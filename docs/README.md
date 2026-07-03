@@ -70,20 +70,16 @@ docs/
 │   ├── 02-kvkk-gdpr-veri-yonetisimi.md
 │   ├── 03-guvenlik-mimarisi-owasp-incident.md
 │   └── 04-ai-guvenligi-ve-model-yonetisimi.md
-├── 07-ui-ux/
-│   ├── 01-tasarim-sistemi-ve-bilesenler.md
-│   ├── 02-sayfa-akislari-ve-wireframe-notlari.md
-│   └── 03-mobil-deneyim-stratejisi.md
-├── 08-devops-test/
-│   ├── 01-devops-surumleme-ortamlar.md
-│   ├── 02-observability-slo-sla.md
-│   └── 03-test-stratejisi-kalite-kapilari.md
-└── 09-yurutme/
-    ├── 01-yol-haritasi.md
-    ├── 02-backlog-epic-user-story.md
-    ├── 03-sprint-plani.md
-    ├── 04-ekip-maliyet-operasyon-plani.md
-    └── 05-lansman-pilot-hypercare.md
+├── 07-operasyon/
+│   ├── 01-devops-ortamlar-surum-yonetimi.md
+│   ├── 02-observability-slo-alarm.md
+│   ├── 03-test-stratejisi-qa.md
+│   └── 04-runbook-operasyon-surecleri.md
+└── 08-yurutme/
+    ├── 01-roadmap-fazlar-milestone.md
+    ├── 02-ekip-roller-delivery-model.md
+    ├── 03-gtm-pilot-musteri-basari.md
+    └── 04-risk-karar-backlog-final-gap.md
 ```
 
 ## Doküman statüleri
