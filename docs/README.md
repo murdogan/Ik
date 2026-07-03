@@ -75,11 +75,13 @@ docs/
 │   ├── 02-observability-slo-alarm.md
 │   ├── 03-test-stratejisi-qa.md
 │   └── 04-runbook-operasyon-surecleri.md
-└── 08-yurutme/
-    ├── 01-roadmap-fazlar-milestone.md
-    ├── 02-ekip-roller-delivery-model.md
-    ├── 03-gtm-pilot-musteri-basari.md
-    └── 04-risk-karar-backlog-final-gap.md
+├── 08-yurutme/
+│   ├── 01-roadmap-fazlar-milestone.md
+│   ├── 02-ekip-roller-delivery-model.md
+│   ├── 03-gtm-pilot-musteri-basari.md
+│   └── 04-risk-karar-backlog-final-gap.md
+└── 09-uygulama/
+    └── 01-sprint-0-teknik-task-breakdown.md
 ```
 
 ## Doküman statüleri
