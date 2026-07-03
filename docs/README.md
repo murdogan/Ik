@@ -81,7 +81,14 @@ docs/
 │   ├── 03-gtm-pilot-musteri-basari.md
 │   └── 04-risk-karar-backlog-final-gap.md
 └── 09-uygulama/
-    └── 01-sprint-0-teknik-task-breakdown.md
+    ├── 01-sprint-0-teknik-task-breakdown.md
+    ├── 02-sprint-0-1-backlog-ve-task-plani.md
+    ├── 03-openapi-endpoint-taslagi.md
+    ├── 04-erd-migration-uygulama-plani.md
+    ├── 05-wireframe-ekran-akis-plani.md
+    ├── 06-import-sablonlari-veri-hazirlik-plani.md
+    ├── 07-demo-landing-satis-anlatisi-plani.md
+    └── 08-implementation-readiness-checklist.md
 ```
 
 ## Doküman statüleri

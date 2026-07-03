@@ -34,7 +34,7 @@ docs/
 ├── 06-guvenlik-uyum/      # Auth, RBAC, KVKK/GDPR, OWASP, AI güvenliği
 ├── 07-operasyon/          # DevOps, observability, test, runbook
 ├── 08-yurutme/            # Roadmap, ekip, GTM, risk/backlog
-└── 09-uygulama/           # Sprint-0 uygulama task breakdown
+└── 09-uygulama/           # Sprint backlog, OpenAPI, ERD, wireframe, import, demo, readiness
 ```
 
 ## Kod yapısı
@@ -79,4 +79,6 @@ CI şunları çalıştırır:
 
 ## Durum
 
-Dokümantasyon foundation tamamlandı ve ilk Sprint-0 backend scaffold eklendi. Sonraki teknik adım: Alembic/PostgreSQL migration iskeleti, tenant tablosu ve RLS/tenant guard testleri.
+Plan dokümantasyon seti tamamlanmıştır. Mevcut repoda daha önce eklenmiş küçük bir Sprint-0 backend scaffold'u vardır; fakat bundan sonraki kod genişletmeleri kullanıcıdan açık “koda geç” onayı alınmadan yapılmamalıdır.
+
+Plan tamamlık kapısı: [Implementation Readiness Checklist](docs/09-uygulama/08-implementation-readiness-checklist.md).
