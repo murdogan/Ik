@@ -1,27 +1,23 @@
-# IK — İnsan Kaynakları Yönetim Sistemi Dokümantasyonu
+# IK — İnsan Kaynakları Yönetim Sistemi
 
-Bu repo, Türkiye pazarı öncelikli ve global pazara açılabilir bir İnsan Kaynakları Yönetim Sistemi için ürün, strateji, modül, mimari, güvenlik, test ve canlıya alma dokümantasyonunu içerir.
-
-Bu aşamanın amacı kod yazmak değil; kod başlamadan önce ürünün ne olduğu, kime satılacağı, hangi modüllerden oluşacağı, MVP kapsamının nerede biteceği ve teknik kararların nasıl alınacağı konusunda net bir ana kaynak oluşturmaktır.
+Bu repo, Türkiye pazarı öncelikli ve global pazara açılabilir bir İnsan Kaynakları Yönetim Sistemi için ürün, strateji, modül, mimari, güvenlik, test, canlıya alma dokümantasyonu ve ilk backend uygulama iskeletini içerir.
 
 ## Çalışma yaklaşımı
 
-Bu dokümantasyon çalışması üç kaynaktan beslenir:
+Bu çalışma üç kaynaktan beslendi:
 
 1. **Codex referansı:** Dosya ve modül iskeleti için ana kontrol listesi.
 2. **Claude referansı:** Derinlik, detay seviyesi ve uygulanabilirlik standardı.
-3. **Mevcut repo geçmişi:** Daha önce hazırlanmış dokümanlar Git geçmişinde korunur; aktif ağaçta yalnızca yeni temiz dokümantasyon tutulur.
-
-Hedef, bu üç kaynağı doğrudan kopyalamak değil; tutarlı, tekrar etmeyen, geliştirilebilir ve canlıya alınabilir bir ürün dokümantasyonu haline getirmektir.
+3. **Mevcut repo geçmişi:** Daha önce hazırlanmış dokümanlar Git geçmişinde korunur; aktif ağaçta temiz foundation tutulur.
 
 ## İlk prensipler
 
 - Önce dokümantasyon, sonra kod.
 - Her kararın sahibi ve etkisi belli olmalı.
 - Her modül MVP / V1 / V2 ayrımıyla yazılmalı.
-- Her modül veri, API, yetki, KVKK, audit ve test etkisiyle birlikte ele alınmalı.
+- Her modül veri, API, yetki, KVKK, audit ve test etkisiyle ele alınmalı.
 - Kırık link, yarım dosya ve boş vaat bırakılmamalı.
-- Eski dokümanlar aktif ağaçta tutulmamalı; repo geçmişinden gerektiğinde geri bakılmalı.
+- Kod tarafında test edilmemiş scaffold “bitti” sayılmamalı.
 
 ## Doküman yapısı
 
@@ -36,24 +32,51 @@ docs/
 ├── 04-mimari/             # Teknik mimari, multi-tenancy, teknoloji kararları
 ├── 05-api-veri/           # Veritabanı, API, webhook, entegrasyon, migrasyon
 ├── 06-guvenlik-uyum/      # Auth, RBAC, KVKK/GDPR, OWASP, AI güvenliği
-├── 07-ui-ux/              # Tasarım sistemi, ekran akışları, mobil deneyim
-├── 08-devops-test/        # Ortamlar, release, observability, test stratejisi
-├── 09-yurutme/            # Yol haritası, backlog, sprint, maliyet, lansman
+├── 07-operasyon/          # DevOps, observability, test, runbook
+├── 08-yurutme/            # Roadmap, ekip, GTM, risk/backlog
+└── 09-uygulama/           # Sprint-0 uygulama task breakdown
 ```
 
-## Eski dokümanlar
+## Kod yapısı
 
-Önceki dokümanlar aktif klasörden kaldırılmıştır. Gerekirse Git geçmişinden incelenir; yeni ana kaynaklar Claude ve Codex zip referanslarıdır.
+```text
+backend/
+├── app/
+│   ├── api/               # API router'ları
+│   ├── core/              # Config, tenancy ve ortak altyapı
+│   └── main.py            # FastAPI app factory
+└── tests/                 # Pytest testleri
+```
 
-## Çalışma sırası
+## Lokal geliştirme
 
-1. Genel standartlar ve modül yazım formatı.
-2. Strateji, pazar, rakip, fiyatlandırma ve ürün kapsamı.
-3. Modül dokümanları.
-4. Mimari, API/veri, güvenlik/uyum.
-5. UI/UX, DevOps/test ve yürütme planı.
-6. Kullanıcı onayından sonra kod/proje iskeleti.
+Gereksinim: `uv` ve Python 3.13.
+
+```bash
+uv sync --all-groups
+uv run pytest
+uv run ruff check backend
+PYTHONPATH=backend uv run python -c "from app.main import create_app; print(create_app().title)"
+```
+
+Beklenen sonuç:
+
+- Testler yeşil: `2 passed`.
+- App import edilir ve `IK Platform API` çıktısı verir.
+- Ruff backend kontrolü hata vermez.
+
+## CI
+
+GitHub Actions workflow template'i: `docs/09-uygulama/templates/backend-ci.yml`
+
+Not: Bu template `.github/workflows/ci.yml` olarak taşındığında GitHub token'ında `workflow` scope gerekir. Mevcut ortamda bu scope olmadığı için workflow şimdilik template olarak tutulur.
+
+CI şunları çalıştırır:
+
+- `uv sync --all-groups`
+- `uv run ruff check backend`
+- `uv run pytest`
 
 ## Durum
 
-Bu repo şu anda **dokümantasyon temel kurulum** aşamasındadır. Kod üretimi, framework seçimi ve canlıya alma altyapısı bu dokümantasyon tamamlanmadan başlatılmayacaktır.
+Dokümantasyon foundation tamamlandı ve ilk Sprint-0 backend scaffold eklendi. Sonraki teknik adım: Alembic/PostgreSQL migration iskeleti, tenant tablosu ve RLS/tenant guard testleri.
