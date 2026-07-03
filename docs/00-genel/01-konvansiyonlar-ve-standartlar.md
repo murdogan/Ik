@@ -194,7 +194,7 @@ Yeni dokümanlar yazılırken kaynak önceliği:
 
 1. Codex zip: kapsam ve dosya iskeleti.
 2. Claude zip: kalite ve detay standardı.
-3. Mevcut repo arşivi: önceki emek ve yerel detaylar.
+3. Git geçmişi: eski repo dokümanlarından gerekirse kontrol amaçlı yararlanılır.
 4. Güncel mevzuat veya teknik kaynaklar: gerektiğinde ayrıca araştırılır.
 
 Eski kaynaklardan doğrudan kopyalama yapılacaksa çelişki kontrolü yapılır. Örneğin eski repo Django diyorsa ama yeni mimari FastAPI diyorsa karar dokümanında gerekçe yazılmadan taşınmaz.

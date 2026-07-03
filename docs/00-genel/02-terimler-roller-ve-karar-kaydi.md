@@ -152,12 +152,12 @@ Scope her zaman tenant izolasyonu içinde değerlendirilir. `tenant` scope başk
 - **Gerekçe:** Codex daha düzenli ve tam kapsamlı; Claude daha derin ve karar odaklıdır.
 - **Etkisi:** Her dosya yazılırken iki kaynak birlikte kontrol edilir.
 
-### ADR-0003 — Mevcut repo dokümanları arşivlenecek, silinmeyecek
+### ADR-0003 — Eski repo dokümanları aktif ağaçtan kaldırılacak
 
 - **Durum:** Kabul edildi
-- **Karar:** Eski `docs/*.md` dosyaları `_archive/2026-07-03-original` altında korunacaktır.
-- **Gerekçe:** Eski dosyalarda değerli modül detayları vardır; ancak yeni yapı daha tutarlı bir omurga gerektirir.
-- **Etkisi:** Yeni dokümanlar arşivden yararlanır ama eski dosya adları ana yapı olarak korunmaz.
+- **Karar:** Eski `docs/*.md` dosyaları aktif doküman ağacından kaldırılır. Gerekirse Git geçmişinden incelenir.
+- **Gerekçe:** Eski dosyalar yeni temiz yapıda görsel ve kavramsal kalabalık oluşturur. Yeni çalışma Codex iskeleti ve Claude kalite standardıyla ilerleyecektir.
+- **Etkisi:** Aktif repo yalnızca yeni dokümantasyon omurgasını gösterir; eski içerik Git geçmişinde kalır.
 
 ### ADR-0004 — MVP kapsamı dar tutulacak
 

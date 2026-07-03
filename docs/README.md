@@ -9,7 +9,7 @@ Bu doküman setinde iki referans yaklaşım birleştirilir:
 - **Codex yaklaşımı:** Klasör yapısı, modül listesi, kapsama kontrol listesi ve düzen.
 - **Claude yaklaşımı:** Uzun, detaylı, gerekçeli, uygulanabilir ve karar odaklı içerik kalitesi.
 
-Her yeni dosya yazılırken önce ilgili Codex dosyası kapsam kontrolü için, sonra Claude dosyası kalite ve detay standardı için, son olarak mevcut repo arşivi yerel bağlam ve önceki emek için taranır.
+Her yeni dosya yazılırken önce ilgili Codex dosyası kapsam kontrolü için, sonra Claude dosyası kalite ve detay standardı için taranır. Eski repo dokümanları aktif ağaçta tutulmaz; gerekirse Git geçmişinden bakılır.
 
 ## Okuma sırası
 
@@ -94,7 +94,7 @@ Aşağıdaki statüler kullanılacaktır:
 - **Taslak:** İlk sürüm yazıldı, kalite kontrol ve kullanıcı onayı bekliyor.
 - **Onaylı:** Kullanıcı tarafından içerik yönü onaylandı.
 - **Revizyon gerekli:** Kapsam veya kalite beklentisini karşılamıyor.
-- **Arşiv:** Yeni yapıda doğrudan kullanılmıyor, referans olarak saklanıyor.
+- **Arşiv:** Aktif doküman ağacında kullanılmaz; eski içerik yalnızca Git geçmişinden incelenir.
 
 ## Faz 1: Temel dosyalar
 
@@ -127,10 +127,6 @@ Her yeni dokümanda şu kontroller aranır:
 6. Kırık iç link olmaması.
 7. Başlık yapısının markdown standardına uygun olması.
 
-## Arşiv
+## Eski dokümanlar
 
-Önceki dokümanlar şu klasörde korunur:
-
-[_archive/2026-07-03-original](_archive/2026-07-03-original)
-
-Arşivdeki içerik çöpe atılmış değildir. Yeni dokümanlar yazılırken özellikle modül detayları, eski pazar analizi, teknoloji seçimi ve sprint planı buradan parça parça süzülecektir.
+Önceki repo dokümanları aktif ağaçtan silinmiştir. Yeni dokümantasyon; Codex iskeleti ve Claude kalite standardı üzerinden sıfırdan, daha temiz şekilde ilerler. Eski içerik gerekiyorsa Git geçmişinden incelenir.

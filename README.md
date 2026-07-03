@@ -10,7 +10,7 @@ Bu dokümantasyon çalışması üç kaynaktan beslenir:
 
 1. **Codex referansı:** Dosya ve modül iskeleti için ana kontrol listesi.
 2. **Claude referansı:** Derinlik, detay seviyesi ve uygulanabilirlik standardı.
-3. **Mevcut repo arşivi:** Daha önce hazırlanmış pazar, modül, mimari, güvenlik ve planlama dokümanlarındaki değerli içerikler.
+3. **Mevcut repo geçmişi:** Daha önce hazırlanmış dokümanlar Git geçmişinde korunur; aktif ağaçta yalnızca yeni temiz dokümantasyon tutulur.
 
 Hedef, bu üç kaynağı doğrudan kopyalamak değil; tutarlı, tekrar etmeyen, geliştirilebilir ve canlıya alınabilir bir ürün dokümantasyonu haline getirmektir.
 
@@ -21,7 +21,7 @@ Hedef, bu üç kaynağı doğrudan kopyalamak değil; tutarlı, tekrar etmeyen, 
 - Her modül MVP / V1 / V2 ayrımıyla yazılmalı.
 - Her modül veri, API, yetki, KVKK, audit ve test etkisiyle birlikte ele alınmalı.
 - Kırık link, yarım dosya ve boş vaat bırakılmamalı.
-- Eski dokümanlar silinmemeli; arşivde korunmalı.
+- Eski dokümanlar aktif ağaçta tutulmamalı; repo geçmişinden gerektiğinde geri bakılmalı.
 
 ## Doküman yapısı
 
@@ -39,16 +39,11 @@ docs/
 ├── 07-ui-ux/              # Tasarım sistemi, ekran akışları, mobil deneyim
 ├── 08-devops-test/        # Ortamlar, release, observability, test stratejisi
 ├── 09-yurutme/            # Yol haritası, backlog, sprint, maliyet, lansman
-└── _archive/              # Eski repo dokümanları ve kaynak arşivi
 ```
 
-## Mevcut arşiv
+## Eski dokümanlar
 
-Önceki dokümanlar şu klasörde korunur:
-
-[docs/_archive/2026-07-03-original](docs/_archive/2026-07-03-original)
-
-Bu arşiv, yeni dokümanların ana yapısını belirlemez; ancak pazar, modül, teknik karar ve iş akışı detayları için referans olarak kullanılır.
+Önceki dokümanlar aktif klasörden kaldırılmıştır. Gerekirse Git geçmişinden incelenir; yeni ana kaynaklar Claude ve Codex zip referanslarıdır.
 
 ## Çalışma sırası
 
