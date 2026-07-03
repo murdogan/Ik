@@ -43,7 +43,7 @@ docs/
 │   └── 04-urun-metrikleri-ve-basari-kriterleri.md
 ├── 03-moduller/
 │   ├── 00-modul-format-ve-ortak-kararlar.md
-│   ├── 01-core-tenant-auth-rbac.md
+│   ├── 01-core-auth-rbac.md
 │   ├── 02-personel-ozluk-dokuman.md
 │   ├── 03-izin-devamsizlik-onay.md
 │   ├── 04-zaman-vardiya-pdks-puantaj.md
