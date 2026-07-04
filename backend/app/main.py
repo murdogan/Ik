@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.api.landing import router as landing_router
 from app.core.config import get_settings
 
 
@@ -12,6 +13,7 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.environment != "prod" else None,
         redoc_url="/redoc" if settings.environment != "prod" else None,
     )
+    app.include_router(landing_router)
     app.include_router(health_router)
     return app
 
