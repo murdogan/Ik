@@ -38,7 +38,7 @@ Add tenant-scoped Employee model and tests using documented MVP fields.
 
 ## T6 — Leave request minimal model
 
-Status: pending
+Status: done
 
 Add tenant-scoped LeaveRequest model and tests with pending/approved/rejected/cancelled statuses.
 
