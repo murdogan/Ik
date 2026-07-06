@@ -8,7 +8,7 @@ Prepare branch, commit planning files if needed, run baseline ruff/pytest. Do no
 
 ## T1 — README and local development commands
 
-Status: pending
+Status: done
 
 Update README/local docs with uv, pytest, ruff, smoke-test, branch workflow commands. Docs only unless a tiny config fix is required.
 
