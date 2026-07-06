@@ -14,7 +14,7 @@ Update README/local docs with uv, pytest, ruff, smoke-test, branch workflow comm
 
 ## T2 — CI workflow
 
-Status: pending
+Status: done
 
 Add GitHub Actions CI running ruff and pytest for backend. Keep it minimal.
 
