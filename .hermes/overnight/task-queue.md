@@ -44,7 +44,7 @@ Add tenant-scoped LeaveRequest model and tests with pending/approved/rejected/ca
 
 ## T7 — Dashboard summary endpoint
 
-Status: pending
+Status: done
 
 Add /api/v1/dashboard/summary endpoint and tests for first demo cards.
 
