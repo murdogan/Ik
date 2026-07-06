@@ -50,7 +50,7 @@ Add /api/v1/dashboard/summary endpoint and tests for first demo cards.
 
 ## T8 — Landing brand update
 
-Status: pending
+Status: done
 
 Update landing brand text to Wealthy Falcon HR while preserving approved design. Update tests.
 
