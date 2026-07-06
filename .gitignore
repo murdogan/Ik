@@ -10,6 +10,10 @@ __pycache__/
 .env.*
 !.env.example
 
+# Hermes runtime artifacts
+.hermes/overnight/*
+!.hermes/overnight/task-queue.md
+
 # Node future
 node_modules/
 .next/
