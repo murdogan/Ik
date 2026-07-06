@@ -21,14 +21,17 @@ def test_core_migration_chain_is_linear() -> None:
     tenant_revision = script.get_revision("0001_create_tenants")
     user_revision = script.get_revision("0002_create_users")
     employee_revision = script.get_revision("0003_create_employees")
+    leave_request_revision = script.get_revision("0004_create_leave_requests")
 
-    assert script.get_heads() == ["0003_create_employees"]
+    assert script.get_heads() == ["0004_create_leave_requests"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
     assert user_revision.down_revision == "0001_create_tenants"
     assert employee_revision is not None
     assert employee_revision.down_revision == "0002_create_users"
+    assert leave_request_revision is not None
+    assert leave_request_revision.down_revision == "0003_create_employees"
 
 
 def test_initial_tenant_migration_exists() -> None:
@@ -61,6 +64,18 @@ def test_initial_employee_migration_exists() -> None:
     assert "employees" in text
     assert "uq_employees_tenant_employee_number" in text
     assert "ck_employees_status" in text
+
+
+def test_initial_leave_request_migration_exists() -> None:
+    migration = Path("backend/alembic/versions/0004_create_leave_requests.py")
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "create_table" in text
+    assert "leave_requests" in text
+    assert "ck_leave_requests_status" in text
+    assert "ix_leave_requests_tenant_employee_start_date" in text
+    assert "ix_leave_requests_tenant_status_created_at" in text
 
 
 def test_readme_documents_migration_commands() -> None:

@@ -3,7 +3,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from app.db.base import Base
-from app.models import Employee, Tenant, User  # noqa: F401
+from app.models import Employee, LeaveRequest, Tenant, User  # noqa: F401
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
