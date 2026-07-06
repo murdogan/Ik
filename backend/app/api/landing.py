@@ -14,7 +14,7 @@ def landing_page() -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IK Platform - Hazırlanıyor</title>
+  <title>Wealthy Falcon HR - Hazırlanıyor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -34,7 +34,7 @@ def landing_page() -> str:
 <body>
   <div class="wrap">
     <nav>
-      <div class="brand"><div class="logo">İK</div><span>IK Platform</span></div>
+      <div class="brand"><div class="logo">WF</div><span>Wealthy Falcon HR</span></div>
       <div class="navlinks"><span>Çalışanlar</span><span>İzinler</span><span>Bordro</span><span>Raporlar</span></div>
       <div class="navcta">Staging / Test Ortamı</div>
     </nav>
@@ -42,7 +42,7 @@ def landing_page() -> str:
       <div>
         <div class="eyebrow"><span class="dot"></span> Türkiye ekipleri için modern HRMS hazırlanıyor</div>
         <h1>İnsan kaynaklarını karmaşadan çıkarıp tek ekranda yönetin.</h1>
-        <p class="lead">Çalışan bilgileri, izin talepleri, onboarding, dokümanlar ve temel raporlar için sade, güven veren ve hızlı kullanılabilen yeni nesil İK platformu.</p>
+        <p class="lead">Wealthy Falcon HR; çalışan bilgileri, izin talepleri, onboarding, dokümanlar ve raporları sade bir platformda toplar.</p>
         <div class="actions"><a class="btn primary" href="#">Demo talep et →</a><a class="btn secondary" href="/docs">API Docs</a><a class="btn secondary" href="/health">Health</a></div>
         <div class="trust"><span><b class="check">✓</b> KOBİ ve orta ölçekli ekipler</span><span><b class="check">✓</b> KVKK odaklı yapı</span><span><b class="check">✓</b> Mobil uyumlu self-servis</span></div>
       </div>

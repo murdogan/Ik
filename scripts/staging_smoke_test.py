@@ -22,7 +22,8 @@ def main() -> None:
     landing_status, landing_type, landing_body = fetch("/")
     assert landing_status == 200, landing_status
     assert "text/html" in landing_type, landing_type
-    assert "IK Platform" in landing_body
+    assert "Wealthy Falcon HR" in landing_body
+    assert "IK Platform" not in landing_body
 
     health_status, health_type, health_body = fetch("/health")
     assert health_status == 200, health_status
