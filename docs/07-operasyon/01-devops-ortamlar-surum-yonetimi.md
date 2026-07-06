@@ -40,6 +40,78 @@ Branch yaklaşımı:
 - Conventional commit önerilir.
 - Büyük özellikler feature flag arkasında merge edilir.
 
+Pratik branch komutları:
+
+```bash
+git switch main
+git pull --ff-only
+git switch -c <task-branch>
+git status --short --branch
+```
+
+Gece Sprint-0 işleri için ayrılmış branch:
+
+```bash
+git switch overnight/sprint-0-wealthy-falcon
+```
+
+Commit öncesi kalite kapıları:
+
+```bash
+uv run ruff check backend
+uv run pytest
+```
+
+İlgili dosyalar dar kapsamla stage edilir:
+
+```bash
+git add README.md docs/<ilgili-dosya>.md
+git commit -m "docs(T1): document local development commands"
+```
+
+### 2.1 Lokal geliştirme komutları
+
+Kurulum:
+
+```bash
+uv sync --all-groups
+```
+
+Backend kalite kontrol:
+
+```bash
+uv run ruff check backend
+uv run pytest
+```
+
+App import smoke testi:
+
+```bash
+PYTHONPATH=backend uv run python -c "from app.main import create_app; print(create_app().title)"
+```
+
+Lokal HTTP smoke testi:
+
+Terminal 1:
+
+```bash
+uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8001 --reload
+```
+
+Terminal 2:
+
+```bash
+uv run python scripts/staging_smoke_test.py http://127.0.0.1:8001
+```
+
+Staging smoke testi, yalnızca zaten çalışan staging URL'sine karşı çalıştırılır:
+
+```bash
+uv run python scripts/staging_smoke_test.py https://<staging-url>
+```
+
+Bu smoke komutu deploy, cron veya ortam ayarı değiştirmez.
+
 ## 3. CI pipeline
 
 | Aşama | Kontrol |
