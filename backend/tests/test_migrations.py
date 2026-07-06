@@ -16,16 +16,19 @@ def test_alembic_config_points_to_backend_migrations() -> None:
     assert config.get_main_option("script_location") == "backend/alembic"
 
 
-def test_tenant_user_migration_chain_is_linear() -> None:
+def test_core_migration_chain_is_linear() -> None:
     script = _script_directory()
     tenant_revision = script.get_revision("0001_create_tenants")
     user_revision = script.get_revision("0002_create_users")
+    employee_revision = script.get_revision("0003_create_employees")
 
-    assert script.get_heads() == ["0002_create_users"]
+    assert script.get_heads() == ["0003_create_employees"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
     assert user_revision.down_revision == "0001_create_tenants"
+    assert employee_revision is not None
+    assert employee_revision.down_revision == "0002_create_users"
 
 
 def test_initial_tenant_migration_exists() -> None:
@@ -47,6 +50,17 @@ def test_initial_user_migration_exists() -> None:
     assert "users" in text
     assert "uq_users_tenant_email" in text
     assert "ck_users_status" in text
+
+
+def test_initial_employee_migration_exists() -> None:
+    migration = Path("backend/alembic/versions/0003_create_employees.py")
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "create_table" in text
+    assert "employees" in text
+    assert "uq_employees_tenant_employee_number" in text
+    assert "ck_employees_status" in text
 
 
 def test_readme_documents_migration_commands() -> None:
