@@ -26,7 +26,7 @@ Inspect existing migration foundation; add or repair minimal Alembic setup only 
 
 ## T4 — Tenant/User foundation hardening
 
-Status: pending
+Status: done
 
 Harden existing tenant/user models and tenant isolation helpers/tests. Keep scope minimal.
 
