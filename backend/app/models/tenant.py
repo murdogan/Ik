@@ -1,7 +1,7 @@
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, String, Text
+from sqlalchemy import CheckConstraint, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,10 +24,11 @@ class Tenant(Base, TimestampMixin):
             "status in ('provisioning','trial','active','suspended','offboarding','closed')",
             name="ck_tenants_status",
         ),
+        UniqueConstraint("slug"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    slug: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=TenantStatus.PROVISIONING.value
