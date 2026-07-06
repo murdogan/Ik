@@ -20,7 +20,7 @@ Add GitHub Actions CI running ruff and pytest for backend. Keep it minimal.
 
 ## T3 — Alembic / migration foundation
 
-Status: pending
+Status: done
 
 Inspect existing migration foundation; add or repair minimal Alembic setup only if needed. Document commands. No destructive migrations.
 
