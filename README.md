@@ -65,6 +65,21 @@ uv run ruff check backend
 uv run pytest
 ```
 
+Veritabanı migration komutları:
+
+```bash
+uv run alembic history
+uv run alembic heads
+uv run alembic current
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "describe change"
+```
+
+`alembic.ini` lokal geliştirme veritabanını hedefler. Migration komutlarını yalnızca lokal/dev
+veritabanına karşı çalıştırın; production/staging migration çalıştırma bu repo task akışının
+parçası değildir. Yeni migration'lar küçük, geriye uyumlu ve tenant/user zincirini bozmayacak
+şekilde hazırlanmalıdır; destructive değişiklikler Sprint-0 kapsamına alınmaz.
+
 Lokal app import smoke testi:
 
 ```bash
