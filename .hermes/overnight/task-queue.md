@@ -32,7 +32,7 @@ Harden existing tenant/user models and tenant isolation helpers/tests. Keep scop
 
 ## T5 — Employee minimal model
 
-Status: pending
+Status: done
 
 Add tenant-scoped Employee model and tests using documented MVP fields.
 
