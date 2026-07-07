@@ -50,20 +50,93 @@ backend/
 
 ## Lokal geliştirme
 
-Gereksinim: `uv` ve Python 3.13.
+Gereksinim: `uv` ve Python 3.13. Komutlar repo kökünden çalıştırılır.
+
+Kurulum:
 
 ```bash
 uv sync --all-groups
-uv run pytest
+```
+
+Commit öncesi kalite kapıları:
+
+```bash
 uv run ruff check backend
+uv run pytest
+```
+
+Veritabanı migration komutları:
+
+```bash
+uv run alembic history
+uv run alembic heads
+uv run alembic current
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "describe change"
+```
+
+`alembic.ini` lokal geliştirme veritabanını hedefler. Migration komutlarını yalnızca lokal/dev
+veritabanına karşı çalıştırın; production/staging migration çalıştırma bu repo task akışının
+parçası değildir. Yeni migration'lar küçük, geriye uyumlu ve tenant/user zincirini bozmayacak
+şekilde hazırlanmalıdır; destructive değişiklikler Sprint-0 kapsamına alınmaz.
+
+Lokal app import smoke testi:
+
+```bash
 PYTHONPATH=backend uv run python -c "from app.main import create_app; print(create_app().title)"
 ```
 
+Beklenen çıktı `IK Platform API` olmalıdır.
+
+Lokal HTTP smoke testi:
+
+Terminal 1:
+
+```bash
+uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8001 --reload
+```
+
+Terminal 2:
+
+```bash
+uv run python scripts/staging_smoke_test.py http://127.0.0.1:8001
+```
+
+Smoke testi `/` ve `/health` endpointlerini kontrol eder; başarılıysa `SMOKE_OK` çıktısı verir.
+Staging için aynı script yalnızca mevcut çalışan URL'ye karşı çalıştırılır:
+
+```bash
+uv run python scripts/staging_smoke_test.py https://<staging-url>
+```
+
+Bu komut deploy, cron veya ortam ayarı değiştirmez.
+
 Beklenen sonuç:
 
-- Testler yeşil: `2 passed`.
-- App import edilir ve `IK Platform API` çıktısı verir.
 - Ruff backend kontrolü hata vermez.
+- Pytest tüm testleri yeşil döndürür.
+- App import edilir ve `IK Platform API` çıktısı verir.
+- HTTP smoke testi `SMOKE_OK` çıktısı verir.
+
+## Branch iş akışı
+
+`main` korumalıdır; değişiklikler kısa ömürlü branch üzerinde yapılır.
+
+```bash
+git switch main
+git pull --ff-only
+git switch -c <task-branch>
+git status --short --branch
+```
+
+Task bitince kalite kapıları çalıştırılır ve yalnızca ilgili dosyalar commitlenir:
+
+```bash
+uv run ruff check backend
+uv run pytest
+git add README.md docs/<ilgili-dosya>.md
+git commit -m "docs(T1): document local development commands"
+```
 
 ## CI
 

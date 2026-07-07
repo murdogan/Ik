@@ -9,6 +9,8 @@ def test_landing_page_returns_staging_html() -> None:
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "IK Platform" in response.text
+    assert "Wealthy Falcon HR" in response.text
+    assert "IK Platform" not in response.text
+    assert "İnsan kaynaklarını karmaşadan çıkarıp tek ekranda yönetin." in response.text
     assert "Staging / Test Ortamı" in response.text
     assert "/health" in response.text
