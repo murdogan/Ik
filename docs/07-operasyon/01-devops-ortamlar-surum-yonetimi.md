@@ -90,7 +90,17 @@ App import smoke testi:
 PYTHONPATH=backend uv run python -c "from app.main import create_app; print(create_app().title)"
 ```
 
-Lokal HTTP smoke testi:
+Lokal backend API smoke testi:
+
+```bash
+uv run python scripts/backend_api_smoke.py
+```
+
+Bu komut server, lokal PostgreSQL, deploy, cron, token veya `.env` gerektirmez. In-memory
+SQLite ile health, landing, OpenAPI, dashboard summary, employee CRUD ve leave request workflow
+endpointlerini ASGI üzerinden doğrular.
+
+Opsiyonel lokal HTTP landing/health smoke testi:
 
 Terminal 1:
 

@@ -88,7 +88,9 @@ docs/
     ├── 05-wireframe-ekran-akis-plani.md
     ├── 06-import-sablonlari-veri-hazirlik-plani.md
     ├── 07-demo-landing-satis-anlatisi-plani.md
-    └── 08-implementation-readiness-checklist.md
+    ├── 08-implementation-readiness-checklist.md
+    ├── 10-sprint-0-implementation-report.md
+    └── 11-api-implementation-status.md
 ```
 
 ## Doküman statüleri

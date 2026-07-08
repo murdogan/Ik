@@ -44,6 +44,10 @@ backend/
 ├── app/
 │   ├── api/               # API router'ları
 │   ├── core/              # Config, tenancy ve ortak altyapı
+│   ├── db/                # SQLAlchemy session ve declarative base
+│   ├── models/            # Tenant-scoped ORM modelleri
+│   ├── schemas/           # Pydantic request/response şemaları
+│   ├── services/          # Küçük domain servisleri
 │   └── main.py            # FastAPI app factory
 └── tests/                 # Pytest testleri
 ```
@@ -88,7 +92,25 @@ PYTHONPATH=backend uv run python -c "from app.main import create_app; print(crea
 
 Beklenen çıktı `IK Platform API` olmalıdır.
 
-Lokal HTTP smoke testi:
+Lokal backend API smoke testi:
+
+```bash
+uv run python scripts/backend_api_smoke.py
+```
+
+Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını ASGI üzerinden
+çalıştırır, geçici SQLite veritabanı oluşturur ve şu yüzeyi kontrol eder:
+
+- `/health`
+- `/`
+- `/openapi.json`
+- `/api/v1/dashboard/summary`
+- `/api/v1/employees` liste/oluşturma/detay/güncelleme/silme
+- `/api/v1/leave-requests` liste/oluşturma/onay/red/iptal
+
+Başarılıysa `BACKEND_SMOKE_OK` çıktısı verir.
+
+Opsiyonel lokal HTTP landing/health smoke testi:
 
 Terminal 1:
 
@@ -116,7 +138,8 @@ Beklenen sonuç:
 - Ruff backend kontrolü hata vermez.
 - Pytest tüm testleri yeşil döndürür.
 - App import edilir ve `IK Platform API` çıktısı verir.
-- HTTP smoke testi `SMOKE_OK` çıktısı verir.
+- Backend API smoke testi `BACKEND_SMOKE_OK` çıktısı verir.
+- Opsiyonel HTTP landing/health smoke testi `SMOKE_OK` çıktısı verir.
 
 ## Branch iş akışı
 

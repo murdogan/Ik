@@ -1,0 +1,335 @@
+# ruff: noqa: E402
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from collections.abc import AsyncIterator
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Any
+from uuid import UUID
+
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND_DIR = ROOT / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from app.db.base import Base
+from app.db.session import get_session
+from app.main import create_app
+from app.models.employee import EmployeeStatus
+from app.models.tenant import Tenant, TenantStatus
+from app.models.user import User, UserStatus
+from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import StaticPool
+
+TENANT_ID = UUID("11111111-aaaa-4111-8111-111111111111")
+REQUESTING_USER_ID = UUID("22222222-bbbb-4222-8222-222222222222")
+APPROVER_USER_ID = UUID("33333333-cccc-4333-8333-333333333333")
+TENANT_HEADERS = {
+    "X-Tenant-Id": str(TENANT_ID),
+    "X-Tenant-Slug": "wealthy-falcon",
+}
+OPENAPI_PATHS = {
+    "/",
+    "/health",
+    "/api/v1/dashboard/summary",
+    "/api/v1/employees",
+    "/api/v1/employees/{employee_id}",
+    "/api/v1/leave-requests",
+    "/api/v1/leave-requests/{leave_request_id}/approve",
+    "/api/v1/leave-requests/{leave_request_id}/reject",
+    "/api/v1/leave-requests/{leave_request_id}/cancel",
+}
+
+
+async def main() -> None:
+    engine, session_factory = await _create_smoke_database()
+    app = create_app()
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://backend-smoke.local",
+        ) as client:
+            await _smoke_system_endpoints(client)
+            employee_id = await _smoke_employee_endpoints(client)
+            await _smoke_leave_request_endpoints(client, employee_id)
+            await _smoke_dashboard_endpoint(client)
+    finally:
+        app.dependency_overrides.clear()
+        await engine.dispose()
+
+    print(
+        "BACKEND_SMOKE_OK "
+        f"tenant_id={TENANT_ID} "
+        "checked=health,landing,openapi,dashboard,employees,leave_requests"
+    )
+
+
+async def _create_smoke_database() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        use_insertmanyvalues=False,
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        session.add_all(
+            [
+                Tenant(
+                    id=TENANT_ID,
+                    slug="wealthy-falcon",
+                    name="Wealthy Falcon HR",
+                    status=TenantStatus.ACTIVE.value,
+                    plan_code="core",
+                    data_region="tr-1",
+                    locale="tr-TR",
+                    timezone="Europe/Istanbul",
+                ),
+                User(
+                    id=REQUESTING_USER_ID,
+                    tenant_id=TENANT_ID,
+                    email="requester@wealthyfalcon.test",
+                    full_name="Requesting User",
+                    status=UserStatus.ACTIVE.value,
+                ),
+                User(
+                    id=APPROVER_USER_ID,
+                    tenant_id=TENANT_ID,
+                    email="approver@wealthyfalcon.test",
+                    full_name="Approver User",
+                    status=UserStatus.ACTIVE.value,
+                ),
+            ]
+        )
+        await session.commit()
+
+    return engine, session_factory
+
+
+async def _smoke_system_endpoints(client: AsyncClient) -> None:
+    health = _expect_json(await client.get("/health"), 200, "GET /health")
+    _assert_equal(health["status"], "ok", "health status")
+    _assert_equal(health["service"], "IK Platform API", "health service")
+
+    landing = await client.get("/")
+    _expect_status(landing, 200, "GET /")
+    _assert_contains(landing.text, "Wealthy Falcon HR", "landing brand")
+
+    openapi = _expect_json(await client.get("/openapi.json"), 200, "GET /openapi.json")
+    missing_paths = OPENAPI_PATHS.difference(openapi["paths"])
+    if missing_paths:
+        raise AssertionError(f"OpenAPI is missing paths: {sorted(missing_paths)}")
+
+
+async def _smoke_employee_endpoints(client: AsyncClient) -> str:
+    today = date.today().isoformat()
+    created = await _create_employee(
+        client,
+        {
+            "employee_number": "WF-SMOKE-001",
+            "first_name": "Ada",
+            "last_name": "Yilmaz",
+            "email": "ada.smoke@wealthyfalcon.test",
+            "department": "People",
+            "position": "HR Specialist",
+            "employment_start_date": today,
+        },
+    )
+    employee_id = created["id"]
+
+    employees = _expect_json(
+        await client.get("/api/v1/employees", headers=TENANT_HEADERS),
+        200,
+        "GET /api/v1/employees",
+    )
+    _assert_equal([employee["employee_number"] for employee in employees], ["WF-SMOKE-001"])
+
+    detail = _expect_json(
+        await client.get(f"/api/v1/employees/{employee_id}", headers=TENANT_HEADERS),
+        200,
+        "GET /api/v1/employees/{employee_id}",
+    )
+    _assert_equal(detail["employee_number"], "WF-SMOKE-001", "employee detail number")
+
+    updated = _expect_json(
+        await client.patch(
+            f"/api/v1/employees/{employee_id}",
+            headers=TENANT_HEADERS,
+            json={"status": EmployeeStatus.ON_LEAVE.value},
+        ),
+        200,
+        "PATCH /api/v1/employees/{employee_id}",
+    )
+    _assert_equal(updated["status"], EmployeeStatus.ON_LEAVE.value, "employee status")
+
+    delete_candidate = await _create_employee(
+        client,
+        {
+            "employee_number": "WF-SMOKE-DELETE",
+            "first_name": "Delete",
+            "last_name": "Candidate",
+            "employment_start_date": today,
+        },
+    )
+    _expect_status(
+        await client.delete(
+            f"/api/v1/employees/{delete_candidate['id']}",
+            headers=TENANT_HEADERS,
+        ),
+        204,
+        "DELETE /api/v1/employees/{employee_id}",
+    )
+    _expect_status(
+        await client.get(
+            f"/api/v1/employees/{delete_candidate['id']}",
+            headers=TENANT_HEADERS,
+        ),
+        404,
+        "GET deleted /api/v1/employees/{employee_id}",
+    )
+
+    return employee_id
+
+
+async def _smoke_leave_request_endpoints(client: AsyncClient, employee_id: str) -> None:
+    approved_request = await _create_leave_request(client, employee_id, day_offset=14)
+    rejected_request = await _create_leave_request(client, employee_id, day_offset=21)
+    cancelled_request = await _create_leave_request(client, employee_id, day_offset=28)
+
+    decision_payload = {
+        "decided_by_user_id": str(APPROVER_USER_ID),
+        "decision_note": "N4 backend smoke decision",
+    }
+    approved = _expect_json(
+        await client.post(
+            f"/api/v1/leave-requests/{approved_request['id']}/approve",
+            headers=TENANT_HEADERS,
+            json=decision_payload,
+        ),
+        200,
+        "POST /api/v1/leave-requests/{leave_request_id}/approve",
+    )
+    _assert_equal(approved["status"], "approved", "approved leave status")
+
+    rejected = _expect_json(
+        await client.post(
+            f"/api/v1/leave-requests/{rejected_request['id']}/reject",
+            headers=TENANT_HEADERS,
+            json=decision_payload,
+        ),
+        200,
+        "POST /api/v1/leave-requests/{leave_request_id}/reject",
+    )
+    _assert_equal(rejected["status"], "rejected", "rejected leave status")
+
+    cancelled = _expect_json(
+        await client.post(
+            f"/api/v1/leave-requests/{cancelled_request['id']}/cancel",
+            headers=TENANT_HEADERS,
+            json=decision_payload,
+        ),
+        200,
+        "POST /api/v1/leave-requests/{leave_request_id}/cancel",
+    )
+    _assert_equal(cancelled["status"], "cancelled", "cancelled leave status")
+
+    leave_requests = _expect_json(
+        await client.get("/api/v1/leave-requests", headers=TENANT_HEADERS),
+        200,
+        "GET /api/v1/leave-requests",
+    )
+    statuses = {leave_request["status"] for leave_request in leave_requests}
+    _assert_equal(statuses, {"approved", "rejected", "cancelled"}, "leave request statuses")
+
+
+async def _smoke_dashboard_endpoint(client: AsyncClient) -> None:
+    summary = _expect_json(
+        await client.get("/api/v1/dashboard/summary", headers=TENANT_HEADERS),
+        200,
+        "GET /api/v1/dashboard/summary",
+    )
+    _assert_equal(summary["employee_count"], 1, "dashboard employee_count")
+    _assert_equal(summary["pending_leave_requests"], 0, "dashboard pending_leave_requests")
+    _assert_equal(summary["new_starters_this_month"], 1, "dashboard new_starters_this_month")
+    _assert_equal(
+        summary["department_distribution"],
+        [{"department": "People", "count": 1}],
+        "dashboard department_distribution",
+    )
+
+
+async def _create_employee(client: AsyncClient, payload: dict[str, Any]) -> dict[str, Any]:
+    return _expect_json(
+        await client.post("/api/v1/employees", headers=TENANT_HEADERS, json=payload),
+        201,
+        "POST /api/v1/employees",
+    )
+
+
+async def _create_leave_request(
+    client: AsyncClient,
+    employee_id: str,
+    day_offset: int,
+) -> dict[str, Any]:
+    start_date = date.today() + timedelta(days=day_offset)
+    end_date = start_date + timedelta(days=1)
+    return _expect_json(
+        await client.post(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            json={
+                "employee_id": employee_id,
+                "leave_type": "annual",
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "requested_by_user_id": str(REQUESTING_USER_ID),
+            },
+        ),
+        201,
+        "POST /api/v1/leave-requests",
+    )
+
+
+def _expect_json(response: Response, status_code: int, label: str) -> Any:
+    _expect_status(response, status_code, label)
+    return response.json()
+
+
+def _expect_status(response: Response, status_code: int, label: str) -> None:
+    if response.status_code != status_code:
+        raise AssertionError(
+            f"{label} expected {status_code}, got {response.status_code}: {response.text}"
+        )
+
+
+def _assert_equal(actual: Any, expected: Any, label: str = "value") -> None:
+    if actual != expected:
+        raise AssertionError(f"{label} expected {expected!r}, got {actual!r}")
+
+
+def _assert_contains(value: str, expected: str, label: str) -> None:
+    if expected not in value:
+        raise AssertionError(f"{label} expected to contain {expected!r}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

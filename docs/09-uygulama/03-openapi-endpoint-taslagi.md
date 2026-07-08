@@ -2,6 +2,46 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
+## 0. Güncel uygulama yüzeyi (2026-07-08 / N4)
+
+Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
+lokal backend smoke kapsamındadır.
+
+| Method | Path | Durum | Not |
+|---|---|---|---|
+| GET | `/health` | Uygulandı | Public servis durumu |
+| GET | `/` | Uygulandı | Wealthy Falcon HR landing HTML |
+| GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB sayımları, departman dağılımı ve son aktiviteler |
+| GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste, şu an pagination/filter yok |
+| POST | `/api/v1/employees` | Uygulandı | Server tenant context kullanır, duplicate employee number `409` |
+| GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
+| PATCH | `/api/v1/employees/{employee_id}` | Uygulandı | Partial update, tarih aralığı validasyonu |
+| DELETE | `/api/v1/employees/{employee_id}` | Uygulandı | Mevcut davranış hard delete |
+| GET | `/api/v1/leave-requests` | Uygulandı | Tenant-scoped liste |
+| POST | `/api/v1/leave-requests` | Uygulandı | Pending talep oluşturur, çalışan ve isteyen kullanıcı tenant içinde olmalı |
+| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Uygulandı | Yalnız pending talep onaylanır |
+| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note destekler |
+| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Uygulandı | Yalnız pending talep iptal edilir |
+
+Geçerli uygulama notları:
+
+- Domain endpointleri `X-Tenant-Id` header'ı ister; `X-Tenant-Slug` opsiyoneldir.
+- Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef
+  standarttır, mevcut scaffold davranışı değildir.
+- Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
+  mekanizmasıdır.
+- Pagination, filtering, idempotency ve correlation envelope henüz TODO'dur.
+- Leave request detail endpointi (`GET /api/v1/leave-requests/{id}`) henüz yoktur.
+
+Lokal smoke komutu:
+
+```bash
+uv run python scripts/backend_api_smoke.py
+```
+
+Bu komut deploy, staging URL, cron, token, `.env` veya dış servis kullanmaz; in-memory SQLite
+ile yukarıdaki API yüzeyini ASGI üzerinden doğrular.
+
 ## 1. API ilkeleri
 
 - Base path: `/api/v1`
