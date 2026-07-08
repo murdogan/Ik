@@ -4,6 +4,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.employees import router as employees_router
 from app.api.health import router as health_router
 from app.api.landing import router as landing_router
+from app.api.leave_requests import router as leave_requests_router
 from app.core.config import get_settings
 
 
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(dashboard_router)
     app.include_router(employees_router)
+    app.include_router(leave_requests_router)
     app.include_router(landing_router)
     app.include_router(health_router)
     return app

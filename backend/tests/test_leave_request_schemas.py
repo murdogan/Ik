@@ -1,0 +1,90 @@
+from datetime import date
+from uuid import UUID
+
+import pytest
+from app.models.leave_request import LeaveRequestStatus
+from app.schemas.leave_request import LeaveRequestCreate, LeaveRequestDecision, LeaveRequestRead
+from pydantic import ValidationError
+
+EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+REQUESTING_USER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+DECIDING_USER_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+
+
+def test_leave_request_create_accepts_minimal_pending_request_payload() -> None:
+    payload = LeaveRequestCreate(
+        employee_id=EMPLOYEE_ID,
+        leave_type=" annual ",
+        start_date=date(2026, 7, 20),
+        end_date=date(2026, 7, 22),
+        requested_by_user_id=REQUESTING_USER_ID,
+    )
+
+    assert payload.leave_type == "annual"
+    assert "status" not in payload.model_dump()
+
+
+def test_leave_request_create_rejects_client_controlled_status() -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestCreate(
+            employee_id=EMPLOYEE_ID,
+            leave_type="annual",
+            start_date=date(2026, 7, 20),
+            end_date=date(2026, 7, 22),
+            requested_by_user_id=REQUESTING_USER_ID,
+            status=LeaveRequestStatus.APPROVED,
+        )
+
+
+def test_leave_request_create_rejects_empty_leave_type() -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestCreate(
+            employee_id=EMPLOYEE_ID,
+            leave_type=" ",
+            start_date=date(2026, 7, 20),
+            end_date=date(2026, 7, 22),
+            requested_by_user_id=REQUESTING_USER_ID,
+        )
+
+
+def test_leave_request_create_rejects_end_date_before_start_date() -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestCreate(
+            employee_id=EMPLOYEE_ID,
+            leave_type="annual",
+            start_date=date(2026, 7, 22),
+            end_date=date(2026, 7, 20),
+            requested_by_user_id=REQUESTING_USER_ID,
+        )
+
+
+def test_leave_request_decision_accepts_optional_note() -> None:
+    payload = LeaveRequestDecision(
+        decided_by_user_id=DECIDING_USER_ID,
+        decision_note=" coverage planned ",
+    )
+
+    assert payload.decision_note == "coverage planned"
+
+
+def test_leave_request_decision_rejects_empty_note_when_provided() -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestDecision(decided_by_user_id=DECIDING_USER_ID, decision_note=" ")
+
+
+def test_leave_request_read_exposes_workflow_fields_without_tenant_id() -> None:
+    payload = LeaveRequestRead(
+        id=UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+        employee_id=EMPLOYEE_ID,
+        leave_type="annual",
+        start_date=date(2026, 7, 20),
+        end_date=date(2026, 7, 22),
+        status=LeaveRequestStatus.PENDING,
+        requested_by_user_id=REQUESTING_USER_ID,
+        decided_by_user_id=None,
+        decision_note=None,
+    )
+
+    data = payload.model_dump()
+    assert data["status"] == LeaveRequestStatus.PENDING
+    assert "tenant_id" not in data
