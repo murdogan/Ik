@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     app_name: str = "IK Platform API"
     app_version: str = "0.1.0"
     environment: Literal["local", "dev", "staging", "prod"] = "local"
+    database_url: str = "postgresql+asyncpg://ik:ik@localhost:5432/ik"
 
     model_config = SettingsConfigDict(env_prefix="IK_", env_file=".env", extra="ignore")
 
