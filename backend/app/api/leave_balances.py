@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
 from app.api.errors import ApiError
+from app.api.openapi import LEAVE_BALANCES_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.schemas.leave_balance_summary import LeaveBalanceSummaryRead
@@ -14,7 +15,7 @@ from app.services.leave_balance_service import (
     LeaveBalanceService,
 )
 
-router = APIRouter(prefix="/api/v1/employees", tags=["leave-balances"])
+router = APIRouter(prefix="/api/v1/employees", tags=[LEAVE_BALANCES_TAG])
 
 
 def get_leave_balance_service(
@@ -23,7 +24,16 @@ def get_leave_balance_service(
     return LeaveBalanceService(session=session)
 
 
-@router.get("/{employee_id}/leave-balances", response_model=list[LeaveBalanceSummaryRead])
+@router.get(
+    "/{employee_id}/leave-balances",
+    response_model=list[LeaveBalanceSummaryRead],
+    summary="List employee leave balances",
+    description=(
+        "Returns read-only manual leave balance summaries for an employee in the current tenant. "
+        "This placeholder endpoint does not calculate accruals or call external integrations."
+    ),
+    response_description="Employee leave balance summaries.",
+)
 async def list_employee_leave_balances(
     employee_id: UUID,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],

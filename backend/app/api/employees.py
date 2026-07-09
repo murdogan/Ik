@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
 from app.api.errors import ApiError
+from app.api.openapi import EMPLOYEES_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.employee import EmployeeStatus
@@ -26,7 +27,7 @@ from app.services.employee_service import (
     EmployeeService,
 )
 
-router = APIRouter(prefix="/api/v1/employees", tags=["employees"])
+router = APIRouter(prefix="/api/v1/employees", tags=[EMPLOYEES_TAG])
 
 
 def get_employee_service(
@@ -72,7 +73,17 @@ def get_employee_list_pagination(
     return EmployeeListPagination(limit=limit, offset=offset)
 
 
-@router.get("", response_model=list[EmployeeRead])
+@router.get(
+    "",
+    response_model=list[EmployeeRead],
+    summary="List employees",
+    description=(
+        "Returns employees for the current tenant with optional department, lifecycle status, "
+        "and employee number or email search filters. Results use bounded limit/offset "
+        "pagination."
+    ),
+    response_description="Tenant employee list.",
+)
 async def list_employees(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
@@ -82,7 +93,17 @@ async def list_employees(
     return await service.list_employees(tenant_context.tenant_id, filters, pagination)
 
 
-@router.post("", response_model=EmployeeRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=EmployeeRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create employee",
+    description=(
+        "Creates an employee in the current tenant from the tenant header context. "
+        "Employee numbers must remain unique within that tenant."
+    ),
+    response_description="Created employee.",
+)
 async def create_employee(
     payload: EmployeeCreate,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
@@ -98,7 +119,16 @@ async def create_employee(
         raise _employee_lifecycle_error(exc) from exc
 
 
-@router.get("/{employee_id}", response_model=EmployeeRead)
+@router.get(
+    "/{employee_id}",
+    response_model=EmployeeRead,
+    summary="Get employee",
+    description=(
+        "Returns a single employee by id when the employee belongs to the current tenant. "
+        "Employees from other tenants are treated as not found."
+    ),
+    response_description="Tenant employee.",
+)
 async def get_employee(
     employee_id: UUID,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
@@ -110,7 +140,16 @@ async def get_employee(
         raise _employee_not_found_error() from exc
 
 
-@router.patch("/{employee_id}", response_model=EmployeeRead)
+@router.patch(
+    "/{employee_id}",
+    response_model=EmployeeRead,
+    summary="Update employee",
+    description=(
+        "Partially updates an employee in the current tenant while preserving tenant isolation, "
+        "employee number uniqueness, and employment lifecycle date rules."
+    ),
+    response_description="Updated employee.",
+)
 async def update_employee(
     employee_id: UUID,
     payload: EmployeeUpdate,
@@ -129,7 +168,16 @@ async def update_employee(
         raise _employee_lifecycle_error(exc) from exc
 
 
-@router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{employee_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete employee",
+    description=(
+        "Deletes an employee by id when the employee belongs to the current tenant. "
+        "Employees from other tenants are treated as not found."
+    ),
+    response_description="Employee deleted.",
+)
 async def delete_employee(
     employee_id: UUID,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],

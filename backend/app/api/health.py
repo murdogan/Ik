@@ -1,11 +1,20 @@
 from fastapi import APIRouter
 
+from app.api.openapi import SYSTEM_TAG
 from app.core.config import get_settings
 
-router = APIRouter(tags=["system"])
+router = APIRouter(tags=[SYSTEM_TAG])
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    summary="Check service health",
+    description=(
+        "Returns public service status metadata for Wealthy Falcon HR. "
+        "This endpoint does not require tenant headers."
+    ),
+    response_description="Service health metadata.",
+)
 def health() -> dict[str, str]:
     settings = get_settings()
     return {

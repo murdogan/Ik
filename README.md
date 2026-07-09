@@ -126,6 +126,10 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
   `limit`/`offset` pagination, oluşturma/onay/red/iptal
 
+OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
+`Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W1C5 metadata hygiene kapsamında
+mevcut operasyonlara açık summary/description eklendi; request/response davranışı değişmedi.
+
 Tenant header dependency hataları ve employee/leave endpointlerinin açıkça yakaladığı domain
 hataları şu zarfla döner:
 `{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.

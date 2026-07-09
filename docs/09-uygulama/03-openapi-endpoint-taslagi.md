@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1C2)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1C5)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -26,6 +26,10 @@ lokal backend smoke kapsamındadır.
 
 Geçerli uygulama notları:
 
+- OpenAPI dokümanı W1C5 itibarıyla okunabilir tag kataloğu kullanır:
+  `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
+  Mevcut operasyonların her biri açık `summary` ve `description` metadata'sı taşır. Bu değişiklik
+  yalnız dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir.
 - Domain endpointleri geçerli UUID formatında `X-Tenant-Id` header'ı ister;
   `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
 - Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
 from app.api.errors import ApiError
+from app.api.openapi import LEAVE_REQUESTS_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
@@ -28,7 +29,7 @@ from app.services.leave_request_service import (
     LeaveRequestUserNotFoundError,
 )
 
-router = APIRouter(prefix="/api/v1/leave-requests", tags=["leave-requests"])
+router = APIRouter(prefix="/api/v1/leave-requests", tags=[LEAVE_REQUESTS_TAG])
 
 
 def get_leave_request_service(
@@ -91,7 +92,16 @@ def get_leave_request_list_pagination(
     return LeaveRequestListPagination(limit=limit, offset=offset)
 
 
-@router.get("", response_model=list[LeaveRequestRead])
+@router.get(
+    "",
+    response_model=list[LeaveRequestRead],
+    summary="List leave requests",
+    description=(
+        "Returns leave requests for the current tenant with optional workflow status, employee, "
+        "and overlapping date-window filters. Results use bounded limit/offset pagination."
+    ),
+    response_description="Tenant leave request list.",
+)
 async def list_leave_requests(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[LeaveRequestService, Depends(get_leave_request_service)],
@@ -101,7 +111,17 @@ async def list_leave_requests(
     return await service.list_leave_requests(tenant_context.tenant_id, filters, pagination)
 
 
-@router.post("", response_model=LeaveRequestRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=LeaveRequestRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create leave request",
+    description=(
+        "Creates a pending leave request in the current tenant. The employee and requesting "
+        "user must both belong to the tenant from the request headers."
+    ),
+    response_description="Created leave request.",
+)
 async def create_leave_request(
     payload: LeaveRequestCreate,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
@@ -117,7 +137,16 @@ async def create_leave_request(
         raise _leave_request_date_range_error(exc) from exc
 
 
-@router.post("/{leave_request_id}/approve", response_model=LeaveRequestRead)
+@router.post(
+    "/{leave_request_id}/approve",
+    response_model=LeaveRequestRead,
+    summary="Approve leave request",
+    description=(
+        "Approves a pending leave request in the current tenant and records the supplied "
+        "decision metadata."
+    ),
+    response_description="Approved leave request.",
+)
 async def approve_leave_request(
     leave_request_id: UUID,
     payload: LeaveRequestDecision,
@@ -138,7 +167,16 @@ async def approve_leave_request(
         raise _leave_request_transition_error(exc) from exc
 
 
-@router.post("/{leave_request_id}/reject", response_model=LeaveRequestRead)
+@router.post(
+    "/{leave_request_id}/reject",
+    response_model=LeaveRequestRead,
+    summary="Reject leave request",
+    description=(
+        "Rejects a pending leave request in the current tenant and records the supplied "
+        "decision metadata."
+    ),
+    response_description="Rejected leave request.",
+)
 async def reject_leave_request(
     leave_request_id: UUID,
     payload: LeaveRequestDecision,
@@ -159,7 +197,16 @@ async def reject_leave_request(
         raise _leave_request_transition_error(exc) from exc
 
 
-@router.post("/{leave_request_id}/cancel", response_model=LeaveRequestRead)
+@router.post(
+    "/{leave_request_id}/cancel",
+    response_model=LeaveRequestRead,
+    summary="Cancel leave request",
+    description=(
+        "Cancels a pending leave request in the current tenant and records the supplied "
+        "decision metadata."
+    ),
+    response_description="Cancelled leave request.",
+)
 async def cancel_leave_request(
     leave_request_id: UUID,
     payload: LeaveRequestDecision,

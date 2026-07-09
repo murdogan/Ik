@@ -3,10 +3,18 @@
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-router = APIRouter(tags=["landing"])
+from app.api.openapi import PUBLIC_TAG
+
+router = APIRouter(tags=[PUBLIC_TAG])
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get(
+    "/",
+    response_class=HTMLResponse,
+    summary="Serve public landing page",
+    description="Returns the public Wealthy Falcon HR staging landing page HTML.",
+    response_description="Wealthy Falcon HR landing HTML.",
+)
 def landing_page() -> str:
     return """
 <!doctype html>

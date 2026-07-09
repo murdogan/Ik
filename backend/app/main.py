@@ -8,6 +8,7 @@ from app.api.health import router as health_router
 from app.api.landing import router as landing_router
 from app.api.leave_balances import router as leave_balances_router
 from app.api.leave_requests import router as leave_requests_router
+from app.api.openapi import OPENAPI_TAGS
 from app.core.config import get_settings
 
 
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         docs_url="/docs" if settings.environment != "prod" else None,
         redoc_url="/redoc" if settings.environment != "prod" else None,
+        openapi_tags=OPENAPI_TAGS,
     )
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
