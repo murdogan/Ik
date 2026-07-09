@@ -374,6 +374,26 @@ async def test_list_employees_returns_current_tenant_records_only() -> None:
         await engine.dispose()
 
 
+async def test_list_employee_blank_filter_values_are_ignored() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"department": "   ", "q": "   "},
+        )
+
+        assert response.status_code == 200
+        assert [employee["employee_number"] for employee in response.json()] == [
+            "WF-001",
+            "WF-010",
+            "WF-020",
+        ]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employees_paginates_current_tenant_records() -> None:
     client, engine = await _client_with_database()
     try:
