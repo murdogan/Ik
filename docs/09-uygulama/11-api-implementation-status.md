@@ -2,18 +2,17 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2B1 Demo seed command`
+Task: `W2B2 Backend smoke expansion`
 
 ## Scope
 
-- Added command-level smoke coverage for the local demo seed script. The test runs
-  `scripts/seed_demo_data.py` twice against a temporary local SQLite database and verifies
-  idempotent tenant, user, employee, and leave request counts.
-- Added regression coverage that the seed command refuses `staging` before connecting to the
-  target database. The command remains allowed only for `IK_ENVIRONMENT=local` and
-  `IK_ENVIRONMENT=dev`.
-- Preserved the existing demo fixture shape: two tenants, five users, eight employees, and five
-  leave requests with fixed UUIDs and tenant-scoped relationships.
+- Expanded `scripts/backend_api_smoke.py` with combined employee filter checks, conflicting
+  employee filter checks, and explicit `terminated` status filter coverage.
+- Expanded leave request smoke coverage for combined status/employee/date filters, conflicting
+  combined filters, one-sided date filters, invalid date-range error codes, and repeated
+  non-pending workflow transition conflicts.
+- Expanded dashboard smoke assertions for tenant-scoped count isolation, department distribution,
+  recent activity count, and recent activity tenant isolation.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -69,11 +68,7 @@ Task: `W2B1 Demo seed command`
 
 ## Verification
 
-W2B1 focused preflight:
-
-- `uv run pytest backend/tests/test_demo_seed_command.py -q`: passed, 2 tests passed.
-
-Full W2B1 local gate run:
+Full W2B2 local gate run:
 
 - `uv run ruff check backend`: passed.
 - `uv run pytest`: passed, 203 tests passed, 1 existing Starlette `TestClient` deprecation
