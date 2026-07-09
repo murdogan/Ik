@@ -655,6 +655,57 @@ async def test_approve_pending_leave_request() -> None:
         await engine.dispose()
 
 
+async def test_leave_request_path_validation_uses_standard_error_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/leave-requests/not-a-uuid/approve",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w3a6-leave-path-validation",
+            },
+            json=_decision_payload(),
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
+            correlation_id="w3a6-leave-path-validation",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_leave_request_decision_validation_uses_standard_error_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            f"/api/v1/leave-requests/{PENDING_REQUEST_ID}/approve",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w3a6-leave-decision-validation",
+            },
+            json={
+                "decided_by_user_id": str(APPROVER_USER_ID),
+                "decision_note": "   ",
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
+            correlation_id="w3a6-leave-decision-validation",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_reject_pending_leave_request_supports_decision_note() -> None:
     client, engine = await _client_with_database()
     try:

@@ -594,6 +594,29 @@ async def test_get_employee_is_tenant_scoped() -> None:
         await engine.dispose()
 
 
+async def test_employee_path_validation_uses_standard_error_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees/not-a-uuid",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w3a6-employee-path-validation",
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_validation_error",
+            message="Employee request validation failed",
+            correlation_id="w3a6-employee-path-validation",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_update_employee_changes_only_current_tenant_record() -> None:
     client, engine = await _client_with_database()
     try:

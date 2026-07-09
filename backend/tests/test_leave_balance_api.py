@@ -284,6 +284,29 @@ async def test_list_employee_leave_balances_rejects_invalid_period_year_envelope
         await engine.dispose()
 
 
+async def test_leave_balance_path_validation_uses_standard_error_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees/not-a-uuid/leave-balances",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w3a6-leave-balance-path-validation",
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_balance_validation_error",
+            message="Leave balance request validation failed",
+            correlation_id="w3a6-leave-balance-path-validation",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_leave_balance_routes_require_tenant_header() -> None:
     client, engine = await _client_with_database()
     try:

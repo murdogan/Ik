@@ -18,6 +18,18 @@ LEAVE_BALANCE_VALIDATION_ERROR_CODE = "leave_balance_validation_error"
 LEAVE_BALANCE_VALIDATION_ERROR_MESSAGE = "Leave balance request validation failed"
 LEAVE_REQUEST_VALIDATION_ERROR_CODE = "leave_request_validation_error"
 LEAVE_REQUEST_VALIDATION_ERROR_MESSAGE = "Leave request validation failed"
+EMPLOYEE_NOT_FOUND_ERROR_CODE = "employee_not_found"
+EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "Employee not found"
+EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE = "employee_number_conflict"
+EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE = "Employee number already exists for this tenant"
+EMPLOYEE_INVALID_DATE_RANGE_ERROR_CODE = "employee_invalid_date_range"
+EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE = "employee_invalid_lifecycle"
+LEAVE_REQUEST_NOT_FOUND_ERROR_CODE = "leave_request_not_found"
+LEAVE_REQUEST_NOT_FOUND_ERROR_MESSAGE = "Leave request not found"
+LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE = "leave_request_invalid_date_range"
+LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE = "leave_request_transition_conflict"
+USER_NOT_FOUND_ERROR_CODE = "user_not_found"
+USER_NOT_FOUND_ERROR_MESSAGE = "User not found"
 
 
 class ApiErrorBody(BaseModel):
@@ -155,6 +167,70 @@ def tenant_slug_header_invalid_error() -> ApiError:
     )
 
 
+def employee_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=EMPLOYEE_NOT_FOUND_ERROR_CODE,
+        message=EMPLOYEE_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def employee_number_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE,
+        message=EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def employee_date_range_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=EMPLOYEE_INVALID_DATE_RANGE_ERROR_CODE,
+        message=message,
+    )
+
+
+def employee_lifecycle_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE,
+        message=message,
+    )
+
+
+def leave_request_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=LEAVE_REQUEST_NOT_FOUND_ERROR_CODE,
+        message=LEAVE_REQUEST_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def user_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=USER_NOT_FOUND_ERROR_CODE,
+        message=USER_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def leave_request_date_range_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE,
+        message=message,
+    )
+
+
+def leave_request_transition_conflict_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE,
+        message=message,
+    )
+
+
 def _has_missing_tenant_header_error(exc: RequestValidationError) -> bool:
     return any(
         tuple(error.get("loc", ())) == ("header", TENANT_ID_HEADER)
@@ -188,22 +264,14 @@ def _is_leave_balance_api_path(path: str) -> bool:
 def _employee_request_validation_error(exc: RequestValidationError) -> ApiError:
     messages = _validation_messages(exc)
     if "Employment end date must be on or after start date" in messages:
-        return ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            code="employee_invalid_date_range",
-            message="Employment end date must be on or after start date",
-        )
+        return employee_date_range_error("Employment end date must be on or after start date")
     for lifecycle_message in (
         "Terminated employees must have an employment end date",
         "Employment end date is only allowed when status is terminated",
         "Status must not be null",
     ):
         if lifecycle_message in messages:
-            return ApiError(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                code="employee_invalid_lifecycle",
-                message=lifecycle_message,
-            )
+            return employee_lifecycle_error(lifecycle_message)
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=EMPLOYEE_VALIDATION_ERROR_CODE,
@@ -226,11 +294,7 @@ def _leave_request_validation_error(exc: RequestValidationError) -> ApiError:
         "Leave request end_date filter must be on or after start_date",
     ):
         if date_range_message in messages:
-            return ApiError(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                code="leave_request_invalid_date_range",
-                message=date_range_message,
-            )
+            return leave_request_date_range_error(date_range_message)
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=LEAVE_REQUEST_VALIDATION_ERROR_CODE,

@@ -1,11 +1,11 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
-from app.api.errors import LEAVE_BALANCE_VALIDATION_RESPONSES, ApiError
+from app.api.errors import LEAVE_BALANCE_VALIDATION_RESPONSES, employee_not_found_error
 from app.api.openapi import LEAVE_BALANCES_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
@@ -59,12 +59,4 @@ async def list_employee_leave_balances(
             period_year,
         )
     except LeaveBalanceEmployeeNotFoundError as exc:
-        raise _employee_not_found_error() from exc
-
-
-def _employee_not_found_error() -> ApiError:
-    return ApiError(
-        status_code=status.HTTP_404_NOT_FOUND,
-        code="employee_not_found",
-        message="Employee not found",
-    )
+        raise employee_not_found_error() from exc

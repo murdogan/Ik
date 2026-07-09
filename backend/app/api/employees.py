@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
-from app.api.errors import EMPLOYEE_VALIDATION_RESPONSES, ApiError
+from app.api.errors import (
+    EMPLOYEE_VALIDATION_RESPONSES,
+    employee_date_range_error,
+    employee_lifecycle_error,
+    employee_not_found_error,
+    employee_number_conflict_error,
+)
 from app.api.openapi import EMPLOYEES_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
@@ -129,11 +135,11 @@ async def create_employee(
     try:
         return await service.create_employee(tenant_context.tenant_id, payload)
     except DuplicateEmployeeNumberError as exc:
-        raise _duplicate_employee_number_error() from exc
+        raise employee_number_conflict_error() from exc
     except EmployeeDateRangeError as exc:
-        raise _employee_date_range_error(exc) from exc
+        raise employee_date_range_error(str(exc)) from exc
     except EmployeeLifecycleError as exc:
-        raise _employee_lifecycle_error(exc) from exc
+        raise employee_lifecycle_error(str(exc)) from exc
 
 
 @router.get(
@@ -154,7 +160,7 @@ async def get_employee(
     try:
         return await service.get_employee(tenant_context.tenant_id, employee_id)
     except EmployeeNotFoundError as exc:
-        raise _employee_not_found_error() from exc
+        raise employee_not_found_error() from exc
 
 
 @router.patch(
@@ -176,13 +182,13 @@ async def update_employee(
     try:
         return await service.update_employee(tenant_context.tenant_id, employee_id, payload)
     except EmployeeNotFoundError as exc:
-        raise _employee_not_found_error() from exc
+        raise employee_not_found_error() from exc
     except DuplicateEmployeeNumberError as exc:
-        raise _duplicate_employee_number_error() from exc
+        raise employee_number_conflict_error() from exc
     except EmployeeDateRangeError as exc:
-        raise _employee_date_range_error(exc) from exc
+        raise employee_date_range_error(str(exc)) from exc
     except EmployeeLifecycleError as exc:
-        raise _employee_lifecycle_error(exc) from exc
+        raise employee_lifecycle_error(str(exc)) from exc
 
 
 @router.delete(
@@ -203,37 +209,5 @@ async def delete_employee(
     try:
         await service.delete_employee(tenant_context.tenant_id, employee_id)
     except EmployeeNotFoundError as exc:
-        raise _employee_not_found_error() from exc
+        raise employee_not_found_error() from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-def _employee_not_found_error() -> ApiError:
-    return ApiError(
-        status_code=status.HTTP_404_NOT_FOUND,
-        code="employee_not_found",
-        message="Employee not found",
-    )
-
-
-def _duplicate_employee_number_error() -> ApiError:
-    return ApiError(
-        status_code=status.HTTP_409_CONFLICT,
-        code="employee_number_conflict",
-        message="Employee number already exists for this tenant",
-    )
-
-
-def _employee_date_range_error(exc: EmployeeDateRangeError) -> ApiError:
-    return ApiError(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        code="employee_invalid_date_range",
-        message=str(exc),
-    )
-
-
-def _employee_lifecycle_error(exc: EmployeeLifecycleError) -> ApiError:
-    return ApiError(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        code="employee_invalid_lifecycle",
-        message=str(exc),
-    )
