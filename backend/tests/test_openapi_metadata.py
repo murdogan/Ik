@@ -105,3 +105,23 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         assert operation["tags"] == [tag]
         assert operation["summary"] == summary
         assert description_fragment in operation["description"]
+
+
+def test_employee_list_openapi_documents_filter_query_params() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    operation = response.json()["paths"]["/api/v1/employees"]["get"]
+    params = {parameter["name"]: parameter for parameter in operation["parameters"]}
+
+    assert {"department", "status", "q", "limit", "offset"}.issubset(params)
+    assert params["department"]["in"] == "query"
+    assert "Exact department filter" in params["department"]["description"]
+    assert params["status"]["in"] == "query"
+    assert "Employment lifecycle status filter" in params["status"]["description"]
+    assert params["q"]["in"] == "query"
+    assert "employee_number and email" in params["q"]["description"]
+    assert params["limit"]["schema"]["maximum"] == 200
+    assert params["offset"]["schema"]["minimum"] == 0

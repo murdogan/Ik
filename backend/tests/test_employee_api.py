@@ -405,6 +405,42 @@ async def test_list_employees_searches_employee_number_and_email() -> None:
         await engine.dispose()
 
 
+async def test_list_employee_filters_are_combined_within_current_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={
+                "department": "people",
+                "status": EmployeeStatus.ON_LEAVE.value,
+                "q": "BORA@WEALTHYFALCON",
+            },
+        )
+
+        assert response.status_code == 200
+        assert [employee["employee_number"] for employee in response.json()] == ["WF-010"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employee_query_does_not_search_names() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"q": "Demir"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employee_filters_remain_tenant_scoped() -> None:
     client, engine = await _client_with_database()
     try:
