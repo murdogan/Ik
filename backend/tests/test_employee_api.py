@@ -410,6 +410,22 @@ async def test_list_employees_paginates_current_tenant_records() -> None:
         await engine.dispose()
 
 
+async def test_list_employees_paginates_after_filters_within_current_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"department": "people", "limit": 1, "offset": 1},
+        )
+
+        assert response.status_code == 200
+        assert [employee["employee_number"] for employee in response.json()] == ["WF-010"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employees_uses_bounded_default_limit() -> None:
     client, engine = await _client_with_database(extra_current_employee_count=52)
     try:
