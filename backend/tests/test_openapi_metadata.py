@@ -1,3 +1,4 @@
+from app.api.errors import TENANT_ID_HEADER, TENANT_SLUG_HEADER
 from app.api.openapi import (
     DASHBOARD_TAG,
     EMPLOYEES_TAG,
@@ -105,6 +106,40 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         assert operation["tags"] == [tag]
         assert operation["summary"] == summary
         assert description_fragment in operation["description"]
+
+
+def test_domain_operations_document_required_tenant_headers() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    protected_operations = {
+        ("/api/v1/dashboard/summary", "get"),
+        ("/api/v1/employees", "get"),
+        ("/api/v1/employees", "post"),
+        ("/api/v1/employees/{employee_id}", "get"),
+        ("/api/v1/employees/{employee_id}", "patch"),
+        ("/api/v1/employees/{employee_id}", "delete"),
+        ("/api/v1/employees/{employee_id}/leave-balances", "get"),
+        ("/api/v1/leave-requests", "get"),
+        ("/api/v1/leave-requests", "post"),
+        ("/api/v1/leave-requests/{leave_request_id}/approve", "post"),
+        ("/api/v1/leave-requests/{leave_request_id}/reject", "post"),
+        ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"),
+    }
+    for path, method in protected_operations:
+        params = {parameter["name"]: parameter for parameter in paths[path][method]["parameters"]}
+        tenant_id_header = params[TENANT_ID_HEADER]
+        tenant_slug_header = params[TENANT_SLUG_HEADER]
+
+        assert tenant_id_header["in"] == "header"
+        assert tenant_id_header["required"] is True
+        assert "canonical hyphenated tenant UUID" in tenant_id_header["description"]
+        assert tenant_slug_header["in"] == "header"
+        assert tenant_slug_header["required"] is False
+        assert "non-empty when provided" in tenant_slug_header["description"]
 
 
 def test_employee_list_openapi_documents_filter_query_params() -> None:

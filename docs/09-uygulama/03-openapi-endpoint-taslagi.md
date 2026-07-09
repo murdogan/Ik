@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W2B3)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W2B4)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -34,8 +34,9 @@ Geçerli uygulama notları:
 - W2B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
   örnekleri taşır. Employee ve leave endpointleri bugün doğrudan schema/list döner; Bölüm 1'deki
   `{ data, meta }` zarfı gelecek standart hedefidir.
-- Domain endpointleri geçerli UUID formatında `X-Tenant-Id` header'ı ister;
-  `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
+- Domain endpointleri canonical hyphenated UUID formatında `X-Tenant-Id` header'ı ister.
+  Compact, braces veya `urn:uuid:` UUID formları ve tekrarlı `X-Tenant-Id` header'ları
+  geçersizdir. `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
 - Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
@@ -123,8 +124,8 @@ X-Correlation-Id: req_wf_demo_001
 - Create response örneklerindeki `id` değerleri server-generated temsili UUID'lerdir; request body
   içinde gönderilmez.
 
-Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, geçersiz UUID formatı veya boş gönderilen
-`X-Tenant-Slug` `400` döner. Örnek:
+Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, canonical hyphenated UUID olmayan değerler, tekrarlı
+`X-Tenant-Id` header'ları veya boş gönderilen `X-Tenant-Slug` `400` döner. Örnek:
 
 ```json
 {

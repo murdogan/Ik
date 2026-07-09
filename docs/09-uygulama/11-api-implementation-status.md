@@ -2,17 +2,16 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2B2 Backend smoke expansion`
+Task: `W2B4 Tenant header validation`
 
 ## Scope
 
-- Expanded `scripts/backend_api_smoke.py` with combined employee filter checks, conflicting
-  employee filter checks, and explicit `terminated` status filter coverage.
-- Expanded leave request smoke coverage for combined status/employee/date filters, conflicting
-  combined filters, one-sided date filters, invalid date-range error codes, and repeated
-  non-pending workflow transition conflicts.
-- Expanded dashboard smoke assertions for tenant-scoped count isolation, department distribution,
-  recent activity count, and recent activity tenant isolation.
+- Hardened tenant dependency parsing so `X-Tenant-Id` must be a single canonical hyphenated UUID.
+  Compact, braces and `urn:uuid:` UUID forms now return the tenant header error envelope.
+- Repeated `X-Tenant-Id` headers now return `tenant_header_invalid`; repeated
+  `X-Tenant-Slug` headers return `tenant_slug_header_invalid`.
+- Added dependency-level regression tests, OpenAPI metadata coverage for required tenant headers,
+  and smoke assertions for missing, non-canonical and repeated tenant headers.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -38,8 +37,8 @@ Task: `W2B2 Backend smoke expansion`
 
 ## Current Behavior Notes
 
-- Domain endpoints require a valid UUID `X-Tenant-Id`; `X-Tenant-Slug` remains optional but cannot
-  be blank when sent.
+- Domain endpoints require a single canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
+  remains optional but cannot be blank or repeated when sent.
 - Employee list supports `department`, `status`, `q`, `limit`, and `offset`.
 - Employee lifecycle validation is active: `terminated` requires `employment_end_date`; `active`
   and `on_leave` require `employment_end_date: null`. Violations return
@@ -68,10 +67,10 @@ Task: `W2B2 Backend smoke expansion`
 
 ## Verification
 
-Full W2B2 local gate run:
+Full W2B4 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 203 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 209 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 

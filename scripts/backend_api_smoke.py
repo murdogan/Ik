@@ -79,6 +79,7 @@ async def main() -> None:
             base_url="http://backend-smoke.local",
         ) as client:
             await _smoke_system_endpoints(client)
+            await _smoke_tenant_header_errors(client)
             primary_employee_id, secondary_employee_id, other_employee_id = (
                 await _smoke_employee_endpoints(client)
             )
@@ -106,7 +107,8 @@ async def main() -> None:
     print(
         "BACKEND_SMOKE_OK "
         f"tenant_id={TENANT_ID} "
-        "checked=health,landing,openapi,dashboard,employees,leave_balances,leave_requests"
+        "checked=health,landing,openapi,tenant_headers,dashboard,employees,"
+        "leave_balances,leave_requests"
     )
 
 
@@ -189,6 +191,43 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
     ]
     if missing_operations:
         raise AssertionError(f"OpenAPI is missing operations: {missing_operations}")
+
+
+async def _smoke_tenant_header_errors(client: AsyncClient) -> None:
+    _expect_error_code(
+        await client.get(
+            "/api/v1/dashboard/summary",
+            headers={"X-Correlation-Id": "smoke-tenant-missing"},
+        ),
+        400,
+        "tenant_header_missing",
+        "GET /api/v1/dashboard/summary missing tenant header",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/dashboard/summary",
+            headers={
+                "X-Tenant-Id": str(TENANT_ID).replace("-", ""),
+                "X-Correlation-Id": "smoke-tenant-invalid",
+            },
+        ),
+        400,
+        "tenant_header_invalid",
+        "GET /api/v1/dashboard/summary invalid tenant header",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/dashboard/summary",
+            headers=[
+                ("X-Tenant-Id", str(TENANT_ID)),
+                ("X-Tenant-Id", str(OTHER_TENANT_ID)),
+                ("X-Correlation-Id", "smoke-tenant-repeated"),
+            ],
+        ),
+        400,
+        "tenant_header_invalid",
+        "GET /api/v1/dashboard/summary repeated tenant header",
+    )
 
 
 async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]:

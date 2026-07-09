@@ -148,8 +148,9 @@ X-Tenant-Slug: wealthy-falcon-demo
 X-Correlation-Id: req_wf_demo_001
 ```
 
-Eksik veya boş `X-Tenant-Id`, geçersiz UUID formatı ve boş gönderilen `X-Tenant-Slug` `400`
-status koduyla aynı error zarfını döner.
+Eksik veya boş `X-Tenant-Id`, canonical hyphenated UUID olmayan tenant id değerleri, tekrarlı
+`X-Tenant-Id` header'ları ve boş gönderilen `X-Tenant-Slug` `400` status koduyla aynı error
+zarfını döner.
 
 Bu örnekler mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün doğrudan
 schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
