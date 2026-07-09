@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B1)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B3)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -73,6 +73,15 @@ uv run python scripts/seed_demo_data.py
 
 Bu komut API yüzeyi eklemez veya değiştirmez. Yalnız `local`/`dev` ortamında iki demo tenant,
 beş kullanıcı, sekiz çalışan ve beş izin talebini idempotent şekilde seed eder.
+
+Bu dokümandaki güncel employee ve leave örnekleri demo seed içindeki Wealthy Falcon HR tenant'ını
+kullanır:
+
+```http
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+```
 
 ## 1. API ilkeleri
 
@@ -236,35 +245,80 @@ Query:
 
 Not: Cursor-based pagination ve `sort` ayrı backlog'dur; mevcut uygulama basit `limit`/`offset` kullanır.
 
-Response item:
+Request örneği:
+
+```http
+GET /api/v1/employees?department=Engineering&status=active&q=WF&limit=2&offset=0
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+```
+
+Response `200` örneği:
 
 ```json
-{
-  "id": "uuid",
-  "employee_number": "EMP-001",
-  "first_name": "Ayşe",
-  "last_name": "Yılmaz",
-  "status": "active",
-  "department": { "id": "uuid", "name": "İK" },
-  "position_title": "İK Uzmanı"
-}
+[
+  {
+    "id": "f3000000-0000-4000-8000-000000000002",
+    "employee_number": "WF-002",
+    "first_name": "Bora",
+    "last_name": "Demir",
+    "email": "bora.demir@wealthyfalcon.demo",
+    "department": "Engineering",
+    "position": "Backend Engineer",
+    "status": "active",
+    "employment_start_date": "2026-06-10",
+    "employment_end_date": null
+  }
+]
 ```
 
 ### `POST /api/v1/employees`
 
 Yetki: `employee:create:tenant`.
 
-Request minimal:
+Request örneği:
 
 ```json
 {
-  "employee_number": "EMP-001",
-  "first_name": "Ayşe",
-  "last_name": "Yılmaz",
-  "email": "ayse@example.com",
-  "employment_start_date": "2026-09-01",
-  "department_id": "uuid",
-  "position_id": "uuid"
+  "employee_number": "WF-010",
+  "first_name": "Selin",
+  "last_name": "Arslan",
+  "email": "selin.arslan@wealthyfalcon.demo",
+  "department": "People",
+  "position": "HR Operations Specialist",
+  "status": "active",
+  "employment_start_date": "2026-08-01",
+  "employment_end_date": null
+}
+```
+
+Response `201` örneği:
+
+```json
+{
+  "id": "f3000000-0000-4000-8000-000000000010",
+  "employee_number": "WF-010",
+  "first_name": "Selin",
+  "last_name": "Arslan",
+  "email": "selin.arslan@wealthyfalcon.demo",
+  "department": "People",
+  "position": "HR Operations Specialist",
+  "status": "active",
+  "employment_start_date": "2026-08-01",
+  "employment_end_date": null
+}
+```
+
+Duplicate employee number `409` örneği:
+
+```json
+{
+  "error": {
+    "code": "employee_number_conflict",
+    "message": "Employee number already exists for this tenant",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
 }
 ```
 
@@ -272,13 +326,94 @@ Request minimal:
 
 Yetki: `employee:read:{scope}`.
 
-Hassas alanlar field permission'a göre maskelenir.
+Tenant scope dışındaki kayıtlar `404` döner. Mevcut `EmployeeRead` response örneği:
+
+```http
+GET /api/v1/employees/f3000000-0000-4000-8000-000000000002
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+```
+
+```json
+{
+  "id": "f3000000-0000-4000-8000-000000000002",
+  "employee_number": "WF-002",
+  "first_name": "Bora",
+  "last_name": "Demir",
+  "email": "bora.demir@wealthyfalcon.demo",
+  "department": "Engineering",
+  "position": "Backend Engineer",
+  "status": "active",
+  "employment_start_date": "2026-06-10",
+  "employment_end_date": null
+}
+```
+
+Hedef davranış: hassas alanlar field permission'a göre maskelenir. Mevcut `EmployeeRead`
+response hassas kimlik, ücret veya belge alanı taşımaz.
+
+Not-found `404` örneği:
+
+```json
+{
+  "error": {
+    "code": "employee_not_found",
+    "message": "Employee not found",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
 
 ### `PATCH /api/v1/employees/{id}`
 
 Yetki: `employee:update:tenant`.
 
-Critical: before/after audit üretir.
+Hedef davranış: critical update işlemleri before/after audit üretir.
+
+Request örneği:
+
+```json
+{
+  "position": "Senior Backend Engineer",
+  "status": "on_leave"
+}
+```
+
+Response `200` örneği:
+
+```json
+{
+  "id": "f3000000-0000-4000-8000-000000000002",
+  "employee_number": "WF-002",
+  "first_name": "Bora",
+  "last_name": "Demir",
+  "email": "bora.demir@wealthyfalcon.demo",
+  "department": "Engineering",
+  "position": "Senior Backend Engineer",
+  "status": "on_leave",
+  "employment_start_date": "2026-06-10",
+  "employment_end_date": null
+}
+```
+
+Invalid date range `422` örneği:
+
+```json
+{
+  "error": {
+    "code": "employee_invalid_date_range",
+    "message": "Employment end date must be on or after start date",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+### `DELETE /api/v1/employees/{id}`
+
+Yetki: `employee:update:tenant`.
+
+Response `204`: body dönmez.
 
 ## 8. Leave endpointleri
 
@@ -290,6 +425,7 @@ Critical: before/after audit üretir.
 | GET | `/api/v1/leave-requests` | `leave:read:{scope}` | Liste; status, employee, tarih aralığı filtreleri ve pagination |
 | POST | `/api/v1/leave-requests/{id}/approve` | `leave:approve:team` | Onay |
 | POST | `/api/v1/leave-requests/{id}/reject` | `leave:approve:team` | Red |
+| POST | `/api/v1/leave-requests/{id}/cancel` | `leave:create:own` | İptal |
 
 ### `GET /api/v1/leave-requests`
 
@@ -306,6 +442,180 @@ Query:
 
 Not: `start_date`/`end_date` filtresi, izin kaydı tarih aralığı sorgu aralığıyla overlap eden
 talepleri döndürür. `end_date < start_date` istekleri `422` döner.
+
+Request örneği:
+
+```http
+GET /api/v1/leave-requests?status=pending&employee_id=f3000000-0000-4000-8000-000000000002&start_date=2026-08-01&end_date=2026-08-31&limit=10&offset=0
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+```
+
+Response `200` örneği:
+
+```json
+[
+  {
+    "id": "f4000000-0000-4000-8000-000000000001",
+    "employee_id": "f3000000-0000-4000-8000-000000000002",
+    "leave_type": "annual",
+    "start_date": "2026-08-03",
+    "end_date": "2026-08-07",
+    "status": "pending",
+    "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+    "decided_by_user_id": null,
+    "decision_note": null
+  }
+]
+```
+
+Invalid filter range `422` örneği:
+
+```json
+{
+  "error": {
+    "code": "leave_request_invalid_date_range",
+    "message": "Leave request end_date filter must be on or after start_date",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+### `POST /api/v1/leave-requests`
+
+Yetki: `leave:create:own`.
+
+Request örneği:
+
+```json
+{
+  "employee_id": "f3000000-0000-4000-8000-000000000003",
+  "leave_type": "annual",
+  "start_date": "2026-09-14",
+  "end_date": "2026-09-18",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002"
+}
+```
+
+Response `201` örneği:
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000010",
+  "employee_id": "f3000000-0000-4000-8000-000000000003",
+  "leave_type": "annual",
+  "start_date": "2026-09-14",
+  "end_date": "2026-09-18",
+  "status": "pending",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": null,
+  "decision_note": null
+}
+```
+
+Cross-tenant `employee_id` veya `requested_by_user_id` referansları tenant scope içinde
+bulunamadığı için sırasıyla `employee_not_found` veya `user_not_found` `404` yanıtı döner.
+
+### `POST /api/v1/leave-requests/{id}/approve`
+
+Yetki: `leave:approve:team`.
+
+Request örneği:
+
+```json
+{
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Approved with team coverage."
+}
+```
+
+Response `200` örneği:
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000001",
+  "employee_id": "f3000000-0000-4000-8000-000000000002",
+  "leave_type": "annual",
+  "start_date": "2026-08-03",
+  "end_date": "2026-08-07",
+  "status": "approved",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Approved with team coverage."
+}
+```
+
+### `POST /api/v1/leave-requests/{id}/reject`
+
+Yetki: `leave:approve:team`.
+
+Request örneği:
+
+```json
+{
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Customer launch coverage is required."
+}
+```
+
+Response `200` örneği:
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000001",
+  "employee_id": "f3000000-0000-4000-8000-000000000002",
+  "leave_type": "annual",
+  "start_date": "2026-08-03",
+  "end_date": "2026-08-07",
+  "status": "rejected",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Customer launch coverage is required."
+}
+```
+
+### `POST /api/v1/leave-requests/{id}/cancel`
+
+Yetki: `leave:create:own`.
+
+Request örneği:
+
+```json
+{
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decision_note": "Employee cancelled the request."
+}
+```
+
+Response `200` örneği:
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000001",
+  "employee_id": "f3000000-0000-4000-8000-000000000002",
+  "leave_type": "annual",
+  "start_date": "2026-08-03",
+  "end_date": "2026-08-07",
+  "status": "cancelled",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decision_note": "Employee cancelled the request."
+}
+```
+
+Non-pending transition `409` örneği:
+
+```json
+{
+  "error": {
+    "code": "leave_request_transition_conflict",
+    "message": "Only pending leave requests can be decided",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
 
 ## 9. Import/export endpointleri
 

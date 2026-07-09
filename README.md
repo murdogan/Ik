@@ -129,6 +129,139 @@ Employee ve leave endpointlerinin açıkça yakaladığı domain hataları şu z
 Bu kapsam not-found, conflict, date-range ve leave transition hatalarıdır; otomatik FastAPI
 validation `422` yanıtları henüz framework varsayılanındadır.
 
+Demo seed sonrası employee ve leave endpointleri için örnek tenant header'ları:
+
+```http
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+```
+
+Employee list örneği:
+
+```http
+GET /api/v1/employees?department=Engineering&status=active&q=WF&limit=2&offset=0
+```
+
+```json
+[
+  {
+    "id": "f3000000-0000-4000-8000-000000000002",
+    "employee_number": "WF-002",
+    "first_name": "Bora",
+    "last_name": "Demir",
+    "email": "bora.demir@wealthyfalcon.demo",
+    "department": "Engineering",
+    "position": "Backend Engineer",
+    "status": "active",
+    "employment_start_date": "2026-06-10",
+    "employment_end_date": null
+  }
+]
+```
+
+Employee create request/response örneği:
+
+```json
+{
+  "employee_number": "WF-010",
+  "first_name": "Selin",
+  "last_name": "Arslan",
+  "email": "selin.arslan@wealthyfalcon.demo",
+  "department": "People",
+  "position": "HR Operations Specialist",
+  "status": "active",
+  "employment_start_date": "2026-08-01",
+  "employment_end_date": null
+}
+```
+
+```json
+{
+  "id": "f3000000-0000-4000-8000-000000000010",
+  "employee_number": "WF-010",
+  "first_name": "Selin",
+  "last_name": "Arslan",
+  "email": "selin.arslan@wealthyfalcon.demo",
+  "department": "People",
+  "position": "HR Operations Specialist",
+  "status": "active",
+  "employment_start_date": "2026-08-01",
+  "employment_end_date": null
+}
+```
+
+Leave request list örneği:
+
+```http
+GET /api/v1/leave-requests?status=pending&employee_id=f3000000-0000-4000-8000-000000000002&start_date=2026-08-01&end_date=2026-08-31&limit=10&offset=0
+```
+
+```json
+[
+  {
+    "id": "f4000000-0000-4000-8000-000000000001",
+    "employee_id": "f3000000-0000-4000-8000-000000000002",
+    "leave_type": "annual",
+    "start_date": "2026-08-03",
+    "end_date": "2026-08-07",
+    "status": "pending",
+    "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+    "decided_by_user_id": null,
+    "decision_note": null
+  }
+]
+```
+
+Leave request create request/response örneği:
+
+```json
+{
+  "employee_id": "f3000000-0000-4000-8000-000000000003",
+  "leave_type": "annual",
+  "start_date": "2026-09-14",
+  "end_date": "2026-09-18",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002"
+}
+```
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000010",
+  "employee_id": "f3000000-0000-4000-8000-000000000003",
+  "leave_type": "annual",
+  "start_date": "2026-09-14",
+  "end_date": "2026-09-18",
+  "status": "pending",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": null,
+  "decision_note": null
+}
+```
+
+Leave approve request/response örneği:
+
+```json
+{
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Approved with team coverage."
+}
+```
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000001",
+  "employee_id": "f3000000-0000-4000-8000-000000000002",
+  "leave_type": "annual",
+  "start_date": "2026-08-03",
+  "end_date": "2026-08-07",
+  "status": "approved",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Approved with team coverage."
+}
+```
+
 Başarılıysa `BACKEND_SMOKE_OK` çıktısı verir.
 
 Opsiyonel lokal HTTP landing/health smoke testi:
