@@ -2,11 +2,15 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W1A3 Leave request list filters`
+Task: `W1A4 Leave request pagination`
 
 ## Scope
 
-- Added tenant-scoped leave request list filters for `status`, `employee_id`, `start_date`, and `end_date`.
+- Added tenant-scoped leave request list pagination with `limit`/`offset`.
+- Leave request pagination uses the same bounded defaults as employees: `limit=50`, maximum `200`,
+  and `offset=0`.
+- Existing leave request list filters for `status`, `employee_id`, `start_date`, and `end_date`
+  continue to apply before pagination.
 - Leave request date filters use an inclusive overlap window, so requests crossing the queried period are returned.
 - Invalid leave filter ranges where `end_date < start_date` return `422`.
 - Employee list keeps existing `department`, `status`, and `q` filters plus `limit`/`offset` pagination.
@@ -22,13 +26,13 @@ Task: `W1A3 Leave request list filters`
 - Employee CRUD under `/api/v1/employees`, including list filters:
   `department`, `status`, `q`, and `limit`/`offset` pagination
 - Leave request list/create/approve/reject/cancel under `/api/v1/leave-requests`, including list
-  filters: `status`, `employee_id`, `start_date`, `end_date`
+  filters: `status`, `employee_id`, `start_date`, `end_date`, and `limit`/`offset` pagination
 
 ## Verification
 
 - `uv run ruff check backend`: passed.
 - `uv run ruff check scripts/backend_api_smoke.py`: passed.
-- `uv run pytest`: passed, 108 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest`: passed, 115 tests passed, 1 existing Starlette `TestClient` deprecation warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 
 ## Remaining Backend TODOs

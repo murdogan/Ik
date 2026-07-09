@@ -11,6 +11,7 @@ from app.schemas.leave_request import (
     LeaveRequestCreate,
     LeaveRequestDecision,
     LeaveRequestListFilters,
+    LeaveRequestListPagination,
 )
 
 
@@ -42,8 +43,10 @@ class LeaveRequestService:
         self,
         tenant_id: UUID,
         filters: LeaveRequestListFilters | None = None,
+        pagination: LeaveRequestListPagination | None = None,
     ) -> list[LeaveRequest]:
         filters = filters or LeaveRequestListFilters()
+        pagination = pagination or LeaveRequestListPagination()
         statement = select(LeaveRequest).where(LeaveRequest.tenant_id == tenant_id)
 
         if filters.status is not None:
@@ -55,9 +58,13 @@ class LeaveRequestService:
         if filters.end_date is not None:
             statement = statement.where(LeaveRequest.start_date <= filters.end_date)
 
-        statement = statement.order_by(
-            LeaveRequest.created_at.desc(),
-            LeaveRequest.start_date.asc(),
+        statement = (
+            statement.order_by(
+                LeaveRequest.created_at.desc(),
+                LeaveRequest.start_date.asc(),
+            )
+            .offset(pagination.offset)
+            .limit(pagination.limit)
         )
         return list(await self.session.scalars(statement))
 

@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.db.base import Base
 from app.db.session import get_session
@@ -9,6 +9,7 @@ from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.schemas.leave_request import LEAVE_REQUEST_LIST_DEFAULT_LIMIT
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
@@ -34,7 +35,9 @@ OTHER_REQUEST_ID = UUID("dddddddd-3333-4ddd-8ddd-dddddddd3333")
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 
 
-async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
+async def _client_with_database(
+    extra_current_leave_request_count: int = 0,
+) -> tuple[AsyncClient, AsyncEngine]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -46,131 +49,144 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        session.add_all(
-            [
-                Tenant(
-                    id=TENANT_ID,
-                    slug="wealthy-falcon",
-                    name="Wealthy Falcon HR",
-                    status=TenantStatus.ACTIVE.value,
-                    plan_code="core",
-                    data_region="tr-1",
-                    locale="tr-TR",
-                    timezone="Europe/Istanbul",
-                ),
-                Tenant(
-                    id=OTHER_TENANT_ID,
-                    slug="other",
-                    name="Other Tenant",
-                    status=TenantStatus.ACTIVE.value,
-                    plan_code="core",
-                    data_region="tr-1",
-                    locale="tr-TR",
-                    timezone="Europe/Istanbul",
-                ),
-                User(
-                    id=REQUESTING_USER_ID,
-                    tenant_id=TENANT_ID,
-                    email="requester@wealthyfalcon.test",
-                    full_name="Requesting User",
-                    status=UserStatus.ACTIVE.value,
-                ),
-                User(
-                    id=APPROVER_USER_ID,
-                    tenant_id=TENANT_ID,
-                    email="approver@wealthyfalcon.test",
-                    full_name="Approver User",
-                    status=UserStatus.ACTIVE.value,
-                ),
-                User(
-                    id=OTHER_USER_ID,
-                    tenant_id=OTHER_TENANT_ID,
-                    email="other@wealthyfalcon.test",
-                    full_name="Other User",
-                    status=UserStatus.ACTIVE.value,
-                ),
-                Employee(
-                    id=EMPLOYEE_ID,
-                    tenant_id=TENANT_ID,
-                    employee_number="WF-001",
-                    first_name="Ada",
-                    last_name="Yilmaz",
-                    email="ada@wealthyfalcon.test",
-                    department="People",
-                    position="HR Specialist",
-                    status=EmployeeStatus.ACTIVE.value,
-                    employment_start_date=date(2026, 7, 1),
-                ),
-                Employee(
-                    id=OTHER_EMPLOYEE_ID,
-                    tenant_id=OTHER_TENANT_ID,
-                    employee_number="OT-001",
-                    first_name="Other",
-                    last_name="Person",
-                    status=EmployeeStatus.ACTIVE.value,
-                    employment_start_date=date(2026, 7, 1),
-                ),
-                Employee(
-                    id=SECOND_EMPLOYEE_ID,
-                    tenant_id=TENANT_ID,
-                    employee_number="WF-002",
-                    first_name="Ece",
-                    last_name="Kaya",
-                    email="ece@wealthyfalcon.test",
-                    department="Engineering",
-                    position="Backend Engineer",
-                    status=EmployeeStatus.ACTIVE.value,
-                    employment_start_date=date(2026, 7, 1),
-                ),
-                LeaveRequest(
-                    id=PENDING_REQUEST_ID,
-                    tenant_id=TENANT_ID,
-                    employee_id=EMPLOYEE_ID,
-                    leave_type="annual",
-                    start_date=date(2026, 7, 20),
-                    end_date=date(2026, 7, 22),
-                    status=LeaveRequestStatus.PENDING.value,
-                    requested_by_user_id=REQUESTING_USER_ID,
-                    created_at=NOW - timedelta(hours=1),
-                ),
-                LeaveRequest(
-                    id=APPROVED_REQUEST_ID,
-                    tenant_id=TENANT_ID,
-                    employee_id=EMPLOYEE_ID,
-                    leave_type="sick",
-                    start_date=date(2026, 7, 10),
-                    end_date=date(2026, 7, 10),
-                    status=LeaveRequestStatus.APPROVED.value,
-                    requested_by_user_id=REQUESTING_USER_ID,
-                    decided_by_user_id=APPROVER_USER_ID,
-                    created_at=NOW - timedelta(hours=2),
-                ),
-                LeaveRequest(
-                    id=REJECTED_REQUEST_ID,
-                    tenant_id=TENANT_ID,
-                    employee_id=SECOND_EMPLOYEE_ID,
-                    leave_type="annual",
-                    start_date=date(2026, 7, 25),
-                    end_date=date(2026, 7, 26),
-                    status=LeaveRequestStatus.REJECTED.value,
-                    requested_by_user_id=REQUESTING_USER_ID,
-                    decided_by_user_id=APPROVER_USER_ID,
-                    decision_note="Coverage conflict",
-                    created_at=NOW - timedelta(minutes=30),
-                ),
-                LeaveRequest(
-                    id=OTHER_REQUEST_ID,
-                    tenant_id=OTHER_TENANT_ID,
-                    employee_id=OTHER_EMPLOYEE_ID,
-                    leave_type="annual",
-                    start_date=date(2026, 7, 20),
-                    end_date=date(2026, 7, 22),
-                    status=LeaveRequestStatus.PENDING.value,
-                    requested_by_user_id=OTHER_USER_ID,
-                    created_at=NOW,
-                ),
-            ]
+        records = [
+            Tenant(
+                id=TENANT_ID,
+                slug="wealthy-falcon",
+                name="Wealthy Falcon HR",
+                status=TenantStatus.ACTIVE.value,
+                plan_code="core",
+                data_region="tr-1",
+                locale="tr-TR",
+                timezone="Europe/Istanbul",
+            ),
+            Tenant(
+                id=OTHER_TENANT_ID,
+                slug="other",
+                name="Other Tenant",
+                status=TenantStatus.ACTIVE.value,
+                plan_code="core",
+                data_region="tr-1",
+                locale="tr-TR",
+                timezone="Europe/Istanbul",
+            ),
+            User(
+                id=REQUESTING_USER_ID,
+                tenant_id=TENANT_ID,
+                email="requester@wealthyfalcon.test",
+                full_name="Requesting User",
+                status=UserStatus.ACTIVE.value,
+            ),
+            User(
+                id=APPROVER_USER_ID,
+                tenant_id=TENANT_ID,
+                email="approver@wealthyfalcon.test",
+                full_name="Approver User",
+                status=UserStatus.ACTIVE.value,
+            ),
+            User(
+                id=OTHER_USER_ID,
+                tenant_id=OTHER_TENANT_ID,
+                email="other@wealthyfalcon.test",
+                full_name="Other User",
+                status=UserStatus.ACTIVE.value,
+            ),
+            Employee(
+                id=EMPLOYEE_ID,
+                tenant_id=TENANT_ID,
+                employee_number="WF-001",
+                first_name="Ada",
+                last_name="Yilmaz",
+                email="ada@wealthyfalcon.test",
+                department="People",
+                position="HR Specialist",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 7, 1),
+            ),
+            Employee(
+                id=OTHER_EMPLOYEE_ID,
+                tenant_id=OTHER_TENANT_ID,
+                employee_number="OT-001",
+                first_name="Other",
+                last_name="Person",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 7, 1),
+            ),
+            Employee(
+                id=SECOND_EMPLOYEE_ID,
+                tenant_id=TENANT_ID,
+                employee_number="WF-002",
+                first_name="Ece",
+                last_name="Kaya",
+                email="ece@wealthyfalcon.test",
+                department="Engineering",
+                position="Backend Engineer",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 7, 1),
+            ),
+            LeaveRequest(
+                id=PENDING_REQUEST_ID,
+                tenant_id=TENANT_ID,
+                employee_id=EMPLOYEE_ID,
+                leave_type="annual",
+                start_date=date(2026, 7, 20),
+                end_date=date(2026, 7, 22),
+                status=LeaveRequestStatus.PENDING.value,
+                requested_by_user_id=REQUESTING_USER_ID,
+                created_at=NOW - timedelta(hours=1),
+            ),
+            LeaveRequest(
+                id=APPROVED_REQUEST_ID,
+                tenant_id=TENANT_ID,
+                employee_id=EMPLOYEE_ID,
+                leave_type="sick",
+                start_date=date(2026, 7, 10),
+                end_date=date(2026, 7, 10),
+                status=LeaveRequestStatus.APPROVED.value,
+                requested_by_user_id=REQUESTING_USER_ID,
+                decided_by_user_id=APPROVER_USER_ID,
+                created_at=NOW - timedelta(hours=2),
+            ),
+            LeaveRequest(
+                id=REJECTED_REQUEST_ID,
+                tenant_id=TENANT_ID,
+                employee_id=SECOND_EMPLOYEE_ID,
+                leave_type="annual",
+                start_date=date(2026, 7, 25),
+                end_date=date(2026, 7, 26),
+                status=LeaveRequestStatus.REJECTED.value,
+                requested_by_user_id=REQUESTING_USER_ID,
+                decided_by_user_id=APPROVER_USER_ID,
+                decision_note="Coverage conflict",
+                created_at=NOW - timedelta(minutes=30),
+            ),
+            LeaveRequest(
+                id=OTHER_REQUEST_ID,
+                tenant_id=OTHER_TENANT_ID,
+                employee_id=OTHER_EMPLOYEE_ID,
+                leave_type="annual",
+                start_date=date(2026, 7, 20),
+                end_date=date(2026, 7, 22),
+                status=LeaveRequestStatus.PENDING.value,
+                requested_by_user_id=OTHER_USER_ID,
+                created_at=NOW,
+            ),
+        ]
+        records.extend(
+            LeaveRequest(
+                id=uuid4(),
+                tenant_id=TENANT_ID,
+                employee_id=EMPLOYEE_ID,
+                leave_type="annual",
+                start_date=date(2026, 8, 1) + timedelta(days=index),
+                end_date=date(2026, 8, 1) + timedelta(days=index),
+                status=LeaveRequestStatus.PENDING.value,
+                requested_by_user_id=REQUESTING_USER_ID,
+                created_at=NOW - timedelta(days=1, minutes=index),
+            )
+            for index in range(extra_current_leave_request_count)
         )
+        session.add_all(records)
         await session.commit()
 
     async def override_session() -> AsyncIterator[AsyncSession]:
@@ -306,6 +322,50 @@ async def test_list_leave_requests_returns_current_tenant_records_only() -> None
             str(REJECTED_REQUEST_ID),
         }
         assert str(OTHER_REQUEST_ID) not in ids
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_paginates_current_tenant_records() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"limit": 1, "offset": 1},
+        )
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()] == [str(PENDING_REQUEST_ID)]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_uses_bounded_default_limit() -> None:
+    client, engine = await _client_with_database(extra_current_leave_request_count=52)
+    try:
+        response = await client.get("/api/v1/leave-requests", headers=_tenant_headers())
+
+        assert response.status_code == 200
+        assert len(response.json()) == LEAVE_REQUEST_LIST_DEFAULT_LIMIT
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_rejects_unbounded_pagination_values() -> None:
+    client, engine = await _client_with_database()
+    try:
+        for params in ({"limit": 0}, {"limit": 201}, {"offset": -1}):
+            response = await client.get(
+                "/api/v1/leave-requests",
+                headers=_tenant_headers(),
+                params=params,
+            )
+
+            assert response.status_code == 422
     finally:
         await client.aclose()
         await engine.dispose()
@@ -540,7 +600,9 @@ async def test_leave_request_routes_are_exposed_in_openapi() -> None:
             parameter["name"]
             for parameter in paths["/api/v1/leave-requests"]["get"]["parameters"]
         }
-        assert {"status", "employee_id", "start_date", "end_date"}.issubset(query_params)
+        assert {"status", "employee_id", "start_date", "end_date", "limit", "offset"}.issubset(
+            query_params
+        )
         assert "/api/v1/leave-requests/{leave_request_id}/approve" in paths
         assert "/api/v1/leave-requests/{leave_request_id}/reject" in paths
         assert "/api/v1/leave-requests/{leave_request_id}/cancel" in paths

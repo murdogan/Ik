@@ -4,9 +4,12 @@ from uuid import UUID
 import pytest
 from app.models.leave_request import LeaveRequestStatus
 from app.schemas.leave_request import (
+    LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
+    LEAVE_REQUEST_LIST_MAX_LIMIT,
     LeaveRequestCreate,
     LeaveRequestDecision,
     LeaveRequestListFilters,
+    LeaveRequestListPagination,
     LeaveRequestRead,
 )
 from pydantic import ValidationError
@@ -95,6 +98,26 @@ def test_leave_request_list_filters_reject_invalid_date_range() -> None:
             start_date=date(2026, 7, 31),
             end_date=date(2026, 7, 1),
         )
+
+
+def test_leave_request_list_pagination_has_bounded_defaults() -> None:
+    payload = LeaveRequestListPagination()
+
+    assert payload.limit == LEAVE_REQUEST_LIST_DEFAULT_LIMIT
+    assert payload.offset == 0
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"limit": 0},
+        {"limit": LEAVE_REQUEST_LIST_MAX_LIMIT + 1},
+        {"offset": -1},
+    ],
+)
+def test_leave_request_list_pagination_rejects_unbounded_values(data: dict[str, int]) -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestListPagination(**data)
 
 
 def test_leave_request_read_exposes_workflow_fields_without_tenant_id() -> None:

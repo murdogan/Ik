@@ -319,6 +319,17 @@ async def _smoke_leave_request_endpoints(client: AsyncClient, employee_id: str) 
     statuses = {leave_request["status"] for leave_request in leave_requests}
     _assert_equal(statuses, {"approved", "rejected", "cancelled"}, "leave request statuses")
 
+    paginated = _expect_json(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"limit": 2, "offset": 1},
+        ),
+        200,
+        "GET /api/v1/leave-requests?limit=2&offset=1",
+    )
+    _assert_equal(len(paginated), 2, "leave request pagination")
+
     approved_filtered = _expect_json(
         await client.get(
             "/api/v1/leave-requests",

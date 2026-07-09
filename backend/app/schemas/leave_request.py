@@ -6,6 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.models.leave_request import LeaveRequestStatus
 
+LEAVE_REQUEST_LIST_DEFAULT_LIMIT = 50
+LEAVE_REQUEST_LIST_MAX_LIMIT = 200
+
 
 class LeaveRequestCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -61,6 +64,15 @@ class LeaveRequestListFilters(BaseModel):
         ):
             raise ValueError("Leave request end_date filter must be on or after start_date")
         return self
+
+
+class LeaveRequestListPagination(BaseModel):
+    limit: int = Field(
+        default=LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=LEAVE_REQUEST_LIST_MAX_LIMIT,
+    )
+    offset: int = Field(default=0, ge=0)
 
 
 class LeaveRequestRead(BaseModel):

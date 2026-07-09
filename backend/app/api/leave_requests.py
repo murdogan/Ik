@@ -10,9 +10,12 @@ from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
 from app.schemas.leave_request import (
+    LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
+    LEAVE_REQUEST_LIST_MAX_LIMIT,
     LeaveRequestCreate,
     LeaveRequestDecision,
     LeaveRequestListFilters,
+    LeaveRequestListPagination,
     LeaveRequestRead,
 )
 from app.services.leave_request_service import (
@@ -64,13 +67,36 @@ def get_leave_request_list_filters(
     )
 
 
+def get_leave_request_list_pagination(
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=LEAVE_REQUEST_LIST_MAX_LIMIT,
+            description=(
+                "Maximum leave requests to return. Bounded to protect large tenant lists."
+            ),
+        ),
+    ] = LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
+    offset: Annotated[
+        int,
+        Query(
+            ge=0,
+            description="Number of matching leave requests to skip before returning results.",
+        ),
+    ] = 0,
+) -> LeaveRequestListPagination:
+    return LeaveRequestListPagination(limit=limit, offset=offset)
+
+
 @router.get("", response_model=list[LeaveRequestRead])
 async def list_leave_requests(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[LeaveRequestService, Depends(get_leave_request_service)],
     filters: Annotated[LeaveRequestListFilters, Depends(get_leave_request_list_filters)],
+    pagination: Annotated[LeaveRequestListPagination, Depends(get_leave_request_list_pagination)],
 ) -> list[LeaveRequestRead]:
-    return await service.list_leave_requests(tenant_context.tenant_id, filters)
+    return await service.list_leave_requests(tenant_context.tenant_id, filters, pagination)
 
 
 @router.post("", response_model=LeaveRequestRead, status_code=status.HTTP_201_CREATED)
