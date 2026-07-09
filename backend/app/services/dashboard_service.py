@@ -56,64 +56,29 @@ class DashboardService:
         )
 
     async def _count_active_employees(self, tenant_id: UUID) -> int:
-        statement = (
-            select(func.count(Employee.id))
-            .where(Employee.tenant_id == tenant_id)
-            .where(Employee.status == EmployeeStatus.ACTIVE.value)
-        )
-        return await self._scalar_count(statement)
+        return await self._scalar_count(_active_employee_count_statement(tenant_id))
 
     async def _count_current_employees(self, tenant_id: UUID) -> int:
-        statement = (
-            select(func.count(Employee.id))
-            .where(Employee.tenant_id == tenant_id)
-            .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
-        )
-        return await self._scalar_count(statement)
+        return await self._scalar_count(_current_employee_count_statement(tenant_id))
 
     async def _count_pending_leave_requests(self, tenant_id: UUID) -> int:
-        statement = (
-            select(func.count(LeaveRequest.id))
-            .where(LeaveRequest.tenant_id == tenant_id)
-            .where(LeaveRequest.status == LeaveRequestStatus.PENDING.value)
-        )
-        return await self._scalar_count(statement)
+        return await self._scalar_count(_pending_leave_count_statement(tenant_id))
 
     async def _count_new_starters_this_month(self, tenant_id: UUID) -> int:
         start_date, end_date = _month_window(self.today)
-        statement = (
-            select(func.count(Employee.id))
-            .where(Employee.tenant_id == tenant_id)
-            .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
-            .where(Employee.employment_start_date >= start_date)
-            .where(Employee.employment_start_date < end_date)
+        return await self._scalar_count(
+            _new_starters_count_statement(
+                tenant_id=tenant_id,
+                start_date=start_date,
+                end_date=end_date,
+            )
         )
-        return await self._scalar_count(statement)
 
     async def _department_distribution(self, tenant_id: UUID) -> list[DepartmentDistributionItem]:
-        department_label = func.coalesce(
-            func.nullif(func.trim(Employee.department), ""),
-            "Unassigned",
-        )
-        employee_count = func.count(Employee.id)
-        statement = (
-            select(
-                department_label.label("department"),
-                employee_count.label("employee_count"),
-            )
-            .where(Employee.tenant_id == tenant_id)
-            .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
-            .group_by(department_label)
-            .order_by(employee_count.desc(), department_label.asc())
-        )
-        rows = (await self.session.execute(statement)).mappings().all()
-        return [
-            DepartmentDistributionItem(
-                department=row["department"],
-                count=row["employee_count"],
-            )
-            for row in rows
-        ]
+        rows = (
+            await self.session.execute(_department_distribution_statement(tenant_id))
+        ).mappings().all()
+        return [_department_distribution_item(row) for row in rows]
 
     async def _recent_activity(self, tenant_id: UUID) -> list[DashboardActivityItem]:
         if self.recent_activity_limit == 0:
@@ -128,62 +93,36 @@ class DashboardService:
         ]
 
     async def _recent_employee_activity(self, tenant_id: UUID) -> list[DashboardActivityItem]:
-        statement = (
-            select(
-                Employee.id.label("entity_id"),
-                Employee.first_name,
-                Employee.last_name,
-                Employee.created_at.label("occurred_at"),
+        rows = (
+            await self.session.execute(
+                _recent_employee_activity_statement(
+                    tenant_id=tenant_id,
+                    limit=self.recent_activity_limit,
+                )
             )
-            .where(Employee.tenant_id == tenant_id)
-            .order_by(Employee.created_at.desc())
-            .limit(self.recent_activity_limit)
-        )
-        rows = (await self.session.execute(statement)).mappings().all()
-        return [
-            DashboardActivityItem(
-                activity_type="employee.created",
-                entity_type="employee",
-                entity_id=row["entity_id"],
-                title=f"{row['first_name']} {row['last_name']} employee profile created",
-                occurred_at=row["occurred_at"],
-            )
-            for row in rows
-            if isinstance(row["occurred_at"], datetime)
-        ]
+        ).mappings().all()
+        activity_items = []
+        for row in rows:
+            activity_item = _employee_activity_item(row)
+            if activity_item is not None:
+                activity_items.append(activity_item)
+        return activity_items
 
     async def _recent_leave_activity(self, tenant_id: UUID) -> list[DashboardActivityItem]:
-        statement = (
-            select(
-                LeaveRequest.id.label("entity_id"),
-                LeaveRequest.status,
-                LeaveRequest.leave_type,
-                LeaveRequest.created_at.label("occurred_at"),
-                Employee.first_name,
-                Employee.last_name,
+        rows = (
+            await self.session.execute(
+                _recent_leave_activity_statement(
+                    tenant_id=tenant_id,
+                    limit=self.recent_activity_limit,
+                )
             )
-            .join(Employee, Employee.id == LeaveRequest.employee_id)
-            .where(LeaveRequest.tenant_id == tenant_id)
-            .where(Employee.tenant_id == tenant_id)
-            .order_by(LeaveRequest.created_at.desc())
-            .limit(self.recent_activity_limit)
-        )
-        rows = (await self.session.execute(statement)).mappings().all()
-        return [
-            DashboardActivityItem(
-                activity_type=LEAVE_ACTIVITY_BY_STATUS[row["status"]],
-                entity_type="leave_request",
-                entity_id=row["entity_id"],
-                title=(
-                    f"{row['first_name']} {row['last_name']} "
-                    f"{row['leave_type']} leave request {row['status']}"
-                ),
-                occurred_at=row["occurred_at"],
-            )
-            for row in rows
-            if row["status"] in LEAVE_ACTIVITY_BY_STATUS
-            and isinstance(row["occurred_at"], datetime)
-        ]
+        ).mappings().all()
+        activity_items = []
+        for row in rows:
+            activity_item = _leave_activity_item(row)
+            if activity_item is not None:
+                activity_items.append(activity_item)
+        return activity_items
 
     async def _scalar_count(self, statement) -> int:
         value = await self.session.scalar(statement)
@@ -195,6 +134,131 @@ def _month_window(today: date) -> tuple[date, date]:
     if today.month == 12:
         return start_date, date(today.year + 1, 1, 1)
     return start_date, date(today.year, today.month + 1, 1)
+
+
+def _active_employee_count_statement(tenant_id: UUID):
+    return (
+        select(func.count(Employee.id))
+        .where(Employee.tenant_id == tenant_id)
+        .where(Employee.status == EmployeeStatus.ACTIVE.value)
+    )
+
+
+def _current_employee_count_statement(tenant_id: UUID):
+    return (
+        select(func.count(Employee.id))
+        .where(Employee.tenant_id == tenant_id)
+        .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
+    )
+
+
+def _pending_leave_count_statement(tenant_id: UUID):
+    return (
+        select(func.count(LeaveRequest.id))
+        .where(LeaveRequest.tenant_id == tenant_id)
+        .where(LeaveRequest.status == LeaveRequestStatus.PENDING.value)
+    )
+
+
+def _new_starters_count_statement(tenant_id: UUID, start_date: date, end_date: date):
+    return (
+        select(func.count(Employee.id))
+        .where(Employee.tenant_id == tenant_id)
+        .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
+        .where(Employee.employment_start_date >= start_date)
+        .where(Employee.employment_start_date < end_date)
+    )
+
+
+def _department_distribution_statement(tenant_id: UUID):
+    department_label = _department_label()
+    employee_count = func.count(Employee.id)
+    return (
+        select(
+            department_label.label("department"),
+            employee_count.label("employee_count"),
+        )
+        .where(Employee.tenant_id == tenant_id)
+        .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
+        .group_by(department_label)
+        .order_by(employee_count.desc(), department_label.asc())
+    )
+
+
+def _department_label():
+    return func.coalesce(
+        func.nullif(func.trim(Employee.department), ""),
+        "Unassigned",
+    )
+
+
+def _recent_employee_activity_statement(tenant_id: UUID, limit: int):
+    return (
+        select(
+            Employee.id.label("entity_id"),
+            Employee.first_name,
+            Employee.last_name,
+            Employee.created_at.label("occurred_at"),
+        )
+        .where(Employee.tenant_id == tenant_id)
+        .order_by(Employee.created_at.desc())
+        .limit(limit)
+    )
+
+
+def _recent_leave_activity_statement(tenant_id: UUID, limit: int):
+    return (
+        select(
+            LeaveRequest.id.label("entity_id"),
+            LeaveRequest.status,
+            LeaveRequest.leave_type,
+            LeaveRequest.created_at.label("occurred_at"),
+            Employee.first_name,
+            Employee.last_name,
+        )
+        .join(Employee, Employee.id == LeaveRequest.employee_id)
+        .where(LeaveRequest.tenant_id == tenant_id)
+        .where(Employee.tenant_id == tenant_id)
+        .order_by(LeaveRequest.created_at.desc())
+        .limit(limit)
+    )
+
+
+def _department_distribution_item(row) -> DepartmentDistributionItem:
+    return DepartmentDistributionItem(
+        department=row["department"],
+        count=row["employee_count"],
+    )
+
+
+def _employee_activity_item(row) -> DashboardActivityItem | None:
+    occurred_at = row["occurred_at"]
+    if not isinstance(occurred_at, datetime):
+        return None
+    return DashboardActivityItem(
+        activity_type="employee.created",
+        entity_type="employee",
+        entity_id=row["entity_id"],
+        title=f"{row['first_name']} {row['last_name']} employee profile created",
+        occurred_at=occurred_at,
+    )
+
+
+def _leave_activity_item(row) -> DashboardActivityItem | None:
+    activity_type = LEAVE_ACTIVITY_BY_STATUS.get(row["status"])
+    occurred_at = row["occurred_at"]
+    if activity_type is None or not isinstance(occurred_at, datetime):
+        return None
+    return DashboardActivityItem(
+        activity_type=activity_type,
+        entity_type="leave_request",
+        entity_id=row["entity_id"],
+        title=(
+            f"{row['first_name']} {row['last_name']} "
+            f"{row['leave_type']} leave request {row['status']}"
+        ),
+        occurred_at=occurred_at,
+    )
 
 
 def _activity_timestamp(activity: DashboardActivityItem) -> float:

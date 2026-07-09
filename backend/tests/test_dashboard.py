@@ -230,6 +230,27 @@ async def test_dashboard_recent_activity_uses_current_tenant_records_only() -> N
     await engine.dispose()
 
 
+async def test_dashboard_recent_activity_limit_is_applied_after_source_merge() -> None:
+    session, engine = await _session_with_seed_data()
+
+    summary = await DashboardService(
+        session=session,
+        today=TODAY,
+        recent_activity_limit=2,
+    ).get_summary(TENANT_ID)
+
+    assert [
+        (activity.activity_type, activity.entity_id)
+        for activity in summary.recent_activity
+    ] == [
+        ("leave.requested", UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")),
+        ("leave.approved", UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")),
+    ]
+
+    await session.close()
+    await engine.dispose()
+
+
 async def test_dashboard_summary_returns_zero_state_for_empty_tenant() -> None:
     session, engine = await _session_with_seed_data()
 
