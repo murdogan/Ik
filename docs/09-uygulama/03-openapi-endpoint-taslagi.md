@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1C5)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1C6)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -29,7 +29,8 @@ Geçerli uygulama notları:
 - OpenAPI dokümanı W1C5 itibarıyla okunabilir tag kataloğu kullanır:
   `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
   Mevcut operasyonların her biri açık `summary` ve `description` metadata'sı taşır. Bu değişiklik
-  yalnız dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir.
+  yalnız dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W1C6
+  status refresh kapsamında smoke script bu operasyonları path ve HTTP method seviyesinde doğrular.
 - Domain endpointleri geçerli UUID formatında `X-Tenant-Id` header'ı ister;
   `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
 - Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef
@@ -43,8 +44,8 @@ Geçerli uygulama notları:
   gelmediyse `null` olur.
 - Şu an kullanılan error code değerleri: `tenant_header_missing`, `tenant_header_invalid`,
   `tenant_slug_header_invalid`, `employee_not_found`, `employee_number_conflict`,
-  `employee_invalid_date_range`, `leave_request_not_found`, `leave_request_invalid_date_range`,
-  `leave_request_transition_conflict`, `user_not_found`.
+  `employee_invalid_date_range`, `employee_invalid_lifecycle`, `leave_request_not_found`,
+  `leave_request_invalid_date_range`, `leave_request_transition_conflict`, `user_not_found`.
 - Cursor pagination standardı, idempotency, tüm response zarfı ve global correlation middleware
   henüz TODO'dur.
 - Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,

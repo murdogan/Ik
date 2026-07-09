@@ -45,17 +45,21 @@ OTHER_TENANT_HEADERS = {
     "X-Tenant-Id": str(OTHER_TENANT_ID),
     "X-Tenant-Slug": "other-falcon",
 }
-OPENAPI_PATHS = {
-    "/",
-    "/health",
-    "/api/v1/dashboard/summary",
-    "/api/v1/employees",
-    "/api/v1/employees/{employee_id}",
-    "/api/v1/employees/{employee_id}/leave-balances",
-    "/api/v1/leave-requests",
-    "/api/v1/leave-requests/{leave_request_id}/approve",
-    "/api/v1/leave-requests/{leave_request_id}/reject",
-    "/api/v1/leave-requests/{leave_request_id}/cancel",
+DOCUMENTED_OPENAPI_OPERATIONS = {
+    ("get", "/"),
+    ("get", "/health"),
+    ("get", "/api/v1/dashboard/summary"),
+    ("get", "/api/v1/employees"),
+    ("post", "/api/v1/employees"),
+    ("get", "/api/v1/employees/{employee_id}"),
+    ("patch", "/api/v1/employees/{employee_id}"),
+    ("delete", "/api/v1/employees/{employee_id}"),
+    ("get", "/api/v1/employees/{employee_id}/leave-balances"),
+    ("get", "/api/v1/leave-requests"),
+    ("post", "/api/v1/leave-requests"),
+    ("post", "/api/v1/leave-requests/{leave_request_id}/approve"),
+    ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
+    ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
 }
 
 
@@ -174,9 +178,13 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
     _assert_contains(landing.text, "Wealthy Falcon HR", "landing brand")
 
     openapi = _expect_json(await client.get("/openapi.json"), 200, "GET /openapi.json")
-    missing_paths = OPENAPI_PATHS.difference(openapi["paths"])
-    if missing_paths:
-        raise AssertionError(f"OpenAPI is missing paths: {sorted(missing_paths)}")
+    missing_operations = [
+        f"{method.upper()} {path}"
+        for method, path in sorted(DOCUMENTED_OPENAPI_OPERATIONS)
+        if method not in openapi["paths"].get(path, {})
+    ]
+    if missing_operations:
+        raise AssertionError(f"OpenAPI is missing operations: {missing_operations}")
 
 
 async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]:
