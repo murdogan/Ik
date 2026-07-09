@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1C6)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W2A3)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -57,9 +57,10 @@ Geçerli uygulama notları:
 - Employee listesinde `department`, `status` ve employee number/email üzerinden `q` filtreleri
 - Employee listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`)
   uygulanmıştır.
-- Leave request listesinde `status`, `employee_id` ve inclusive `start_date`/`end_date` tarih
-  aralığı filtreleri uygulanmıştır. Tarih aralığı, izin kaydının tarihleriyle overlap eden
-  talepleri döndürür.
+- Leave request listesinde W2A3 itibarıyla `status`, `employee_id` ve inclusive
+  `start_date`/`end_date` tarih aralığı filtreleri testlerle sabitlenmiştir. Tarih aralığı, izin
+  kaydının tarihleriyle overlap eden talepleri döndürür; tek taraflı tarih filtreleri de tenant
+  scope içinde çalışır.
 - Leave request listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`;
   `offset` varsayılan `0`) uygulanmıştır.
 - Leave balance summary endpointi `leave_balance_summaries` read modelini okur. Bu W1C2

@@ -261,6 +261,56 @@ async def test_list_leave_requests_uses_inclusive_overlap_boundaries() -> None:
         await engine.dispose()
 
 
+async def test_list_leave_requests_combines_status_and_employee_filters() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        leave_requests = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            filters=LeaveRequestListFilters(
+                status=LeaveRequestStatus.PENDING,
+                employee_id=EMPLOYEE_ID,
+            ),
+        )
+        cross_tenant_employee_requests = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            filters=LeaveRequestListFilters(
+                status=LeaveRequestStatus.PENDING,
+                employee_id=OTHER_EMPLOYEE_ID,
+            ),
+        )
+
+        assert [leave_request.id for leave_request in leave_requests] == [PENDING_REQUEST_ID]
+        assert cross_tenant_employee_requests == []
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_supports_single_sided_date_filters() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        ending_on_or_after = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            filters=LeaveRequestListFilters(start_date=date(2026, 7, 22)),
+        )
+        starting_on_or_before = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            filters=LeaveRequestListFilters(end_date=date(2026, 7, 20)),
+        )
+
+        assert {leave_request.id for leave_request in ending_on_or_after} == {
+            PENDING_REQUEST_ID,
+            BOUNDARY_REQUEST_ID,
+        }
+        assert {leave_request.id for leave_request in starting_on_or_before} == {
+            PENDING_REQUEST_ID,
+            APPROVED_REQUEST_ID,
+        }
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_decide_leave_request_checks_transition_before_decider_tenant() -> None:
     session, engine = await _session_with_seed_data()
     try:

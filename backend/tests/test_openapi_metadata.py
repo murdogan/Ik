@@ -125,3 +125,27 @@ def test_employee_list_openapi_documents_filter_query_params() -> None:
     assert "employee_number and email" in params["q"]["description"]
     assert params["limit"]["schema"]["maximum"] == 200
     assert params["offset"]["schema"]["minimum"] == 0
+
+
+def test_leave_request_list_openapi_documents_filter_query_params() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    operation = response.json()["paths"]["/api/v1/leave-requests"]["get"]
+    params = {parameter["name"]: parameter for parameter in operation["parameters"]}
+
+    assert {"status", "employee_id", "start_date", "end_date", "limit", "offset"}.issubset(
+        params
+    )
+    assert params["status"]["in"] == "query"
+    assert "Leave request workflow status filter" in params["status"]["description"]
+    assert params["employee_id"]["in"] == "query"
+    assert "Always applied within the current tenant" in params["employee_id"]["description"]
+    assert params["start_date"]["in"] == "query"
+    assert "Inclusive date-window start" in params["start_date"]["description"]
+    assert params["end_date"]["in"] == "query"
+    assert "Inclusive date-window end" in params["end_date"]["description"]
+    assert params["limit"]["schema"]["maximum"] == 200
+    assert params["offset"]["schema"]["minimum"] == 0

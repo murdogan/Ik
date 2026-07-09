@@ -2,16 +2,15 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W1C6 Implementation report refresh`
+Task: `W2A3 Leave request list filters`
 
 ## Scope
 
-- Refreshed the implementation status snapshot for the current backend/API/data surface completed
-  through W1C6.
-- Aligned this report with the current OpenAPI endpoint draft and local backend smoke coverage.
-- Hardened `scripts/backend_api_smoke.py` so it checks documented OpenAPI operations by method and
-  path, then exercises the implemented tenant-scoped endpoints through ASGI with an in-memory
-  SQLite database.
+- Hardened the leave request list filter contract for `status`, `employee_id`, and inclusive
+  overlapping `start_date`/`end_date` query parameters.
+- Added service-level coverage for combined status+employee filters, cross-tenant employee filter
+  results, and single-sided date windows.
+- Added OpenAPI metadata coverage for the leave request list filter query parameters.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -58,10 +57,14 @@ Task: `W1C6 Implementation report refresh`
 
 ## Verification
 
-W1C6 local gate run:
+W2A3 focused preflight:
+
+- `uv run pytest backend/tests/test_leave_request_service.py backend/tests/test_leave_request_api.py backend/tests/test_openapi_metadata.py`: passed, 37 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+
+Full W2A3 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 189 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 196 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 
