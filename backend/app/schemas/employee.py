@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.models.employee import EmployeeStatus
 
 EMAIL_PATTERN: Pattern[str] = compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+EMPLOYEE_LIST_DEFAULT_LIMIT = 50
+EMPLOYEE_LIST_MAX_LIMIT = 200
 
 
 class EmployeeCreate(BaseModel):
@@ -106,6 +108,15 @@ class EmployeeListFilters(BaseModel):
         if value is None:
             return None
         return value or None
+
+
+class EmployeeListPagination(BaseModel):
+    limit: int = Field(
+        default=EMPLOYEE_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=EMPLOYEE_LIST_MAX_LIMIT,
+    )
+    offset: int = Field(default=0, ge=0)
 
 
 class EmployeeRead(BaseModel):

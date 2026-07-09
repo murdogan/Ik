@@ -235,6 +235,20 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> str:
             "employment_start_date": today,
         },
     )
+    paginated = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"limit": 1, "offset": 1},
+        ),
+        200,
+        "GET /api/v1/employees?limit=1&offset=1",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in paginated],
+        ["WF-SMOKE-DELETE"],
+        "employee pagination",
+    )
     _expect_status(
         await client.delete(
             f"/api/v1/employees/{delete_candidate['id']}",

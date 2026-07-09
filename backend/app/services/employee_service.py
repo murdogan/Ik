@@ -5,7 +5,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee, EmployeeStatus
-from app.schemas.employee import EmployeeCreate, EmployeeListFilters, EmployeeUpdate
+from app.schemas.employee import (
+    EmployeeCreate,
+    EmployeeListFilters,
+    EmployeeListPagination,
+    EmployeeUpdate,
+)
 
 
 class EmployeeNotFoundError(Exception):
@@ -28,8 +33,10 @@ class EmployeeService:
         self,
         tenant_id: UUID,
         filters: EmployeeListFilters | None = None,
+        pagination: EmployeeListPagination | None = None,
     ) -> list[Employee]:
         filters = filters or EmployeeListFilters()
+        pagination = pagination or EmployeeListPagination()
         statement = select(Employee).where(Employee.tenant_id == tenant_id)
 
         if filters.department is not None:
@@ -47,7 +54,11 @@ class EmployeeService:
                 )
             )
 
-        statement = statement.order_by(Employee.employee_number.asc())
+        statement = (
+            statement.order_by(Employee.employee_number.asc())
+            .offset(pagination.offset)
+            .limit(pagination.limit)
+        )
         return list(await self.session.scalars(statement))
 
     async def get_employee(self, tenant_id: UUID, employee_id: UUID) -> Employee:

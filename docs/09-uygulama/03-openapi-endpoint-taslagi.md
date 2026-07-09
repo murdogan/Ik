@@ -12,7 +12,7 @@ lokal backend smoke kapsamındadır.
 | GET | `/health` | Uygulandı | Public servis durumu |
 | GET | `/` | Uygulandı | Wealthy Falcon HR landing HTML |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB sayımları, departman dağılımı ve son aktiviteler |
-| GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; `department`, `status`, `q` filtreleri var |
+| GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; `department`, `status`, `q` filtreleri ve `limit`/`offset` pagination var |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context kullanır, duplicate employee number `409` |
 | GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | Uygulandı | Partial update, tarih aralığı validasyonu |
@@ -30,8 +30,9 @@ Geçerli uygulama notları:
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
   mekanizmasıdır.
-- Pagination, idempotency ve correlation envelope henüz TODO'dur.
+- Cursor pagination standardı, idempotency ve correlation envelope henüz TODO'dur.
 - Employee listesinde `department`, `status` ve employee number/email üzerinden `q` filtreleri
+- Employee listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`)
   uygulanmıştır; diğer listelerde filtreleme ayrı backlog'dur.
 - Leave request detail endpointi (`GET /api/v1/leave-requests/{id}`) henüz yoktur.
 
@@ -201,8 +202,10 @@ Query:
 - `department`: Departman adına göre case-insensitive exact match.
 - `status`: `active`, `on_leave`, `terminated`.
 - `q`: `employee_number` ve `email` üzerinde case-insensitive contains araması.
+- `limit`: Dönen kayıt sayısı. Varsayılan `50`, maksimum `200`.
+- `offset`: Sıralı sonuçta atlanacak kayıt sayısı. Varsayılan `0`.
 
-Not: `cursor`, `limit` ve `sort` ayrı pagination/sıralama backlog'udur.
+Not: Cursor-based pagination ve `sort` ayrı backlog'dur; mevcut uygulama basit `limit`/`offset` kullanır.
 
 Response item:
 

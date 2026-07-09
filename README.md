@@ -105,7 +105,8 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/`
 - `/openapi.json`
 - `/api/v1/dashboard/summary`
-- `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, oluşturma/detay/güncelleme/silme
+- `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, `limit`/`offset` pagination,
+  oluşturma/detay/güncelleme/silme
 - `/api/v1/leave-requests` liste/oluşturma/onay/red/iptal
 
 Başarılıysa `BACKEND_SMOKE_OK` çıktısı verir.

@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import date
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.db.base import Base
 from app.db.session import get_session
@@ -25,7 +25,9 @@ TERMINATED_EMPLOYEE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 OTHER_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 
-async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
+async def _client_with_database(
+    extra_current_employee_count: int = 0,
+) -> tuple[AsyncClient, AsyncEngine]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -37,77 +39,88 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        session.add_all(
-            [
-                Tenant(
-                    id=TENANT_ID,
-                    slug="wealthy-falcon",
-                    name="Wealthy Falcon HR",
-                    status=TenantStatus.ACTIVE.value,
-                    plan_code="core",
-                    data_region="tr-1",
-                    locale="tr-TR",
-                    timezone="Europe/Istanbul",
-                ),
-                Tenant(
-                    id=OTHER_TENANT_ID,
-                    slug="other",
-                    name="Other Tenant",
-                    status=TenantStatus.ACTIVE.value,
-                    plan_code="core",
-                    data_region="tr-1",
-                    locale="tr-TR",
-                    timezone="Europe/Istanbul",
-                ),
-                Employee(
-                    id=EMPLOYEE_ID,
-                    tenant_id=TENANT_ID,
-                    employee_number="WF-001",
-                    first_name="Ada",
-                    last_name="Yilmaz",
-                    email="ada@wealthyfalcon.test",
-                    department="People",
-                    position="HR Specialist",
-                    status=EmployeeStatus.ACTIVE.value,
-                    employment_start_date=date(2026, 7, 1),
-                ),
-                Employee(
-                    id=ON_LEAVE_EMPLOYEE_ID,
-                    tenant_id=TENANT_ID,
-                    employee_number="WF-010",
-                    first_name="Bora",
-                    last_name="Demir",
-                    email="bora@wealthyfalcon.test",
-                    department="People",
-                    position="People Partner",
-                    status=EmployeeStatus.ON_LEAVE.value,
-                    employment_start_date=date(2026, 7, 2),
-                ),
-                Employee(
-                    id=TERMINATED_EMPLOYEE_ID,
-                    tenant_id=TENANT_ID,
-                    employee_number="WF-020",
-                    first_name="Cem",
-                    last_name="Kaya",
-                    email="cem@wealthyfalcon.test",
-                    department="Engineering",
-                    position="Backend Engineer",
-                    status=EmployeeStatus.TERMINATED.value,
-                    employment_start_date=date(2026, 7, 3),
-                ),
-                Employee(
-                    id=OTHER_EMPLOYEE_ID,
-                    tenant_id=OTHER_TENANT_ID,
-                    employee_number="OT-001",
-                    first_name="Other",
-                    last_name="Person",
-                    email="other@wealthyfalcon.test",
-                    department="People",
-                    status=EmployeeStatus.ACTIVE.value,
-                    employment_start_date=date(2026, 7, 1),
-                ),
-            ]
+        records = [
+            Tenant(
+                id=TENANT_ID,
+                slug="wealthy-falcon",
+                name="Wealthy Falcon HR",
+                status=TenantStatus.ACTIVE.value,
+                plan_code="core",
+                data_region="tr-1",
+                locale="tr-TR",
+                timezone="Europe/Istanbul",
+            ),
+            Tenant(
+                id=OTHER_TENANT_ID,
+                slug="other",
+                name="Other Tenant",
+                status=TenantStatus.ACTIVE.value,
+                plan_code="core",
+                data_region="tr-1",
+                locale="tr-TR",
+                timezone="Europe/Istanbul",
+            ),
+            Employee(
+                id=EMPLOYEE_ID,
+                tenant_id=TENANT_ID,
+                employee_number="WF-001",
+                first_name="Ada",
+                last_name="Yilmaz",
+                email="ada@wealthyfalcon.test",
+                department="People",
+                position="HR Specialist",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 7, 1),
+            ),
+            Employee(
+                id=ON_LEAVE_EMPLOYEE_ID,
+                tenant_id=TENANT_ID,
+                employee_number="WF-010",
+                first_name="Bora",
+                last_name="Demir",
+                email="bora@wealthyfalcon.test",
+                department="People",
+                position="People Partner",
+                status=EmployeeStatus.ON_LEAVE.value,
+                employment_start_date=date(2026, 7, 2),
+            ),
+            Employee(
+                id=TERMINATED_EMPLOYEE_ID,
+                tenant_id=TENANT_ID,
+                employee_number="WF-020",
+                first_name="Cem",
+                last_name="Kaya",
+                email="cem@wealthyfalcon.test",
+                department="Engineering",
+                position="Backend Engineer",
+                status=EmployeeStatus.TERMINATED.value,
+                employment_start_date=date(2026, 7, 3),
+            ),
+            Employee(
+                id=OTHER_EMPLOYEE_ID,
+                tenant_id=OTHER_TENANT_ID,
+                employee_number="OT-001",
+                first_name="Other",
+                last_name="Person",
+                email="other@wealthyfalcon.test",
+                department="People",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 7, 1),
+            ),
+        ]
+        records.extend(
+            Employee(
+                id=uuid4(),
+                tenant_id=TENANT_ID,
+                employee_number=f"WF-{100 + index:03d}",
+                first_name=f"Extra{index}",
+                last_name="Employee",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 7, 4),
+            )
+            for index in range(extra_current_employee_count)
         )
+        session.add_all(records)
         await session.commit()
 
     async def override_session() -> AsyncIterator[AsyncSession]:
@@ -199,6 +212,50 @@ async def test_list_employees_returns_current_tenant_records_only() -> None:
             "WF-010",
             "WF-020",
         ]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_paginates_current_tenant_records() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1, "offset": 1},
+        )
+
+        assert response.status_code == 200
+        assert [employee["employee_number"] for employee in response.json()] == ["WF-010"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_uses_bounded_default_limit() -> None:
+    client, engine = await _client_with_database(extra_current_employee_count=52)
+    try:
+        response = await client.get("/api/v1/employees", headers=_tenant_headers())
+
+        assert response.status_code == 200
+        assert len(response.json()) == 50
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_rejects_unbounded_pagination_values() -> None:
+    client, engine = await _client_with_database()
+    try:
+        for params in ({"limit": 0}, {"limit": 201}, {"offset": -1}):
+            response = await client.get(
+                "/api/v1/employees",
+                headers=_tenant_headers(),
+                params=params,
+            )
+
+            assert response.status_code == 422
     finally:
         await client.aclose()
         await engine.dispose()
@@ -437,7 +494,9 @@ async def test_employee_routes_are_exposed_in_openapi() -> None:
         employee_list_parameters = {
             parameter["name"] for parameter in paths["/api/v1/employees"]["get"]["parameters"]
         }
-        assert {"department", "status", "q"}.issubset(employee_list_parameters)
+        assert {"department", "status", "q", "limit", "offset"}.issubset(
+            employee_list_parameters
+        )
     finally:
         await client.aclose()
         await engine.dispose()

@@ -3,7 +3,15 @@ from uuid import UUID
 
 import pytest
 from app.models.employee import EmployeeStatus
-from app.schemas.employee import EmployeeCreate, EmployeeListFilters, EmployeeRead, EmployeeUpdate
+from app.schemas.employee import (
+    EMPLOYEE_LIST_DEFAULT_LIMIT,
+    EMPLOYEE_LIST_MAX_LIMIT,
+    EmployeeCreate,
+    EmployeeListFilters,
+    EmployeeListPagination,
+    EmployeeRead,
+    EmployeeUpdate,
+)
 from pydantic import ValidationError
 
 
@@ -93,6 +101,26 @@ def test_employee_list_filters_strip_text_and_convert_empty_values_to_none() -> 
     assert payload.department == "People"
     assert payload.status == EmployeeStatus.ON_LEAVE
     assert payload.q is None
+
+
+def test_employee_list_pagination_has_bounded_defaults() -> None:
+    payload = EmployeeListPagination()
+
+    assert payload.limit == EMPLOYEE_LIST_DEFAULT_LIMIT
+    assert payload.offset == 0
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"limit": 0},
+        {"limit": EMPLOYEE_LIST_MAX_LIMIT + 1},
+        {"offset": -1},
+    ],
+)
+def test_employee_list_pagination_rejects_unbounded_values(data: dict[str, int]) -> None:
+    with pytest.raises(ValidationError):
+        EmployeeListPagination(**data)
 
 
 def test_employee_read_does_not_expose_tenant_id() -> None:
