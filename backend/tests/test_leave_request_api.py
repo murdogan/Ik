@@ -425,6 +425,22 @@ async def test_list_leave_requests_paginates_current_tenant_records() -> None:
         await engine.dispose()
 
 
+async def test_list_leave_requests_paginates_after_filters_within_current_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"employee_id": str(EMPLOYEE_ID), "limit": 1, "offset": 1},
+        )
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()] == [str(APPROVED_REQUEST_ID)]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_leave_requests_uses_bounded_default_limit() -> None:
     client, engine = await _client_with_database(extra_current_leave_request_count=52)
     try:
