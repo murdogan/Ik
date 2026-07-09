@@ -2,10 +2,13 @@ from pathlib import Path
 
 import app.models  # noqa: F401
 from alembic import command as alembic_command
+from alembic.autogenerate import compare_metadata
 from alembic.config import Config
+from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from app.db.base import Base
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 ALEMBIC_INI = Path("alembic.ini")
 
@@ -19,6 +22,12 @@ def _alembic_config(database_url: str | None = None) -> Config:
 
 def _script_directory() -> ScriptDirectory:
     return ScriptDirectory.from_config(_alembic_config())
+
+
+def _compare_type(context, _inspected_column, _metadata_column, _inspected_type, metadata_type):
+    if context.dialect.name == "sqlite" and isinstance(metadata_type, PG_UUID):
+        return False
+    return None
 
 
 def test_alembic_config_points_to_backend_migrations() -> None:
@@ -35,8 +44,9 @@ def test_core_migration_chain_is_linear() -> None:
     leave_request_revision = script.get_revision("0004_create_leave_requests")
     employee_date_order_revision = script.get_revision("0005_employee_date_order")
     leave_balance_revision = script.get_revision("0006_create_leave_balance_summaries")
+    timestamp_revision = script.get_revision("0007_enforce_timestamp_not_null")
 
-    assert script.get_heads() == ["0006_create_leave_balance_summaries"]
+    assert script.get_heads() == ["0007_enforce_timestamp_not_null"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -49,6 +59,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert employee_date_order_revision.down_revision == "0004_create_leave_requests"
     assert leave_balance_revision is not None
     assert leave_balance_revision.down_revision == "0005_employee_date_order"
+    assert timestamp_revision is not None
+    assert timestamp_revision.down_revision == "0006_create_leave_balance_summaries"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -77,6 +89,27 @@ def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> No
             ).scalar_one()
 
         assert current_revision == _script_directory().get_current_head()
+    finally:
+        engine.dispose()
+
+
+def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-metadata-smoke.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+
+    alembic_command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.connect() as connection:
+            migration_context = MigrationContext.configure(
+                connection,
+                opts={"compare_type": _compare_type, "target_metadata": Base.metadata},
+            )
+            schema_diffs = compare_metadata(migration_context, Base.metadata)
+
+        assert schema_diffs == []
     finally:
         engine.dispose()
 
@@ -143,6 +176,17 @@ def test_leave_balance_summary_migration_exists() -> None:
     assert "leave_balance_summaries" in text
     assert "uq_leave_balance_summaries_tenant_employee_type_period" in text
     assert "ix_leave_balance_summaries_tenant_employee_period" in text
+
+
+def test_timestamp_not_null_migration_exists() -> None:
+    migration = Path("backend/alembic/versions/0007_enforce_timestamp_not_null.py")
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "TIMESTAMP_TABLES" in text
+    assert "created_at" in text
+    assert "updated_at" in text
+    assert "nullable=False" in text
 
 
 def test_readme_documents_migration_commands() -> None:
