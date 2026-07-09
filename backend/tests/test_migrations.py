@@ -45,8 +45,11 @@ def test_core_migration_chain_is_linear() -> None:
     employee_date_order_revision = script.get_revision("0005_employee_date_order")
     leave_balance_revision = script.get_revision("0006_create_leave_balance_summaries")
     timestamp_revision = script.get_revision("0007_enforce_timestamp_not_null")
+    employee_lifecycle_revision = script.get_revision(
+        "0008_employee_lifecycle_status_dates"
+    )
 
-    assert script.get_heads() == ["0007_enforce_timestamp_not_null"]
+    assert script.get_heads() == ["0008_employee_lifecycle_status_dates"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -61,6 +64,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert leave_balance_revision.down_revision == "0005_employee_date_order"
     assert timestamp_revision is not None
     assert timestamp_revision.down_revision == "0006_create_leave_balance_summaries"
+    assert employee_lifecycle_revision is not None
+    assert employee_lifecycle_revision.down_revision == "0007_enforce_timestamp_not_null"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -187,6 +192,18 @@ def test_timestamp_not_null_migration_exists() -> None:
     assert "created_at" in text
     assert "updated_at" in text
     assert "nullable=False" in text
+
+
+def test_employee_lifecycle_status_dates_migration_exists() -> None:
+    migration = Path(
+        "backend/alembic/versions/0008_employee_lifecycle_status_dates.py"
+    )
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "ck_employees_lifecycle_status_dates" in text
+    assert "status = 'terminated'" in text
+    assert "employment_end_date is not null" in text
 
 
 def test_readme_documents_migration_commands() -> None:

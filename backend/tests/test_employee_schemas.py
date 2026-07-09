@@ -189,6 +189,16 @@ def test_employee_update_rejects_terminated_status_with_explicit_null_end_date()
         EmployeeUpdate(status=EmployeeStatus.TERMINATED, employment_end_date=None)
 
 
+@pytest.mark.parametrize("status", [EmployeeStatus.ACTIVE, EmployeeStatus.ON_LEAVE])
+def test_employee_update_allows_non_terminated_status_with_explicit_null_end_date(
+    status: EmployeeStatus,
+) -> None:
+    payload = EmployeeUpdate(status=status, employment_end_date=None)
+
+    assert payload.status == status
+    assert payload.employment_end_date is None
+
+
 def test_employee_update_allows_terminated_status_without_end_date_in_partial_payload() -> None:
     payload = EmployeeUpdate(status=EmployeeStatus.TERMINATED)
 

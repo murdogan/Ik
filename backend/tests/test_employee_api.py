@@ -696,6 +696,23 @@ async def test_update_employee_terminates_when_status_and_end_date_are_provided(
         await engine.dispose()
 
 
+async def test_update_employee_changes_active_employee_to_on_leave() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"status": EmployeeStatus.ON_LEAVE.value},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == EmployeeStatus.ON_LEAVE.value
+        assert response.json()["employment_end_date"] is None
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_update_employee_rejects_terminated_status_without_end_date() -> None:
     client, engine = await _client_with_database()
     try:
@@ -723,6 +740,26 @@ async def test_update_employee_rejects_end_date_without_terminated_status() -> N
             f"/api/v1/employees/{EMPLOYEE_ID}",
             headers=_tenant_headers(),
             json={"employment_end_date": "2026-07-31"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_lifecycle",
+            message="Employment end date is only allowed when status is terminated",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_reactivation_without_clearing_end_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"status": EmployeeStatus.ON_LEAVE.value},
         )
 
         _assert_error_response(

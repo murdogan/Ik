@@ -2,16 +2,16 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2B4 Tenant header validation`
+Task: `W2C1 Employee employment lifecycle fields`
 
 ## Scope
 
-- Hardened tenant dependency parsing so `X-Tenant-Id` must be a single canonical hyphenated UUID.
-  Compact, braces and `urn:uuid:` UUID forms now return the tenant header error envelope.
-- Repeated `X-Tenant-Id` headers now return `tenant_header_invalid`; repeated
-  `X-Tenant-Slug` headers return `tenant_slug_header_invalid`.
-- Added dependency-level regression tests, OpenAPI metadata coverage for required tenant headers,
-  and smoke assertions for missing, non-canonical and repeated tenant headers.
+- Added a data-layer employee lifecycle check so `terminated` employees must have
+  `employment_end_date`, while `active` and `on_leave` employees must not.
+- Added schema/API regression coverage for status-only lifecycle transitions and explicit null
+  end-date handling.
+- Kept the public employee API shape unchanged; lifecycle violations still return
+  `employee_invalid_lifecycle`.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -42,7 +42,8 @@ Task: `W2B4 Tenant header validation`
 - Employee list supports `department`, `status`, `q`, `limit`, and `offset`.
 - Employee lifecycle validation is active: `terminated` requires `employment_end_date`; `active`
   and `on_leave` require `employment_end_date: null`. Violations return
-  `employee_invalid_lifecycle`.
+  `employee_invalid_lifecycle`. W2C1 also enforces this invariant with the
+  `ck_employees_lifecycle_status_dates` database check constraint.
 - Leave request list supports `status`, `employee_id`, inclusive overlapping `start_date` and
   `end_date` filters, plus bounded `limit` and `offset` pagination. Pagination is tenant-scoped
   and uses deterministic ordering by `created_at desc`, `start_date asc`, and `id asc`.
@@ -67,10 +68,10 @@ Task: `W2B4 Tenant header validation`
 
 ## Verification
 
-Full W2B4 local gate run:
+Full W2C1 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 209 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 238 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 

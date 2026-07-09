@@ -98,6 +98,16 @@ def test_employee_date_order_check_constraint_is_named() -> None:
     assert "ck_employees_date_order" in constraint_names
 
 
+def test_employee_lifecycle_status_dates_check_constraint_is_named() -> None:
+    constraint_names = {
+        constraint.name
+        for constraint in Employee.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert "ck_employees_lifecycle_status_dates" in constraint_names
+
+
 def test_employee_has_tenant_status_index() -> None:
     indexes = {
         index.name: tuple(column.name for column in index.columns)
