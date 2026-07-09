@@ -154,14 +154,22 @@ Eksik veya boş `X-Tenant-Id`, canonical hyphenated UUID olmayan tenant id değe
 `X-Tenant-Id` header'ları ve boş gönderilen `X-Tenant-Slug` `400` status koduyla aynı error
 zarfını döner.
 
-Bu örnekler mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün doğrudan
-schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
+Bu W3B3 örnekleri mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün
+doğrudan schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
+HTTP request bloklarında gösterilen tenant header'ları her domain endpoint için zorunludur.
+Create ve decision örneklerindeki yeni `id` değerleri temsili server-generated kayıtlardır; gerçek
+çağrıda aktif tenant içindeki mevcut kayıt id'leri kullanılmalıdır.
 
 Employee list örneği:
 
 ```http
 GET /api/v1/employees?department=Engineering&status=active&q=WF&limit=2&offset=0
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
+
+Response `200`:
 
 ```json
 [
@@ -182,6 +190,14 @@ GET /api/v1/employees?department=Engineering&status=active&q=WF&limit=2&offset=0
 
 Employee create request/response örneği:
 
+```http
+POST /api/v1/employees
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
+
 ```json
 {
   "employee_number": "WF-010",
@@ -195,6 +211,8 @@ Employee create request/response örneği:
   "employment_end_date": null
 }
 ```
+
+Response `201`:
 
 ```json
 {
@@ -215,7 +233,12 @@ Employee detail/update/delete örnekleri:
 
 ```http
 GET /api/v1/employees/f3000000-0000-4000-8000-000000000002
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
+
+Response `200`:
 
 ```json
 {
@@ -234,6 +257,10 @@ GET /api/v1/employees/f3000000-0000-4000-8000-000000000002
 
 ```http
 PATCH /api/v1/employees/f3000000-0000-4000-8000-000000000002
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
 ```
 
 ```json
@@ -242,6 +269,8 @@ PATCH /api/v1/employees/f3000000-0000-4000-8000-000000000002
   "status": "on_leave"
 }
 ```
+
+Response `200`:
 
 ```json
 {
@@ -260,8 +289,12 @@ PATCH /api/v1/employees/f3000000-0000-4000-8000-000000000002
 
 ```http
 DELETE /api/v1/employees/f3000000-0000-4000-8000-000000000002
-204 No Content
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
+
+Response `204`: no body.
 
 Employee lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve
 `on_leave` kayıtlarda `employment_end_date` `null` olmalıdır. Mevcut kayıtla birleştirildikten
@@ -273,7 +306,12 @@ Leave balance summary örneği:
 
 ```http
 GET /api/v1/employees/f3000000-0000-4000-8000-000000000002/leave-balances?period_year=2026
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
+
+Response `200`:
 
 ```json
 [
@@ -302,7 +340,12 @@ Leave request list örneği:
 
 ```http
 GET /api/v1/leave-requests?status=pending&employee_id=f3000000-0000-4000-8000-000000000002&start_date=2026-08-01&end_date=2026-08-31&limit=10&offset=0
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
+
+Response `200`:
 
 ```json
 [
@@ -322,6 +365,14 @@ GET /api/v1/leave-requests?status=pending&employee_id=f3000000-0000-4000-8000-00
 
 Leave request create request/response örneği:
 
+```http
+POST /api/v1/leave-requests
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
+
 ```json
 {
   "employee_id": "f3000000-0000-4000-8000-000000000003",
@@ -331,6 +382,8 @@ Leave request create request/response örneği:
   "requested_by_user_id": "f2000000-0000-4000-8000-000000000002"
 }
 ```
+
+Response `201`:
 
 ```json
 {
@@ -353,12 +406,22 @@ zarfını kullanır. Leave create tarih sırası ve liste tarih aralığı kural
 
 Leave approve request/response örneği:
 
+```http
+POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000001/approve
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
+
 ```json
 {
   "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
   "decision_note": "Approved with team coverage."
 }
 ```
+
+Response `200`:
 
 ```json
 {
@@ -374,7 +437,16 @@ Leave approve request/response örneği:
 }
 ```
 
-Leave reject/cancel response shape'i aynı decision body ile çalışır:
+Leave reject/cancel response shape'i aynı decision body ile çalışır. Aşağıdaki path id'leri
+bağımsız örneklerde pending talepleri temsil eder:
+
+```http
+POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000011/reject
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
 
 ```json
 {
@@ -383,9 +455,11 @@ Leave reject/cancel response shape'i aynı decision body ile çalışır:
 }
 ```
 
+Response `200`:
+
 ```json
 {
-  "id": "f4000000-0000-4000-8000-000000000001",
+  "id": "f4000000-0000-4000-8000-000000000011",
   "employee_id": "f3000000-0000-4000-8000-000000000002",
   "leave_type": "annual",
   "start_date": "2026-08-03",
@@ -397,6 +471,14 @@ Leave reject/cancel response shape'i aynı decision body ile çalışır:
 }
 ```
 
+```http
+POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000012/cancel
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
+
 ```json
 {
   "decided_by_user_id": "f2000000-0000-4000-8000-000000000002",
@@ -404,9 +486,11 @@ Leave reject/cancel response shape'i aynı decision body ile çalışır:
 }
 ```
 
+Response `200`:
+
 ```json
 {
-  "id": "f4000000-0000-4000-8000-000000000001",
+  "id": "f4000000-0000-4000-8000-000000000012",
   "employee_id": "f3000000-0000-4000-8000-000000000002",
   "leave_type": "annual",
   "start_date": "2026-08-03",

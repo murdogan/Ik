@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W2C6)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W3B3)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -34,9 +34,10 @@ Geçerli uygulama notları:
   dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W2C6 status
   refresh kapsamında smoke script generated OpenAPI operasyon setiyle documented smoke registry'yi
   path ve HTTP method seviyesinde iki yönlü doğrular.
-- W2B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
-  örnekleri taşır. Employee ve leave endpointleri bugün doğrudan schema/list döner; Bölüm 1'deki
-  `{ data, meta }` zarfı gelecek standart hedefidir.
+- W3B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
+  örnekleri taşır. Employee ve leave endpoint örnekleri method/path, tenant header, request body,
+  success response ve temel error zarfı seviyesinde gösterilir. Employee ve leave endpointleri
+  bugün doğrudan schema/list döner; Bölüm 1'deki `{ data, meta }` zarfı gelecek standart hedefidir.
 - Domain endpointleri canonical hyphenated UUID formatında `X-Tenant-Id` header'ı ister.
   Compact, braces veya `urn:uuid:` UUID formları ve tekrarlı `X-Tenant-Id` header'ları
   geçersizdir. `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
@@ -127,6 +128,9 @@ X-Correlation-Id: req_wf_demo_001
   ve leave request kayıtları üretir; bakiye read modeli ayrıca manuel/test verisiyle doldurulur.
 - Create response örneklerindeki `id` değerleri server-generated temsili UUID'lerdir; request body
   içinde gönderilmez.
+- Decision transition örneklerindeki `f400...0011` ve `f400...0012` gibi path id'leri bağımsız
+  senaryolarda mevcut tenant içindeki pending kayıtları temsil eder; gerçek çağrıda tenant-scoped
+  mevcut bir pending leave request id'si kullanılmalıdır.
 
 Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, canonical hyphenated UUID olmayan değerler, tekrarlı
 `X-Tenant-Id` header'ları veya boş gönderilen `X-Tenant-Slug` `400` döner. Örnek:
@@ -310,6 +314,7 @@ Request örneği:
 GET /api/v1/employees?department=Engineering&status=active&q=WF&limit=2&offset=0
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
 
 Response `200` örneği:
@@ -336,6 +341,14 @@ Response `200` örneği:
 Yetki: `employee:create:tenant`.
 
 Request örneği:
+
+```http
+POST /api/v1/employees
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
 
 ```json
 {
@@ -410,6 +423,8 @@ Tenant scope dışındaki kayıtlar `404` döner. Mevcut `EmployeeRead` response
 ```http
 GET /api/v1/employees/f3000000-0000-4000-8000-000000000002
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
 
 ```json
@@ -450,6 +465,14 @@ Yetki: `employee:update:tenant`.
 Hedef davranış: critical update işlemleri before/after audit üretir.
 
 Request örneği:
+
+```http
+PATCH /api/v1/employees/f3000000-0000-4000-8000-000000000002
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
 
 ```json
 {
@@ -505,6 +528,15 @@ Invalid lifecycle `422` örneği:
 
 Yetki: `employee:update:tenant`.
 
+Request örneği:
+
+```http
+DELETE /api/v1/employees/f3000000-0000-4000-8000-000000000002
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+```
+
 Response `204`: body dönmez.
 
 ## 8. Leave endpointleri
@@ -538,6 +570,7 @@ Request örneği:
 GET /api/v1/employees/f3000000-0000-4000-8000-000000000002/leave-balances?period_year=2026
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
 
 Response `200` örneği:
@@ -594,6 +627,7 @@ Request örneği:
 GET /api/v1/leave-requests?status=pending&employee_id=f3000000-0000-4000-8000-000000000002&start_date=2026-08-01&end_date=2026-08-31&limit=10&offset=0
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
 ```
 
 Response `200` örneği:
@@ -632,6 +666,14 @@ Invalid filter range `422` örneği:
 Yetki: `leave:create:own`.
 
 Request örneği:
+
+```http
+POST /api/v1/leave-requests
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
 
 ```json
 {
@@ -682,7 +724,18 @@ Generic leave request validation `422` örneği:
 
 Yetki: `leave:approve:team`.
 
+Decision örnekleri bağımsız senaryolardır; path içindeki `id` değeri mevcut tenant içindeki
+`pending` bir izin talebini temsil eder.
+
 Request örneği:
+
+```http
+POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000001/approve
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
 
 ```json
 {
@@ -713,6 +766,14 @@ Yetki: `leave:approve:team`.
 
 Request örneği:
 
+```http
+POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000011/reject
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
+
 ```json
 {
   "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
@@ -724,7 +785,7 @@ Response `200` örneği:
 
 ```json
 {
-  "id": "f4000000-0000-4000-8000-000000000001",
+  "id": "f4000000-0000-4000-8000-000000000011",
   "employee_id": "f3000000-0000-4000-8000-000000000002",
   "leave_type": "annual",
   "start_date": "2026-08-03",
@@ -742,6 +803,14 @@ Yetki: `leave:create:own`.
 
 Request örneği:
 
+```http
+POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000012/cancel
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+X-Correlation-Id: req_wf_demo_001
+Content-Type: application/json
+```
+
 ```json
 {
   "decided_by_user_id": "f2000000-0000-4000-8000-000000000002",
@@ -753,7 +822,7 @@ Response `200` örneği:
 
 ```json
 {
-  "id": "f4000000-0000-4000-8000-000000000001",
+  "id": "f4000000-0000-4000-8000-000000000012",
   "employee_id": "f3000000-0000-4000-8000-000000000002",
   "leave_type": "annual",
   "start_date": "2026-08-03",
