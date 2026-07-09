@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B3)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B4)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -25,19 +25,21 @@ lokal backend smoke kapsamındadır.
 
 Geçerli uygulama notları:
 
-- Domain endpointleri `X-Tenant-Id` header'ı ister; `X-Tenant-Slug` opsiyoneldir.
+- Domain endpointleri geçerli UUID formatında `X-Tenant-Id` header'ı ister;
+  `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
 - Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
   mekanizmasıdır.
-- Employee ve leave endpointlerinde route seviyesinde yakalanan domain hataları Bölüm 1'deki
-  error zarfını döner. FastAPI'nin otomatik request validation `422` yanıtları henüz framework
-  varsayılanındadır.
+- Tenant header dependency hataları ve employee/leave endpointlerinde route seviyesinde yakalanan
+  domain hataları Bölüm 1'deki error zarfını döner. FastAPI'nin diğer otomatik request
+  validation `422` yanıtları henüz framework varsayılanındadır.
 - Bu domain error zarfında `correlation_id`, `X-Correlation-Id` header'ı geldiyse aynı değer,
   gelmediyse `null` olur.
-- Şu an kullanılan domain error code değerleri: `employee_not_found`,
-  `employee_number_conflict`, `employee_invalid_date_range`, `leave_request_not_found`,
-  `leave_request_invalid_date_range`, `leave_request_transition_conflict`, `user_not_found`.
+- Şu an kullanılan error code değerleri: `tenant_header_missing`, `tenant_header_invalid`,
+  `tenant_slug_header_invalid`, `employee_not_found`, `employee_number_conflict`,
+  `employee_invalid_date_range`, `leave_request_not_found`, `leave_request_invalid_date_range`,
+  `leave_request_transition_conflict`, `user_not_found`.
 - Cursor pagination standardı, idempotency, tüm response zarfı ve global correlation middleware
   henüz TODO'dur.
 - Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,
@@ -81,6 +83,20 @@ kullanır:
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
 X-Correlation-Id: req_wf_demo_001
+```
+
+Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, geçersiz UUID formatı veya boş gönderilen
+`X-Tenant-Slug` `400` döner. Örnek:
+
+```json
+{
+  "error": {
+    "code": "tenant_header_invalid",
+    "message": "X-Tenant-Id header must be a valid UUID",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
 ```
 
 ## 1. API ilkeleri

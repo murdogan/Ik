@@ -623,7 +623,12 @@ async def test_leave_request_routes_require_tenant_header() -> None:
     try:
         response = await client.get("/api/v1/leave-requests")
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=400,
+            code="tenant_header_missing",
+            message="X-Tenant-Id header is required",
+        )
     finally:
         await client.aclose()
         await engine.dispose()

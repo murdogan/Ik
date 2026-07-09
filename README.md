@@ -124,9 +124,11 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
   `limit`/`offset` pagination, oluşturma/onay/red/iptal
 
-Employee ve leave endpointlerinin açıkça yakaladığı domain hataları şu zarfla döner:
+Tenant header dependency hataları ve employee/leave endpointlerinin açıkça yakaladığı domain
+hataları şu zarfla döner:
 `{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.
-Bu kapsam not-found, conflict, date-range ve leave transition hatalarıdır; otomatik FastAPI
+Bu kapsam `tenant_header_missing`, `tenant_header_invalid`, `tenant_slug_header_invalid`,
+not-found, conflict, date-range ve leave transition hatalarıdır. Diğer otomatik FastAPI
 validation `422` yanıtları henüz framework varsayılanındadır.
 
 Demo seed sonrası employee ve leave endpointleri için örnek tenant header'ları:
@@ -136,6 +138,9 @@ X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
 X-Correlation-Id: req_wf_demo_001
 ```
+
+Eksik veya boş `X-Tenant-Id`, geçersiz UUID formatı ve boş gönderilen `X-Tenant-Slug` `400`
+status koduyla aynı error zarfını döner.
 
 Employee list örneği:
 

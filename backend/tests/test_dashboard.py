@@ -296,7 +296,34 @@ def test_dashboard_summary_endpoint_requires_tenant_header() -> None:
 
     response = client.get("/api/v1/dashboard/summary")
 
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "code": "tenant_header_missing",
+            "message": "X-Tenant-Id header is required",
+            "details": None,
+            "correlation_id": None,
+        }
+    }
+
+
+def test_dashboard_summary_endpoint_rejects_invalid_tenant_header() -> None:
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/dashboard/summary",
+        headers={"X-Tenant-Id": "not-a-uuid", "X-Correlation-Id": "dashboard-tenant"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "code": "tenant_header_invalid",
+            "message": "X-Tenant-Id header must be a valid UUID",
+            "details": None,
+            "correlation_id": "dashboard-tenant",
+        }
+    }
 
 
 def test_dashboard_summary_is_exposed_in_openapi() -> None:
