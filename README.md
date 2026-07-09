@@ -121,6 +121,8 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
   starters, department distribution and recent activity
 - `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, `limit`/`offset` pagination,
   oluşturma/detay/güncelleme/silme
+- `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
+  `period_year` filtresi ve tenant-scoped çalışan kontrolü
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
   `limit`/`offset` pagination, oluşturma/onay/red/iptal
 
@@ -199,6 +201,32 @@ Employee create request/response örneği:
 Employee lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve
 `on_leave` kayıtlarda `employment_end_date` `null` olmalıdır. Mevcut kayıtla birleştirildikten
 sonra bu kuralı bozan güncellemeler `employee_invalid_lifecycle` koduyla `422` döner.
+
+Leave balance summary örneği:
+
+```http
+GET /api/v1/employees/f3000000-0000-4000-8000-000000000002/leave-balances?period_year=2026
+```
+
+```json
+[
+  {
+    "id": "f5000000-0000-4000-8000-000000000001",
+    "employee_id": "f3000000-0000-4000-8000-000000000002",
+    "leave_type": "annual",
+    "period_year": 2026,
+    "opening_balance_days": 20.0,
+    "used_days": 5.0,
+    "planned_days": 2.0,
+    "remaining_days": 13.0,
+    "calculation_mode": "manual_placeholder",
+    "external_integration_enabled": false
+  }
+]
+```
+
+Bu endpoint W1C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak edişi/accrual,
+resmi tatil hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon içermez.
 
 Leave request list örneği:
 

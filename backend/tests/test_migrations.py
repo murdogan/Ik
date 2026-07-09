@@ -34,8 +34,9 @@ def test_core_migration_chain_is_linear() -> None:
     employee_revision = script.get_revision("0003_create_employees")
     leave_request_revision = script.get_revision("0004_create_leave_requests")
     employee_date_order_revision = script.get_revision("0005_employee_date_order")
+    leave_balance_revision = script.get_revision("0006_create_leave_balance_summaries")
 
-    assert script.get_heads() == ["0005_employee_date_order"]
+    assert script.get_heads() == ["0006_create_leave_balance_summaries"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -46,6 +47,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert leave_request_revision.down_revision == "0003_create_employees"
     assert employee_date_order_revision is not None
     assert employee_date_order_revision.down_revision == "0004_create_leave_requests"
+    assert leave_balance_revision is not None
+    assert leave_balance_revision.down_revision == "0005_employee_date_order"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -129,6 +132,17 @@ def test_employee_date_order_migration_exists() -> None:
     text = migration.read_text()
     assert "ck_employees_date_order" in text
     assert "employment_end_date >= employment_start_date" in text
+
+
+def test_leave_balance_summary_migration_exists() -> None:
+    migration = Path("backend/alembic/versions/0006_create_leave_balance_summaries.py")
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "create_table" in text
+    assert "leave_balance_summaries" in text
+    assert "uq_leave_balance_summaries_tenant_employee_type_period" in text
+    assert "ix_leave_balance_summaries_tenant_employee_period" in text
 
 
 def test_readme_documents_migration_commands() -> None:

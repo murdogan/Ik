@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B5)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1C2)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -17,6 +17,7 @@ lokal backend smoke kapsamındadır.
 | GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | Uygulandı | Partial update, tarih aralığı validasyonu |
 | DELETE | `/api/v1/employees/{employee_id}` | Uygulandı | Mevcut davranış hard delete |
+| GET | `/api/v1/employees/{employee_id}/leave-balances` | Uygulandı | Tenant-scoped, read-only manuel izin bakiyesi özeti; `period_year` filtresi var |
 | GET | `/api/v1/leave-requests` | Uygulandı | Tenant-scoped liste; `status`, `employee_id`, `start_date`, `end_date` filtreleri ve `limit`/`offset` pagination var |
 | POST | `/api/v1/leave-requests` | Uygulandı | Pending talep oluşturur, çalışan ve isteyen kullanıcı tenant içinde olmalı |
 | POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Uygulandı | Yalnız pending talep onaylanır |
@@ -56,6 +57,13 @@ Geçerli uygulama notları:
   talepleri döndürür.
 - Leave request listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`;
   `offset` varsayılan `0`) uygulanmıştır.
+- Leave balance summary endpointi `leave_balance_summaries` read modelini okur. Bu W1C2
+  placeholder'ı yalnız manuel/açılış özet değerlerini döner; hak ediş/accrual motoru, resmi tatil
+  hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon içermez. Response içinde
+  `calculation_mode: "manual_placeholder"` ve `external_integration_enabled: false` döner.
+  `remaining_days`, `opening_balance_days - used_days - planned_days` olarak türetilir. Tenant
+  içindeki çalışanın hiç bakiye özeti yoksa `200 []`, tenant scope dışı çalışan için
+  `employee_not_found` `404` döner.
 - Employee ve leave tarih alanları yalnız `YYYY-MM-DD` full-date değerlerini kabul eder;
   midnight datetime stringleri tarih olarak coerce edilmez. Employee create/update ve leave create
   date order kontrolleri servis katmanında da korunur; `employees` tablosunda date-order check
@@ -457,11 +465,51 @@ Response `204`: body dönmez.
 |---|---|---|---|
 | GET | `/api/v1/leave-types` | `leave:read` | Tenant izin türleri |
 | GET | `/api/v1/leave-balances/me` | `leave:read:own` | Çalışan bakiyesi |
+| GET | `/api/v1/employees/{id}/leave-balances` | `leave:read:{scope}` | Yetkili çalışanın manuel bakiye özeti |
 | POST | `/api/v1/leave-requests` | `leave:create:own` | İzin talebi |
 | GET | `/api/v1/leave-requests` | `leave:read:{scope}` | Liste; status, employee, tarih aralığı filtreleri ve pagination |
 | POST | `/api/v1/leave-requests/{id}/approve` | `leave:approve:team` | Onay |
 | POST | `/api/v1/leave-requests/{id}/reject` | `leave:approve:team` | Red |
 | POST | `/api/v1/leave-requests/{id}/cancel` | `leave:create:own` | İptal |
+
+### `GET /api/v1/employees/{id}/leave-balances`
+
+Yetki: `leave:read:{scope}`.
+
+Query:
+
+- `period_year`: Opsiyonel dönem yılı. `1900..2200` aralığıyla sınırlıdır.
+
+Not: Bu endpoint W1C2 için bilinçli olarak read-only ve manuel placeholder'dır. İzin hak edişi,
+resmi tatil/hafta sonu hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon çalıştırmaz.
+Çalışan tenant içinde varsa ama bakiye özeti yoksa `200 []` döner.
+
+Request örneği:
+
+```http
+GET /api/v1/employees/f3000000-0000-4000-8000-000000000002/leave-balances?period_year=2026
+X-Tenant-Id: f1000000-0000-4000-8000-000000000001
+X-Tenant-Slug: wealthy-falcon-demo
+```
+
+Response `200` örneği:
+
+```json
+[
+  {
+    "id": "f5000000-0000-4000-8000-000000000001",
+    "employee_id": "f3000000-0000-4000-8000-000000000002",
+    "leave_type": "annual",
+    "period_year": 2026,
+    "opening_balance_days": 20.0,
+    "used_days": 5.0,
+    "planned_days": 2.0,
+    "remaining_days": 13.0,
+    "calculation_mode": "manual_placeholder",
+    "external_integration_enabled": false
+  }
+]
+```
 
 ### `GET /api/v1/leave-requests`
 

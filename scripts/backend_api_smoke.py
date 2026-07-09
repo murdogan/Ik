@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "backend"
@@ -19,6 +19,7 @@ from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
 from app.models.employee import EmployeeStatus
+from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
@@ -50,6 +51,7 @@ OPENAPI_PATHS = {
     "/api/v1/dashboard/summary",
     "/api/v1/employees",
     "/api/v1/employees/{employee_id}",
+    "/api/v1/employees/{employee_id}/leave-balances",
     "/api/v1/leave-requests",
     "/api/v1/leave-requests/{leave_request_id}/approve",
     "/api/v1/leave-requests/{leave_request_id}/reject",
@@ -76,6 +78,12 @@ async def main() -> None:
             primary_employee_id, secondary_employee_id, other_employee_id = (
                 await _smoke_employee_endpoints(client)
             )
+            await _smoke_leave_balance_endpoint(
+                client,
+                session_factory,
+                primary_employee_id,
+                other_employee_id,
+            )
             await _smoke_leave_request_endpoints(
                 client,
                 primary_employee_id,
@@ -90,7 +98,7 @@ async def main() -> None:
     print(
         "BACKEND_SMOKE_OK "
         f"tenant_id={TENANT_ID} "
-        "checked=health,landing,openapi,dashboard,employees,leave_requests"
+        "checked=health,landing,openapi,dashboard,employees,leave_balances,leave_requests"
     )
 
 
@@ -381,6 +389,78 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
     )
 
     return employee_id, secondary_employee_id, other_employee_id
+
+
+async def _smoke_leave_balance_endpoint(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    employee_id: str,
+    other_employee_id: str,
+) -> None:
+    period_year = date.today().year
+    balance_id = uuid4()
+    other_balance_id = uuid4()
+    async with session_factory() as session:
+        session.add_all(
+            [
+                LeaveBalanceSummary(
+                    id=balance_id,
+                    tenant_id=TENANT_ID,
+                    employee_id=UUID(employee_id),
+                    leave_type="annual",
+                    period_year=period_year,
+                    opening_balance_days=20.0,
+                    used_days=5.0,
+                    planned_days=2.0,
+                ),
+                LeaveBalanceSummary(
+                    id=other_balance_id,
+                    tenant_id=OTHER_TENANT_ID,
+                    employee_id=UUID(other_employee_id),
+                    leave_type="annual",
+                    period_year=period_year,
+                    opening_balance_days=99.0,
+                    used_days=0.0,
+                    planned_days=0.0,
+                ),
+            ]
+        )
+        await session.commit()
+
+    balances = _expect_json(
+        await client.get(
+            f"/api/v1/employees/{employee_id}/leave-balances",
+            headers=TENANT_HEADERS,
+            params={"period_year": period_year},
+        ),
+        200,
+        "GET /api/v1/employees/{employee_id}/leave-balances",
+    )
+    _assert_equal(len(balances), 1, "leave balance summary count")
+    _assert_equal(balances[0]["id"], str(balance_id), "leave balance summary id")
+    _assert_equal(balances[0]["remaining_days"], 13.0, "leave balance remaining_days")
+    _assert_equal(
+        balances[0]["calculation_mode"],
+        "manual_placeholder",
+        "leave balance calculation_mode",
+    )
+    _assert_equal(
+        balances[0]["external_integration_enabled"],
+        False,
+        "leave balance external integration flag",
+    )
+    if "tenant_id" in balances[0]:
+        raise AssertionError("leave balance summary leaked tenant_id")
+
+    _expect_error_code(
+        await client.get(
+            f"/api/v1/employees/{other_employee_id}/leave-balances",
+            headers=TENANT_HEADERS,
+        ),
+        404,
+        "employee_not_found",
+        "GET cross-tenant /api/v1/employees/{employee_id}/leave-balances",
+    )
 
 
 async def _smoke_leave_request_endpoints(
