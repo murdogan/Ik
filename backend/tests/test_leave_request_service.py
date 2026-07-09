@@ -242,6 +242,30 @@ async def test_create_leave_request_rejects_missing_requesting_user() -> None:
         await engine.dispose()
 
 
+async def test_create_leave_request_rejects_cross_tenant_employee_without_insert() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        existing_ids = set(await session.scalars(select(LeaveRequest.id)))
+
+        with pytest.raises(LeaveRequestEmployeeNotFoundError):
+            await LeaveRequestService(session).create_leave_request(
+                TENANT_ID,
+                LeaveRequestCreate(
+                    employee_id=OTHER_EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 8, 3),
+                    end_date=date(2026, 8, 7),
+                    requested_by_user_id=REQUESTING_USER_ID,
+                ),
+            )
+
+        current_ids = set(await session.scalars(select(LeaveRequest.id)))
+        assert current_ids == existing_ids
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_list_leave_requests_uses_inclusive_overlap_boundaries() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -343,6 +367,28 @@ async def test_decide_leave_request_checks_transition_before_decider_tenant() ->
         assert leave_request is not None
         assert leave_request.status == LeaveRequestStatus.APPROVED.value
         assert leave_request.decided_by_user_id == APPROVER_USER_ID
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_decide_leave_request_rejects_cross_tenant_decider_without_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        with pytest.raises(LeaveRequestUserNotFoundError):
+            await LeaveRequestService(session).approve_leave_request(
+                TENANT_ID,
+                PENDING_REQUEST_ID,
+                LeaveRequestDecision(decided_by_user_id=OTHER_USER_ID),
+            )
+
+        leave_request = await session.scalar(
+            select(LeaveRequest).where(LeaveRequest.id == PENDING_REQUEST_ID)
+        )
+        assert leave_request is not None
+        assert leave_request.status == LeaveRequestStatus.PENDING.value
+        assert leave_request.decided_by_user_id is None
+        assert leave_request.decision_note is None
     finally:
         await session.close()
         await engine.dispose()

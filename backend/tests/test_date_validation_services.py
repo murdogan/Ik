@@ -62,6 +62,21 @@ async def test_employee_service_create_rejects_constructed_invalid_lifecycle() -
         await service.create_employee(TENANT_ID, payload)
 
 
+async def test_employee_service_create_rejects_constructed_null_status() -> None:
+    service = EmployeeService(session=cast(AsyncSession, None))
+    payload = EmployeeCreate.model_construct(
+        employee_number="WF-001",
+        first_name="Ada",
+        last_name="Yilmaz",
+        status=None,
+        employment_start_date=date(2026, 7, 1),
+        employment_end_date=None,
+    )
+
+    with pytest.raises(EmployeeLifecycleError, match="Employee status is required"):
+        await service.create_employee(TENANT_ID, payload)
+
+
 async def test_leave_request_service_create_rejects_constructed_invalid_date_range() -> None:
     service = LeaveRequestService(session=cast(AsyncSession, None))
     payload = LeaveRequestCreate.model_construct(

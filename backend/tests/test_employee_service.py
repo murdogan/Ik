@@ -5,8 +5,14 @@ import pytest
 from app.db.base import Base
 from app.models.employee import Employee, EmployeeStatus
 from app.models.tenant import Tenant, TenantStatus
-from app.schemas.employee import EmployeeListFilters, EmployeeListPagination, EmployeeUpdate
+from app.schemas.employee import (
+    EmployeeCreate,
+    EmployeeListFilters,
+    EmployeeListPagination,
+    EmployeeUpdate,
+)
 from app.services.employee_service import (
+    DuplicateEmployeeNumberError,
     EmployeeDateRangeError,
     EmployeeLifecycleError,
     EmployeeNotFoundError,
@@ -145,6 +151,33 @@ async def test_get_employee_is_tenant_scoped_at_service_boundary() -> None:
     try:
         with pytest.raises(EmployeeNotFoundError):
             await EmployeeService(session).get_employee(TENANT_ID, OTHER_EMPLOYEE_ID)
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_create_employee_rejects_duplicate_number_before_insert() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        existing_ids = set(
+            await session.scalars(select(Employee.id).where(Employee.tenant_id == TENANT_ID))
+        )
+
+        with pytest.raises(DuplicateEmployeeNumberError):
+            await EmployeeService(session).create_employee(
+                TENANT_ID,
+                EmployeeCreate(
+                    employee_number="WF-001",
+                    first_name="Duplicate",
+                    last_name="Employee",
+                    employment_start_date=date(2026, 7, 8),
+                ),
+            )
+
+        current_ids = set(
+            await session.scalars(select(Employee.id).where(Employee.tenant_id == TENANT_ID))
+        )
+        assert current_ids == existing_ids
     finally:
         await session.close()
         await engine.dispose()
