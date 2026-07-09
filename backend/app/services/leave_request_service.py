@@ -62,6 +62,7 @@ class LeaveRequestService:
             statement.order_by(
                 LeaveRequest.created_at.desc(),
                 LeaveRequest.start_date.asc(),
+                LeaveRequest.id.asc(),
             )
             .offset(pagination.offset)
             .limit(pagination.limit)

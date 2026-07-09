@@ -2,15 +2,13 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2A3 Leave request list filters`
+Task: `W2A4 Leave request pagination`
 
 ## Scope
 
-- Hardened the leave request list filter contract for `status`, `employee_id`, and inclusive
-  overlapping `start_date`/`end_date` query parameters.
-- Added service-level coverage for combined status+employee filters, cross-tenant employee filter
-  results, and single-sided date windows.
-- Added OpenAPI metadata coverage for the leave request list filter query parameters.
+- Hardened leave request list `limit`/`offset` pagination with deterministic service ordering.
+- Kept pagination bounded at `limit` default `50`, maximum `200`, and `offset` default `0`.
+- Added service-level coverage that pagination is applied after tenant scope.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -43,7 +41,8 @@ Task: `W2A3 Leave request list filters`
   and `on_leave` require `employment_end_date: null`. Violations return
   `employee_invalid_lifecycle`.
 - Leave request list supports `status`, `employee_id`, inclusive overlapping `start_date` and
-  `end_date` filters, plus `limit` and `offset`.
+  `end_date` filters, plus bounded `limit` and `offset` pagination. Pagination is tenant-scoped
+  and uses deterministic ordering by `created_at desc`, `start_date asc`, and `id asc`.
 - Dashboard summary is DB-backed and tenant-scoped. It returns active employee count, workforce
   count, pending leave count, new starters this month, department distribution, recent activity,
   and compatibility fields currently used by the frontend-facing contract.
@@ -57,14 +56,14 @@ Task: `W2A3 Leave request list filters`
 
 ## Verification
 
-W2A3 focused preflight:
+W2A4 focused preflight:
 
-- `uv run pytest backend/tests/test_leave_request_service.py backend/tests/test_leave_request_api.py backend/tests/test_openapi_metadata.py`: passed, 37 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest backend/tests/test_leave_request_service.py backend/tests/test_leave_request_api.py backend/tests/test_openapi_metadata.py`: passed, 38 tests passed, 1 existing Starlette `TestClient` deprecation warning.
 
-Full W2A3 local gate run:
+Full W2A4 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 196 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 197 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 

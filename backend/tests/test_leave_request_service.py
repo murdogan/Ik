@@ -11,6 +11,7 @@ from app.schemas.leave_request import (
     LeaveRequestCreate,
     LeaveRequestDecision,
     LeaveRequestListFilters,
+    LeaveRequestListPagination,
 )
 from app.services.leave_request_service import (
     LeaveRequestEmployeeNotFoundError,
@@ -281,6 +282,21 @@ async def test_list_leave_requests_combines_status_and_employee_filters() -> Non
 
         assert [leave_request.id for leave_request in leave_requests] == [PENDING_REQUEST_ID]
         assert cross_tenant_employee_requests == []
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_paginates_after_tenant_scope() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        leave_requests = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            pagination=LeaveRequestListPagination(limit=1, offset=1),
+        )
+
+        assert [leave_request.id for leave_request in leave_requests] == [PENDING_REQUEST_ID]
+        assert {leave_request.tenant_id for leave_request in leave_requests} == {TENANT_ID}
     finally:
         await session.close()
         await engine.dispose()
