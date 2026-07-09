@@ -104,7 +104,8 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/health`
 - `/`
 - `/openapi.json`
-- `/api/v1/dashboard/summary`
+- `/api/v1/dashboard/summary` active employee count, pending leave count, this-month
+  starters, department distribution and recent activity
 - `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, `limit`/`offset` pagination,
   oluşturma/detay/güncelleme/silme
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,

@@ -2,17 +2,20 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W1A4 Leave request pagination`
+Task: `W1A5 Dashboard enrichment`
 
 ## Scope
 
-- Added tenant-scoped leave request list pagination with `limit`/`offset`.
-- Leave request pagination uses the same bounded defaults as employees: `limit=50`, maximum `200`,
-  and `offset=0`.
-- Existing leave request list filters for `status`, `employee_id`, `start_date`, and `end_date`
-  continue to apply before pagination.
-- Leave request date filters use an inclusive overlap window, so requests crossing the queried period are returned.
-- Invalid leave filter ranges where `end_date < start_date` return `422`.
+- Added explicit tenant-scoped dashboard metrics: `active_employee_count` and
+  `pending_leave_count`.
+- `active_employee_count` counts only employees with `active` status.
+- Existing `employee_count` remains the current workforce count (`active` + `on_leave`) and
+  `pending_leave_requests` remains as a compatibility field mirroring `pending_leave_count`.
+- Dashboard summary continues to return DB-backed `new_starters_this_month`,
+  `department_distribution`, and `recent_activity`.
+- Dashboard tests now cover active/on-leave separation, pending leave count aliases, unassigned
+  department grouping, zero state, tenant header use, and OpenAPI schema exposure.
+- Backend API smoke now asserts the enriched dashboard fields.
 - Employee list keeps existing `department`, `status`, and `q` filters plus `limit`/`offset` pagination.
 - Synced README, backend smoke coverage, and OpenAPI draft status with current API behavior.
 - No deploy, staging URL, cron, token, auth, credential, `.env`, UI, or external integration changes.
@@ -22,7 +25,8 @@ Task: `W1A4 Leave request pagination`
 - `GET /health`
 - `GET /`
 - `GET /openapi.json`
-- `GET /api/v1/dashboard/summary`
+- `GET /api/v1/dashboard/summary`, including active employee count, pending leave count,
+  this-month starters, department distribution, and recent activity
 - Employee CRUD under `/api/v1/employees`, including list filters:
   `department`, `status`, `q`, and `limit`/`offset` pagination
 - Leave request list/create/approve/reject/cancel under `/api/v1/leave-requests`, including list

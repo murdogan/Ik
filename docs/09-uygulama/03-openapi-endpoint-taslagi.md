@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A4)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A5)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -11,7 +11,7 @@ lokal backend smoke kapsamındadır.
 |---|---|---|---|
 | GET | `/health` | Uygulandı | Public servis durumu |
 | GET | `/` | Uygulandı | Wealthy Falcon HR landing HTML |
-| GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB sayımları, departman dağılımı ve son aktiviteler |
+| GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; `department`, `status`, `q` filtreleri ve `limit`/`offset` pagination var |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context kullanır, duplicate employee number `409` |
 | GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
@@ -31,6 +31,12 @@ Geçerli uygulama notları:
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
   mekanizmasıdır.
 - Cursor pagination standardı, idempotency ve correlation envelope henüz TODO'dur.
+- Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,
+  `pending_leave_count`, `employee_count`, `pending_leave_requests`,
+  `new_starters_this_month`, `department_distribution` ve `recent_activity` döner.
+  `active_employee_count` yalnız `active` çalışanları sayar; `employee_count` mevcut
+  işgücü için `active` ve `on_leave` statülerini kapsar. `pending_leave_requests`,
+  `pending_leave_count` ile uyumlu geriye dönük alandır.
 - Employee listesinde `department`, `status` ve employee number/email üzerinden `q` filtreleri
 - Employee listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`)
   uygulanmıştır.

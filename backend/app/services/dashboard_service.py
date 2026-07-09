@@ -37,20 +37,31 @@ class DashboardService:
         self.recent_activity_limit = max(recent_activity_limit, 0)
 
     async def get_summary(self, tenant_id: UUID) -> DashboardSummary:
+        active_employee_count = await self._count_active_employees(tenant_id)
         employee_count = await self._count_current_employees(tenant_id)
-        pending_leave_requests = await self._count_pending_leave_requests(tenant_id)
+        pending_leave_count = await self._count_pending_leave_requests(tenant_id)
         new_starters_this_month = await self._count_new_starters_this_month(tenant_id)
         department_distribution = await self._department_distribution(tenant_id)
         recent_activity = await self._recent_activity(tenant_id)
 
         return DashboardSummary(
+            active_employee_count=active_employee_count,
+            pending_leave_count=pending_leave_count,
             employee_count=employee_count,
-            pending_leave_requests=pending_leave_requests,
+            pending_leave_requests=pending_leave_count,
             new_starters_this_month=new_starters_this_month,
             open_tasks=0,
             department_distribution=department_distribution,
             recent_activity=recent_activity,
         )
+
+    async def _count_active_employees(self, tenant_id: UUID) -> int:
+        statement = (
+            select(func.count(Employee.id))
+            .where(Employee.tenant_id == tenant_id)
+            .where(Employee.status == EmployeeStatus.ACTIVE.value)
+        )
+        return await self._scalar_count(statement)
 
     async def _count_current_employees(self, tenant_id: UUID) -> int:
         statement = (

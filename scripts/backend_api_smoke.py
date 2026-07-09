@@ -397,7 +397,9 @@ async def _smoke_dashboard_endpoint(client: AsyncClient) -> None:
         200,
         "GET /api/v1/dashboard/summary",
     )
+    _assert_equal(summary["active_employee_count"], 0, "dashboard active_employee_count")
     _assert_equal(summary["employee_count"], 1, "dashboard employee_count")
+    _assert_equal(summary["pending_leave_count"], 0, "dashboard pending_leave_count")
     _assert_equal(summary["pending_leave_requests"], 0, "dashboard pending_leave_requests")
     _assert_equal(summary["new_starters_this_month"], 1, "dashboard new_starters_this_month")
     _assert_equal(

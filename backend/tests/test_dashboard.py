@@ -125,6 +125,18 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 created_at=NOW - timedelta(days=20),
             ),
             Employee(
+                id=UUID("4fffffff-4444-4fff-8fff-ffffffffffff"),
+                tenant_id=TENANT_ID,
+                employee_number="WF-005",
+                first_name="Elif",
+                last_name="Arslan",
+                department="   ",
+                position="Operations Specialist",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 4, 1),
+                created_at=NOW - timedelta(days=30),
+            ),
+            Employee(
                 id=UUID("9eeeeeee-9999-4999-8999-999999999999"),
                 tenant_id=OTHER_TENANT_ID,
                 employee_number="OT-001",
@@ -181,13 +193,16 @@ async def test_dashboard_summary_counts_are_tenant_scoped_from_database() -> Non
 
     summary = await DashboardService(session=session, today=TODAY).get_summary(TENANT_ID)
 
-    assert summary.employee_count == 3
+    assert summary.active_employee_count == 3
+    assert summary.employee_count == 4
+    assert summary.pending_leave_count == 1
     assert summary.pending_leave_requests == 1
     assert summary.new_starters_this_month == 2
     assert summary.open_tasks == 0
     assert summary.department_distribution == [
         DepartmentDistributionItem(department="People", count=2),
         DepartmentDistributionItem(department="Engineering", count=1),
+        DepartmentDistributionItem(department="Unassigned", count=1),
     ]
 
     await session.close()
@@ -222,7 +237,9 @@ async def test_dashboard_summary_returns_zero_state_for_empty_tenant() -> None:
         UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
     )
 
+    assert summary.active_employee_count == 0
     assert summary.employee_count == 0
+    assert summary.pending_leave_count == 0
     assert summary.pending_leave_requests == 0
     assert summary.new_starters_this_month == 0
     assert summary.open_tasks == 0
@@ -240,6 +257,8 @@ def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
         async def get_summary(self, tenant_id: UUID) -> DashboardSummary:
             self.tenant_ids.append(tenant_id)
             return DashboardSummary(
+                active_employee_count=6,
+                pending_leave_count=2,
                 employee_count=7,
                 pending_leave_requests=2,
                 new_starters_this_month=1,
@@ -266,7 +285,9 @@ def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
 
     assert response.status_code == 200
     assert fake_service.tenant_ids == [TENANT_ID]
+    assert response.json()["active_employee_count"] == 6
     assert response.json()["employee_count"] == 7
+    assert response.json()["pending_leave_count"] == 2
     assert response.json()["recent_activity"] == []
 
 
@@ -284,4 +305,10 @@ def test_dashboard_summary_is_exposed_in_openapi() -> None:
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
-    assert "/api/v1/dashboard/summary" in response.json()["paths"]
+    openapi = response.json()
+    assert "/api/v1/dashboard/summary" in openapi["paths"]
+    summary_properties = openapi["components"]["schemas"]["DashboardSummary"]["properties"]
+    assert "active_employee_count" in summary_properties
+    assert "pending_leave_count" in summary_properties
+    assert "department_distribution" in summary_properties
+    assert "new_starters_this_month" in summary_properties

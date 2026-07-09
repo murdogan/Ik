@@ -18,6 +18,8 @@ class DashboardActivityItem(BaseModel):
 
 
 class DashboardSummary(BaseModel):
+    active_employee_count: int
+    pending_leave_count: int
     employee_count: int
     pending_leave_requests: int
     new_starters_this_month: int
