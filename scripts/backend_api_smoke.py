@@ -45,6 +45,7 @@ OTHER_TENANT_HEADERS = {
     "X-Tenant-Id": str(OTHER_TENANT_ID),
     "X-Tenant-Slug": "other-falcon",
 }
+HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
 DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/"),
     ("get", "/health"),
@@ -61,6 +62,10 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
     ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
 }
+DOCUMENTED_RUNTIME_ENDPOINTS = {
+    ("get", "/openapi.json"),
+}
+DOCUMENTED_SMOKE_ENDPOINTS = DOCUMENTED_OPENAPI_OPERATIONS | DOCUMENTED_RUNTIME_ENDPOINTS
 
 
 async def main() -> None:
@@ -107,6 +112,7 @@ async def main() -> None:
     print(
         "BACKEND_SMOKE_OK "
         f"tenant_id={TENANT_ID} "
+        f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
         "checked=health,landing,openapi,tenant_headers,dashboard,employees,"
         "leave_balances,leave_requests"
     )
@@ -184,13 +190,28 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
     _assert_contains(landing.text, "Wealthy Falcon HR", "landing brand")
 
     openapi = _expect_json(await client.get("/openapi.json"), 200, "GET /openapi.json")
-    missing_operations = [
-        f"{method.upper()} {path}"
-        for method, path in sorted(DOCUMENTED_OPENAPI_OPERATIONS)
-        if method not in openapi["paths"].get(path, {})
-    ]
+    _expect_documented_openapi_operations(openapi)
+
+
+def _expect_documented_openapi_operations(openapi: dict[str, Any]) -> None:
+    actual_operations = {
+        (method, path)
+        for path, path_item in openapi["paths"].items()
+        for method in path_item
+        if method in HTTP_METHODS
+    }
+    missing_operations = sorted(DOCUMENTED_OPENAPI_OPERATIONS - actual_operations)
+    undocumented_operations = sorted(actual_operations - DOCUMENTED_OPENAPI_OPERATIONS)
     if missing_operations:
-        raise AssertionError(f"OpenAPI is missing operations: {missing_operations}")
+        raise AssertionError(
+            "OpenAPI is missing documented operations: "
+            f"{_format_operations(missing_operations)}"
+        )
+    if undocumented_operations:
+        raise AssertionError(
+            "OpenAPI has operations missing from backend smoke documentation: "
+            f"{_format_operations(undocumented_operations)}"
+        )
 
 
 async def _smoke_tenant_header_errors(client: AsyncClient) -> None:
@@ -603,7 +624,7 @@ async def _smoke_leave_request_endpoints(
 
     decision_payload = {
         "decided_by_user_id": str(APPROVER_USER_ID),
-        "decision_note": "W1B2 backend smoke decision",
+        "decision_note": "W2C6 backend smoke decision",
     }
     approved = _expect_json(
         await client.post(
@@ -626,7 +647,7 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(
         approved["decision_note"],
-        "W1B2 backend smoke decision",
+        "W2C6 backend smoke decision",
         "approved leave decision note",
     )
 
@@ -1094,6 +1115,10 @@ def _assert_equal(actual: Any, expected: Any, label: str = "value") -> None:
 def _assert_contains(value: str, expected: str, label: str) -> None:
     if expected not in value:
         raise AssertionError(f"{label} expected to contain {expected!r}")
+
+
+def _format_operations(operations: list[tuple[str, str]]) -> list[str]:
+    return [f"{method.upper()} {path}" for method, path in operations]
 
 
 if __name__ == "__main__":

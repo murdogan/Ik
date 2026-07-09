@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W2B4)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W2C6)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -11,6 +11,7 @@ lokal backend smoke kapsamındadır.
 |---|---|---|---|
 | GET | `/health` | Uygulandı | Public servis durumu |
 | GET | `/` | Uygulandı | Wealthy Falcon HR landing HTML |
+| GET | `/openapi.json` | Uygulandı | FastAPI generated schema; smoke bu şemayla documented operation drift kontrolü yapar |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; `department`, `status`, `q` filtreleri ve `limit`/`offset` pagination var |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context kullanır, duplicate employee number `409` |
@@ -30,8 +31,9 @@ Geçerli uygulama notları:
   `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
   Mevcut operasyonların her biri açık, tenant-aware `summary` ve `description` metadata'sı taşır;
   filtre/header açıklamaları da docs okunabilirliği için netleştirilmiştir. Bu değişiklik yalnız
-  dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W1C6 status
-  refresh kapsamında smoke script bu operasyonları path ve HTTP method seviyesinde doğrular.
+  dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W2C6 status
+  refresh kapsamında smoke script generated OpenAPI operasyon setiyle documented smoke registry'yi
+  path ve HTTP method seviyesinde iki yönlü doğrular.
 - W2B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
   örnekleri taşır. Employee ve leave endpointleri bugün doğrudan schema/list döner; Bölüm 1'deki
   `{ data, meta }` zarfı gelecek standart hedefidir.

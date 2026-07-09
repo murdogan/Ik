@@ -2,53 +2,53 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2C2 Leave balance placeholder model plan`
+Task: `W2C6 Implementation report refresh`
 
 ## Scope
 
-- Confirmed the existing `leave_balance_summaries` read model is the appropriate minimal domain
-  placeholder for W2C2; no new balance write API, accrual engine, payroll, or external integration
-  was added.
-- Hardened the leave balance response schema so `external_integration_enabled` is a literal
-  `false` placeholder flag.
-- Added regression coverage that the Leave Balances OpenAPI surface remains read-only and exposes
-  no mutating operations.
-- Kept the public leave balance API shape unchanged.
+- Refreshed the implementation status report against the current FastAPI route surface after
+  W2C1-W2C5.
+- Reconfirmed the completed API surface, tenant-scoped behavior notes, and remaining backend
+  backlog.
+- Tightened `scripts/backend_api_smoke.py` so the generated OpenAPI operation set and documented
+  smoke registry must stay in sync.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
+- No API behavior, schema, model, migration, or tenant isolation change.
 
 ## Completed API Surface
 
 | Method | Path | Status | Smoke coverage |
 |---|---|---|---|
-| GET | `/health` | Implemented | Health response and OpenAPI operation |
-| GET | `/` | Implemented | Landing response and OpenAPI operation |
-| GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch |
-| GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped enriched metrics and OpenAPI operation |
-| GET | `/api/v1/employees` | Implemented | Tenant list, filters, pagination, OpenAPI operation |
-| POST | `/api/v1/employees` | Implemented | Tenant create and OpenAPI operation |
-| GET | `/api/v1/employees/{employee_id}` | Implemented | Detail, tenant isolation, OpenAPI operation |
-| PATCH | `/api/v1/employees/{employee_id}` | Implemented | Partial update, lifecycle rules, OpenAPI operation |
-| DELETE | `/api/v1/employees/{employee_id}` | Implemented | Delete, not-found check, OpenAPI operation |
-| GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Manual summaries, period filter, tenant isolation, OpenAPI operation |
-| GET | `/api/v1/leave-requests` | Implemented | Tenant list, filters, pagination, OpenAPI operation |
-| POST | `/api/v1/leave-requests` | Implemented | Pending create and OpenAPI operation |
-| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Pending-only transition, tenant checks, OpenAPI operation |
-| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Pending-only transition, OpenAPI operation |
-| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Pending-only transition, OpenAPI operation |
+| GET | `/health` | Implemented | Health response and documented OpenAPI operation |
+| GET | `/` | Implemented | Wealthy Falcon HR landing response and documented OpenAPI operation |
+| GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and documented operation drift check |
+| GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped enriched metrics and documented OpenAPI operation |
+| GET | `/api/v1/employees` | Implemented | Tenant list, filters, pagination, and documented OpenAPI operation |
+| POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, and documented OpenAPI operation |
+| GET | `/api/v1/employees/{employee_id}` | Implemented | Detail, tenant isolation, and documented OpenAPI operation |
+| PATCH | `/api/v1/employees/{employee_id}` | Implemented | Partial update, lifecycle rules, and documented OpenAPI operation |
+| DELETE | `/api/v1/employees/{employee_id}` | Implemented | Delete, not-found check, and documented OpenAPI operation |
+| GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Manual summaries, period filter, tenant isolation, and documented OpenAPI operation |
+| GET | `/api/v1/leave-requests` | Implemented | Tenant list, filters, pagination, and documented OpenAPI operation |
+| POST | `/api/v1/leave-requests` | Implemented | Pending create, tenant checks, and documented OpenAPI operation |
+| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Pending-only transition, tenant checks, and documented OpenAPI operation |
+| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Pending-only transition and documented OpenAPI operation |
+| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Pending-only transition and documented OpenAPI operation |
 
 ## Current Behavior Notes
 
-- Domain endpoints require a single canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
+- Domain endpoints require exactly one canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
   remains optional but cannot be blank or repeated when sent.
-- Employee list supports `department`, `status`, `q`, `limit`, and `offset`.
+- Employee list supports `department`, `status`, `q`, `limit`, and `offset`. Filters are scoped to
+  the current tenant before pagination.
 - Employee lifecycle validation is active: `terminated` requires `employment_end_date`; `active`
   and `on_leave` require `employment_end_date: null`. Violations return
-  `employee_invalid_lifecycle`. W2C1 also enforces this invariant with the
-  `ck_employees_lifecycle_status_dates` database check constraint.
+  `employee_invalid_lifecycle`, and the database also has
+  `ck_employees_lifecycle_status_dates`.
 - Leave request list supports `status`, `employee_id`, inclusive overlapping `start_date` and
-  `end_date` filters, plus bounded `limit` and `offset` pagination. Pagination is tenant-scoped
-  and uses deterministic ordering by `created_at desc`, `start_date asc`, and `id asc`.
+  `end_date` filters, plus bounded `limit` and `offset` pagination. Ordering is deterministic by
+  `created_at desc`, `start_date asc`, and `id asc`.
 - Dashboard summary is DB-backed and tenant-scoped. It returns active employee count, workforce
   count, pending leave count, new starters this month, department distribution, recent activity,
   and compatibility fields currently used by the frontend-facing contract.
@@ -56,35 +56,55 @@ Task: `W2C2 Leave balance placeholder model plan`
   `leave_balance_summaries`. They return `calculation_mode: "manual_placeholder"` and
   `external_integration_enabled: false`; no accrual engine or external integration exists.
 - OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
-  `Leave Requests`. Current operations have explicit summaries and descriptions.
-- Tenant dependency, route-level domain errors, and automatic request validation errors on
-  employee, leave balance, and leave request endpoints use the project error envelope. Generic
-  validation failures on those endpoints return `employee_validation_error`,
-  `leave_balance_validation_error`, or `leave_request_validation_error`; date-range and lifecycle
-  request validation maps to the existing specific domain codes.
+  `Leave Requests`. Current operations have explicit summaries, descriptions, and tenant-aware
+  parameter/header descriptions.
+- Tenant dependency errors, route-level domain errors, and automatic request validation errors on
+  employee, leave balance, and leave request endpoints use the project error envelope.
 - FastAPI's generic request validation remains framework default outside the employee and leave
   endpoint scope.
 - Local demo seed remains a script command, not an API surface:
   `uv run python scripts/seed_demo_data.py`. It assumes the target local/dev schema already
   exists, then idempotently creates or resets demo tenants, users, employees, and leave requests.
 
+## Smoke Coverage
+
+`uv run python scripts/backend_api_smoke.py` runs entirely local/in-memory through ASGI and SQLite.
+It does not use deploy, staging URLs, cron, tokens, credentials, `.env`, or external services.
+
+The script currently verifies:
+
+- `/health`, `/`, and `/openapi.json`.
+- OpenAPI operation drift: every documented operation must exist in generated OpenAPI, and every
+  generated OpenAPI operation must be listed in the documented smoke registry.
+- Tenant header missing, invalid, repeated, and cross-tenant behavior.
+- Employee create/list/detail/update/delete, filters, pagination, lifecycle status handling, and
+  tenant isolation.
+- Leave balance read-only summaries, `period_year` filtering, placeholder flags, and tenant
+  isolation.
+- Leave request create/list/approve/reject/cancel, filters, pagination, transition conflicts,
+  cross-tenant user/request checks, date-window behavior, and tenant isolation.
+- Dashboard counts, department distribution, recent activity shape, and tenant isolation.
+
 ## Verification
 
-Full W2C2 local gate run:
+W2C6 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 240 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run ruff check scripts/backend_api_smoke.py`: passed.
+- `uv run pytest`: passed, 245 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
-- `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
+- `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
+  endpoints covered.
 
 ## Remaining Backend Backlog
 
 - Auth/session/RBAC dependencies and permission enforcement.
-- Tenant current/settings endpoints and user/role management endpoints.
+- Tenant current/settings/onboarding endpoints and user/role management endpoints.
 - Standard `{ data, meta }` response envelope, global correlation middleware, and broader
   validation/error normalization beyond employee and leave request endpoints.
-- Cursor pagination standardization, sorting, and idempotency for critical POST flows.
+- Cursor pagination standardization, sorting controls, and idempotency for critical POST flows.
 - Optional leave request detail endpoint if the product workflow needs it.
-- Full leave policy/accrual calculation, holiday calendars, adjustments/imports, and employee
+- Leave policy/accrual calculation, holiday calendars, adjustments/imports, and employee
   self-service leave balance views.
 - Documents, reports, and export endpoints in later MVP phases.
+- CI/OpenAPI contract governance once workflow-token constraints are resolved outside this task.
