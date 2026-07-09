@@ -7,7 +7,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,7 @@ from app.core.config import get_settings
 from app.services.demo_seed_service import DemoSeedConflictError, DemoSeedResult, seed_demo_data
 
 LOCAL_DEMO_ENVIRONMENTS = {"local", "dev"}
+LOCAL_DATABASE_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
 
 
 def main() -> int:
@@ -34,6 +36,12 @@ def main() -> int:
         return 2
 
     database_url = args.database_url or settings.database_url
+    try:
+        _ensure_local_database_url(database_url)
+    except ValueError as exc:
+        print(f"DEMO_SEED_REFUSED {exc}", file=sys.stderr)
+        return 2
+
     try:
         result = asyncio.run(_run_seed(database_url))
     except DemoSeedConflictError as exc:
@@ -59,6 +67,23 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def _ensure_local_database_url(database_url: str) -> None:
+    try:
+        url = make_url(database_url)
+    except ArgumentError as exc:
+        raise ValueError("database_url_invalid") from exc
+
+    if url.drivername.startswith("sqlite"):
+        return
+
+    host = url.host or ""
+    if host in LOCAL_DATABASE_HOSTS:
+        return
+
+    allowed_hosts = ",".join(sorted(LOCAL_DATABASE_HOSTS - {""}))
+    raise ValueError(f"database_url_not_local host={host!r} allowed_hosts={allowed_hosts}")
 
 
 async def _run_seed(database_url: str) -> DemoSeedResult:

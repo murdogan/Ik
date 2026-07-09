@@ -51,6 +51,20 @@ def test_demo_seed_command_refuses_staging_environment() -> None:
     )
 
 
+def test_demo_seed_command_refuses_non_local_database_url() -> None:
+    result = _run_seed_command(
+        "postgresql+asyncpg://ik:ik@db.example.com:5432/ik",
+        environment="local",
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert (
+        "DEMO_SEED_REFUSED database_url_not_local "
+        "host='db.example.com' allowed_hosts=127.0.0.1,::1,localhost"
+    ) in result.stderr
+
+
 def _run_seed_command(database_url: str, *, environment: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["IK_ENVIRONMENT"] = environment

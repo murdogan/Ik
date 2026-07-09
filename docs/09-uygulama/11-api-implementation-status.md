@@ -65,6 +65,7 @@ Task: `W2C6 Implementation report refresh`
 - Local demo seed remains a script command, not an API surface:
   `uv run python scripts/seed_demo_data.py`. It assumes the target local/dev schema already
   exists, then idempotently creates or resets demo tenants, users, employees, and leave requests.
+  The command refuses non-local database URL hosts before opening a connection.
 
 ## Smoke Coverage
 

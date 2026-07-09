@@ -94,8 +94,9 @@ uv run python scripts/seed_demo_data.py
 Seed komutu yalnız `IK_ENVIRONMENT=local` veya `IK_ENVIRONMENT=dev` iken çalışır. Komut
 idempotenttir; iki demo tenant, beş kullanıcı, sekiz çalışan ve beş izin talebini stabil UUID'ler
 ile oluşturur veya demo fixture değerlerine geri günceller. Lokal test/smoke kullanımında hedef
-veritabanı `--database-url` ile geçici olarak override edilebilir; production/staging deploy,
-cron, token, credential veya `.env` değişikliği yapmaz.
+veritabanı `--database-url` ile geçici olarak override edilebilir; komut SQLite veya local host
+veritabanı dışındaki hedefleri reddeder. Production/staging deploy, cron, token, credential veya
+`.env` değişikliği yapmaz.
 
 Lokal app import smoke testi:
 

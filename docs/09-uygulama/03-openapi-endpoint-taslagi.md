@@ -104,7 +104,8 @@ uv run python scripts/seed_demo_data.py
 ```
 
 Bu komut API yüzeyi eklemez veya değiştirmez. Yalnız `local`/`dev` ortamında iki demo tenant,
-beş kullanıcı, sekiz çalışan ve beş izin talebini idempotent şekilde seed eder.
+beş kullanıcı, sekiz çalışan ve beş izin talebini idempotent şekilde seed eder. SQLite veya local
+host dışındaki database URL hedeflerini bağlantı açmadan reddeder.
 
 Bu dokümandaki güncel employee ve leave örnekleri demo seed içindeki Wealthy Falcon HR tenant'ını
 kullanır:
