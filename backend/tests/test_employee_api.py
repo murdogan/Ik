@@ -20,6 +20,8 @@ from sqlalchemy.pool import StaticPool
 TENANT_ID = UUID("11111111-aaaa-4111-8111-111111111111")
 OTHER_TENANT_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+ON_LEAVE_EMPLOYEE_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+TERMINATED_EMPLOYEE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 OTHER_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 
@@ -70,11 +72,37 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
                     employment_start_date=date(2026, 7, 1),
                 ),
                 Employee(
+                    id=ON_LEAVE_EMPLOYEE_ID,
+                    tenant_id=TENANT_ID,
+                    employee_number="WF-010",
+                    first_name="Bora",
+                    last_name="Demir",
+                    email="bora@wealthyfalcon.test",
+                    department="People",
+                    position="People Partner",
+                    status=EmployeeStatus.ON_LEAVE.value,
+                    employment_start_date=date(2026, 7, 2),
+                ),
+                Employee(
+                    id=TERMINATED_EMPLOYEE_ID,
+                    tenant_id=TENANT_ID,
+                    employee_number="WF-020",
+                    first_name="Cem",
+                    last_name="Kaya",
+                    email="cem@wealthyfalcon.test",
+                    department="Engineering",
+                    position="Backend Engineer",
+                    status=EmployeeStatus.TERMINATED.value,
+                    employment_start_date=date(2026, 7, 3),
+                ),
+                Employee(
                     id=OTHER_EMPLOYEE_ID,
                     tenant_id=OTHER_TENANT_ID,
                     employee_number="OT-001",
                     first_name="Other",
                     last_name="Person",
+                    email="other@wealthyfalcon.test",
+                    department="People",
                     status=EmployeeStatus.ACTIVE.value,
                     employment_start_date=date(2026, 7, 1),
                 ),
@@ -166,7 +194,85 @@ async def test_list_employees_returns_current_tenant_records_only() -> None:
         response = await client.get("/api/v1/employees", headers=_tenant_headers())
 
         assert response.status_code == 200
-        assert [employee["employee_number"] for employee in response.json()] == ["WF-001"]
+        assert [employee["employee_number"] for employee in response.json()] == [
+            "WF-001",
+            "WF-010",
+            "WF-020",
+        ]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_filters_by_department_within_current_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"department": "people"},
+        )
+
+        assert response.status_code == 200
+        assert [employee["employee_number"] for employee in response.json()] == [
+            "WF-001",
+            "WF-010",
+        ]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_filters_by_status_within_current_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"status": EmployeeStatus.ON_LEAVE.value},
+        )
+
+        assert response.status_code == 200
+        assert [employee["employee_number"] for employee in response.json()] == ["WF-010"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_searches_employee_number_and_email() -> None:
+    client, engine = await _client_with_database()
+    try:
+        number_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"q": "010"},
+        )
+        email_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"q": "CEM@WEALTHYFALCON"},
+        )
+
+        assert number_response.status_code == 200
+        assert [employee["employee_number"] for employee in number_response.json()] == ["WF-010"]
+        assert email_response.status_code == 200
+        assert [employee["employee_number"] for employee in email_response.json()] == ["WF-020"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employee_filters_remain_tenant_scoped() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"q": "other@wealthyfalcon.test"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == []
     finally:
         await client.aclose()
         await engine.dispose()
@@ -328,6 +434,10 @@ async def test_employee_routes_are_exposed_in_openapi() -> None:
         paths = response.json()["paths"]
         assert "/api/v1/employees" in paths
         assert "/api/v1/employees/{employee_id}" in paths
+        employee_list_parameters = {
+            parameter["name"] for parameter in paths["/api/v1/employees"]["get"]["parameters"]
+        }
+        assert {"department", "status", "q"}.issubset(employee_list_parameters)
     finally:
         await client.aclose()
         await engine.dispose()

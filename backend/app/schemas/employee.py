@@ -93,6 +93,21 @@ class EmployeeUpdate(BaseModel):
         return self
 
 
+class EmployeeListFilters(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    department: str | None = None
+    status: EmployeeStatus | None = None
+    q: str | None = Field(default=None, max_length=320)
+
+    @field_validator("department", "q")
+    @classmethod
+    def empty_text_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value or None
+
+
 class EmployeeRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

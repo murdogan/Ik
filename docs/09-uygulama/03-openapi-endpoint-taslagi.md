@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-08 / N4)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A1)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -12,7 +12,7 @@ lokal backend smoke kapsamındadır.
 | GET | `/health` | Uygulandı | Public servis durumu |
 | GET | `/` | Uygulandı | Wealthy Falcon HR landing HTML |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB sayımları, departman dağılımı ve son aktiviteler |
-| GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste, şu an pagination/filter yok |
+| GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; `department`, `status`, `q` filtreleri var |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context kullanır, duplicate employee number `409` |
 | GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | Uygulandı | Partial update, tarih aralığı validasyonu |
@@ -30,7 +30,9 @@ Geçerli uygulama notları:
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
   mekanizmasıdır.
-- Pagination, filtering, idempotency ve correlation envelope henüz TODO'dur.
+- Pagination, idempotency ve correlation envelope henüz TODO'dur.
+- Employee listesinde `department`, `status` ve employee number/email üzerinden `q` filtreleri
+  uygulanmıştır; diğer listelerde filtreleme ayrı backlog'dur.
 - Leave request detail endpointi (`GET /api/v1/leave-requests/{id}`) henüz yoktur.
 
 Lokal smoke komutu:
@@ -196,11 +198,11 @@ Yetki: `employee:read:{scope}`.
 
 Query:
 
-- `cursor`
-- `limit`
-- `filter[status]`
-- `q`
-- `sort`
+- `department`: Departman adına göre case-insensitive exact match.
+- `status`: `active`, `on_leave`, `terminated`.
+- `q`: `employee_number` ve `email` üzerinde case-insensitive contains araması.
+
+Not: `cursor`, `limit` ve `sort` ayrı pagination/sıralama backlog'udur.
 
 Response item:
 

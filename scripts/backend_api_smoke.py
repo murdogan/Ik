@@ -163,6 +163,36 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> str:
     )
     _assert_equal([employee["employee_number"] for employee in employees], ["WF-SMOKE-001"])
 
+    department_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"department": "people"},
+        ),
+        200,
+        "GET /api/v1/employees?department=people",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in department_filtered],
+        ["WF-SMOKE-001"],
+        "employee department filter",
+    )
+
+    search_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"q": "ADA.SMOKE"},
+        ),
+        200,
+        "GET /api/v1/employees?q=ADA.SMOKE",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in search_filtered],
+        ["WF-SMOKE-001"],
+        "employee q filter",
+    )
+
     detail = _expect_json(
         await client.get(f"/api/v1/employees/{employee_id}", headers=TENANT_HEADERS),
         200,
@@ -180,6 +210,21 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> str:
         "PATCH /api/v1/employees/{employee_id}",
     )
     _assert_equal(updated["status"], EmployeeStatus.ON_LEAVE.value, "employee status")
+
+    status_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"status": EmployeeStatus.ON_LEAVE.value},
+        ),
+        200,
+        "GET /api/v1/employees?status=on_leave",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in status_filtered],
+        ["WF-SMOKE-001"],
+        "employee status filter",
+    )
 
     delete_candidate = await _create_employee(
         client,

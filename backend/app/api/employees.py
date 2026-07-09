@@ -1,13 +1,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
-from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
+from app.models.employee import EmployeeStatus
+from app.schemas.employee import EmployeeCreate, EmployeeListFilters, EmployeeRead, EmployeeUpdate
 from app.services.employee_service import (
     DuplicateEmployeeNumberError,
     EmployeeDateRangeError,
@@ -24,12 +25,33 @@ def get_employee_service(
     return EmployeeService(session=session)
 
 
+def get_employee_list_filters(
+    department: Annotated[
+        str | None,
+        Query(description="Exact department filter. Case-insensitive."),
+    ] = None,
+    status_filter: Annotated[
+        EmployeeStatus | None,
+        Query(alias="status", description="Employment lifecycle status filter."),
+    ] = None,
+    q: Annotated[
+        str | None,
+        Query(
+            description="Case-insensitive search over employee_number and email.",
+            max_length=320,
+        ),
+    ] = None,
+) -> EmployeeListFilters:
+    return EmployeeListFilters(department=department, status=status_filter, q=q)
+
+
 @router.get("", response_model=list[EmployeeRead])
 async def list_employees(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
+    filters: Annotated[EmployeeListFilters, Depends(get_employee_list_filters)],
 ) -> list[EmployeeRead]:
-    return await service.list_employees(tenant_context.tenant_id)
+    return await service.list_employees(tenant_context.tenant_id, filters)
 
 
 @router.post("", response_model=EmployeeRead, status_code=status.HTTP_201_CREATED)

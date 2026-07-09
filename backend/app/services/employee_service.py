@@ -1,11 +1,11 @@
 from datetime import date
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee, EmployeeStatus
-from app.schemas.employee import EmployeeCreate, EmployeeUpdate
+from app.schemas.employee import EmployeeCreate, EmployeeListFilters, EmployeeUpdate
 
 
 class EmployeeNotFoundError(Exception):
@@ -24,12 +24,30 @@ class EmployeeService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_employees(self, tenant_id: UUID) -> list[Employee]:
-        statement = (
-            select(Employee)
-            .where(Employee.tenant_id == tenant_id)
-            .order_by(Employee.employee_number.asc())
-        )
+    async def list_employees(
+        self,
+        tenant_id: UUID,
+        filters: EmployeeListFilters | None = None,
+    ) -> list[Employee]:
+        filters = filters or EmployeeListFilters()
+        statement = select(Employee).where(Employee.tenant_id == tenant_id)
+
+        if filters.department is not None:
+            statement = statement.where(
+                func.lower(func.trim(Employee.department)) == filters.department.casefold()
+            )
+        if filters.status is not None:
+            statement = statement.where(Employee.status == _status_value(filters.status))
+        if filters.q is not None:
+            search_term = filters.q.casefold()
+            statement = statement.where(
+                or_(
+                    func.lower(Employee.employee_number).contains(search_term, autoescape=True),
+                    func.lower(Employee.email).contains(search_term, autoescape=True),
+                )
+            )
+
+        statement = statement.order_by(Employee.employee_number.asc())
         return list(await self.session.scalars(statement))
 
     async def get_employee(self, tenant_id: UUID, employee_id: UUID) -> Employee:

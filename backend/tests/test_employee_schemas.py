@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 from app.models.employee import EmployeeStatus
-from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
+from app.schemas.employee import EmployeeCreate, EmployeeListFilters, EmployeeRead, EmployeeUpdate
 from pydantic import ValidationError
 
 
@@ -81,6 +81,18 @@ def test_employee_update_allows_partial_payload_and_null_email() -> None:
 def test_employee_update_rejects_empty_name_when_provided() -> None:
     with pytest.raises(ValidationError):
         EmployeeUpdate(last_name=" ")
+
+
+def test_employee_list_filters_strip_text_and_convert_empty_values_to_none() -> None:
+    payload = EmployeeListFilters(
+        department=" People ",
+        status=EmployeeStatus.ON_LEAVE,
+        q=" ",
+    )
+
+    assert payload.department == "People"
+    assert payload.status == EmployeeStatus.ON_LEAVE
+    assert payload.q is None
 
 
 def test_employee_read_does_not_expose_tenant_id() -> None:
