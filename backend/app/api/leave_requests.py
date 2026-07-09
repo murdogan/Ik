@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
-from app.api.errors import ApiError
+from app.api.errors import LEAVE_REQUEST_VALIDATION_RESPONSES, ApiError
 from app.api.openapi import LEAVE_REQUESTS_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
@@ -29,7 +29,11 @@ from app.services.leave_request_service import (
     LeaveRequestUserNotFoundError,
 )
 
-router = APIRouter(prefix="/api/v1/leave-requests", tags=[LEAVE_REQUESTS_TAG])
+router = APIRouter(
+    prefix="/api/v1/leave-requests",
+    tags=[LEAVE_REQUESTS_TAG],
+    responses=LEAVE_REQUEST_VALIDATION_RESPONSES,
+)
 
 
 def get_leave_request_service(

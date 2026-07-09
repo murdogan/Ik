@@ -290,7 +290,12 @@ async def test_create_leave_request_rejects_client_controlled_status() -> None:
             json=payload,
         )
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -304,11 +309,20 @@ async def test_create_leave_request_rejects_datetime_strings_for_leave_dates() -
 
         response = await client.post(
             "/api/v1/leave-requests",
-            headers=_tenant_headers(),
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w2a6-leave-validation",
+            },
             json=payload,
         )
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
+            correlation_id="w2a6-leave-validation",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -410,7 +424,12 @@ async def test_list_leave_requests_rejects_unbounded_pagination_values() -> None
                 params=params,
             )
 
-            assert response.status_code == 422
+            _assert_error_response(
+                response,
+                status_code=422,
+                code="leave_request_validation_error",
+                message="Leave request validation failed",
+            )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -514,7 +533,12 @@ async def test_list_leave_requests_rejects_datetime_strings_for_date_filters() -
             params={"start_date": "2026-07-22T00:00:00", "end_date": "2026-07-24"},
         )
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -645,7 +669,12 @@ async def test_create_leave_request_rejects_invalid_date_order() -> None:
             json=payload,
         )
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_invalid_date_range",
+            message="Leave end date must be on or after start date",
+        )
     finally:
         await client.aclose()
         await engine.dispose()

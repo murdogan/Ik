@@ -240,7 +240,39 @@ async def test_create_employee_rejects_end_date_without_terminated_status() -> N
             },
         )
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_lifecycle",
+            message="Employment end date is only allowed when status is terminated",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_create_employee_rejects_invalid_date_order_with_error_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-002",
+                "first_name": "Bora",
+                "last_name": "Demir",
+                "status": EmployeeStatus.TERMINATED.value,
+                "employment_start_date": "2026-08-01",
+                "employment_end_date": "2026-07-31",
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_date_range",
+            message="Employment end date must be on or after start date",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -261,7 +293,12 @@ async def test_create_employee_rejects_client_controlled_tenant_id() -> None:
             },
         )
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_validation_error",
+            message="Employee request validation failed",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -272,7 +309,10 @@ async def test_create_employee_rejects_datetime_string_for_employment_date() -> 
     try:
         response = await client.post(
             "/api/v1/employees",
-            headers=_tenant_headers(),
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w2a6-employee-validation",
+            },
             json={
                 "employee_number": "WF-002",
                 "first_name": "Bora",
@@ -281,7 +321,13 @@ async def test_create_employee_rejects_datetime_string_for_employment_date() -> 
             },
         )
 
-        assert response.status_code == 422
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_validation_error",
+            message="Employee request validation failed",
+            correlation_id="w2a6-employee-validation",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -341,7 +387,12 @@ async def test_list_employees_rejects_unbounded_pagination_values() -> None:
                 params=params,
             )
 
-            assert response.status_code == 422
+            _assert_error_response(
+                response,
+                status_code=422,
+                code="employee_validation_error",
+                message="Employee request validation failed",
+            )
     finally:
         await client.aclose()
         await engine.dispose()

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
-from app.api.errors import ApiError
+from app.api.errors import LEAVE_BALANCE_VALIDATION_RESPONSES, ApiError
 from app.api.openapi import LEAVE_BALANCES_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
@@ -15,7 +15,11 @@ from app.services.leave_balance_service import (
     LeaveBalanceService,
 )
 
-router = APIRouter(prefix="/api/v1/employees", tags=[LEAVE_BALANCES_TAG])
+router = APIRouter(
+    prefix="/api/v1/employees",
+    tags=[LEAVE_BALANCES_TAG],
+    responses=LEAVE_BALANCE_VALIDATION_RESPONSES,
+)
 
 
 def get_leave_balance_service(

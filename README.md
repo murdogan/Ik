@@ -130,12 +130,15 @@ OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `S
 `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W1C5 metadata hygiene kapsamında
 mevcut operasyonlara açık summary/description eklendi; request/response davranışı değişmedi.
 
-Tenant header dependency hataları ve employee/leave endpointlerinin açıkça yakaladığı domain
-hataları şu zarfla döner:
+Tenant header dependency hataları, employee/leave endpointlerinin açıkça yakaladığı domain
+hataları ve employee, leave balance, leave request endpointlerindeki otomatik request validation
+`422` hataları şu zarfla döner:
 `{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.
 Bu kapsam `tenant_header_missing`, `tenant_header_invalid`, `tenant_slug_header_invalid`,
-not-found, conflict, date-range, employee lifecycle ve leave transition hatalarıdır. Diğer
-otomatik FastAPI validation `422` yanıtları henüz framework varsayılanındadır.
+not-found, conflict, date-range, employee lifecycle, `employee_validation_error`,
+`leave_balance_validation_error`, `leave_request_validation_error` ve leave transition
+hatalarıdır. Diğer endpointlerdeki otomatik FastAPI validation `422` yanıtları henüz framework
+varsayılanındadır.
 
 Demo seed sonrası employee ve leave endpointleri için örnek tenant header'ları:
 
@@ -205,6 +208,8 @@ Employee create request/response örneği:
 Employee lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve
 `on_leave` kayıtlarda `employment_end_date` `null` olmalıdır. Mevcut kayıtla birleştirildikten
 sonra bu kuralı bozan güncellemeler `employee_invalid_lifecycle` koduyla `422` döner.
+Employee endpointlerinde generic request validation hataları `employee_validation_error` kodu ve
+`Employee request validation failed` mesajıyla aynı error zarfını kullanır.
 
 Leave balance summary örneği:
 
@@ -231,6 +236,8 @@ GET /api/v1/employees/f3000000-0000-4000-8000-000000000002/leave-balances?period
 
 Bu endpoint W1C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak edişi/accrual,
 resmi tatil hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon içermez.
+Leave balance endpointinde generic request validation hataları `leave_balance_validation_error`
+kodu ve `Leave balance request validation failed` mesajıyla aynı error zarfını kullanır.
 
 Leave request list örneği:
 
@@ -279,6 +286,11 @@ Leave request create request/response örneği:
   "decision_note": null
 }
 ```
+
+Leave request endpointlerinde generic request validation hataları
+`leave_request_validation_error` kodu ve `Leave request validation failed` mesajıyla aynı error
+zarfını kullanır. Leave create tarih sırası ve liste tarih aralığı kuralları
+`leave_request_invalid_date_range` koduyla `422` döner.
 
 Leave approve request/response örneği:
 

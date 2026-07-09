@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W2A5)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W2A6)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -37,15 +37,18 @@ Geçerli uygulama notları:
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
   mekanizmasıdır.
-- Tenant header dependency hataları ve employee/leave endpointlerinde route seviyesinde yakalanan
-  domain hataları Bölüm 1'deki error zarfını döner. FastAPI'nin diğer otomatik request
-  validation `422` yanıtları henüz framework varsayılanındadır.
-- Bu domain error zarfında `correlation_id`, `X-Correlation-Id` header'ı geldiyse aynı değer,
-  gelmediyse `null` olur.
+- Tenant header dependency hataları, employee/leave endpointlerinde route seviyesinde yakalanan
+  domain hataları ve employee, leave balance, leave request endpointlerindeki otomatik request
+  validation `422` hataları Bölüm 1'deki error zarfını döner. Diğer endpointlerdeki otomatik
+  FastAPI validation yanıtları henüz framework varsayılanındadır.
+- Bu error zarfında `correlation_id`, `X-Correlation-Id` header'ı geldiyse aynı değer, gelmediyse
+  `null` olur.
 - Şu an kullanılan error code değerleri: `tenant_header_missing`, `tenant_header_invalid`,
   `tenant_slug_header_invalid`, `employee_not_found`, `employee_number_conflict`,
-  `employee_invalid_date_range`, `employee_invalid_lifecycle`, `leave_request_not_found`,
-  `leave_request_invalid_date_range`, `leave_request_transition_conflict`, `user_not_found`.
+  `employee_invalid_date_range`, `employee_invalid_lifecycle`, `employee_validation_error`,
+  `leave_balance_validation_error`, `leave_request_not_found`,
+  `leave_request_invalid_date_range`, `leave_request_transition_conflict`,
+  `leave_request_validation_error`, `user_not_found`.
 - Cursor pagination standardı, idempotency, tüm response zarfı ve global correlation middleware
   henüz TODO'dur.
 - Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,
@@ -348,6 +351,23 @@ Response `201` örneği:
 Lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve `on_leave`
 kayıtlarda `employment_end_date` `null` olmalıdır.
 
+Otomatik request validation hataları employee endpointlerinde `employee_validation_error` `422`
+zarfına normalize edilir. Tarih sırası ve lifecycle iş kuralları daha spesifik
+`employee_invalid_date_range` veya `employee_invalid_lifecycle` kodlarını kullanır.
+
+Generic employee validation `422` örneği:
+
+```json
+{
+  "error": {
+    "code": "employee_validation_error",
+    "message": "Employee request validation failed",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
 Duplicate employee number `409` örneği:
 
 ```json
@@ -519,6 +539,19 @@ Response `200` örneği:
 ]
 ```
 
+Generic leave balance validation `422` örneği:
+
+```json
+{
+  "error": {
+    "code": "leave_balance_validation_error",
+    "message": "Leave balance request validation failed",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
 ### `GET /api/v1/leave-requests`
 
 Yetki: `leave:read:{scope}`.
@@ -608,6 +641,22 @@ Response `201` örneği:
 
 Cross-tenant `employee_id` veya `requested_by_user_id` referansları tenant scope içinde
 bulunamadığı için sırasıyla `employee_not_found` veya `user_not_found` `404` yanıtı döner.
+Otomatik request validation hataları leave request endpointlerinde
+`leave_request_validation_error` `422` zarfına normalize edilir. Leave create tarih sırası ve
+liste tarih aralığı iş kuralları `leave_request_invalid_date_range` kodunu kullanır.
+
+Generic leave request validation `422` örneği:
+
+```json
+{
+  "error": {
+    "code": "leave_request_validation_error",
+    "message": "Leave request validation failed",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
 
 ### `POST /api/v1/leave-requests/{id}/approve`
 

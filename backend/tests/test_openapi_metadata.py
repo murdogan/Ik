@@ -149,3 +149,26 @@ def test_leave_request_list_openapi_documents_filter_query_params() -> None:
     assert "Inclusive date-window end" in params["end_date"]["description"]
     assert params["limit"]["schema"]["maximum"] == 200
     assert params["offset"]["schema"]["minimum"] == 0
+
+
+def test_employee_and_leave_openapi_document_project_error_envelope_for_422() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    operations = {
+        ("/api/v1/employees", "post"): "Employee endpoint validation error envelope.",
+        (
+            "/api/v1/employees/{employee_id}/leave-balances",
+            "get",
+        ): "Leave balance endpoint validation error envelope.",
+        ("/api/v1/leave-requests", "post"): "Leave request endpoint validation error envelope.",
+    }
+    for (path, method), description in operations.items():
+        response_422 = paths[path][method]["responses"]["422"]
+        schema_ref = response_422["content"]["application/json"]["schema"]["$ref"]
+        assert response_422["description"] == description
+        assert schema_ref.endswith("/ApiErrorResponse")
+        assert not schema_ref.endswith("/HTTPValidationError")

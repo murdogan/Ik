@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
-from app.api.errors import ApiError
+from app.api.errors import EMPLOYEE_VALIDATION_RESPONSES, ApiError
 from app.api.openapi import EMPLOYEES_TAG
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
@@ -27,7 +27,11 @@ from app.services.employee_service import (
     EmployeeService,
 )
 
-router = APIRouter(prefix="/api/v1/employees", tags=[EMPLOYEES_TAG])
+router = APIRouter(
+    prefix="/api/v1/employees",
+    tags=[EMPLOYEES_TAG],
+    responses=EMPLOYEE_VALIDATION_RESPONSES,
+)
 
 
 def get_employee_service(

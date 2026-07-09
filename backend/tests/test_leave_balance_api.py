@@ -162,6 +162,7 @@ def _assert_error_response(
     status_code: int,
     code: str,
     message: str,
+    correlation_id: str | None = None,
 ) -> None:
     assert response.status_code == status_code
     assert response.json() == {
@@ -169,7 +170,7 @@ def _assert_error_response(
             "code": code,
             "message": message,
             "details": None,
-            "correlation_id": None,
+            "correlation_id": correlation_id,
         }
     }
 
@@ -253,6 +254,30 @@ async def test_list_employee_leave_balances_rejects_cross_tenant_employee() -> N
             status_code=404,
             code="employee_not_found",
             message="Employee not found",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employee_leave_balances_rejects_invalid_period_year_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            f"/api/v1/employees/{EMPLOYEE_ID}/leave-balances",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w2a6-leave-balance-validation",
+            },
+            params={"period_year": 1800},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_balance_validation_error",
+            message="Leave balance request validation failed",
+            correlation_id="w2a6-leave-balance-validation",
         )
     finally:
         await client.aclose()
