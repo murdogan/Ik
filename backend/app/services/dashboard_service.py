@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
 
@@ -25,6 +26,14 @@ LEAVE_ACTIVITY_BY_STATUS = {
 }
 
 
+@dataclass(frozen=True)
+class _DashboardCounts:
+    active_employee_count: int
+    employee_count: int
+    pending_leave_count: int
+    new_starters_this_month: int
+
+
 class DashboardService:
     def __init__(
         self,
@@ -37,48 +46,27 @@ class DashboardService:
         self.recent_activity_limit = max(recent_activity_limit, 0)
 
     async def get_summary(self, tenant_id: UUID) -> DashboardSummary:
-        active_employee_count = await self._count_active_employees(tenant_id)
-        employee_count = await self._count_current_employees(tenant_id)
-        pending_leave_count = await self._count_pending_leave_requests(tenant_id)
-        new_starters_this_month = await self._count_new_starters_this_month(tenant_id)
-        department_distribution = await self._department_distribution(tenant_id)
+        counts = await _query_dashboard_counts(
+            session=self.session,
+            tenant_id=tenant_id,
+            today=self.today,
+        )
+        department_distribution = await _query_department_distribution(
+            session=self.session,
+            tenant_id=tenant_id,
+        )
         recent_activity = await self._recent_activity(tenant_id)
 
         return DashboardSummary(
-            active_employee_count=active_employee_count,
-            pending_leave_count=pending_leave_count,
-            employee_count=employee_count,
-            pending_leave_requests=pending_leave_count,
-            new_starters_this_month=new_starters_this_month,
+            active_employee_count=counts.active_employee_count,
+            pending_leave_count=counts.pending_leave_count,
+            employee_count=counts.employee_count,
+            pending_leave_requests=counts.pending_leave_count,
+            new_starters_this_month=counts.new_starters_this_month,
             open_tasks=0,
             department_distribution=department_distribution,
             recent_activity=recent_activity,
         )
-
-    async def _count_active_employees(self, tenant_id: UUID) -> int:
-        return await self._scalar_count(_active_employee_count_statement(tenant_id))
-
-    async def _count_current_employees(self, tenant_id: UUID) -> int:
-        return await self._scalar_count(_current_employee_count_statement(tenant_id))
-
-    async def _count_pending_leave_requests(self, tenant_id: UUID) -> int:
-        return await self._scalar_count(_pending_leave_count_statement(tenant_id))
-
-    async def _count_new_starters_this_month(self, tenant_id: UUID) -> int:
-        start_date, end_date = _month_window(self.today)
-        return await self._scalar_count(
-            _new_starters_count_statement(
-                tenant_id=tenant_id,
-                start_date=start_date,
-                end_date=end_date,
-            )
-        )
-
-    async def _department_distribution(self, tenant_id: UUID) -> list[DepartmentDistributionItem]:
-        rows = (
-            await self.session.execute(_department_distribution_statement(tenant_id))
-        ).mappings().all()
-        return [_department_distribution_item(row) for row in rows]
 
     async def _recent_activity(self, tenant_id: UUID) -> list[DashboardActivityItem]:
         if self.recent_activity_limit == 0:
@@ -93,14 +81,11 @@ class DashboardService:
         ]
 
     async def _recent_employee_activity(self, tenant_id: UUID) -> list[DashboardActivityItem]:
-        rows = (
-            await self.session.execute(
-                _recent_employee_activity_statement(
-                    tenant_id=tenant_id,
-                    limit=self.recent_activity_limit,
-                )
-            )
-        ).mappings().all()
+        rows = await _query_recent_employee_activity_rows(
+            session=self.session,
+            tenant_id=tenant_id,
+            limit=self.recent_activity_limit,
+        )
         activity_items = []
         for row in rows:
             activity_item = _employee_activity_item(row)
@@ -109,14 +94,11 @@ class DashboardService:
         return activity_items
 
     async def _recent_leave_activity(self, tenant_id: UUID) -> list[DashboardActivityItem]:
-        rows = (
-            await self.session.execute(
-                _recent_leave_activity_statement(
-                    tenant_id=tenant_id,
-                    limit=self.recent_activity_limit,
-                )
-            )
-        ).mappings().all()
+        rows = await _query_recent_leave_activity_rows(
+            session=self.session,
+            tenant_id=tenant_id,
+            limit=self.recent_activity_limit,
+        )
         activity_items = []
         for row in rows:
             activity_item = _leave_activity_item(row)
@@ -124,16 +106,87 @@ class DashboardService:
                 activity_items.append(activity_item)
         return activity_items
 
-    async def _scalar_count(self, statement) -> int:
-        value = await self.session.scalar(statement)
-        return int(value or 0)
-
 
 def _month_window(today: date) -> tuple[date, date]:
     start_date = date(today.year, today.month, 1)
     if today.month == 12:
         return start_date, date(today.year + 1, 1, 1)
     return start_date, date(today.year, today.month + 1, 1)
+
+
+async def _query_dashboard_counts(
+    session: AsyncSession,
+    tenant_id: UUID,
+    today: date,
+) -> _DashboardCounts:
+    start_date, end_date = _month_window(today)
+    return _DashboardCounts(
+        active_employee_count=await _scalar_count(
+            session,
+            _active_employee_count_statement(tenant_id),
+        ),
+        employee_count=await _scalar_count(
+            session,
+            _current_employee_count_statement(tenant_id),
+        ),
+        pending_leave_count=await _scalar_count(
+            session,
+            _pending_leave_count_statement(tenant_id),
+        ),
+        new_starters_this_month=await _scalar_count(
+            session,
+            _new_starters_count_statement(
+                tenant_id=tenant_id,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+        ),
+    )
+
+
+async def _query_department_distribution(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> list[DepartmentDistributionItem]:
+    rows = await _mapped_rows(session, _department_distribution_statement(tenant_id))
+    return [_department_distribution_item(row) for row in rows]
+
+
+async def _query_recent_employee_activity_rows(
+    session: AsyncSession,
+    tenant_id: UUID,
+    limit: int,
+):
+    return await _mapped_rows(
+        session,
+        _recent_employee_activity_statement(
+            tenant_id=tenant_id,
+            limit=limit,
+        ),
+    )
+
+
+async def _query_recent_leave_activity_rows(
+    session: AsyncSession,
+    tenant_id: UUID,
+    limit: int,
+):
+    return await _mapped_rows(
+        session,
+        _recent_leave_activity_statement(
+            tenant_id=tenant_id,
+            limit=limit,
+        ),
+    )
+
+
+async def _scalar_count(session: AsyncSession, statement) -> int:
+    value = await session.scalar(statement)
+    return int(value or 0)
+
+
+async def _mapped_rows(session: AsyncSession, statement):
+    return (await session.execute(statement)).mappings().all()
 
 
 def _active_employee_count_statement(tenant_id: UUID):
