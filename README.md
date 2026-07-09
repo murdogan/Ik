@@ -330,9 +330,11 @@ Response `200`:
 ]
 ```
 
-Bu endpoint W1C2/W2C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak
+Bu endpoint W1C2/W2C2/W3C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak
 edişi/accrual, resmi tatil hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon
 içermez. `external_integration_enabled` alanı bu placeholder yüzeyinde sabit `false` döner.
+W3C2 testleri persistence katmanının yalnız manuel summary kolonlarını taşıdığını ve response
+schema'sının manuel placeholder dışı calculation mode kabul etmediğini sabitler.
 Leave balance endpointinde generic request validation hataları `leave_balance_validation_error`
 kodu ve `Leave balance request validation failed` mesajıyla aynı error zarfını kullanır.
 

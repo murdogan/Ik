@@ -44,6 +44,21 @@ def test_leave_balance_summary_required_columns_match_manual_summary_record() ->
         assert columns[name].nullable is False
 
 
+def test_leave_balance_summary_persistence_stays_manual_placeholder_only() -> None:
+    assert set(LeaveBalanceSummary.__table__.columns.keys()) == {
+        "id",
+        "tenant_id",
+        "employee_id",
+        "leave_type",
+        "period_year",
+        "opening_balance_days",
+        "used_days",
+        "planned_days",
+        "created_at",
+        "updated_at",
+    }
+
+
 def test_leave_balance_summary_foreign_keys_are_tenant_scoped_and_cascading() -> None:
     tenant_id = LeaveBalanceSummary.__table__.columns["tenant_id"]
     employee_id = LeaveBalanceSummary.__table__.columns["employee_id"]

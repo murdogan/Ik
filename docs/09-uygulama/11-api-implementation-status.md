@@ -2,16 +2,16 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2C6 Implementation report refresh`
+Task: `W3C2 Leave balance placeholder model plan`
 
 ## Scope
 
-- Refreshed the implementation status report against the current FastAPI route surface after
-  W2C1-W2C5.
-- Reconfirmed the completed API surface, tenant-scoped behavior notes, and remaining backend
-  backlog.
-- Tightened `scripts/backend_api_smoke.py` so the generated OpenAPI operation set and documented
-  smoke registry must stay in sync.
+- Reconfirmed that the existing `leave_balance_summaries` read model is the appropriate minimal
+  domain placeholder for leave balance summaries.
+- Added regression coverage that keeps the placeholder persistence model limited to stored manual
+  summary columns and keeps the response schema on `manual_placeholder` calculation mode only.
+- Refreshed docs around the current leave balance limitation instead of adding payroll, accrual,
+  holiday, PDKS, AI, or external integration behavior.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 - No API behavior, schema, model, migration, or tenant isolation change.
@@ -54,7 +54,9 @@ Task: `W2C6 Implementation report refresh`
   and compatibility fields currently used by the frontend-facing contract.
 - Leave balance summaries are read-only manual placeholders backed by
   `leave_balance_summaries`. They return `calculation_mode: "manual_placeholder"` and
-  `external_integration_enabled: false`; no accrual engine or external integration exists.
+  `external_integration_enabled: false`; no accrual engine, holiday calendar calculation,
+  payroll/bordro, SGK, bank, PDKS, AI, or external integration exists. W3C2 regression tests
+  explicitly keep this as a stored-summary placeholder.
 - OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
   `Leave Requests`. Current operations have explicit summaries, descriptions, and tenant-aware
   parameter/header descriptions.
@@ -88,11 +90,12 @@ The script currently verifies:
 
 ## Verification
 
-W2C6 local gate run:
+W3C2 local gate run:
 
+- `uv run pytest backend/tests/test_leave_balance_model.py backend/tests/test_leave_balance_schemas.py backend/tests/test_openapi_metadata.py`:
+  passed, 20 tests passed, 1 existing Starlette `TestClient` deprecation warning.
 - `uv run ruff check backend`: passed.
-- `uv run ruff check scripts/backend_api_smoke.py`: passed.
-- `uv run pytest`: passed, 245 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 282 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered.
