@@ -151,6 +151,9 @@ X-Correlation-Id: req_wf_demo_001
 Eksik veya boş `X-Tenant-Id`, geçersiz UUID formatı ve boş gönderilen `X-Tenant-Slug` `400`
 status koduyla aynı error zarfını döner.
 
+Bu örnekler mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün doğrudan
+schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
+
 Employee list örneği:
 
 ```http
@@ -203,6 +206,58 @@ Employee create request/response örneği:
   "employment_start_date": "2026-08-01",
   "employment_end_date": null
 }
+```
+
+Employee detail/update/delete örnekleri:
+
+```http
+GET /api/v1/employees/f3000000-0000-4000-8000-000000000002
+```
+
+```json
+{
+  "id": "f3000000-0000-4000-8000-000000000002",
+  "employee_number": "WF-002",
+  "first_name": "Bora",
+  "last_name": "Demir",
+  "email": "bora.demir@wealthyfalcon.demo",
+  "department": "Engineering",
+  "position": "Backend Engineer",
+  "status": "active",
+  "employment_start_date": "2026-06-10",
+  "employment_end_date": null
+}
+```
+
+```http
+PATCH /api/v1/employees/f3000000-0000-4000-8000-000000000002
+```
+
+```json
+{
+  "position": "Senior Backend Engineer",
+  "status": "on_leave"
+}
+```
+
+```json
+{
+  "id": "f3000000-0000-4000-8000-000000000002",
+  "employee_number": "WF-002",
+  "first_name": "Bora",
+  "last_name": "Demir",
+  "email": "bora.demir@wealthyfalcon.demo",
+  "department": "Engineering",
+  "position": "Senior Backend Engineer",
+  "status": "on_leave",
+  "employment_start_date": "2026-06-10",
+  "employment_end_date": null
+}
+```
+
+```http
+DELETE /api/v1/employees/f3000000-0000-4000-8000-000000000002
+204 No Content
 ```
 
 Employee lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve
@@ -312,6 +367,63 @@ Leave approve request/response örneği:
   "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
   "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
   "decision_note": "Approved with team coverage."
+}
+```
+
+Leave reject/cancel response shape'i aynı decision body ile çalışır:
+
+```json
+{
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Customer launch coverage is required."
+}
+```
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000001",
+  "employee_id": "f3000000-0000-4000-8000-000000000002",
+  "leave_type": "annual",
+  "start_date": "2026-08-03",
+  "end_date": "2026-08-07",
+  "status": "rejected",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000003",
+  "decision_note": "Customer launch coverage is required."
+}
+```
+
+```json
+{
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decision_note": "Employee cancelled the request."
+}
+```
+
+```json
+{
+  "id": "f4000000-0000-4000-8000-000000000001",
+  "employee_id": "f3000000-0000-4000-8000-000000000002",
+  "leave_type": "annual",
+  "start_date": "2026-08-03",
+  "end_date": "2026-08-07",
+  "status": "cancelled",
+  "requested_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decided_by_user_id": "f2000000-0000-4000-8000-000000000002",
+  "decision_note": "Employee cancelled the request."
+}
+```
+
+Pending olmayan talepte tekrar decision işlemi `409` döner:
+
+```json
+{
+  "error": {
+    "code": "leave_request_transition_conflict",
+    "message": "Only pending leave requests can be decided",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
 }
 ```
 

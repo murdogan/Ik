@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W2A6)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W2B3)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -31,6 +31,9 @@ Geçerli uygulama notları:
   Mevcut operasyonların her biri açık `summary` ve `description` metadata'sı taşır. Bu değişiklik
   yalnız dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W1C6
   status refresh kapsamında smoke script bu operasyonları path ve HTTP method seviyesinde doğrular.
+- W2B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
+  örnekleri taşır. Employee ve leave endpointleri bugün doğrudan schema/list döner; Bölüm 1'deki
+  `{ data, meta }` zarfı gelecek standart hedefidir.
 - Domain endpointleri geçerli UUID formatında `X-Tenant-Id` header'ı ister;
   `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
 - Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef
@@ -107,6 +110,18 @@ X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
 X-Correlation-Id: req_wf_demo_001
 ```
+
+Örnek kapsamı:
+
+- Employee örnekleri mevcut `EmployeeRead`, `EmployeeCreate` ve `EmployeeUpdate` alanlarıyla
+  sınırlıdır; hassas kimlik, ücret, belge veya bordro alanı yoktur.
+- Leave request örnekleri mevcut `LeaveRequestRead`, `LeaveRequestCreate` ve
+  `LeaveRequestDecision` alanlarını gösterir. Approval/reject/cancel işlemleri aynı decision body
+  shape'ini kullanır.
+- Leave balance örneği read-only manuel placeholder response shape'ini gösterir. Demo seed çalışan
+  ve leave request kayıtları üretir; bakiye read modeli ayrıca manuel/test verisiyle doldurulur.
+- Create response örneklerindeki `id` değerleri server-generated temsili UUID'lerdir; request body
+  içinde gönderilmez.
 
 Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, geçersiz UUID formatı veya boş gönderilen
 `X-Tenant-Slug` `400` döner. Örnek:
