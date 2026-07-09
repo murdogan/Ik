@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 import pytest
@@ -77,6 +77,33 @@ def test_employee_create_rejects_end_date_before_start_date() -> None:
         )
 
 
+def test_employee_create_allows_same_day_start_and_end_dates() -> None:
+    payload = EmployeeCreate(
+        employee_number="WF-001",
+        first_name="Ada",
+        last_name="Yilmaz",
+        employment_start_date=date(2026, 7, 1),
+        employment_end_date=date(2026, 7, 1),
+    )
+
+    assert payload.employment_end_date == payload.employment_start_date
+
+
+@pytest.mark.parametrize("field", ["employment_start_date", "employment_end_date"])
+def test_employee_create_rejects_datetime_strings_for_date_fields(field: str) -> None:
+    data = {
+        "employee_number": "WF-001",
+        "first_name": "Ada",
+        "last_name": "Yilmaz",
+        "employment_start_date": "2026-07-01",
+        "employment_end_date": "2026-07-02",
+    }
+    data[field] = "2026-07-01T00:00:00"
+
+    with pytest.raises(ValidationError):
+        EmployeeCreate(**data)
+
+
 def test_employee_update_allows_partial_payload_and_null_email() -> None:
     payload = EmployeeUpdate(first_name=" Ada ", email=None)
 
@@ -84,6 +111,19 @@ def test_employee_update_allows_partial_payload_and_null_email() -> None:
         "first_name": "Ada",
         "email": None,
     }
+
+
+def test_employee_update_rejects_end_date_before_start_date_when_both_provided() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(
+            employment_start_date=date(2026, 7, 10),
+            employment_end_date=date(2026, 7, 1),
+        )
+
+
+def test_employee_update_rejects_datetime_objects_for_date_fields() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(employment_start_date=datetime(2026, 7, 1))
 
 
 def test_employee_update_rejects_empty_name_when_provided() -> None:

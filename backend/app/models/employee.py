@@ -22,6 +22,10 @@ class Employee(Base, TimestampMixin):
             "status in ('active','on_leave','terminated')",
             name="ck_employees_status",
         ),
+        CheckConstraint(
+            "employment_end_date is null or employment_end_date >= employment_start_date",
+            name="ck_employees_date_order",
+        ),
         UniqueConstraint(
             "tenant_id",
             "employee_number",

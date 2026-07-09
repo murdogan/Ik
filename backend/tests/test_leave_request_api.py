@@ -296,6 +296,24 @@ async def test_create_leave_request_rejects_client_controlled_status() -> None:
         await engine.dispose()
 
 
+async def test_create_leave_request_rejects_datetime_strings_for_leave_dates() -> None:
+    client, engine = await _client_with_database()
+    try:
+        payload = _create_payload()
+        payload["start_date"] = "2026-08-03T00:00:00"
+
+        response = await client.post(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            json=payload,
+        )
+
+        assert response.status_code == 422
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_create_leave_request_rejects_cross_tenant_employee() -> None:
     client, engine = await _client_with_database()
     try:
@@ -482,6 +500,21 @@ async def test_list_leave_requests_rejects_invalid_filter_date_range() -> None:
             code="leave_request_invalid_date_range",
             message="Leave request end_date filter must be on or after start_date",
         )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_rejects_datetime_strings_for_date_filters() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"start_date": "2026-07-22T00:00:00", "end_date": "2026-07-24"},
+        )
+
+        assert response.status_code == 422
     finally:
         await client.aclose()
         await engine.dispose()

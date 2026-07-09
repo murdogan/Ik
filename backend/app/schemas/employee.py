@@ -1,4 +1,3 @@
-from datetime import date
 from re import Pattern, compile
 from typing import Self
 from uuid import UUID
@@ -6,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.employee import EmployeeStatus
+from app.schemas.date_fields import DateOnly
 
 EMAIL_PATTERN: Pattern[str] = compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 EMPLOYEE_LIST_DEFAULT_LIMIT = 50
@@ -22,8 +22,8 @@ class EmployeeCreate(BaseModel):
     department: str | None = None
     position: str | None = None
     status: EmployeeStatus = EmployeeStatus.ACTIVE
-    employment_start_date: date
-    employment_end_date: date | None = None
+    employment_start_date: DateOnly
+    employment_end_date: DateOnly | None = None
 
     @field_validator("employee_number", "first_name", "last_name")
     @classmethod
@@ -63,8 +63,8 @@ class EmployeeUpdate(BaseModel):
     department: str | None = None
     position: str | None = None
     status: EmployeeStatus | None = None
-    employment_start_date: date | None = None
-    employment_end_date: date | None = None
+    employment_start_date: DateOnly | None = None
+    employment_end_date: DateOnly | None = None
 
     @field_validator("employee_number", "first_name", "last_name")
     @classmethod
@@ -130,5 +130,5 @@ class EmployeeRead(BaseModel):
     department: str | None
     position: str | None
     status: EmployeeStatus
-    employment_start_date: date
-    employment_end_date: date | None
+    employment_start_date: DateOnly
+    employment_end_date: DateOnly | None

@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B4)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B5)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -56,6 +56,10 @@ Geçerli uygulama notları:
   talepleri döndürür.
 - Leave request listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`;
   `offset` varsayılan `0`) uygulanmıştır.
+- Employee ve leave tarih alanları yalnız `YYYY-MM-DD` full-date değerlerini kabul eder;
+  midnight datetime stringleri tarih olarak coerce edilmez. Employee create/update ve leave create
+  date order kontrolleri servis katmanında da korunur; `employees` tablosunda date-order check
+  constraint vardır.
 - Leave request detail endpointi (`GET /api/v1/leave-requests/{id}`) henüz yoktur.
 
 Lokal smoke komutu:

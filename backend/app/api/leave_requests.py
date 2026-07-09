@@ -1,4 +1,3 @@
-from datetime import date
 from typing import Annotated
 from uuid import UUID
 
@@ -10,6 +9,7 @@ from app.api.errors import ApiError
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
+from app.schemas.date_fields import DateOnly
 from app.schemas.leave_request import (
     LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
     LEAVE_REQUEST_LIST_MAX_LIMIT,
@@ -47,11 +47,11 @@ def get_leave_request_list_filters(
         Query(description="Employee id filter. Always applied within the current tenant."),
     ] = None,
     start_date: Annotated[
-        date | None,
+        DateOnly | None,
         Query(description="Inclusive date-window start for overlapping leave requests."),
     ] = None,
     end_date: Annotated[
-        date | None,
+        DateOnly | None,
         Query(description="Inclusive date-window end for overlapping leave requests."),
     ] = None,
 ) -> LeaveRequestListFilters:

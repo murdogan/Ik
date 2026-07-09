@@ -1,10 +1,10 @@
-from datetime import date
 from typing import Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.leave_request import LeaveRequestStatus
+from app.schemas.date_fields import DateOnly
 
 LEAVE_REQUEST_LIST_DEFAULT_LIMIT = 50
 LEAVE_REQUEST_LIST_MAX_LIMIT = 200
@@ -15,8 +15,8 @@ class LeaveRequestCreate(BaseModel):
 
     employee_id: UUID
     leave_type: str = Field(min_length=1, max_length=64)
-    start_date: date
-    end_date: date
+    start_date: DateOnly
+    end_date: DateOnly
     requested_by_user_id: UUID
 
     @field_validator("leave_type")
@@ -52,8 +52,8 @@ class LeaveRequestListFilters(BaseModel):
 
     status: LeaveRequestStatus | None = None
     employee_id: UUID | None = None
-    start_date: date | None = None
-    end_date: date | None = None
+    start_date: DateOnly | None = None
+    end_date: DateOnly | None = None
 
     @model_validator(mode="after")
     def validate_date_range_when_complete(self) -> Self:
@@ -81,8 +81,8 @@ class LeaveRequestRead(BaseModel):
     id: UUID
     employee_id: UUID
     leave_type: str
-    start_date: date
-    end_date: date
+    start_date: DateOnly
+    end_date: DateOnly
     status: LeaveRequestStatus
     requested_by_user_id: UUID
     decided_by_user_id: UUID | None

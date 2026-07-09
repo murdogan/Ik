@@ -95,6 +95,7 @@ async def _client_with_database(
                 position="Backend Engineer",
                 status=EmployeeStatus.TERMINATED.value,
                 employment_start_date=date(2026, 7, 3),
+                employment_end_date=date(2026, 7, 31),
             ),
             Employee(
                 id=OTHER_EMPLOYEE_ID,
@@ -211,6 +212,26 @@ async def test_create_employee_rejects_client_controlled_tenant_id() -> None:
                 "first_name": "Bora",
                 "last_name": "Demir",
                 "employment_start_date": "2026-07-08",
+            },
+        )
+
+        assert response.status_code == 422
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_create_employee_rejects_datetime_string_for_employment_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-002",
+                "first_name": "Bora",
+                "last_name": "Demir",
+                "employment_start_date": "2026-07-08T00:00:00",
             },
         )
 
@@ -451,6 +472,42 @@ async def test_update_employee_rejects_invalid_existing_date_order_with_error_en
             code="employee_invalid_date_range",
             message="Employment end date must be on or after start date",
         )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_start_date_after_existing_end_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"employment_start_date": "2026-08-01"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_date_range",
+            message="Employment end date must be on or after start date",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_allows_clearing_existing_end_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"employment_end_date": None},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["employment_end_date"] is None
     finally:
         await client.aclose()
         await engine.dispose()

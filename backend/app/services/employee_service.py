@@ -68,6 +68,7 @@ class EmployeeService:
         return employee
 
     async def create_employee(self, tenant_id: UUID, payload: EmployeeCreate) -> Employee:
+        _validate_date_order(payload.employment_start_date, payload.employment_end_date)
         await self._ensure_employee_number_available(
             tenant_id=tenant_id,
             employee_number=payload.employee_number,

@@ -2,17 +2,17 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W1B4 Tenant header validation`
+Task: `W1B5 Date validation hardening`
 
 ## Scope
 
-- Hardened `X-Tenant-Id` parsing in the API tenant dependency.
-- Missing or blank `X-Tenant-Id` returns `400 tenant_header_missing`.
-- Malformed `X-Tenant-Id` returns `400 tenant_header_invalid`.
-- Blank provided `X-Tenant-Slug` returns `400 tenant_slug_header_invalid`.
-- Tenant header errors use the standard `{ error: { code, message, details, correlation_id } }`
-  envelope and preserve `X-Correlation-Id`.
-- No API surface, migration, production/staging deploy, cron, token, auth, credential, `.env`, UI,
+- Hardened employee and leave date fields to accept only `YYYY-MM-DD` full-date values.
+- Rejected midnight datetime strings instead of coercing them to dates.
+- Added employee service create validation for date order, matching the existing update guard.
+- Added an `employees` table date-order check constraint and Alembic revision.
+- Expanded schema, service, model, migration, and API regression tests for same-day ranges,
+  explicit null clearing, partial update edge cases, and leave date filter parsing.
+- No API surface, production/staging deploy, cron, token, auth, credential, `.env`, UI,
   payroll, PDKS, AI, or external integration changes.
 
 ## Implemented API Surface Covered
@@ -32,7 +32,7 @@ Task: `W1B4 Tenant header validation`
 ## Verification
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 125 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest`: passed, 143 tests passed, 1 existing Starlette `TestClient` deprecation warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 
 ## Remaining Backend TODOs
