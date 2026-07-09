@@ -1,13 +1,23 @@
+import importlib
+import pkgutil
 from pathlib import Path
 
-import app.models  # noqa: F401
+import app.models as model_package
 from alembic import command as alembic_command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from app.db.base import Base
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKeyConstraint,
+    Table,
+    UniqueConstraint,
+    create_engine,
+    inspect,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 ALEMBIC_INI = Path("alembic.ini")
@@ -22,6 +32,140 @@ def _alembic_config(database_url: str | None = None) -> Config:
 
 def _script_directory() -> ScriptDirectory:
     return ScriptDirectory.from_config(_alembic_config())
+
+
+def _import_all_model_modules() -> None:
+    for module in pkgutil.iter_modules(
+        model_package.__path__, f"{model_package.__name__}."
+    ):
+        importlib.import_module(module.name)
+
+
+def _current_model_tables() -> dict[str, Table]:
+    _import_all_model_modules()
+    return {
+        mapper.local_table.name: mapper.local_table
+        for mapper in Base.registry.mappers
+    }
+
+
+def _model_column_signatures(table: Table) -> dict[str, tuple[bool, bool, bool]]:
+    return {
+        column.name: (
+            column.nullable,
+            column.primary_key,
+            column.server_default is not None,
+        )
+        for column in table.columns
+    }
+
+
+def _database_column_signatures(
+    columns: list[dict[str, object]],
+) -> dict[str, tuple[bool, bool, bool]]:
+    return {
+        str(column["name"]): (
+            bool(column["nullable"]),
+            bool(column["primary_key"]),
+            column["default"] is not None,
+        )
+        for column in columns
+    }
+
+
+def _model_index_signatures(table: Table) -> set[tuple[str | None, tuple[str, ...], bool]]:
+    return {
+        (
+            index.name,
+            tuple(column.name for column in index.columns),
+            bool(index.unique),
+        )
+        for index in table.indexes
+    }
+
+
+def _database_index_signatures(
+    indexes: list[dict[str, object]],
+) -> set[tuple[str | None, tuple[str, ...], bool]]:
+    return {
+        (
+            index["name"] if index["name"] is None else str(index["name"]),
+            tuple(str(column_name) for column_name in index["column_names"]),
+            bool(index["unique"]),
+        )
+        for index in indexes
+    }
+
+
+def _model_unique_constraint_signatures(
+    table: Table,
+) -> set[tuple[str | None, tuple[str, ...]]]:
+    return {
+        (
+            constraint.name,
+            tuple(column.name for column in constraint.columns),
+        )
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+
+def _database_unique_constraint_signatures(
+    constraints: list[dict[str, object]],
+) -> set[tuple[str | None, tuple[str, ...]]]:
+    return {
+        (
+            constraint["name"] if constraint["name"] is None else str(constraint["name"]),
+            tuple(str(column_name) for column_name in constraint["column_names"]),
+        )
+        for constraint in constraints
+    }
+
+
+def _model_foreign_key_signatures(
+    table: Table,
+) -> set[tuple[tuple[str, ...], str, tuple[str, ...], str | None]]:
+    return {
+        (
+            tuple(element.parent.name for element in constraint.elements),
+            constraint.referred_table.name,
+            tuple(element.column.name for element in constraint.elements),
+            constraint.ondelete,
+        )
+        for constraint in table.constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+    }
+
+
+def _database_foreign_key_signatures(
+    foreign_keys: list[dict[str, object]],
+) -> set[tuple[tuple[str, ...], str, tuple[str, ...], str | None]]:
+    return {
+        (
+            tuple(str(column_name) for column_name in foreign_key["constrained_columns"]),
+            str(foreign_key["referred_table"]),
+            tuple(str(column_name) for column_name in foreign_key["referred_columns"]),
+            foreign_key["options"].get("ondelete"),
+        )
+        for foreign_key in foreign_keys
+    }
+
+
+def _model_check_constraint_names(table: Table) -> set[str | None]:
+    return {
+        constraint.name
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+
+def _database_check_constraint_names(
+    constraints: list[dict[str, object]],
+) -> set[str | None]:
+    return {
+        constraint["name"] if constraint["name"] is None else str(constraint["name"])
+        for constraint in constraints
+    }
 
 
 def _compare_type(context, _inspected_column, _metadata_column, _inspected_type, metadata_type):
@@ -72,6 +216,7 @@ def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> No
     database_path = tmp_path / "migration-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
+    model_tables = _current_model_tables()
 
     alembic_command.upgrade(config, "head")
 
@@ -80,13 +225,25 @@ def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> No
         inspector = inspect(engine)
         migrated_tables = set(inspector.get_table_names())
 
-        assert set(Base.metadata.tables) <= migrated_tables
+        assert set(Base.metadata.tables) == set(model_tables)
+        assert migrated_tables == set(model_tables) | {"alembic_version"}
 
-        for table in Base.metadata.sorted_tables:
-            migrated_columns = {column["name"] for column in inspector.get_columns(table.name)}
-            model_columns = {column.name for column in table.columns}
-
-            assert model_columns <= migrated_columns
+        for table in model_tables.values():
+            assert _database_column_signatures(
+                inspector.get_columns(table.name)
+            ) == _model_column_signatures(table)
+            assert _database_index_signatures(
+                inspector.get_indexes(table.name)
+            ) == _model_index_signatures(table)
+            assert _database_unique_constraint_signatures(
+                inspector.get_unique_constraints(table.name)
+            ) == _model_unique_constraint_signatures(table)
+            assert _database_foreign_key_signatures(
+                inspector.get_foreign_keys(table.name)
+            ) == _model_foreign_key_signatures(table)
+            assert _database_check_constraint_names(
+                inspector.get_check_constraints(table.name)
+            ) == _model_check_constraint_names(table)
 
         with engine.connect() as connection:
             current_revision = connection.execute(
