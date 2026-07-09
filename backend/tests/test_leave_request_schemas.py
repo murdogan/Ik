@@ -78,6 +78,18 @@ def test_leave_request_create_allows_same_day_start_and_end_dates() -> None:
     assert payload.end_date == payload.start_date
 
 
+@pytest.mark.parametrize("value", ["20260803", "2026-W32-1", "2026-02-30"])
+def test_leave_request_create_rejects_non_full_date_strings(value: str) -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestCreate(
+            employee_id=EMPLOYEE_ID,
+            leave_type="annual",
+            start_date=value,
+            end_date="2026-08-07",
+            requested_by_user_id=REQUESTING_USER_ID,
+        )
+
+
 @pytest.mark.parametrize("field", ["start_date", "end_date"])
 def test_leave_request_create_rejects_datetime_strings_for_date_fields(field: str) -> None:
     data = {
@@ -133,6 +145,12 @@ def test_leave_request_list_filters_reject_datetime_strings_for_date_fields() ->
             start_date="2026-07-01T00:00:00",
             end_date="2026-07-31",
         )
+
+
+@pytest.mark.parametrize("value", ["20260701", "2026-W27-3", "2026-02-30"])
+def test_leave_request_list_filters_reject_non_full_date_strings(value: str) -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestListFilters(start_date=value)
 
 
 def test_leave_request_list_pagination_has_bounded_defaults() -> None:

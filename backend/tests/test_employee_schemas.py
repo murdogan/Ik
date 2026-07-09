@@ -117,6 +117,17 @@ def test_employee_create_allows_same_day_start_and_end_dates() -> None:
     assert payload.status == EmployeeStatus.TERMINATED
 
 
+@pytest.mark.parametrize("value", ["20260701", "2026-W27-3", "2026-02-30"])
+def test_employee_create_rejects_non_full_date_strings(value: str) -> None:
+    with pytest.raises(ValidationError):
+        EmployeeCreate(
+            employee_number="WF-001",
+            first_name="Ada",
+            last_name="Yilmaz",
+            employment_start_date=value,
+        )
+
+
 @pytest.mark.parametrize("field", ["employment_start_date", "employment_end_date"])
 def test_employee_create_rejects_datetime_strings_for_date_fields(field: str) -> None:
     data = {
@@ -147,6 +158,17 @@ def test_employee_update_rejects_end_date_before_start_date_when_both_provided()
             employment_start_date=date(2026, 7, 10),
             employment_end_date=date(2026, 7, 1),
         )
+
+
+def test_employee_update_rejects_explicit_null_start_date() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(employment_start_date=None)
+
+
+@pytest.mark.parametrize("value", ["20260701", "2026-W27-3", "2026-02-30"])
+def test_employee_update_rejects_non_full_date_strings(value: str) -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(employment_start_date=value)
 
 
 def test_employee_update_rejects_explicit_null_status() -> None:

@@ -7,6 +7,7 @@ from app.models.employee import Employee, EmployeeStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.schemas.employee import EmployeeListFilters, EmployeeListPagination, EmployeeUpdate
 from app.services.employee_service import (
+    EmployeeDateRangeError,
     EmployeeLifecycleError,
     EmployeeNotFoundError,
     EmployeeService,
@@ -192,6 +193,21 @@ async def test_update_employee_rejects_constructed_null_status() -> None:
         payload = EmployeeUpdate.model_construct(_fields_set={"status"}, status=None)
 
         with pytest.raises(EmployeeLifecycleError, match="Employee status is required"):
+            await EmployeeService(session).update_employee(TENANT_ID, EMPLOYEE_ID, payload)
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_constructed_null_start_date() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        payload = EmployeeUpdate.model_construct(
+            _fields_set={"employment_start_date"},
+            employment_start_date=None,
+        )
+
+        with pytest.raises(EmployeeDateRangeError, match="Employment start date is required"):
             await EmployeeService(session).update_employee(TENANT_ID, EMPLOYEE_ID, payload)
     finally:
         await session.close()

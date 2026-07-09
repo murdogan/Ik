@@ -33,6 +33,20 @@ async def test_employee_service_create_rejects_constructed_invalid_date_range() 
         await service.create_employee(TENANT_ID, payload)
 
 
+async def test_employee_service_create_rejects_constructed_missing_start_date() -> None:
+    service = EmployeeService(session=cast(AsyncSession, None))
+    payload = EmployeeCreate.model_construct(
+        employee_number="WF-001",
+        first_name="Ada",
+        last_name="Yilmaz",
+        employment_start_date=None,
+        employment_end_date=None,
+    )
+
+    with pytest.raises(EmployeeDateRangeError, match="Employment start date is required"):
+        await service.create_employee(TENANT_ID, payload)
+
+
 async def test_employee_service_create_rejects_constructed_invalid_lifecycle() -> None:
     service = EmployeeService(session=cast(AsyncSession, None))
     payload = EmployeeCreate.model_construct(
@@ -59,4 +73,29 @@ async def test_leave_request_service_create_rejects_constructed_invalid_date_ran
     )
 
     with pytest.raises(LeaveRequestDateRangeError, match="Leave end date"):
+        await service.create_leave_request(TENANT_ID, payload)
+
+
+@pytest.mark.parametrize(
+    ("start_date", "end_date", "message"),
+    [
+        (None, date(2026, 7, 20), "Leave start date is required"),
+        (date(2026, 7, 20), None, "Leave end date is required"),
+    ],
+)
+async def test_leave_request_service_create_rejects_constructed_missing_dates(
+    start_date: date | None,
+    end_date: date | None,
+    message: str,
+) -> None:
+    service = LeaveRequestService(session=cast(AsyncSession, None))
+    payload = LeaveRequestCreate.model_construct(
+        employee_id=EMPLOYEE_ID,
+        leave_type="annual",
+        start_date=start_date,
+        end_date=end_date,
+        requested_by_user_id=USER_ID,
+    )
+
+    with pytest.raises(LeaveRequestDateRangeError, match=message):
         await service.create_leave_request(TENANT_ID, payload)

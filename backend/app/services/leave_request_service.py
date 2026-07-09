@@ -178,7 +178,11 @@ class LeaveRequestService:
             raise LeaveRequestUserNotFoundError
 
 
-def _validate_date_order(start_date: date, end_date: date) -> None:
+def _validate_date_order(start_date: date | None, end_date: date | None) -> None:
+    if start_date is None:
+        raise LeaveRequestDateRangeError("Leave start date is required")
+    if end_date is None:
+        raise LeaveRequestDateRangeError("Leave end date is required")
     if end_date < start_date:
         raise LeaveRequestDateRangeError("Leave end date must be on or after start date")
 

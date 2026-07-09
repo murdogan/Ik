@@ -181,9 +181,11 @@ def _validate_date_order(start_date: date, end_date: date | None) -> None:
 def _validate_employment_lifecycle(
     *,
     status: EmployeeStatus | str | None,
-    start_date: date,
+    start_date: date | None,
     end_date: date | None,
 ) -> None:
+    if start_date is None:
+        raise EmployeeDateRangeError("Employment start date is required")
     _validate_date_order(start_date, end_date)
 
     status_value = _status_value(status)

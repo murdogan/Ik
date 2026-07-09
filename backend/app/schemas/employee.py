@@ -88,13 +88,15 @@ class EmployeeUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_date_order_when_complete(self) -> Self:
+        fields_set = self.model_fields_set
+        if "employment_start_date" in fields_set and self.employment_start_date is None:
+            raise ValueError("Employment start date must not be null")
         if (
             self.employment_start_date is not None
             and self.employment_end_date is not None
             and self.employment_end_date < self.employment_start_date
         ):
             raise ValueError("Employment end date must be on or after start date")
-        fields_set = self.model_fields_set
         if "status" in fields_set and self.status is None:
             raise ValueError("Status must not be null")
         if "status" in fields_set and "employment_end_date" in fields_set:
