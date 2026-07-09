@@ -49,7 +49,7 @@ def test_tenant_dependency_accepts_valid_tenant_header() -> None:
     response = _client().get(
         "/tenant-context",
         headers={
-            "X-Tenant-Id": f" {str(TENANT_ID).upper()} ",
+            "X-Tenant-Id": str(TENANT_ID),
             "X-Tenant-Slug": " wealthy-falcon ",
         },
     )
@@ -108,6 +108,9 @@ def test_tenant_dependency_rejects_blank_tenant_header() -> None:
         str(TENANT_ID).replace("-", ""),
         f"{{{TENANT_ID}}}",
         f"urn:uuid:{TENANT_ID}",
+        str(TENANT_ID).upper(),
+        f" {TENANT_ID}",
+        f"{TENANT_ID} ",
     ],
 )
 def test_tenant_dependency_rejects_invalid_tenant_header(tenant_header: str) -> None:

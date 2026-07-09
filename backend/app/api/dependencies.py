@@ -77,13 +77,15 @@ def _parse_tenant_id_header(value: str | None) -> UUID:
     clean_value = value.strip()
     if not clean_value:
         raise tenant_header_missing_error()
+    if clean_value != value:
+        raise tenant_header_invalid_error()
 
     try:
-        tenant_id = UUID(clean_value)
+        tenant_id = UUID(value)
     except ValueError as exc:
         raise tenant_header_invalid_error() from exc
 
-    if clean_value.lower() != str(tenant_id):
+    if value != str(tenant_id):
         raise tenant_header_invalid_error()
     return tenant_id
 
