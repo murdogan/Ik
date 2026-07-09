@@ -24,5 +24,5 @@ Branch: `overnight/sprint-0-wealthy-falcon`
 ## Remaining Work
 
 - Auth/session API implementation remains future work.
-- Admin web UI and demo seed flows remain future work.
+- Admin web UI remains future work; local demo seed command was added later in W1B1.
 - Dependency deprecation warning can be handled during normal dependency maintenance.

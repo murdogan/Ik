@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A6)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1B1)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -64,6 +64,15 @@ uv run python scripts/backend_api_smoke.py
 
 Bu komut deploy, staging URL, cron, token, `.env` veya dış servis kullanmaz; in-memory SQLite
 ile yukarıdaki API yüzeyini ASGI üzerinden doğrular.
+
+Lokal demo seed komutu:
+
+```bash
+uv run python scripts/seed_demo_data.py
+```
+
+Bu komut API yüzeyi eklemez veya değiştirmez. Yalnız `local`/`dev` ortamında iki demo tenant,
+beş kullanıcı, sekiz çalışan ve beş izin talebini idempotent şekilde seed eder.
 
 ## 1. API ilkeleri
 

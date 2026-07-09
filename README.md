@@ -84,6 +84,19 @@ veritabanına karşı çalıştırın; production/staging migration çalıştır
 parçası değildir. Yeni migration'lar küçük, geriye uyumlu ve tenant/user zincirini bozmayacak
 şekilde hazırlanmalıdır; destructive değişiklikler Sprint-0 kapsamına alınmaz.
 
+Lokal demo seed komutu:
+
+```bash
+uv run alembic upgrade head
+uv run python scripts/seed_demo_data.py
+```
+
+Seed komutu yalnız `IK_ENVIRONMENT=local` veya `IK_ENVIRONMENT=dev` iken çalışır. Komut
+idempotenttir; iki demo tenant, beş kullanıcı, sekiz çalışan ve beş izin talebini stabil UUID'ler
+ile oluşturur veya demo fixture değerlerine geri günceller. Lokal test/smoke kullanımında hedef
+veritabanı `--database-url` ile geçici olarak override edilebilir; production/staging deploy,
+cron, token, credential veya `.env` değişikliği yapmaz.
+
 Lokal app import smoke testi:
 
 ```bash
