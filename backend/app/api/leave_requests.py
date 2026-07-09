@@ -2,10 +2,11 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
+from app.api.errors import ApiError
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
@@ -55,9 +56,10 @@ def get_leave_request_list_filters(
     ] = None,
 ) -> LeaveRequestListFilters:
     if start_date is not None and end_date is not None and end_date < start_date:
-        raise HTTPException(
+        raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Leave request end_date filter must be on or after start_date",
+            code="leave_request_invalid_date_range",
+            message="Leave request end_date filter must be on or after start_date",
         )
     return LeaveRequestListFilters(
         status=status_filter,
@@ -112,10 +114,7 @@ async def create_leave_request(
     except LeaveRequestUserNotFoundError as exc:
         raise _user_not_found_error() from exc
     except LeaveRequestDateRangeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+        raise _leave_request_date_range_error(exc) from exc
 
 
 @router.post("/{leave_request_id}/approve", response_model=LeaveRequestRead)
@@ -181,29 +180,41 @@ async def cancel_leave_request(
         raise _leave_request_transition_error(exc) from exc
 
 
-def _leave_request_not_found_error() -> HTTPException:
-    return HTTPException(
+def _leave_request_not_found_error() -> ApiError:
+    return ApiError(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail="Leave request not found",
+        code="leave_request_not_found",
+        message="Leave request not found",
     )
 
 
-def _employee_not_found_error() -> HTTPException:
-    return HTTPException(
+def _employee_not_found_error() -> ApiError:
+    return ApiError(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail="Employee not found",
+        code="employee_not_found",
+        message="Employee not found",
     )
 
 
-def _user_not_found_error() -> HTTPException:
-    return HTTPException(
+def _user_not_found_error() -> ApiError:
+    return ApiError(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail="User not found",
+        code="user_not_found",
+        message="User not found",
     )
 
 
-def _leave_request_transition_error(exc: LeaveRequestTransitionError) -> HTTPException:
-    return HTTPException(
+def _leave_request_date_range_error(exc: LeaveRequestDateRangeError) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="leave_request_invalid_date_range",
+        message=str(exc),
+    )
+
+
+def _leave_request_transition_error(exc: LeaveRequestTransitionError) -> ApiError:
+    return ApiError(
         status_code=status.HTTP_409_CONFLICT,
-        detail=str(exc),
+        code="leave_request_transition_conflict",
+        message=str(exc),
     )

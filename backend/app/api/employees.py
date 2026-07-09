@@ -1,10 +1,11 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
+from app.api.errors import ApiError
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.employee import EmployeeStatus
@@ -118,10 +119,7 @@ async def update_employee(
     except DuplicateEmployeeNumberError as exc:
         raise _duplicate_employee_number_error() from exc
     except EmployeeDateRangeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+        raise _employee_date_range_error(exc) from exc
 
 
 @router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -137,15 +135,25 @@ async def delete_employee(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _employee_not_found_error() -> HTTPException:
-    return HTTPException(
+def _employee_not_found_error() -> ApiError:
+    return ApiError(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail="Employee not found",
+        code="employee_not_found",
+        message="Employee not found",
     )
 
 
-def _duplicate_employee_number_error() -> HTTPException:
-    return HTTPException(
+def _duplicate_employee_number_error() -> ApiError:
+    return ApiError(
         status_code=status.HTTP_409_CONFLICT,
-        detail="Employee number already exists for this tenant",
+        code="employee_number_conflict",
+        message="Employee number already exists for this tenant",
+    )
+
+
+def _employee_date_range_error(exc: EmployeeDateRangeError) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="employee_invalid_date_range",
+        message=str(exc),
     )

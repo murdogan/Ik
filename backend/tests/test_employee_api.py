@@ -143,6 +143,25 @@ def _tenant_headers(tenant_id: UUID = TENANT_ID) -> dict[str, str]:
     return {"X-Tenant-Id": str(tenant_id)}
 
 
+def _assert_error_response(
+    response,
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    correlation_id: str | None = None,
+) -> None:
+    assert response.status_code == status_code
+    assert response.json() == {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": None,
+            "correlation_id": correlation_id,
+        }
+    }
+
+
 async def test_create_employee_uses_tenant_header_and_server_generated_id() -> None:
     client, engine = await _client_with_database()
     try:
@@ -349,7 +368,12 @@ async def test_get_employee_is_tenant_scoped() -> None:
 
         assert response.status_code == 200
         assert response.json()["employee_number"] == "WF-001"
-        assert cross_tenant_response.status_code == 404
+        _assert_error_response(
+            cross_tenant_response,
+            status_code=404,
+            code="employee_not_found",
+            message="Employee not found",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -401,7 +425,32 @@ async def test_update_employee_rejects_duplicate_employee_number_within_tenant()
             json={"employee_number": "WF-002"},
         )
 
-        assert response.status_code == 409
+        _assert_error_response(
+            response,
+            status_code=409,
+            code="employee_number_conflict",
+            message="Employee number already exists for this tenant",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_invalid_existing_date_order_with_error_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"employment_end_date": "2026-06-30"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_date_range",
+            message="Employment end date must be on or after start date",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -432,7 +481,7 @@ async def test_create_employee_rejects_duplicate_employee_number_within_tenant()
     try:
         response = await client.post(
             "/api/v1/employees",
-            headers=_tenant_headers(),
+            headers={**_tenant_headers(), "X-Correlation-Id": "w1a6-employee-error"},
             json={
                 "employee_number": "WF-001",
                 "first_name": "Duplicate",
@@ -441,7 +490,13 @@ async def test_create_employee_rejects_duplicate_employee_number_within_tenant()
             },
         )
 
-        assert response.status_code == 409
+        _assert_error_response(
+            response,
+            status_code=409,
+            code="employee_number_conflict",
+            message="Employee number already exists for this tenant",
+            correlation_id="w1a6-employee-error",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -464,8 +519,18 @@ async def test_delete_employee_hard_deletes_current_tenant_record() -> None:
         )
 
         assert response.status_code == 204
-        assert get_response.status_code == 404
-        assert cross_tenant_response.status_code == 404
+        _assert_error_response(
+            get_response,
+            status_code=404,
+            code="employee_not_found",
+            message="Employee not found",
+        )
+        _assert_error_response(
+            cross_tenant_response,
+            status_code=404,
+            code="employee_not_found",
+            message="Employee not found",
+        )
     finally:
         await client.aclose()
         await engine.dispose()

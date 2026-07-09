@@ -209,6 +209,25 @@ def _tenant_headers(tenant_id: UUID = TENANT_ID) -> dict[str, str]:
     return {"X-Tenant-Id": str(tenant_id)}
 
 
+def _assert_error_response(
+    response,
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    correlation_id: str | None = None,
+) -> None:
+    assert response.status_code == status_code
+    assert response.json() == {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": None,
+            "correlation_id": correlation_id,
+        }
+    }
+
+
 def _create_payload(
     employee_id: UUID = EMPLOYEE_ID,
     requested_by_user_id: UUID = REQUESTING_USER_ID,
@@ -286,8 +305,12 @@ async def test_create_leave_request_rejects_cross_tenant_employee() -> None:
             json=_create_payload(employee_id=OTHER_EMPLOYEE_ID),
         )
 
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Employee not found"
+        _assert_error_response(
+            response,
+            status_code=404,
+            code="employee_not_found",
+            message="Employee not found",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -302,8 +325,12 @@ async def test_create_leave_request_rejects_cross_tenant_requesting_user() -> No
             json=_create_payload(requested_by_user_id=OTHER_USER_ID),
         )
 
-        assert response.status_code == 404
-        assert response.json()["detail"] == "User not found"
+        _assert_error_response(
+            response,
+            status_code=404,
+            code="user_not_found",
+            message="User not found",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -449,9 +476,11 @@ async def test_list_leave_requests_rejects_invalid_filter_date_range() -> None:
             params={"start_date": "2026-07-24", "end_date": "2026-07-20"},
         )
 
-        assert response.status_code == 422
-        assert response.json()["detail"] == (
-            "Leave request end_date filter must be on or after start_date"
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_invalid_date_range",
+            message="Leave request end_date filter must be on or after start_date",
         )
     finally:
         await client.aclose()
@@ -519,8 +548,12 @@ async def test_approve_non_pending_leave_request_returns_conflict() -> None:
             json=_decision_payload(),
         )
 
-        assert response.status_code == 409
-        assert response.json()["detail"] == "Only pending leave requests can be decided"
+        _assert_error_response(
+            response,
+            status_code=409,
+            code="leave_request_transition_conflict",
+            message="Only pending leave requests can be decided",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -535,8 +568,12 @@ async def test_decision_routes_are_tenant_scoped() -> None:
             json=_decision_payload(),
         )
 
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Leave request not found"
+        _assert_error_response(
+            response,
+            status_code=404,
+            code="leave_request_not_found",
+            message="Leave request not found",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -551,8 +588,12 @@ async def test_decision_routes_reject_cross_tenant_decider() -> None:
             json=_decision_payload(decided_by_user_id=OTHER_USER_ID),
         )
 
-        assert response.status_code == 404
-        assert response.json()["detail"] == "User not found"
+        _assert_error_response(
+            response,
+            status_code=404,
+            code="user_not_found",
+            message="User not found",
+        )
     finally:
         await client.aclose()
         await engine.dispose()

@@ -2,22 +2,25 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W1A5 Dashboard enrichment`
+Task: `W1A6 API error consistency`
 
 ## Scope
 
-- Added explicit tenant-scoped dashboard metrics: `active_employee_count` and
-  `pending_leave_count`.
-- `active_employee_count` counts only employees with `active` status.
-- Existing `employee_count` remains the current workforce count (`active` + `on_leave`) and
-  `pending_leave_requests` remains as a compatibility field mirroring `pending_leave_count`.
-- Dashboard summary continues to return DB-backed `new_starters_this_month`,
-  `department_distribution`, and `recent_activity`.
-- Dashboard tests now cover active/on-leave separation, pending leave count aliases, unassigned
-  department grouping, zero state, tenant header use, and OpenAPI schema exposure.
-- Backend API smoke now asserts the enriched dashboard fields.
-- Employee list keeps existing `department`, `status`, and `q` filters plus `limit`/`offset` pagination.
-- Synced README, backend smoke coverage, and OpenAPI draft status with current API behavior.
+- Employee and leave route-level domain errors now return the documented structured envelope:
+  `{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.
+- Covered employee errors: not found, duplicate employee number, and invalid partial-update date
+  range.
+- Covered leave errors: employee/user/leave request not found, invalid list date range, and
+  non-pending transition conflict.
+- `X-Correlation-Id` is propagated into the envelope when supplied; otherwise
+  `correlation_id` is `null`.
+- FastAPI automatic request validation `422` responses remain framework defaults; global response
+  envelope/correlation middleware is still a separate future task.
+- Employee list keeps existing `department`, `status`, and `q` filters plus
+  `limit`/`offset` pagination.
+- Dashboard summary keeps DB-backed active/pending metrics, this-month starters, department
+  distribution, and recent activity.
+- Synced README and OpenAPI draft status with current API behavior.
 - No deploy, staging URL, cron, token, auth, credential, `.env`, UI, or external integration changes.
 
 ## Implemented API Surface Covered
@@ -35,14 +38,13 @@ Task: `W1A5 Dashboard enrichment`
 ## Verification
 
 - `uv run ruff check backend`: passed.
-- `uv run ruff check scripts/backend_api_smoke.py`: passed.
-- `uv run pytest`: passed, 115 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest`: passed, 116 tests passed, 1 existing Starlette `TestClient` deprecation warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 
 ## Remaining Backend TODOs
 
 - Auth/session/RBAC dependencies.
-- Standard response envelope, correlation metadata, and structured error envelope.
+- Full standard response envelope and global correlation middleware.
 - Sorting/idempotency on list and critical POST endpoints.
 - Cursor-based pagination remains a separate future standardization task.
 - Additional list filters outside employee and leave request lists remain separate future tasks.

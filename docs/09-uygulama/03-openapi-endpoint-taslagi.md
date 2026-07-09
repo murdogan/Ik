@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A5)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A6)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -30,7 +30,16 @@ Geçerli uygulama notları:
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
   mekanizmasıdır.
-- Cursor pagination standardı, idempotency ve correlation envelope henüz TODO'dur.
+- Employee ve leave endpointlerinde route seviyesinde yakalanan domain hataları Bölüm 1'deki
+  error zarfını döner. FastAPI'nin otomatik request validation `422` yanıtları henüz framework
+  varsayılanındadır.
+- Bu domain error zarfında `correlation_id`, `X-Correlation-Id` header'ı geldiyse aynı değer,
+  gelmediyse `null` olur.
+- Şu an kullanılan domain error code değerleri: `employee_not_found`,
+  `employee_number_conflict`, `employee_invalid_date_range`, `leave_request_not_found`,
+  `leave_request_invalid_date_range`, `leave_request_transition_conflict`, `user_not_found`.
+- Cursor pagination standardı, idempotency, tüm response zarfı ve global correlation middleware
+  henüz TODO'dur.
 - Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,
   `pending_leave_count`, `employee_count`, `pending_leave_requests`,
   `new_starters_this_month`, `department_distribution` ve `recent_activity` döner.

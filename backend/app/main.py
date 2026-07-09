@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.dashboard import router as dashboard_router
 from app.api.employees import router as employees_router
+from app.api.errors import ApiError, api_error_handler
 from app.api.health import router as health_router
 from app.api.landing import router as landing_router
 from app.api.leave_requests import router as leave_requests_router
@@ -16,6 +17,7 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.environment != "prod" else None,
         redoc_url="/redoc" if settings.environment != "prod" else None,
     )
+    app.add_exception_handler(ApiError, api_error_handler)
     app.include_router(dashboard_router)
     app.include_router(employees_router)
     app.include_router(leave_requests_router)

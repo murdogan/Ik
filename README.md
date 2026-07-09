@@ -111,6 +111,11 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
   `limit`/`offset` pagination, oluşturma/onay/red/iptal
 
+Employee ve leave endpointlerinin açıkça yakaladığı domain hataları şu zarfla döner:
+`{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.
+Bu kapsam not-found, conflict, date-range ve leave transition hatalarıdır; otomatik FastAPI
+validation `422` yanıtları henüz framework varsayılanındadır.
+
 Başarılıysa `BACKEND_SMOKE_OK` çıktısı verir.
 
 Opsiyonel lokal HTTP landing/health smoke testi:
