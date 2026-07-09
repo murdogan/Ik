@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -178,13 +178,32 @@ class LeaveRequestService:
             raise LeaveRequestUserNotFoundError
 
 
-def _validate_date_order(start_date: date | None, end_date: date | None) -> None:
-    if start_date is None:
-        raise LeaveRequestDateRangeError("Leave start date is required")
-    if end_date is None:
-        raise LeaveRequestDateRangeError("Leave end date is required")
+def _validate_date_order(start_date: object, end_date: object) -> None:
+    start_date = _required_leave_date(
+        start_date,
+        missing_message="Leave start date is required",
+        invalid_message="Leave start date must be a date without time",
+    )
+    end_date = _required_leave_date(
+        end_date,
+        missing_message="Leave end date is required",
+        invalid_message="Leave end date must be a date without time",
+    )
     if end_date < start_date:
         raise LeaveRequestDateRangeError("Leave end date must be on or after start date")
+
+
+def _required_leave_date(
+    value: object,
+    *,
+    missing_message: str,
+    invalid_message: str,
+) -> date:
+    if value is None:
+        raise LeaveRequestDateRangeError(missing_message)
+    if isinstance(value, datetime) or not isinstance(value, date):
+        raise LeaveRequestDateRangeError(invalid_message)
+    return value
 
 
 def _status_value(status: LeaveRequestStatus | str | None) -> str | None:

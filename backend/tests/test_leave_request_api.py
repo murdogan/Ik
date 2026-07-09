@@ -351,6 +351,29 @@ async def test_create_leave_request_rejects_compact_leave_date_string() -> None:
         await engine.dispose()
 
 
+async def test_create_leave_request_rejects_numeric_leave_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        payload = _create_payload()
+        payload["start_date"] = 0
+
+        response = await client.post(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            json=payload,
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_create_leave_request_rejects_cross_tenant_employee() -> None:
     client, engine = await _client_with_database()
     try:

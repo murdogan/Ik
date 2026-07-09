@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import cast
 from uuid import UUID
 
@@ -44,6 +44,52 @@ async def test_employee_service_create_rejects_constructed_missing_start_date() 
     )
 
     with pytest.raises(EmployeeDateRangeError, match="Employment start date is required"):
+        await service.create_employee(TENANT_ID, payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        (
+            "employment_start_date",
+            datetime(2026, 7, 1),
+            "Employment start date must be a date without time",
+        ),
+        (
+            "employment_start_date",
+            "2026-07-01",
+            "Employment start date must be a date without time",
+        ),
+        (
+            "employment_end_date",
+            datetime(2026, 7, 31),
+            "Employment end date must be a date without time",
+        ),
+        (
+            "employment_end_date",
+            "2026-07-31",
+            "Employment end date must be a date without time",
+        ),
+    ],
+)
+async def test_employee_service_create_rejects_constructed_non_date_values(
+    field_name: str,
+    value: object,
+    message: str,
+) -> None:
+    service = EmployeeService(session=cast(AsyncSession, None))
+    payload_values = {
+        "employee_number": "WF-001",
+        "first_name": "Ada",
+        "last_name": "Yilmaz",
+        "status": EmployeeStatus.TERMINATED,
+        "employment_start_date": date(2026, 7, 1),
+        "employment_end_date": date(2026, 7, 31),
+    }
+    payload_values[field_name] = value
+    payload = EmployeeCreate.model_construct(**payload_values)
+
+    with pytest.raises(EmployeeDateRangeError, match=message):
         await service.create_employee(TENANT_ID, payload)
 
 
@@ -111,6 +157,35 @@ async def test_leave_request_service_create_rejects_constructed_missing_dates(
         end_date=end_date,
         requested_by_user_id=USER_ID,
     )
+
+    with pytest.raises(LeaveRequestDateRangeError, match=message):
+        await service.create_leave_request(TENANT_ID, payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        ("start_date", datetime(2026, 7, 20), "Leave start date must be a date without time"),
+        ("start_date", "2026-07-20", "Leave start date must be a date without time"),
+        ("end_date", datetime(2026, 7, 22), "Leave end date must be a date without time"),
+        ("end_date", "2026-07-22", "Leave end date must be a date without time"),
+    ],
+)
+async def test_leave_request_service_create_rejects_constructed_non_date_values(
+    field_name: str,
+    value: object,
+    message: str,
+) -> None:
+    service = LeaveRequestService(session=cast(AsyncSession, None))
+    payload_values = {
+        "employee_id": EMPLOYEE_ID,
+        "leave_type": "annual",
+        "start_date": date(2026, 7, 20),
+        "end_date": date(2026, 7, 22),
+        "requested_by_user_id": USER_ID,
+    }
+    payload_values[field_name] = value
+    payload = LeaveRequestCreate.model_construct(**payload_values)
 
     with pytest.raises(LeaveRequestDateRangeError, match=message):
         await service.create_leave_request(TENANT_ID, payload)

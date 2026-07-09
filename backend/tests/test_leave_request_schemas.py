@@ -105,6 +105,21 @@ def test_leave_request_create_rejects_datetime_strings_for_date_fields(field: st
         LeaveRequestCreate(**data)
 
 
+@pytest.mark.parametrize("field", ["start_date", "end_date"])
+def test_leave_request_create_rejects_numeric_date_values(field: str) -> None:
+    data = {
+        "employee_id": EMPLOYEE_ID,
+        "leave_type": "annual",
+        "start_date": "2026-07-20",
+        "end_date": "2026-07-22",
+        "requested_by_user_id": REQUESTING_USER_ID,
+    }
+    data[field] = 0
+
+    with pytest.raises(ValidationError):
+        LeaveRequestCreate(**data)
+
+
 def test_leave_request_decision_accepts_optional_note() -> None:
     payload = LeaveRequestDecision(
         decided_by_user_id=DECIDING_USER_ID,
@@ -145,6 +160,12 @@ def test_leave_request_list_filters_reject_datetime_strings_for_date_fields() ->
             start_date="2026-07-01T00:00:00",
             end_date="2026-07-31",
         )
+
+
+@pytest.mark.parametrize("field", ["start_date", "end_date"])
+def test_leave_request_list_filters_reject_numeric_date_values(field: str) -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestListFilters(**{field: 0})
 
 
 @pytest.mark.parametrize("value", ["20260701", "2026-W27-3", "2026-02-30"])

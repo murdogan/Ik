@@ -143,6 +143,22 @@ def test_employee_create_rejects_datetime_strings_for_date_fields(field: str) ->
         EmployeeCreate(**data)
 
 
+@pytest.mark.parametrize("field", ["employment_start_date", "employment_end_date"])
+def test_employee_create_rejects_numeric_date_values(field: str) -> None:
+    data = {
+        "employee_number": "WF-001",
+        "first_name": "Ada",
+        "last_name": "Yilmaz",
+        "status": EmployeeStatus.TERMINATED,
+        "employment_start_date": "2026-07-01",
+        "employment_end_date": "2026-07-02",
+    }
+    data[field] = 0
+
+    with pytest.raises(ValidationError):
+        EmployeeCreate(**data)
+
+
 def test_employee_update_allows_partial_payload_and_null_email() -> None:
     payload = EmployeeUpdate(first_name=" Ada ", email=None)
 
@@ -208,6 +224,12 @@ def test_employee_update_allows_terminated_status_without_end_date_in_partial_pa
 def test_employee_update_rejects_datetime_objects_for_date_fields() -> None:
     with pytest.raises(ValidationError):
         EmployeeUpdate(employment_start_date=datetime(2026, 7, 1))
+
+
+@pytest.mark.parametrize("field", ["employment_start_date", "employment_end_date"])
+def test_employee_update_rejects_numeric_date_values(field: str) -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(**{field: 0})
 
 
 def test_employee_update_rejects_empty_name_when_provided() -> None:

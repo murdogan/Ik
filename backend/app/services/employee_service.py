@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select
@@ -161,7 +161,11 @@ def _employee_create_values(payload: EmployeeCreate) -> dict[str, object]:
 
 
 def _employee_update_values(payload: EmployeeUpdate) -> dict[str, object]:
-    values = payload.model_dump(exclude_unset=True)
+    values = {
+        field_name: getattr(payload, field_name)
+        for field_name in EmployeeUpdate.model_fields
+        if field_name in payload.model_fields_set
+    }
     if "status" in values:
         values["status"] = _status_value(values["status"])
     return values
@@ -181,11 +185,18 @@ def _validate_date_order(start_date: date, end_date: date | None) -> None:
 def _validate_employment_lifecycle(
     *,
     status: EmployeeStatus | str | None,
-    start_date: date | None,
-    end_date: date | None,
+    start_date: object,
+    end_date: object,
 ) -> None:
-    if start_date is None:
-        raise EmployeeDateRangeError("Employment start date is required")
+    start_date = _required_employment_date(
+        start_date,
+        missing_message="Employment start date is required",
+        invalid_message="Employment start date must be a date without time",
+    )
+    end_date = _optional_employment_date(
+        end_date,
+        invalid_message="Employment end date must be a date without time",
+    )
     _validate_date_order(start_date, end_date)
 
     status_value = _status_value(status)
@@ -201,3 +212,28 @@ def _validate_employment_lifecycle(
         raise EmployeeLifecycleError(
             "Employment end date is only allowed when status is terminated"
         )
+
+
+def _required_employment_date(
+    value: object,
+    *,
+    missing_message: str,
+    invalid_message: str,
+) -> date:
+    if value is None:
+        raise EmployeeDateRangeError(missing_message)
+    if isinstance(value, datetime) or not isinstance(value, date):
+        raise EmployeeDateRangeError(invalid_message)
+    return value
+
+
+def _optional_employment_date(
+    value: object,
+    *,
+    invalid_message: str,
+) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime) or not isinstance(value, date):
+        raise EmployeeDateRangeError(invalid_message)
+    return value

@@ -358,6 +358,31 @@ async def test_create_employee_rejects_compact_employment_date_string() -> None:
         await engine.dispose()
 
 
+async def test_create_employee_rejects_numeric_employment_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-002",
+                "first_name": "Bora",
+                "last_name": "Demir",
+                "employment_start_date": 0,
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_validation_error",
+            message="Employee request validation failed",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employees_returns_current_tenant_records_only() -> None:
     client, engine = await _client_with_database()
     try:
