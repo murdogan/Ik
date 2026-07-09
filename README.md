@@ -290,8 +290,9 @@ GET /api/v1/employees/f3000000-0000-4000-8000-000000000002/leave-balances?period
 ]
 ```
 
-Bu endpoint W1C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak edişi/accrual,
-resmi tatil hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon içermez.
+Bu endpoint W1C2/W2C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak
+edişi/accrual, resmi tatil hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon
+içermez. `external_integration_enabled` alanı bu placeholder yüzeyinde sabit `false` döner.
 Leave balance endpointinde generic request validation hataları `leave_balance_validation_error`
 kodu ve `Leave balance request validation failed` mesajıyla aynı error zarfını kullanır.
 

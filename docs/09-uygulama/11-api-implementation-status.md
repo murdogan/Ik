@@ -2,16 +2,18 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2C1 Employee employment lifecycle fields`
+Task: `W2C2 Leave balance placeholder model plan`
 
 ## Scope
 
-- Added a data-layer employee lifecycle check so `terminated` employees must have
-  `employment_end_date`, while `active` and `on_leave` employees must not.
-- Added schema/API regression coverage for status-only lifecycle transitions and explicit null
-  end-date handling.
-- Kept the public employee API shape unchanged; lifecycle violations still return
-  `employee_invalid_lifecycle`.
+- Confirmed the existing `leave_balance_summaries` read model is the appropriate minimal domain
+  placeholder for W2C2; no new balance write API, accrual engine, payroll, or external integration
+  was added.
+- Hardened the leave balance response schema so `external_integration_enabled` is a literal
+  `false` placeholder flag.
+- Added regression coverage that the Leave Balances OpenAPI surface remains read-only and exposes
+  no mutating operations.
+- Kept the public leave balance API shape unchanged.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -68,10 +70,10 @@ Task: `W2C1 Employee employment lifecycle fields`
 
 ## Verification
 
-Full W2C1 local gate run:
+Full W2C2 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 238 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 240 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 

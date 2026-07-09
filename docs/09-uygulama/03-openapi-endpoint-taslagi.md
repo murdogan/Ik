@@ -72,10 +72,10 @@ Geçerli uygulama notları:
 - Leave request listesinde W2A4 itibarıyla `limit`/`offset` pagination (`limit` varsayılan `50`,
   maksimum `200`; `offset` varsayılan `0`) tenant scope sonrası uygulanır. Sonuç sırası
   `created_at desc`, `start_date asc`, `id asc` ile deterministiktir.
-- Leave balance summary endpointi `leave_balance_summaries` read modelini okur. Bu W1C2
+- Leave balance summary endpointi `leave_balance_summaries` read modelini okur. Bu W1C2/W2C2
   placeholder'ı yalnız manuel/açılış özet değerlerini döner; hak ediş/accrual motoru, resmi tatil
   hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon içermez. Response içinde
-  `calculation_mode: "manual_placeholder"` ve `external_integration_enabled: false` döner.
+  `calculation_mode: "manual_placeholder"` ve sabit `external_integration_enabled: false` döner.
   `remaining_days`, `opening_balance_days - used_days - planned_days` olarak türetilir. Tenant
   içindeki çalışanın hiç bakiye özeti yoksa `200 []`, tenant scope dışı çalışan için
   `employee_not_found` `404` döner.
@@ -524,7 +524,7 @@ Query:
 
 - `period_year`: Opsiyonel dönem yılı. `1900..2200` aralığıyla sınırlıdır.
 
-Not: Bu endpoint W1C2 için bilinçli olarak read-only ve manuel placeholder'dır. İzin hak edişi,
+Not: Bu endpoint W1C2/W2C2 için bilinçli olarak read-only ve manuel placeholder'dır. İzin hak edişi,
 resmi tatil/hafta sonu hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon çalıştırmaz.
 Çalışan tenant içinde varsa ama bakiye özeti yoksa `200 []` döner.
 

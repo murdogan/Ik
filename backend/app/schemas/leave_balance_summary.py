@@ -16,4 +16,4 @@ class LeaveBalanceSummaryRead(BaseModel):
     planned_days: float
     remaining_days: float
     calculation_mode: Literal["manual_placeholder"] = "manual_placeholder"
-    external_integration_enabled: bool = False
+    external_integration_enabled: Literal[False] = False

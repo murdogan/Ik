@@ -108,6 +108,26 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         assert description_fragment in operation["description"]
 
 
+def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    leave_balance_path = "/api/v1/employees/{employee_id}/leave-balances"
+    assert set(paths[leave_balance_path]) == {"get"}
+
+    mutating_methods = {"post", "put", "patch", "delete"}
+    tagged_mutations = [
+        (path, method)
+        for path, operations in paths.items()
+        for method, operation in operations.items()
+        if method in mutating_methods and operation["tags"] == [LEAVE_BALANCES_TAG]
+    ]
+    assert tagged_mutations == []
+
+
 def test_domain_operations_document_required_tenant_headers() -> None:
     client = TestClient(create_app())
 
