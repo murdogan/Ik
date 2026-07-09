@@ -5,7 +5,7 @@ import pytest
 from app.db.base import Base
 from app.models.employee import Employee, EmployeeStatus
 from app.models.tenant import Tenant, TenantStatus
-from app.schemas.employee import EmployeeListFilters, EmployeeUpdate
+from app.schemas.employee import EmployeeListFilters, EmployeeListPagination, EmployeeUpdate
 from app.services.employee_service import (
     EmployeeLifecycleError,
     EmployeeNotFoundError,
@@ -119,6 +119,21 @@ async def test_list_employees_treats_wildcard_search_as_literal_text() -> None:
         )
 
         assert employees == []
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_list_employees_paginates_after_tenant_scope() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        employees = await EmployeeService(session).list_employees(
+            TENANT_ID,
+            pagination=EmployeeListPagination(limit=1, offset=1),
+        )
+
+        assert [employee.employee_number for employee in employees] == ["WF-002"]
+        assert {employee.tenant_id for employee in employees} == {TENANT_ID}
     finally:
         await session.close()
         await engine.dispose()
