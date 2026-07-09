@@ -333,6 +333,20 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         ["WF-SMOKE-002"],
         "employee department filter is case-insensitive",
     )
+    trimmed_department_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"department": " People "},
+        ),
+        200,
+        "GET /api/v1/employees?department=%20People%20",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in trimmed_department_filtered],
+        ["WF-SMOKE-001"],
+        "employee department filter trims whitespace",
+    )
 
     search_filtered = _expect_json(
         await client.get(
@@ -361,6 +375,20 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         [employee["employee_number"] for employee in number_search_filtered],
         ["WF-SMOKE-002"],
         "employee q filter searches employee_number",
+    )
+    trimmed_search_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"q": " ADA.SMOKE "},
+        ),
+        200,
+        "GET /api/v1/employees?q=%20ADA.SMOKE%20",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in trimmed_search_filtered],
+        ["WF-SMOKE-001"],
+        "employee q filter trims whitespace",
     )
     cross_tenant_search_filtered = _expect_json(
         await client.get(
@@ -418,6 +446,16 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         [employee["employee_number"] for employee in active_filtered],
         ["WF-SMOKE-002"],
         "employee active status filter",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"status": "disabled"},
+        ),
+        422,
+        "employee_validation_error",
+        "GET /api/v1/employees?status=disabled",
     )
     combined_filtered = _expect_json(
         await client.get(
@@ -622,9 +660,10 @@ async def _smoke_leave_request_endpoints(
         requested_by_user_id=str(OTHER_REQUESTING_USER_ID),
     )
 
+    decision_note = "W3B2 backend smoke decision"
     decision_payload = {
         "decided_by_user_id": str(APPROVER_USER_ID),
-        "decision_note": "W2C6 backend smoke decision",
+        "decision_note": decision_note,
     }
     approved = _expect_json(
         await client.post(
@@ -647,7 +686,7 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(
         approved["decision_note"],
-        "W2C6 backend smoke decision",
+        decision_note,
         "approved leave decision note",
     )
 
@@ -665,6 +704,16 @@ async def _smoke_leave_request_endpoints(
         LeaveRequestStatus.REJECTED.value,
         "rejected leave status",
     )
+    _assert_equal(
+        rejected["decided_by_user_id"],
+        str(APPROVER_USER_ID),
+        "rejected leave decider",
+    )
+    _assert_equal(
+        rejected["decision_note"],
+        decision_note,
+        "rejected leave decision note",
+    )
 
     cancelled = _expect_json(
         await client.post(
@@ -680,6 +729,16 @@ async def _smoke_leave_request_endpoints(
         LeaveRequestStatus.CANCELLED.value,
         "cancelled leave status",
     )
+    _assert_equal(
+        cancelled["decided_by_user_id"],
+        str(APPROVER_USER_ID),
+        "cancelled leave decider",
+    )
+    _assert_equal(
+        cancelled["decision_note"],
+        decision_note,
+        "cancelled leave decision note",
+    )
 
     _expect_error_code(
         await client.post(
@@ -690,6 +749,26 @@ async def _smoke_leave_request_endpoints(
         409,
         "leave_request_transition_conflict",
         "POST decided /api/v1/leave-requests/{leave_request_id}/approve",
+    )
+    _expect_error_code(
+        await client.post(
+            f"/api/v1/leave-requests/{approved_request['id']}/reject",
+            headers=TENANT_HEADERS,
+            json=decision_payload,
+        ),
+        409,
+        "leave_request_transition_conflict",
+        "POST approved /api/v1/leave-requests/{leave_request_id}/reject",
+    )
+    _expect_error_code(
+        await client.post(
+            f"/api/v1/leave-requests/{approved_request['id']}/cancel",
+            headers=TENANT_HEADERS,
+            json=decision_payload,
+        ),
+        409,
+        "leave_request_transition_conflict",
+        "POST approved /api/v1/leave-requests/{leave_request_id}/cancel",
     )
     _expect_error_code(
         await client.post(
@@ -801,6 +880,34 @@ async def _smoke_leave_request_endpoints(
         [pending_request["id"]],
         "leave request pending status filter",
     )
+    for status_value, expected_id in (
+        (LeaveRequestStatus.REJECTED.value, rejected_request["id"]),
+        (LeaveRequestStatus.CANCELLED.value, cancelled_request["id"]),
+    ):
+        status_filtered = _expect_json(
+            await client.get(
+                "/api/v1/leave-requests",
+                headers=TENANT_HEADERS,
+                params={"status": status_value},
+            ),
+            200,
+            f"GET /api/v1/leave-requests?status={status_value}",
+        )
+        _assert_equal(
+            [leave_request["id"] for leave_request in status_filtered],
+            [expected_id],
+            f"leave request {status_value} status filter",
+        )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"status": "archived"},
+        ),
+        422,
+        "leave_request_validation_error",
+        "GET /api/v1/leave-requests?status=archived",
+    )
 
     employee_filtered = _expect_json(
         await client.get(
@@ -816,6 +923,23 @@ async def _smoke_leave_request_endpoints(
         {approved_request["id"], rejected_request["id"], cancelled_request["id"]},
         "leave request employee_id filter",
     )
+    employee_filtered_page = _expect_json(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"employee_id": employee_id, "limit": 1, "offset": 1},
+        ),
+        200,
+        "GET /api/v1/leave-requests?employee_id=<employee_id>&limit=1&offset=1",
+    )
+    _assert_equal(len(employee_filtered_page), 1, "leave request filtered pagination size")
+    employee_filter_ids = {
+        approved_request["id"],
+        rejected_request["id"],
+        cancelled_request["id"],
+    }
+    if employee_filtered_page[0]["id"] not in employee_filter_ids:
+        raise AssertionError("leave request filtered pagination returned wrong employee")
     secondary_employee_filtered = _expect_json(
         await client.get(
             "/api/v1/leave-requests",
@@ -982,6 +1106,11 @@ async def _smoke_dashboard_endpoint(
     _assert_equal(summary["employee_count"], 2, "dashboard employee_count")
     _assert_equal(summary["pending_leave_count"], 1, "dashboard pending_leave_count")
     _assert_equal(summary["pending_leave_requests"], 1, "dashboard pending_leave_requests")
+    _assert_equal(
+        summary["pending_leave_requests"],
+        summary["pending_leave_count"],
+        "dashboard pending leave compatibility count",
+    )
     _assert_equal(summary["new_starters_this_month"], 2, "dashboard new_starters_this_month")
     _assert_equal(summary["open_tasks"], 0, "dashboard open_tasks")
     _assert_equal(
@@ -1035,6 +1164,11 @@ async def _smoke_dashboard_endpoint(
         "other dashboard pending_leave_requests",
     )
     _assert_equal(
+        other_summary["pending_leave_requests"],
+        other_summary["pending_leave_count"],
+        "other dashboard pending leave compatibility count",
+    )
+    _assert_equal(
         other_summary["new_starters_this_month"],
         1,
         "other dashboard new_starters_this_month",
@@ -1043,6 +1177,21 @@ async def _smoke_dashboard_endpoint(
         other_summary["department_distribution"],
         [{"department": "People", "count": 1}],
         "other dashboard department_distribution",
+    )
+    _assert_equal(
+        len(other_summary["recent_activity"]),
+        2,
+        "other dashboard recent_activity count",
+    )
+    _assert_equal(
+        {activity["activity_type"] for activity in other_summary["recent_activity"]},
+        {"employee.created", "leave.requested"},
+        "other dashboard recent_activity types",
+    )
+    _assert_equal(
+        {activity["entity_id"] for activity in other_summary["recent_activity"]},
+        {other_employee_id, other_tenant_leave_request_id},
+        "other dashboard recent_activity tenant scope",
     )
 
 
