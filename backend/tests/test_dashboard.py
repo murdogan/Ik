@@ -210,6 +210,82 @@ async def test_dashboard_summary_counts_are_tenant_scoped_from_database() -> Non
     await engine.dispose()
 
 
+async def test_dashboard_this_month_starters_use_calendar_month_window() -> None:
+    session, engine = await _session_with_seed_data()
+    session.add_all(
+        [
+            Employee(
+                id=UUID("a1000000-0000-4000-8000-000000000001"),
+                tenant_id=TENANT_ID,
+                employee_number="WF-006",
+                first_name="Gizem",
+                last_name="Aydin",
+                department="Finance",
+                position="Finance Lead",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 12, 1),
+            ),
+            Employee(
+                id=UUID("a1000000-0000-4000-8000-000000000002"),
+                tenant_id=TENANT_ID,
+                employee_number="WF-007",
+                first_name="Hakan",
+                last_name="Oz",
+                department="Finance",
+                position="Analyst",
+                status=EmployeeStatus.ON_LEAVE.value,
+                employment_start_date=date(2026, 12, 31),
+            ),
+            Employee(
+                id=UUID("a1000000-0000-4000-8000-000000000003"),
+                tenant_id=TENANT_ID,
+                employee_number="WF-008",
+                first_name="Ipek",
+                last_name="Can",
+                department="Finance",
+                position="Former Analyst",
+                status=EmployeeStatus.TERMINATED.value,
+                employment_start_date=date(2026, 12, 15),
+                employment_end_date=date(2026, 12, 20),
+            ),
+            Employee(
+                id=UUID("a1000000-0000-4000-8000-000000000004"),
+                tenant_id=TENANT_ID,
+                employee_number="WF-009",
+                first_name="Jale",
+                last_name="Kurt",
+                department="Finance",
+                position="Controller",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2027, 1, 1),
+            ),
+            Employee(
+                id=UUID("a1000000-0000-4000-8000-000000000005"),
+                tenant_id=OTHER_TENANT_ID,
+                employee_number="OT-002",
+                first_name="Other",
+                last_name="Starter",
+                department="Finance",
+                position="Analyst",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 12, 10),
+            ),
+        ]
+    )
+    await session.commit()
+
+    summary = await DashboardService(
+        session=session,
+        today=date(2026, 12, 31),
+        recent_activity_limit=0,
+    ).get_summary(TENANT_ID)
+
+    assert summary.new_starters_this_month == 2
+
+    await session.close()
+    await engine.dispose()
+
+
 async def test_dashboard_recent_activity_uses_current_tenant_records_only() -> None:
     session, engine = await _session_with_seed_data()
 
