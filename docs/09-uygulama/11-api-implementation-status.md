@@ -2,17 +2,18 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2A6 API error consistency`
+Task: `W2B1 Demo seed command`
 
 ## Scope
 
-- Standardized automatic request validation `422` responses for employee, leave balance, and
-  leave request endpoints onto the project error envelope without changing success response bodies.
-- Preserved tenant header error precedence and tenant-scoped service behavior; missing tenant
-  headers still return `tenant_header_missing` before route-specific validation mapping.
-- Added regression coverage for generic validation failures, employee lifecycle/date-range
-  validation, leave balance validation, leave request date-range validation, generated OpenAPI
-  error schemas, and `X-Correlation-Id` propagation.
+- Added command-level smoke coverage for the local demo seed script. The test runs
+  `scripts/seed_demo_data.py` twice against a temporary local SQLite database and verifies
+  idempotent tenant, user, employee, and leave request counts.
+- Added regression coverage that the seed command refuses `staging` before connecting to the
+  target database. The command remains allowed only for `IK_ENVIRONMENT=local` and
+  `IK_ENVIRONMENT=dev`.
+- Preserved the existing demo fixture shape: two tenants, five users, eight employees, and five
+  leave requests with fixed UUIDs and tenant-scoped relationships.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -62,18 +63,20 @@ Task: `W2A6 API error consistency`
   request validation maps to the existing specific domain codes.
 - FastAPI's generic request validation remains framework default outside the employee and leave
   endpoint scope.
+- Local demo seed remains a script command, not an API surface:
+  `uv run python scripts/seed_demo_data.py`. It assumes the target local/dev schema already
+  exists, then idempotently creates or resets demo tenants, users, employees, and leave requests.
 
 ## Verification
 
-W2A6 focused preflight:
+W2B1 focused preflight:
 
-- `uv run pytest backend/tests/test_employee_api.py backend/tests/test_leave_balance_api.py backend/tests/test_leave_request_api.py backend/tests/test_openapi_metadata.py -q`:
-  passed, 66 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest backend/tests/test_demo_seed_command.py -q`: passed, 2 tests passed.
 
-Full W2A6 local gate run:
+Full W2B1 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 201 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 203 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 
