@@ -128,8 +128,8 @@ Tenant header dependency hataları ve employee/leave endpointlerinin açıkça y
 hataları şu zarfla döner:
 `{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.
 Bu kapsam `tenant_header_missing`, `tenant_header_invalid`, `tenant_slug_header_invalid`,
-not-found, conflict, date-range ve leave transition hatalarıdır. Diğer otomatik FastAPI
-validation `422` yanıtları henüz framework varsayılanındadır.
+not-found, conflict, date-range, employee lifecycle ve leave transition hatalarıdır. Diğer
+otomatik FastAPI validation `422` yanıtları henüz framework varsayılanındadır.
 
 Demo seed sonrası employee ve leave endpointleri için örnek tenant header'ları:
 
@@ -195,6 +195,10 @@ Employee create request/response örneği:
   "employment_end_date": null
 }
 ```
+
+Employee lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve
+`on_leave` kayıtlarda `employment_end_date` `null` olmalıdır. Mevcut kayıtla birleştirildikten
+sonra bu kuralı bozan güncellemeler `employee_invalid_lifecycle` koduyla `422` döner.
 
 Leave request list örneği:
 

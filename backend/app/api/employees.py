@@ -21,6 +21,7 @@ from app.schemas.employee import (
 from app.services.employee_service import (
     DuplicateEmployeeNumberError,
     EmployeeDateRangeError,
+    EmployeeLifecycleError,
     EmployeeNotFoundError,
     EmployeeService,
 )
@@ -91,6 +92,10 @@ async def create_employee(
         return await service.create_employee(tenant_context.tenant_id, payload)
     except DuplicateEmployeeNumberError as exc:
         raise _duplicate_employee_number_error() from exc
+    except EmployeeDateRangeError as exc:
+        raise _employee_date_range_error(exc) from exc
+    except EmployeeLifecycleError as exc:
+        raise _employee_lifecycle_error(exc) from exc
 
 
 @router.get("/{employee_id}", response_model=EmployeeRead)
@@ -120,6 +125,8 @@ async def update_employee(
         raise _duplicate_employee_number_error() from exc
     except EmployeeDateRangeError as exc:
         raise _employee_date_range_error(exc) from exc
+    except EmployeeLifecycleError as exc:
+        raise _employee_lifecycle_error(exc) from exc
 
 
 @router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -155,5 +162,13 @@ def _employee_date_range_error(exc: EmployeeDateRangeError) -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code="employee_invalid_date_range",
+        message=str(exc),
+    )
+
+
+def _employee_lifecycle_error(exc: EmployeeLifecycleError) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="employee_invalid_lifecycle",
         message=str(exc),
     )

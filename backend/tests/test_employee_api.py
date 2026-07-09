@@ -200,6 +200,52 @@ async def test_create_employee_uses_tenant_header_and_server_generated_id() -> N
         await engine.dispose()
 
 
+async def test_create_employee_accepts_terminated_lifecycle_with_end_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-002",
+                "first_name": "Bora",
+                "last_name": "Demir",
+                "status": EmployeeStatus.TERMINATED.value,
+                "employment_start_date": "2026-07-08",
+                "employment_end_date": "2026-07-31",
+            },
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["status"] == EmployeeStatus.TERMINATED.value
+        assert body["employment_end_date"] == "2026-07-31"
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_create_employee_rejects_end_date_without_terminated_status() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-002",
+                "first_name": "Bora",
+                "last_name": "Demir",
+                "employment_start_date": "2026-07-08",
+                "employment_end_date": "2026-07-31",
+            },
+        )
+
+        assert response.status_code == 422
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_create_employee_rejects_client_controlled_tenant_id() -> None:
     client, engine = await _client_with_database()
     try:
@@ -497,16 +543,78 @@ async def test_update_employee_rejects_start_date_after_existing_end_date() -> N
         await engine.dispose()
 
 
-async def test_update_employee_allows_clearing_existing_end_date() -> None:
+async def test_update_employee_terminates_when_status_and_end_date_are_provided() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={
+                "status": EmployeeStatus.TERMINATED.value,
+                "employment_end_date": "2026-07-31",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == EmployeeStatus.TERMINATED.value
+        assert body["employment_end_date"] == "2026-07-31"
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_terminated_status_without_end_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"status": EmployeeStatus.TERMINATED.value},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_lifecycle",
+            message="Terminated employees must have an employment end date",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_end_date_without_terminated_status() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"employment_end_date": "2026-07-31"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_lifecycle",
+            message="Employment end date is only allowed when status is terminated",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_allows_reactivation_when_end_date_is_cleared() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.patch(
             f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}",
             headers=_tenant_headers(),
-            json={"employment_end_date": None},
+            json={"status": EmployeeStatus.ACTIVE.value, "employment_end_date": None},
         )
 
         assert response.status_code == 200
+        assert response.json()["status"] == EmployeeStatus.ACTIVE.value
         assert response.json()["employment_end_date"] is None
     finally:
         await client.aclose()

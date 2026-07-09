@@ -3,9 +3,14 @@ from typing import cast
 from uuid import UUID
 
 import pytest
+from app.models.employee import EmployeeStatus
 from app.schemas.employee import EmployeeCreate
 from app.schemas.leave_request import LeaveRequestCreate
-from app.services.employee_service import EmployeeDateRangeError, EmployeeService
+from app.services.employee_service import (
+    EmployeeDateRangeError,
+    EmployeeLifecycleError,
+    EmployeeService,
+)
 from app.services.leave_request_service import LeaveRequestDateRangeError, LeaveRequestService
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +30,21 @@ async def test_employee_service_create_rejects_constructed_invalid_date_range() 
     )
 
     with pytest.raises(EmployeeDateRangeError, match="Employment end date"):
+        await service.create_employee(TENANT_ID, payload)
+
+
+async def test_employee_service_create_rejects_constructed_invalid_lifecycle() -> None:
+    service = EmployeeService(session=cast(AsyncSession, None))
+    payload = EmployeeCreate.model_construct(
+        employee_number="WF-001",
+        first_name="Ada",
+        last_name="Yilmaz",
+        status=EmployeeStatus.TERMINATED,
+        employment_start_date=date(2026, 7, 1),
+        employment_end_date=None,
+    )
+
+    with pytest.raises(EmployeeLifecycleError, match="Terminated employees"):
         await service.create_employee(TENANT_ID, payload)
 
 

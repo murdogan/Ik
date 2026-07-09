@@ -329,6 +329,9 @@ Response `201` örneği:
 }
 ```
 
+Lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve `on_leave`
+kayıtlarda `employment_end_date` `null` olmalıdır.
+
 Duplicate employee number `409` örneği:
 
 ```json
@@ -423,6 +426,19 @@ Invalid date range `422` örneği:
   "error": {
     "code": "employee_invalid_date_range",
     "message": "Employment end date must be on or after start date",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+Invalid lifecycle `422` örneği:
+
+```json
+{
+  "error": {
+    "code": "employee_invalid_lifecycle",
+    "message": "Terminated employees must have an employment end date",
     "details": null,
     "correlation_id": "req_wf_demo_001"
   }

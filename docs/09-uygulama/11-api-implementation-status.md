@@ -2,17 +2,19 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W1B5 Date validation hardening`
+Task: `W1C1 Employee employment lifecycle fields`
 
 ## Scope
 
-- Hardened employee and leave date fields to accept only `YYYY-MM-DD` full-date values.
-- Rejected midnight datetime strings instead of coercing them to dates.
-- Added employee service create validation for date order, matching the existing update guard.
-- Added an `employees` table date-order check constraint and Alembic revision.
-- Expanded schema, service, model, migration, and API regression tests for same-day ranges,
-  explicit null clearing, partial update edge cases, and leave date filter parsing.
-- No API surface, production/staging deploy, cron, token, auth, credential, `.env`, UI,
+- Added minimal employee lifecycle validation on existing `status`, `employment_start_date`,
+  and `employment_end_date` fields.
+- Enforced that `terminated` employees require `employment_end_date`, while `active` and
+  `on_leave` employees must keep `employment_end_date` null.
+- Applied the lifecycle guard in employee create/update schemas and `EmployeeService`, including
+  the API error code `employee_invalid_lifecycle` for domain-level update failures.
+- Expanded schema, service, and tenant-scoped API regression tests for valid termination,
+  invalid lifecycle combinations, and reactivation only when the end date is cleared.
+- No new model fields/tables, production/staging deploy, cron, token, auth, credential, `.env`, UI,
   payroll, PDKS, AI, or external integration changes.
 
 ## Implemented API Surface Covered
@@ -32,7 +34,7 @@ Task: `W1B5 Date validation hardening`
 ## Verification
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 143 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest`: passed, 158 tests passed, 1 existing Starlette `TestClient` deprecation warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 
 ## Remaining Backend TODOs

@@ -77,16 +77,44 @@ def test_employee_create_rejects_end_date_before_start_date() -> None:
         )
 
 
+def test_employee_create_requires_end_date_when_status_is_terminated() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeCreate(
+            employee_number="WF-001",
+            first_name="Ada",
+            last_name="Yilmaz",
+            status=EmployeeStatus.TERMINATED,
+            employment_start_date=date(2026, 7, 1),
+        )
+
+
+@pytest.mark.parametrize("status", [EmployeeStatus.ACTIVE, EmployeeStatus.ON_LEAVE])
+def test_employee_create_rejects_end_date_for_non_terminated_status(
+    status: EmployeeStatus,
+) -> None:
+    with pytest.raises(ValidationError):
+        EmployeeCreate(
+            employee_number="WF-001",
+            first_name="Ada",
+            last_name="Yilmaz",
+            status=status,
+            employment_start_date=date(2026, 7, 1),
+            employment_end_date=date(2026, 7, 10),
+        )
+
+
 def test_employee_create_allows_same_day_start_and_end_dates() -> None:
     payload = EmployeeCreate(
         employee_number="WF-001",
         first_name="Ada",
         last_name="Yilmaz",
+        status=EmployeeStatus.TERMINATED,
         employment_start_date=date(2026, 7, 1),
         employment_end_date=date(2026, 7, 1),
     )
 
     assert payload.employment_end_date == payload.employment_start_date
+    assert payload.status == EmployeeStatus.TERMINATED
 
 
 @pytest.mark.parametrize("field", ["employment_start_date", "employment_end_date"])
@@ -119,6 +147,30 @@ def test_employee_update_rejects_end_date_before_start_date_when_both_provided()
             employment_start_date=date(2026, 7, 10),
             employment_end_date=date(2026, 7, 1),
         )
+
+
+def test_employee_update_rejects_explicit_null_status() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(status=None)
+
+
+@pytest.mark.parametrize("status", [EmployeeStatus.ACTIVE, EmployeeStatus.ON_LEAVE])
+def test_employee_update_rejects_end_date_for_non_terminated_status(
+    status: EmployeeStatus,
+) -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(status=status, employment_end_date=date(2026, 7, 10))
+
+
+def test_employee_update_rejects_terminated_status_with_explicit_null_end_date() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(status=EmployeeStatus.TERMINATED, employment_end_date=None)
+
+
+def test_employee_update_allows_terminated_status_without_end_date_in_partial_payload() -> None:
+    payload = EmployeeUpdate(status=EmployeeStatus.TERMINATED)
+
+    assert payload.status == EmployeeStatus.TERMINATED
 
 
 def test_employee_update_rejects_datetime_objects_for_date_fields() -> None:

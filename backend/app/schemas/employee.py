@@ -1,3 +1,4 @@
+from datetime import date
 from re import Pattern, compile
 from typing import Self
 from uuid import UUID
@@ -50,6 +51,7 @@ class EmployeeCreate(BaseModel):
             and self.employment_end_date < self.employment_start_date
         ):
             raise ValueError("Employment end date must be on or after start date")
+        _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
         return self
 
 
@@ -92,6 +94,11 @@ class EmployeeUpdate(BaseModel):
             and self.employment_end_date < self.employment_start_date
         ):
             raise ValueError("Employment end date must be on or after start date")
+        fields_set = self.model_fields_set
+        if "status" in fields_set and self.status is None:
+            raise ValueError("Status must not be null")
+        if "status" in fields_set and "employment_end_date" in fields_set:
+            _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
         return self
 
 
@@ -132,3 +139,16 @@ class EmployeeRead(BaseModel):
     status: EmployeeStatus
     employment_start_date: DateOnly
     employment_end_date: DateOnly | None
+
+
+def _validate_lifecycle_status_end_date(
+    status: EmployeeStatus | None,
+    employment_end_date: date | None,
+) -> None:
+    if status == EmployeeStatus.TERMINATED:
+        if employment_end_date is None:
+            raise ValueError("Terminated employees must have an employment end date")
+        return
+
+    if employment_end_date is not None:
+        raise ValueError("Employment end date is only allowed when status is terminated")

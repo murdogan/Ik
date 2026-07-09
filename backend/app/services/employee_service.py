@@ -25,6 +25,10 @@ class EmployeeDateRangeError(ValueError):
     pass
 
 
+class EmployeeLifecycleError(ValueError):
+    pass
+
+
 class EmployeeService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -68,7 +72,11 @@ class EmployeeService:
         return employee
 
     async def create_employee(self, tenant_id: UUID, payload: EmployeeCreate) -> Employee:
-        _validate_date_order(payload.employment_start_date, payload.employment_end_date)
+        _validate_employment_lifecycle(
+            status=payload.status,
+            start_date=payload.employment_start_date,
+            end_date=payload.employment_end_date,
+        )
         await self._ensure_employee_number_available(
             tenant_id=tenant_id,
             employee_number=payload.employee_number,
@@ -99,9 +107,14 @@ class EmployeeService:
                 exclude_employee_id=employee_id,
             )
 
+        next_status = values.get("status", employee.status)
         next_start_date = values.get("employment_start_date", employee.employment_start_date)
         next_end_date = values.get("employment_end_date", employee.employment_end_date)
-        _validate_date_order(next_start_date, next_end_date)
+        _validate_employment_lifecycle(
+            status=next_status,
+            start_date=next_start_date,
+            end_date=next_end_date,
+        )
 
         for field_name, value in values.items():
             setattr(employee, field_name, value)
@@ -163,3 +176,26 @@ def _status_value(status: EmployeeStatus | str | None) -> str | None:
 def _validate_date_order(start_date: date, end_date: date | None) -> None:
     if end_date is not None and end_date < start_date:
         raise EmployeeDateRangeError("Employment end date must be on or after start date")
+
+
+def _validate_employment_lifecycle(
+    *,
+    status: EmployeeStatus | str | None,
+    start_date: date,
+    end_date: date | None,
+) -> None:
+    _validate_date_order(start_date, end_date)
+
+    status_value = _status_value(status)
+    if status_value is None:
+        raise EmployeeLifecycleError("Employee status is required")
+    if status_value == EmployeeStatus.TERMINATED.value:
+        if end_date is None:
+            raise EmployeeLifecycleError(
+                "Terminated employees must have an employment end date"
+            )
+        return
+    if end_date is not None:
+        raise EmployeeLifecycleError(
+            "Employment end date is only allowed when status is terminated"
+        )
