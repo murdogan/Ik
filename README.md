@@ -127,8 +127,9 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
   `limit`/`offset` pagination, oluşturma/onay/red/iptal
 
 OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
-`Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W1C5 metadata hygiene kapsamında
-mevcut operasyonlara açık summary/description eklendi; request/response davranışı değişmedi.
+`Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W2C5 metadata hygiene kapsamında
+tag açıklamaları, tenant-aware operation summary/description metinleri ve filtre/header
+açıklamaları okunabilirlik için güncellendi; request/response davranışı değişmedi.
 
 Tenant header dependency hataları, employee/leave endpointlerinin açıkça yakaladığı domain
 hataları ve employee, leave balance, leave request endpointlerindeki otomatik request validation

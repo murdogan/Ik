@@ -11,6 +11,8 @@ from app.api.openapi import (
 from app.main import create_app
 from fastapi.testclient import TestClient
 
+HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
+
 
 def test_openapi_uses_readable_tag_catalog() -> None:
     client = TestClient(create_app())
@@ -19,6 +21,13 @@ def test_openapi_uses_readable_tag_catalog() -> None:
 
     assert response.status_code == 200
     assert response.json()["tags"] == OPENAPI_TAGS
+    descriptions = {tag["name"]: tag["description"] for tag in response.json()["tags"]}
+    assert "API health" in descriptions[SYSTEM_TAG]
+    assert "outside tenant-scoped APIs" in descriptions[PUBLIC_TAG]
+    assert "dashboard views" in descriptions[DASHBOARD_TAG]
+    assert "profile lookup" in descriptions[EMPLOYEES_TAG]
+    assert "no accrual engine" in descriptions[LEAVE_BALANCES_TAG]
+    assert "pending-request decision workflow" in descriptions[LEAVE_REQUESTS_TAG]
 
 
 def test_current_operations_have_readable_openapi_metadata() -> None:
@@ -31,73 +40,73 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
     expected_metadata = {
         ("/health", "get"): (
             SYSTEM_TAG,
-            "Check service health",
-            "public service status metadata",
+            "Check API health",
+            "public Wealthy Falcon HR API status metadata",
         ),
         ("/", "get"): (
             PUBLIC_TAG,
-            "Serve public landing page",
-            "public Wealthy Falcon HR staging landing page",
+            "Serve Wealthy Falcon HR landing",
+            "landing page HTML for browser requests",
         ),
         ("/api/v1/dashboard/summary", "get"): (
             DASHBOARD_TAG,
-            "Get dashboard summary",
-            "tenant-scoped HR operating metrics",
+            "Read tenant dashboard summary",
+            "tenant header context",
         ),
         ("/api/v1/employees", "get"): (
             EMPLOYEES_TAG,
-            "List employees",
+            "List tenant employees",
             "bounded limit/offset pagination",
         ),
         ("/api/v1/employees", "post"): (
             EMPLOYEES_TAG,
-            "Create employee",
-            "unique within that tenant",
+            "Create tenant employee",
+            "lifecycle date rules are enforced",
         ),
         ("/api/v1/employees/{employee_id}", "get"): (
             EMPLOYEES_TAG,
-            "Get employee",
+            "Read tenant employee",
             "Employees from other tenants are treated as not found",
         ),
         ("/api/v1/employees/{employee_id}", "patch"): (
             EMPLOYEES_TAG,
-            "Update employee",
+            "Update tenant employee",
             "employment lifecycle date rules",
         ),
         ("/api/v1/employees/{employee_id}", "delete"): (
             EMPLOYEES_TAG,
-            "Delete employee",
+            "Delete tenant employee",
             "Employees from other tenants are treated as not found",
         ),
         ("/api/v1/employees/{employee_id}/leave-balances", "get"): (
             LEAVE_BALANCES_TAG,
-            "List employee leave balances",
-            "does not calculate accruals or call external integrations",
+            "List employee leave balance summaries",
+            "reads stored summaries only",
         ),
         ("/api/v1/leave-requests", "get"): (
             LEAVE_REQUESTS_TAG,
-            "List leave requests",
+            "List tenant leave requests",
             "bounded limit/offset pagination",
         ),
         ("/api/v1/leave-requests", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Create leave request",
-            "employee and requesting user must both belong to the tenant",
+            "Create tenant leave request",
+            "leave dates must be ordered",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/approve", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Approve leave request",
-            "Approves a pending leave request",
+            "Approve tenant leave request",
+            "Leave requests from other tenants are treated as not found",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/reject", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Reject leave request",
-            "Rejects a pending leave request",
+            "Reject tenant leave request",
+            "Leave requests from other tenants are treated as not found",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Cancel leave request",
-            "Cancels a pending leave request",
+            "Cancel tenant leave request",
+            "Leave requests from other tenants are treated as not found",
         ),
     }
 
@@ -106,6 +115,26 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         assert operation["tags"] == [tag]
         assert operation["summary"] == summary
         assert description_fragment in operation["description"]
+
+
+def test_current_operations_use_tag_catalog_and_doc_metadata() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi = response.json()
+    allowed_tags = {tag["name"] for tag in OPENAPI_TAGS}
+    for operations in openapi["paths"].values():
+        for method, operation in operations.items():
+            if method not in HTTP_METHODS:
+                continue
+            assert len(operation["tags"]) == 1
+            assert operation["tags"][0] in allowed_tags
+            assert operation["summary"].strip()
+            assert operation["description"].strip()
+            for response_metadata in operation["responses"].values():
+                assert response_metadata["description"].strip()
 
 
 def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:
@@ -156,7 +185,7 @@ def test_domain_operations_document_required_tenant_headers() -> None:
 
         assert tenant_id_header["in"] == "header"
         assert tenant_id_header["required"] is True
-        assert "canonical hyphenated tenant UUID" in tenant_id_header["description"]
+        assert "single canonical hyphenated UUID" in tenant_id_header["description"]
         assert tenant_slug_header["in"] == "header"
         assert tenant_slug_header["required"] is False
         assert "non-empty when provided" in tenant_slug_header["description"]
@@ -173,11 +202,11 @@ def test_employee_list_openapi_documents_filter_query_params() -> None:
 
     assert {"department", "status", "q", "limit", "offset"}.issubset(params)
     assert params["department"]["in"] == "query"
-    assert "Exact department filter" in params["department"]["description"]
+    assert "exact department value within the tenant" in params["department"]["description"]
     assert params["status"]["in"] == "query"
-    assert "Employment lifecycle status filter" in params["status"]["description"]
+    assert "employment lifecycle status" in params["status"]["description"]
     assert params["q"]["in"] == "query"
-    assert "employee_number and email" in params["q"]["description"]
+    assert "within the tenant" in params["q"]["description"]
     assert params["limit"]["schema"]["maximum"] == 200
     assert params["offset"]["schema"]["minimum"] == 0
 
@@ -195,13 +224,13 @@ def test_leave_request_list_openapi_documents_filter_query_params() -> None:
         params
     )
     assert params["status"]["in"] == "query"
-    assert "Leave request workflow status filter" in params["status"]["description"]
+    assert "leave request workflow status" in params["status"]["description"]
     assert params["employee_id"]["in"] == "query"
-    assert "Always applied within the current tenant" in params["employee_id"]["description"]
+    assert "one employee in the current tenant" in params["employee_id"]["description"]
     assert params["start_date"]["in"] == "query"
-    assert "Inclusive date-window start" in params["start_date"]["description"]
+    assert "Inclusive start" in params["start_date"]["description"]
     assert params["end_date"]["in"] == "query"
-    assert "Inclusive date-window end" in params["end_date"]["description"]
+    assert "Inclusive end" in params["end_date"]["description"]
     assert params["limit"]["schema"]["maximum"] == 200
     assert params["offset"]["schema"]["minimum"] == 0
 

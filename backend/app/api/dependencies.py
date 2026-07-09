@@ -20,14 +20,16 @@ def get_tenant_context(
         str,
         Header(
             alias=TENANT_ID_HEADER,
-            description="Required canonical hyphenated tenant UUID.",
+            description=(
+                "Required current tenant id. Must be a single canonical hyphenated UUID."
+            ),
         ),
     ],
     x_tenant_slug: Annotated[
         str | None,
         Header(
             alias=TENANT_SLUG_HEADER,
-            description="Optional tenant slug. Must be non-empty when provided.",
+            description="Optional current tenant slug. Must be non-empty when provided.",
         ),
     ] = None,
 ) -> TenantContext:

@@ -22,10 +22,10 @@ def get_dashboard_service(
 @router.get(
     "/summary",
     response_model=DashboardSummary,
-    summary="Get dashboard summary",
+    summary="Read tenant dashboard summary",
     description=(
-        "Returns tenant-scoped HR operating metrics for the current tenant, including "
-        "workforce counts, pending leave, department distribution, new starters, and "
+        "Returns HR operating metrics for the current tenant from the tenant header context, "
+        "including workforce counts, pending leave, department distribution, new starters, and "
         "recent activity."
     ),
     response_description="Tenant dashboard summary metrics.",

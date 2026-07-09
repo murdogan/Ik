@@ -26,11 +26,12 @@ lokal backend smoke kapsamındadır.
 
 Geçerli uygulama notları:
 
-- OpenAPI dokümanı W1C5 itibarıyla okunabilir tag kataloğu kullanır:
+- OpenAPI dokümanı W2C5 itibarıyla okunabilir tag kataloğu kullanır:
   `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
-  Mevcut operasyonların her biri açık `summary` ve `description` metadata'sı taşır. Bu değişiklik
-  yalnız dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W1C6
-  status refresh kapsamında smoke script bu operasyonları path ve HTTP method seviyesinde doğrular.
+  Mevcut operasyonların her biri açık, tenant-aware `summary` ve `description` metadata'sı taşır;
+  filtre/header açıklamaları da docs okunabilirliği için netleştirilmiştir. Bu değişiklik yalnız
+  dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W1C6 status
+  refresh kapsamında smoke script bu operasyonları path ve HTTP method seviyesinde doğrular.
 - W2B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
   örnekleri taşır. Employee ve leave endpointleri bugün doğrudan schema/list döner; Bölüm 1'deki
   `{ data, meta }` zarfı gelecek standart hedefidir.

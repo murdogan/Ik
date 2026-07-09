@@ -43,16 +43,22 @@ def get_employee_service(
 def get_employee_list_filters(
     department: Annotated[
         str | None,
-        Query(description="Exact department filter. Case-insensitive."),
+        Query(
+            description=(
+                "Filters to an exact department value within the tenant. Case-insensitive."
+            ),
+        ),
     ] = None,
     status_filter: Annotated[
         EmployeeStatus | None,
-        Query(alias="status", description="Employment lifecycle status filter."),
+        Query(alias="status", description="Filters by employment lifecycle status."),
     ] = None,
     q: Annotated[
         str | None,
         Query(
-            description="Case-insensitive search over employee_number and email.",
+            description=(
+                "Case-insensitive search over employee_number and email within the tenant."
+            ),
             max_length=320,
         ),
     ] = None,
@@ -66,12 +72,19 @@ def get_employee_list_pagination(
         Query(
             ge=1,
             le=EMPLOYEE_LIST_MAX_LIMIT,
-            description="Maximum employees to return. Bounded to protect large tenant lists.",
+            description=(
+                "Maximum employees to return for this tenant. Bounded to protect large lists."
+            ),
         ),
     ] = EMPLOYEE_LIST_DEFAULT_LIMIT,
     offset: Annotated[
         int,
-        Query(ge=0, description="Number of matching employees to skip before returning results."),
+        Query(
+            ge=0,
+            description=(
+                "Number of matching tenant employees to skip before returning results."
+            ),
+        ),
     ] = 0,
 ) -> EmployeeListPagination:
     return EmployeeListPagination(limit=limit, offset=offset)
@@ -80,11 +93,11 @@ def get_employee_list_pagination(
 @router.get(
     "",
     response_model=list[EmployeeRead],
-    summary="List employees",
+    summary="List tenant employees",
     description=(
-        "Returns employees for the current tenant with optional department, lifecycle status, "
-        "and employee number or email search filters. Results use bounded limit/offset "
-        "pagination."
+        "Returns employees for the current tenant from the tenant header context. Optional "
+        "filters cover department, lifecycle status, and employee number or email search, with "
+        "bounded limit/offset pagination."
     ),
     response_description="Tenant employee list.",
 )
@@ -101,10 +114,10 @@ async def list_employees(
     "",
     response_model=EmployeeRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Create employee",
+    summary="Create tenant employee",
     description=(
-        "Creates an employee in the current tenant from the tenant header context. "
-        "Employee numbers must remain unique within that tenant."
+        "Creates an employee in the current tenant from the tenant header context. Employee "
+        "numbers must remain unique within that tenant, and lifecycle date rules are enforced."
     ),
     response_description="Created employee.",
 )
@@ -126,10 +139,10 @@ async def create_employee(
 @router.get(
     "/{employee_id}",
     response_model=EmployeeRead,
-    summary="Get employee",
+    summary="Read tenant employee",
     description=(
-        "Returns a single employee by id when the employee belongs to the current tenant. "
-        "Employees from other tenants are treated as not found."
+        "Returns one employee by id when the employee belongs to the current tenant. Employees "
+        "from other tenants are treated as not found."
     ),
     response_description="Tenant employee.",
 )
@@ -147,7 +160,7 @@ async def get_employee(
 @router.patch(
     "/{employee_id}",
     response_model=EmployeeRead,
-    summary="Update employee",
+    summary="Update tenant employee",
     description=(
         "Partially updates an employee in the current tenant while preserving tenant isolation, "
         "employee number uniqueness, and employment lifecycle date rules."
@@ -175,10 +188,10 @@ async def update_employee(
 @router.delete(
     "/{employee_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete employee",
+    summary="Delete tenant employee",
     description=(
-        "Deletes an employee by id when the employee belongs to the current tenant. "
-        "Employees from other tenants are treated as not found."
+        "Deletes an employee by id when the employee belongs to the current tenant. Employees "
+        "from other tenants are treated as not found."
     ),
     response_description="Employee deleted.",
 )

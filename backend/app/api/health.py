@@ -8,10 +8,10 @@ router = APIRouter(tags=[SYSTEM_TAG])
 
 @router.get(
     "/health",
-    summary="Check service health",
+    summary="Check API health",
     description=(
-        "Returns public service status metadata for Wealthy Falcon HR. "
-        "This endpoint does not require tenant headers."
+        "Returns public Wealthy Falcon HR API status metadata, including service name, version, "
+        "and environment. This endpoint does not require tenant headers."
     ),
     response_description="Service health metadata.",
 )

@@ -45,19 +45,19 @@ def get_leave_request_service(
 def get_leave_request_list_filters(
     status_filter: Annotated[
         LeaveRequestStatus | None,
-        Query(alias="status", description="Leave request workflow status filter."),
+        Query(alias="status", description="Filters by leave request workflow status."),
     ] = None,
     employee_id: Annotated[
         UUID | None,
-        Query(description="Employee id filter. Always applied within the current tenant."),
+        Query(description="Filters to leave requests for one employee in the current tenant."),
     ] = None,
     start_date: Annotated[
         DateOnly | None,
-        Query(description="Inclusive date-window start for overlapping leave requests."),
+        Query(description="Inclusive start of the leave date window to overlap."),
     ] = None,
     end_date: Annotated[
         DateOnly | None,
-        Query(description="Inclusive date-window end for overlapping leave requests."),
+        Query(description="Inclusive end of the leave date window to overlap."),
     ] = None,
 ) -> LeaveRequestListFilters:
     if start_date is not None and end_date is not None and end_date < start_date:
@@ -81,7 +81,8 @@ def get_leave_request_list_pagination(
             ge=1,
             le=LEAVE_REQUEST_LIST_MAX_LIMIT,
             description=(
-                "Maximum leave requests to return. Bounded to protect large tenant lists."
+                "Maximum leave requests to return for this tenant. Bounded to protect large "
+                "lists."
             ),
         ),
     ] = LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
@@ -89,7 +90,9 @@ def get_leave_request_list_pagination(
         int,
         Query(
             ge=0,
-            description="Number of matching leave requests to skip before returning results.",
+            description=(
+                "Number of matching tenant leave requests to skip before returning results."
+            ),
         ),
     ] = 0,
 ) -> LeaveRequestListPagination:
@@ -99,10 +102,11 @@ def get_leave_request_list_pagination(
 @router.get(
     "",
     response_model=list[LeaveRequestRead],
-    summary="List leave requests",
+    summary="List tenant leave requests",
     description=(
-        "Returns leave requests for the current tenant with optional workflow status, employee, "
-        "and overlapping date-window filters. Results use bounded limit/offset pagination."
+        "Returns leave requests for the current tenant from the tenant header context. Optional "
+        "filters cover workflow status, employee, and overlapping date windows, with bounded "
+        "limit/offset pagination."
     ),
     response_description="Tenant leave request list.",
 )
@@ -119,10 +123,11 @@ async def list_leave_requests(
     "",
     response_model=LeaveRequestRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Create leave request",
+    summary="Create tenant leave request",
     description=(
         "Creates a pending leave request in the current tenant. The employee and requesting "
-        "user must both belong to the tenant from the request headers."
+        "user must both belong to the tenant from the request headers, and leave dates must be "
+        "ordered."
     ),
     response_description="Created leave request.",
 )
@@ -144,10 +149,10 @@ async def create_leave_request(
 @router.post(
     "/{leave_request_id}/approve",
     response_model=LeaveRequestRead,
-    summary="Approve leave request",
+    summary="Approve tenant leave request",
     description=(
         "Approves a pending leave request in the current tenant and records the supplied "
-        "decision metadata."
+        "decision metadata. Leave requests from other tenants are treated as not found."
     ),
     response_description="Approved leave request.",
 )
@@ -174,10 +179,10 @@ async def approve_leave_request(
 @router.post(
     "/{leave_request_id}/reject",
     response_model=LeaveRequestRead,
-    summary="Reject leave request",
+    summary="Reject tenant leave request",
     description=(
         "Rejects a pending leave request in the current tenant and records the supplied "
-        "decision metadata."
+        "decision metadata. Leave requests from other tenants are treated as not found."
     ),
     response_description="Rejected leave request.",
 )
@@ -204,10 +209,10 @@ async def reject_leave_request(
 @router.post(
     "/{leave_request_id}/cancel",
     response_model=LeaveRequestRead,
-    summary="Cancel leave request",
+    summary="Cancel tenant leave request",
     description=(
         "Cancels a pending leave request in the current tenant and records the supplied "
-        "decision metadata."
+        "decision metadata. Leave requests from other tenants are treated as not found."
     ),
     response_description="Cancelled leave request.",
 )

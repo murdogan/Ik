@@ -11,8 +11,8 @@ router = APIRouter(tags=[PUBLIC_TAG])
 @router.get(
     "/",
     response_class=HTMLResponse,
-    summary="Serve public landing page",
-    description="Returns the public Wealthy Falcon HR staging landing page HTML.",
+    summary="Serve Wealthy Falcon HR landing",
+    description="Returns the public Wealthy Falcon HR landing page HTML for browser requests.",
     response_description="Wealthy Falcon HR landing HTML.",
 )
 def landing_page() -> str:
