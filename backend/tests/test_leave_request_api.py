@@ -511,6 +511,39 @@ async def test_list_leave_request_filters_remain_tenant_scoped() -> None:
         await engine.dispose()
 
 
+async def test_list_leave_requests_combines_status_employee_and_date_filters() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={
+                "status": LeaveRequestStatus.PENDING.value,
+                "employee_id": str(EMPLOYEE_ID),
+                "start_date": "2026-07-21",
+                "end_date": "2026-07-21",
+            },
+        )
+        cross_tenant_response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={
+                "status": LeaveRequestStatus.PENDING.value,
+                "employee_id": str(OTHER_EMPLOYEE_ID),
+                "start_date": "2026-07-21",
+                "end_date": "2026-07-21",
+            },
+        )
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()] == [str(PENDING_REQUEST_ID)]
+        assert cross_tenant_response.status_code == 200
+        assert cross_tenant_response.json() == []
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_leave_requests_filters_by_overlapping_date_range() -> None:
     client, engine = await _client_with_database()
     try:

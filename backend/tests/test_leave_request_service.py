@@ -286,7 +286,7 @@ async def test_list_leave_requests_uses_inclusive_overlap_boundaries() -> None:
         await engine.dispose()
 
 
-async def test_list_leave_requests_combines_status_and_employee_filters() -> None:
+async def test_list_leave_requests_combines_status_employee_and_date_filters() -> None:
     session, engine = await _session_with_seed_data()
     try:
         leave_requests = await LeaveRequestService(session).list_leave_requests(
@@ -294,6 +294,8 @@ async def test_list_leave_requests_combines_status_and_employee_filters() -> Non
             filters=LeaveRequestListFilters(
                 status=LeaveRequestStatus.PENDING,
                 employee_id=EMPLOYEE_ID,
+                start_date=date(2026, 7, 21),
+                end_date=date(2026, 7, 21),
             ),
         )
         cross_tenant_employee_requests = await LeaveRequestService(session).list_leave_requests(
@@ -301,6 +303,8 @@ async def test_list_leave_requests_combines_status_and_employee_filters() -> Non
             filters=LeaveRequestListFilters(
                 status=LeaveRequestStatus.PENDING,
                 employee_id=OTHER_EMPLOYEE_ID,
+                start_date=date(2026, 7, 21),
+                end_date=date(2026, 7, 21),
             ),
         )
 
