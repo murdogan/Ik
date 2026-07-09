@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W2A4)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W2A5)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -53,7 +53,8 @@ Geçerli uygulama notları:
   `new_starters_this_month`, `department_distribution` ve `recent_activity` döner.
   `active_employee_count` yalnız `active` çalışanları sayar; `employee_count` mevcut
   işgücü için `active` ve `on_leave` statülerini kapsar. `pending_leave_requests`,
-  `pending_leave_count` ile uyumlu geriye dönük alandır.
+  `pending_leave_count` ile uyumlu geriye dönük alandır. W2A5 kapsamında bu zenginleştirilmiş
+  alanlar API seviyesinde DB-backed ve tenant-scoped testle sabitlenmiştir.
 - Employee listesinde `department`, `status` ve employee number/email üzerinden `q` filtreleri
 - Employee listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`)
   uygulanmıştır.

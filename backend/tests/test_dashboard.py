@@ -11,6 +11,7 @@ from app.models.user import User, UserStatus
 from app.schemas.dashboard import DashboardSummary, DepartmentDistributionItem
 from app.services.dashboard_service import DashboardService
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -269,6 +270,47 @@ async def test_dashboard_summary_returns_zero_state_for_empty_tenant() -> None:
 
     await session.close()
     await engine.dispose()
+
+
+async def test_dashboard_summary_endpoint_reads_enriched_metrics_from_database() -> None:
+    session, engine = await _session_with_seed_data()
+    app = create_app()
+
+    def override_dashboard_service() -> DashboardService:
+        return DashboardService(session=session, today=TODAY, recent_activity_limit=0)
+
+    app.dependency_overrides[get_dashboard_service] = override_dashboard_service
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get(
+                "/api/v1/dashboard/summary",
+                headers={
+                    "X-Tenant-Id": str(TENANT_ID),
+                    "X-Tenant-Slug": "wealthy-falcon",
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["active_employee_count"] == 3
+        assert body["employee_count"] == 4
+        assert body["pending_leave_count"] == 1
+        assert body["pending_leave_requests"] == 1
+        assert body["new_starters_this_month"] == 2
+        assert body["department_distribution"] == [
+            {"department": "People", "count": 2},
+            {"department": "Engineering", "count": 1},
+            {"department": "Unassigned", "count": 1},
+        ]
+        assert body["recent_activity"] == []
+    finally:
+        app.dependency_overrides.clear()
+        await session.close()
+        await engine.dispose()
 
 
 def test_dashboard_summary_endpoint_uses_tenant_header() -> None:

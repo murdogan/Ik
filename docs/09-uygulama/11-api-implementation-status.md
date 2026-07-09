@@ -2,13 +2,16 @@
 
 Date: 2026-07-09
 Branch: `codex/continuous-24h-backend`
-Task: `W2A4 Leave request pagination`
+Task: `W2A5 Dashboard enrichment`
 
 ## Scope
 
-- Hardened leave request list `limit`/`offset` pagination with deterministic service ordering.
-- Kept pagination bounded at `limit` default `50`, maximum `200`, and `offset` default `0`.
-- Added service-level coverage that pagination is applied after tenant scope.
+- Kept the dashboard summary API surface unchanged while locking the enriched DB-backed contract.
+- Added API-level coverage for active employee count, pending leave count, workforce compatibility
+  fields, this-month starters, department distribution, and recent activity using seeded database
+  rows.
+- Confirmed dashboard summary remains tenant-scoped; cross-tenant employees and leave requests in
+  the seed data do not affect current tenant metrics.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -19,7 +22,7 @@ Task: `W2A4 Leave request pagination`
 | GET | `/health` | Implemented | Health response and OpenAPI operation |
 | GET | `/` | Implemented | Landing response and OpenAPI operation |
 | GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch |
-| GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped metrics and OpenAPI operation |
+| GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped enriched metrics and OpenAPI operation |
 | GET | `/api/v1/employees` | Implemented | Tenant list, filters, pagination, OpenAPI operation |
 | POST | `/api/v1/employees` | Implemented | Tenant create and OpenAPI operation |
 | GET | `/api/v1/employees/{employee_id}` | Implemented | Detail, tenant isolation, OpenAPI operation |
@@ -56,14 +59,15 @@ Task: `W2A4 Leave request pagination`
 
 ## Verification
 
-W2A4 focused preflight:
+W2A5 focused preflight:
 
-- `uv run pytest backend/tests/test_leave_request_service.py backend/tests/test_leave_request_api.py backend/tests/test_openapi_metadata.py`: passed, 38 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest backend/tests/test_dashboard.py -q`: passed, 9 tests passed, 1 existing
+  Starlette `TestClient` deprecation warning.
 
-Full W2A4 local gate run:
+Full W2A5 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 197 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 198 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`.
 
