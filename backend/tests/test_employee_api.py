@@ -225,6 +225,32 @@ async def test_create_employee_accepts_terminated_lifecycle_with_end_date() -> N
         await engine.dispose()
 
 
+async def test_create_employee_rejects_terminated_lifecycle_without_end_date() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-002",
+                "first_name": "Bora",
+                "last_name": "Demir",
+                "status": EmployeeStatus.TERMINATED.value,
+                "employment_start_date": "2026-07-08",
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_lifecycle",
+            message="Terminated employees must have an employment end date",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_create_employee_rejects_end_date_without_terminated_status() -> None:
     client, engine = await _client_with_database()
     try:

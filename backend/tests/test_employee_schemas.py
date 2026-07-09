@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -284,3 +285,23 @@ def test_employee_read_does_not_expose_tenant_id() -> None:
     )
 
     assert "tenant_id" not in payload.model_dump()
+
+
+def test_employee_read_accepts_model_lifecycle_status_string() -> None:
+    payload = EmployeeRead.model_validate(
+        SimpleNamespace(
+            id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            employee_number="WF-001",
+            first_name="Ada",
+            last_name="Yilmaz",
+            email=None,
+            department="People",
+            position="HR Specialist",
+            status=EmployeeStatus.TERMINATED.value,
+            employment_start_date=date(2026, 7, 1),
+            employment_end_date=date(2026, 7, 31),
+        )
+    )
+
+    assert payload.status == EmployeeStatus.TERMINATED
+    assert payload.employment_end_date == date(2026, 7, 31)
