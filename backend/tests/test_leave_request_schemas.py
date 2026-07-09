@@ -3,7 +3,12 @@ from uuid import UUID
 
 import pytest
 from app.models.leave_request import LeaveRequestStatus
-from app.schemas.leave_request import LeaveRequestCreate, LeaveRequestDecision, LeaveRequestRead
+from app.schemas.leave_request import (
+    LeaveRequestCreate,
+    LeaveRequestDecision,
+    LeaveRequestListFilters,
+    LeaveRequestRead,
+)
 from pydantic import ValidationError
 
 EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
@@ -70,6 +75,26 @@ def test_leave_request_decision_accepts_optional_note() -> None:
 def test_leave_request_decision_rejects_empty_note_when_provided() -> None:
     with pytest.raises(ValidationError):
         LeaveRequestDecision(decided_by_user_id=DECIDING_USER_ID, decision_note=" ")
+
+
+def test_leave_request_list_filters_accept_supported_query_fields() -> None:
+    filters = LeaveRequestListFilters(
+        status=LeaveRequestStatus.APPROVED,
+        employee_id=EMPLOYEE_ID,
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 31),
+    )
+
+    assert filters.status == LeaveRequestStatus.APPROVED
+    assert filters.employee_id == EMPLOYEE_ID
+
+
+def test_leave_request_list_filters_reject_invalid_date_range() -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestListFilters(
+            start_date=date(2026, 7, 31),
+            end_date=date(2026, 7, 1),
+        )
 
 
 def test_leave_request_read_exposes_workflow_fields_without_tenant_id() -> None:

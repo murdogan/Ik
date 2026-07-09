@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.employee import Employee
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.user import User
-from app.schemas.leave_request import LeaveRequestCreate, LeaveRequestDecision
+from app.schemas.leave_request import (
+    LeaveRequestCreate,
+    LeaveRequestDecision,
+    LeaveRequestListFilters,
+)
 
 
 class LeaveRequestNotFoundError(Exception):
@@ -34,11 +38,26 @@ class LeaveRequestService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_leave_requests(self, tenant_id: UUID) -> list[LeaveRequest]:
-        statement = (
-            select(LeaveRequest)
-            .where(LeaveRequest.tenant_id == tenant_id)
-            .order_by(LeaveRequest.created_at.desc(), LeaveRequest.start_date.asc())
+    async def list_leave_requests(
+        self,
+        tenant_id: UUID,
+        filters: LeaveRequestListFilters | None = None,
+    ) -> list[LeaveRequest]:
+        filters = filters or LeaveRequestListFilters()
+        statement = select(LeaveRequest).where(LeaveRequest.tenant_id == tenant_id)
+
+        if filters.status is not None:
+            statement = statement.where(LeaveRequest.status == _status_value(filters.status))
+        if filters.employee_id is not None:
+            statement = statement.where(LeaveRequest.employee_id == filters.employee_id)
+        if filters.start_date is not None:
+            statement = statement.where(LeaveRequest.end_date >= filters.start_date)
+        if filters.end_date is not None:
+            statement = statement.where(LeaveRequest.start_date <= filters.end_date)
+
+        statement = statement.order_by(
+            LeaveRequest.created_at.desc(),
+            LeaveRequest.start_date.asc(),
         )
         return list(await self.session.scalars(statement))
 
@@ -154,3 +173,9 @@ class LeaveRequestService:
 def _validate_date_order(start_date: date, end_date: date) -> None:
     if end_date < start_date:
         raise LeaveRequestDateRangeError("Leave end date must be on or after start date")
+
+
+def _status_value(status: LeaveRequestStatus | str | None) -> str | None:
+    if isinstance(status, LeaveRequestStatus):
+        return status.value
+    return status

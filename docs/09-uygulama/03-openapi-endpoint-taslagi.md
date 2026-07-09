@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A1)
+## 0. Güncel uygulama yüzeyi (2026-07-09 / W1A3)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -17,7 +17,7 @@ lokal backend smoke kapsamındadır.
 | GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | Uygulandı | Partial update, tarih aralığı validasyonu |
 | DELETE | `/api/v1/employees/{employee_id}` | Uygulandı | Mevcut davranış hard delete |
-| GET | `/api/v1/leave-requests` | Uygulandı | Tenant-scoped liste |
+| GET | `/api/v1/leave-requests` | Uygulandı | Tenant-scoped liste; `status`, `employee_id`, `start_date`, `end_date` filtreleri var |
 | POST | `/api/v1/leave-requests` | Uygulandı | Pending talep oluşturur, çalışan ve isteyen kullanıcı tenant içinde olmalı |
 | POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Uygulandı | Yalnız pending talep onaylanır |
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note destekler |
@@ -33,7 +33,10 @@ Geçerli uygulama notları:
 - Cursor pagination standardı, idempotency ve correlation envelope henüz TODO'dur.
 - Employee listesinde `department`, `status` ve employee number/email üzerinden `q` filtreleri
 - Employee listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`)
-  uygulanmıştır; diğer listelerde filtreleme ayrı backlog'dur.
+  uygulanmıştır.
+- Leave request listesinde `status`, `employee_id` ve inclusive `start_date`/`end_date` tarih
+  aralığı filtreleri uygulanmıştır. Tarih aralığı, izin kaydının tarihleriyle overlap eden
+  talepleri döndürür.
 - Leave request detail endpointi (`GET /api/v1/leave-requests/{id}`) henüz yoktur.
 
 Lokal smoke komutu:
@@ -258,9 +261,23 @@ Critical: before/after audit üretir.
 | GET | `/api/v1/leave-types` | `leave:read` | Tenant izin türleri |
 | GET | `/api/v1/leave-balances/me` | `leave:read:own` | Çalışan bakiyesi |
 | POST | `/api/v1/leave-requests` | `leave:create:own` | İzin talebi |
-| GET | `/api/v1/leave-requests` | `leave:read:{scope}` | Liste |
+| GET | `/api/v1/leave-requests` | `leave:read:{scope}` | Liste; status, employee ve tarih aralığı filtreleri |
 | POST | `/api/v1/leave-requests/{id}/approve` | `leave:approve:team` | Onay |
 | POST | `/api/v1/leave-requests/{id}/reject` | `leave:approve:team` | Red |
+
+### `GET /api/v1/leave-requests`
+
+Yetki: `leave:read:{scope}`.
+
+Query:
+
+- `status`: `pending`, `approved`, `rejected`, `cancelled`.
+- `employee_id`: Çalışan UUID filtresi. Her zaman aktif tenant scope içinde uygulanır.
+- `start_date`: Inclusive tarih aralığı başlangıcı.
+- `end_date`: Inclusive tarih aralığı bitişi.
+
+Not: `start_date`/`end_date` filtresi, izin kaydı tarih aralığı sorgu aralığıyla overlap eden
+talepleri döndürür. `end_date < start_date` istekleri `422` döner.
 
 ## 9. Import/export endpointleri
 

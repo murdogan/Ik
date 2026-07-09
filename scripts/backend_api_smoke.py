@@ -319,6 +319,66 @@ async def _smoke_leave_request_endpoints(client: AsyncClient, employee_id: str) 
     statuses = {leave_request["status"] for leave_request in leave_requests}
     _assert_equal(statuses, {"approved", "rejected", "cancelled"}, "leave request statuses")
 
+    approved_filtered = _expect_json(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"status": "approved"},
+        ),
+        200,
+        "GET /api/v1/leave-requests?status=approved",
+    )
+    _assert_equal(
+        [leave_request["id"] for leave_request in approved_filtered],
+        [approved_request["id"]],
+        "leave request status filter",
+    )
+
+    employee_filtered = _expect_json(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"employee_id": employee_id},
+        ),
+        200,
+        "GET /api/v1/leave-requests?employee_id=<employee_id>",
+    )
+    _assert_equal(
+        {leave_request["id"] for leave_request in employee_filtered},
+        {approved_request["id"], rejected_request["id"], cancelled_request["id"]},
+        "leave request employee_id filter",
+    )
+
+    date_filtered = _expect_json(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={
+                "start_date": rejected_request["start_date"],
+                "end_date": rejected_request["end_date"],
+            },
+        ),
+        200,
+        "GET /api/v1/leave-requests?start_date=<date>&end_date=<date>",
+    )
+    _assert_equal(
+        [leave_request["id"] for leave_request in date_filtered],
+        [rejected_request["id"]],
+        "leave request date range filter",
+    )
+    _expect_status(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={
+                "start_date": rejected_request["end_date"],
+                "end_date": rejected_request["start_date"],
+            },
+        ),
+        422,
+        "GET /api/v1/leave-requests invalid date range",
+    )
+
 
 async def _smoke_dashboard_endpoint(client: AsyncClient) -> None:
     summary = _expect_json(

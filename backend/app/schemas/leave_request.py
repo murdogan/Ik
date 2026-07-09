@@ -44,6 +44,25 @@ class LeaveRequestDecision(BaseModel):
         return value
 
 
+class LeaveRequestListFilters(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    status: LeaveRequestStatus | None = None
+    employee_id: UUID | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range_when_complete(self) -> Self:
+        if (
+            self.start_date is not None
+            and self.end_date is not None
+            and self.end_date < self.start_date
+        ):
+            raise ValueError("Leave request end_date filter must be on or after start_date")
+        return self
+
+
 class LeaveRequestRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

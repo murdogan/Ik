@@ -22,12 +22,14 @@ from sqlalchemy.pool import StaticPool
 TENANT_ID = UUID("11111111-aaaa-4111-8111-111111111111")
 OTHER_TENANT_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+SECOND_EMPLOYEE_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
 OTHER_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 REQUESTING_USER_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 APPROVER_USER_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 OTHER_USER_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 PENDING_REQUEST_ID = UUID("aaaaaaaa-1111-4aaa-8aaa-aaaaaaaa1111")
 APPROVED_REQUEST_ID = UUID("bbbbbbbb-2222-4bbb-8bbb-bbbbbbbb2222")
+REJECTED_REQUEST_ID = UUID("cccccccc-4444-4ccc-8ccc-cccccccc4444")
 OTHER_REQUEST_ID = UUID("dddddddd-3333-4ddd-8ddd-dddddddd3333")
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 
@@ -108,6 +110,18 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
                     status=EmployeeStatus.ACTIVE.value,
                     employment_start_date=date(2026, 7, 1),
                 ),
+                Employee(
+                    id=SECOND_EMPLOYEE_ID,
+                    tenant_id=TENANT_ID,
+                    employee_number="WF-002",
+                    first_name="Ece",
+                    last_name="Kaya",
+                    email="ece@wealthyfalcon.test",
+                    department="Engineering",
+                    position="Backend Engineer",
+                    status=EmployeeStatus.ACTIVE.value,
+                    employment_start_date=date(2026, 7, 1),
+                ),
                 LeaveRequest(
                     id=PENDING_REQUEST_ID,
                     tenant_id=TENANT_ID,
@@ -130,6 +144,19 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
                     requested_by_user_id=REQUESTING_USER_ID,
                     decided_by_user_id=APPROVER_USER_ID,
                     created_at=NOW - timedelta(hours=2),
+                ),
+                LeaveRequest(
+                    id=REJECTED_REQUEST_ID,
+                    tenant_id=TENANT_ID,
+                    employee_id=SECOND_EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 7, 25),
+                    end_date=date(2026, 7, 26),
+                    status=LeaveRequestStatus.REJECTED.value,
+                    requested_by_user_id=REQUESTING_USER_ID,
+                    decided_by_user_id=APPROVER_USER_ID,
+                    decision_note="Coverage conflict",
+                    created_at=NOW - timedelta(minutes=30),
                 ),
                 LeaveRequest(
                     id=OTHER_REQUEST_ID,
@@ -273,8 +300,99 @@ async def test_list_leave_requests_returns_current_tenant_records_only() -> None
 
         assert response.status_code == 200
         ids = {item["id"] for item in response.json()}
-        assert ids == {str(PENDING_REQUEST_ID), str(APPROVED_REQUEST_ID)}
+        assert ids == {
+            str(PENDING_REQUEST_ID),
+            str(APPROVED_REQUEST_ID),
+            str(REJECTED_REQUEST_ID),
+        }
         assert str(OTHER_REQUEST_ID) not in ids
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_filters_by_status_within_current_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"status": LeaveRequestStatus.PENDING.value},
+        )
+
+        assert response.status_code == 200
+        ids = {item["id"] for item in response.json()}
+        assert ids == {str(PENDING_REQUEST_ID)}
+        assert str(OTHER_REQUEST_ID) not in ids
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_filters_by_employee_id_within_current_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"employee_id": str(SECOND_EMPLOYEE_ID)},
+        )
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()] == [str(REJECTED_REQUEST_ID)]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_request_filters_remain_tenant_scoped() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={
+                "employee_id": str(OTHER_EMPLOYEE_ID),
+                "status": LeaveRequestStatus.PENDING.value,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_filters_by_overlapping_date_range() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"start_date": "2026-07-22", "end_date": "2026-07-24"},
+        )
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()] == [str(PENDING_REQUEST_ID)]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_rejects_invalid_filter_date_range() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"start_date": "2026-07-24", "end_date": "2026-07-20"},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Leave request end_date filter must be on or after start_date"
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -418,6 +536,11 @@ async def test_leave_request_routes_are_exposed_in_openapi() -> None:
         assert response.status_code == 200
         paths = response.json()["paths"]
         assert "/api/v1/leave-requests" in paths
+        query_params = {
+            parameter["name"]
+            for parameter in paths["/api/v1/leave-requests"]["get"]["parameters"]
+        }
+        assert {"status", "employee_id", "start_date", "end_date"}.issubset(query_params)
         assert "/api/v1/leave-requests/{leave_request_id}/approve" in paths
         assert "/api/v1/leave-requests/{leave_request_id}/reject" in paths
         assert "/api/v1/leave-requests/{leave_request_id}/cancel" in paths

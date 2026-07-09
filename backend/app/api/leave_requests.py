@@ -1,13 +1,20 @@
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
-from app.schemas.leave_request import LeaveRequestCreate, LeaveRequestDecision, LeaveRequestRead
+from app.models.leave_request import LeaveRequestStatus
+from app.schemas.leave_request import (
+    LeaveRequestCreate,
+    LeaveRequestDecision,
+    LeaveRequestListFilters,
+    LeaveRequestRead,
+)
 from app.services.leave_request_service import (
     LeaveRequestDateRangeError,
     LeaveRequestEmployeeNotFoundError,
@@ -26,12 +33,44 @@ def get_leave_request_service(
     return LeaveRequestService(session=session)
 
 
+def get_leave_request_list_filters(
+    status_filter: Annotated[
+        LeaveRequestStatus | None,
+        Query(alias="status", description="Leave request workflow status filter."),
+    ] = None,
+    employee_id: Annotated[
+        UUID | None,
+        Query(description="Employee id filter. Always applied within the current tenant."),
+    ] = None,
+    start_date: Annotated[
+        date | None,
+        Query(description="Inclusive date-window start for overlapping leave requests."),
+    ] = None,
+    end_date: Annotated[
+        date | None,
+        Query(description="Inclusive date-window end for overlapping leave requests."),
+    ] = None,
+) -> LeaveRequestListFilters:
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Leave request end_date filter must be on or after start_date",
+        )
+    return LeaveRequestListFilters(
+        status=status_filter,
+        employee_id=employee_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
 @router.get("", response_model=list[LeaveRequestRead])
 async def list_leave_requests(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[LeaveRequestService, Depends(get_leave_request_service)],
+    filters: Annotated[LeaveRequestListFilters, Depends(get_leave_request_list_filters)],
 ) -> list[LeaveRequestRead]:
-    return await service.list_leave_requests(tenant_context.tenant_id)
+    return await service.list_leave_requests(tenant_context.tenant_id, filters)
 
 
 @router.post("", response_model=LeaveRequestRead, status_code=status.HTTP_201_CREATED)
