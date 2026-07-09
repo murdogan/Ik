@@ -1,17 +1,28 @@
 from pathlib import Path
 
+import app.models  # noqa: F401
+from alembic import command as alembic_command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from app.db.base import Base
+from sqlalchemy import create_engine, inspect, text
 
 ALEMBIC_INI = Path("alembic.ini")
 
 
+def _alembic_config(database_url: str | None = None) -> Config:
+    config = Config(str(ALEMBIC_INI))
+    if database_url is not None:
+        config.set_main_option("sqlalchemy.url", database_url)
+    return config
+
+
 def _script_directory() -> ScriptDirectory:
-    return ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
+    return ScriptDirectory.from_config(_alembic_config())
 
 
 def test_alembic_config_points_to_backend_migrations() -> None:
-    config = Config(str(ALEMBIC_INI))
+    config = _alembic_config()
 
     assert config.get_main_option("script_location") == "backend/alembic"
 
@@ -35,6 +46,36 @@ def test_core_migration_chain_is_linear() -> None:
     assert leave_request_revision.down_revision == "0003_create_employees"
     assert employee_date_order_revision is not None
     assert employee_date_order_revision.down_revision == "0004_create_leave_requests"
+
+
+def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-smoke.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+
+    alembic_command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        inspector = inspect(engine)
+        migrated_tables = set(inspector.get_table_names())
+
+        assert set(Base.metadata.tables) <= migrated_tables
+
+        for table in Base.metadata.sorted_tables:
+            migrated_columns = {column["name"] for column in inspector.get_columns(table.name)}
+            model_columns = {column.name for column in table.columns}
+
+            assert model_columns <= migrated_columns
+
+        with engine.connect() as connection:
+            current_revision = connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+
+        assert current_revision == _script_directory().get_current_head()
+    finally:
+        engine.dispose()
 
 
 def test_initial_tenant_migration_exists() -> None:
