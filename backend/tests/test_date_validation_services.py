@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 from app.models.employee import EmployeeStatus
 from app.schemas.employee import EmployeeCreate
-from app.schemas.leave_request import LeaveRequestCreate
+from app.schemas.leave_request import LeaveRequestCreate, LeaveRequestListFilters
 from app.services.employee_service import (
     EmployeeDateRangeError,
     EmployeeLifecycleError,
@@ -189,3 +189,42 @@ async def test_leave_request_service_create_rejects_constructed_non_date_values(
 
     with pytest.raises(LeaveRequestDateRangeError, match=message):
         await service.create_leave_request(TENANT_ID, payload)
+
+
+async def test_leave_request_service_list_rejects_constructed_invalid_filter_range() -> None:
+    service = LeaveRequestService(session=cast(AsyncSession, None))
+    filters = LeaveRequestListFilters.model_construct(
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 20),
+    )
+
+    with pytest.raises(LeaveRequestDateRangeError, match="end_date filter"):
+        await service.list_leave_requests(TENANT_ID, filters=filters)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        ("start_date", datetime(2026, 7, 20), "Leave start date must be a date without time"),
+        ("start_date", "2026-07-20", "Leave start date must be a date without time"),
+        ("start_date", 0, "Leave start date must be a date without time"),
+        ("end_date", datetime(2026, 7, 22), "Leave end date must be a date without time"),
+        ("end_date", "2026-07-22", "Leave end date must be a date without time"),
+        ("end_date", 0, "Leave end date must be a date without time"),
+    ],
+)
+async def test_leave_request_service_list_rejects_constructed_non_date_filter_values(
+    field_name: str,
+    value: object,
+    message: str,
+) -> None:
+    service = LeaveRequestService(session=cast(AsyncSession, None))
+    filter_values = {
+        "start_date": date(2026, 7, 20),
+        "end_date": date(2026, 7, 22),
+    }
+    filter_values[field_name] = value
+    filters = LeaveRequestListFilters.model_construct(**filter_values)
+
+    with pytest.raises(LeaveRequestDateRangeError, match=message):
+        await service.list_leave_requests(TENANT_ID, filters=filters)

@@ -8,6 +8,7 @@ from app.core.error_messages import (
     LEAVE_END_DATE_MUST_BE_DATE_MESSAGE,
     LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
     LEAVE_END_DATE_REQUIRED_MESSAGE,
+    LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
     LEAVE_REQUEST_ONLY_PENDING_CAN_BE_DECIDED_MESSAGE,
     LEAVE_START_DATE_MUST_BE_DATE_MESSAGE,
     LEAVE_START_DATE_REQUIRED_MESSAGE,
@@ -55,6 +56,7 @@ class LeaveRequestService:
     ) -> list[LeaveRequest]:
         filters = filters or LeaveRequestListFilters()
         pagination = pagination or LeaveRequestListPagination()
+        _validate_filter_date_range(filters)
         statement = select(LeaveRequest).where(LeaveRequest.tenant_id == tenant_id)
 
         if filters.status is not None:
@@ -201,6 +203,21 @@ def _validate_date_order(start_date: object, end_date: object) -> None:
         raise LeaveRequestDateRangeError(LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
 
 
+def _validate_filter_date_range(filters: LeaveRequestListFilters) -> None:
+    start_date = _optional_leave_date(
+        filters.start_date,
+        invalid_message=LEAVE_START_DATE_MUST_BE_DATE_MESSAGE,
+    )
+    end_date = _optional_leave_date(
+        filters.end_date,
+        invalid_message=LEAVE_END_DATE_MUST_BE_DATE_MESSAGE,
+    )
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise LeaveRequestDateRangeError(
+            LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE
+        )
+
+
 def _required_leave_date(
     value: object,
     *,
@@ -209,6 +226,18 @@ def _required_leave_date(
 ) -> date:
     if value is None:
         raise LeaveRequestDateRangeError(missing_message)
+    if isinstance(value, datetime) or not isinstance(value, date):
+        raise LeaveRequestDateRangeError(invalid_message)
+    return value
+
+
+def _optional_leave_date(
+    value: object,
+    *,
+    invalid_message: str,
+) -> date | None:
+    if value is None:
+        return None
     if isinstance(value, datetime) or not isinstance(value, date):
         raise LeaveRequestDateRangeError(invalid_message)
     return value

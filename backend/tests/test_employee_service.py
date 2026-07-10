@@ -322,6 +322,25 @@ async def test_update_employee_rejects_constructed_datetime_start_date_without_m
         await engine.dispose()
 
 
+async def test_update_employee_rejects_constructed_datetime_end_date_without_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        payload = EmployeeUpdate.model_construct(
+            _fields_set={"employment_end_date"},
+            employment_end_date=datetime(2026, 7, 31),
+        )
+
+        with pytest.raises(EmployeeDateRangeError, match="date without time"):
+            await EmployeeService(session).update_employee(TENANT_ID, EMPLOYEE_ID, payload)
+
+        employee = await session.scalar(select(Employee).where(Employee.id == EMPLOYEE_ID))
+        assert employee is not None
+        assert employee.employment_end_date is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_update_employee_allows_reactivation_when_end_date_is_cleared() -> None:
     session, engine = await _session_with_seed_data()
     try:

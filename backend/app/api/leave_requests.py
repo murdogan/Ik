@@ -122,7 +122,10 @@ async def list_leave_requests(
     filters: Annotated[LeaveRequestListFilters, Depends(get_leave_request_list_filters)],
     pagination: Annotated[LeaveRequestListPagination, Depends(get_leave_request_list_pagination)],
 ) -> list[LeaveRequestRead]:
-    return await service.list_leave_requests(tenant_context.tenant_id, filters, pagination)
+    try:
+        return await service.list_leave_requests(tenant_context.tenant_id, filters, pagination)
+    except LeaveRequestDateRangeError as exc:
+        raise leave_request_date_range_error(str(exc)) from exc
 
 
 @router.post(
