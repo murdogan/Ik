@@ -271,3 +271,50 @@ def test_employee_and_leave_openapi_document_project_error_envelope_for_422() ->
         assert response_422["description"] == description
         assert schema_ref.endswith("/ApiErrorResponse")
         assert not schema_ref.endswith("/HTTPValidationError")
+
+
+def test_employee_and_leave_commands_document_stable_conflict_envelopes() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    operations = {
+        ("/api/v1/employees", "post"): {
+            "employee_number_conflict",
+            "data_integrity_conflict",
+            "concurrent_write_conflict",
+        },
+        ("/api/v1/employees/{employee_id}", "patch"): {
+            "employee_number_conflict",
+            "data_integrity_conflict",
+            "concurrent_write_conflict",
+        },
+        ("/api/v1/leave-requests/{leave_request_id}/approve", "post"): {
+            "leave_request_transition_conflict",
+            "data_integrity_conflict",
+            "concurrent_write_conflict",
+        },
+        ("/api/v1/leave-requests", "post"): {
+            "data_integrity_conflict",
+            "concurrent_write_conflict",
+        },
+        ("/api/v1/leave-requests/{leave_request_id}/reject", "post"): {
+            "leave_request_transition_conflict",
+            "data_integrity_conflict",
+            "concurrent_write_conflict",
+        },
+        ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"): {
+            "leave_request_transition_conflict",
+            "data_integrity_conflict",
+            "concurrent_write_conflict",
+        },
+    }
+    for (path, method), expected_examples in operations.items():
+        response_409 = paths[path][method]["responses"]["409"]
+        media_type = response_409["content"]["application/json"]
+        assert "command" in response_409["description"]
+        assert response_409["description"].endswith("conflict envelope.")
+        assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
+        assert set(media_type["examples"]) == expected_examples

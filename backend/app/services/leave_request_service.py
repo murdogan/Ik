@@ -16,6 +16,7 @@ from app.core.error_messages import (
 from app.models.employee import Employee
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.user import User
+from app.platform.errors.application import ApplicationError
 from app.schemas.leave_request import (
     LeaveRequestCreate,
     LeaveRequestDecision,
@@ -24,23 +25,23 @@ from app.schemas.leave_request import (
 )
 
 
-class LeaveRequestNotFoundError(Exception):
+class LeaveRequestNotFoundError(ApplicationError):
     pass
 
 
-class LeaveRequestEmployeeNotFoundError(Exception):
+class LeaveRequestEmployeeNotFoundError(ApplicationError):
     pass
 
 
-class LeaveRequestUserNotFoundError(Exception):
+class LeaveRequestUserNotFoundError(ApplicationError):
     pass
 
 
-class LeaveRequestDateRangeError(ValueError):
+class LeaveRequestDateRangeError(ApplicationError, ValueError):
     pass
 
 
-class LeaveRequestTransitionError(ValueError):
+class LeaveRequestTransitionError(ApplicationError, ValueError):
     pass
 
 
@@ -99,7 +100,7 @@ class LeaveRequestService:
             requested_by_user_id=payload.requested_by_user_id,
         )
         self.session.add(leave_request)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(leave_request)
         return leave_request
 
@@ -158,7 +159,7 @@ class LeaveRequestService:
         leave_request.decided_by_user_id = payload.decided_by_user_id
         leave_request.decision_note = payload.decision_note
 
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(leave_request)
         return leave_request
 

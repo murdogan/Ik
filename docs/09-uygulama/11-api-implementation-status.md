@@ -2,9 +2,40 @@
 
 Date: 2026-07-10
 Branch: `codex/mvp-phase0-until-20260711-1100`
-Task: `P0B Modular-monolith skeleton and import-boundary enforcement`
+Task: `P0C Unit of Work transaction boundary and stable error mapping`
 
 ## Scope
+
+### P0C transaction and error boundary
+
+- Added `SqlAlchemyUnitOfWork.execute` as the sole begin/commit/rollback owner for the transitional
+  `EmployeeCommandHandler` and `LeaveRequestCommandHandler` write paths.
+- Employee create/update/delete and leave request create/approve/reject/cancel now run through those
+  application command handlers. The underlying business services may `flush()` so constraints and
+  generated values are visible, but migrated service methods never `commit()` independently.
+- Kept employee/leave/dashboard/balance read paths direct and SQLAlchemy-aware; P0C adds no generic
+  repository, distributed transaction abstraction, or god object.
+- Added the transport-neutral `ApplicationError` contract and one API-edge mapper. Existing
+  employee/leave error status, code, public message, envelope, and correlation behavior remain
+  compatible.
+- Preserved `409 employee_number_conflict` for both the availability pre-check and the authoritative
+  `uq_employees_tenant_employee_number` database constraint. Unknown integrity failures now become
+  the safe `409 data_integrity_conflict`; SQLAlchemy `StaleDataError` and recognized database
+  concurrency failures become the safe `409 concurrent_write_conflict`, without returning SQL or
+  constraint internals.
+- Added rollback and fresh-session persistence coverage for flushed employee/leave changes, plus
+  command success and typed-error mapping regressions. These tests prove a later command failure
+  cannot leave the migrated domain mutation partially persisted.
+- P0C changes no table/model schema and adds no Alembic migration. It establishes the boundary that
+  later audit/outbox writers can join without implementing those later features now.
+- Leave decision winner/locking/versioning and idempotency remain later Phase-0 work. Composite
+  tenant foreign keys for tenant-owned relationships likewise remain in the later database-hardening
+  migration block; P0C does not claim either issue is fixed.
+- No endpoint path, method, success response shape, tenant isolation rule, auth/RBAC behavior, or
+  product feature changes. The only new HTTP outcomes are safe stable mappings for persistence
+  failures that previously could escape as internal errors.
+
+### Preserved P0A/P0B foundation
 
 - Added the canonical `app.platform` and `app.modules` package skeleton from the master plan,
   without moving employee/leave routes, services, schemas, or SQLAlchemy models.
@@ -37,8 +68,8 @@ Task: `P0B Modular-monolith skeleton and import-boundary enforcement`
   smoke registry is listed in docs but not executed by the smoke runtime scenarios.
 - Carried forward W4C5 OpenAPI metadata hygiene: generated docs still use readable tag
   descriptions and tenant-aware operation summaries/descriptions.
-- No endpoint/OpenAPI behavior, response envelope, model, permission, tenant isolation, auth/RBAC,
-  or product-feature change.
+- P0A/P0B introduced no endpoint/OpenAPI behavior, response envelope, model, permission, tenant
+  isolation, auth/RBAC, or product-feature change.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -82,7 +113,8 @@ Task: `P0B Modular-monolith skeleton and import-boundary enforcement`
   current tenant before pagination. `limit` defaults to `50`, is capped at `200`, and `offset`
   defaults to `0`. Ordering is deterministic by `created_at desc`, `start_date asc`, and `id asc`.
 - Leave request decision endpoints currently approve, reject, or cancel only pending requests and
-  require the deciding user to belong to the same tenant.
+  require the deciding user to belong to the same tenant. P0C moves their commit boundary but does
+  not yet add a winner rule, row lock, optimistic version, or idempotency key.
 - Dashboard summary is DB-backed and tenant-scoped. It returns active employee count, workforce
   count, pending leave count, new starters this month, department distribution, recent activity,
   and compatibility fields currently used by the frontend-facing contract.
@@ -103,14 +135,19 @@ Task: `P0B Modular-monolith skeleton and import-boundary enforcement`
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
-- Tenant dependency errors, route-level domain errors, and automatic request validation errors on
-  employee, leave balance, and leave request endpoints use the project error envelope.
+- Tenant dependency errors, centrally mapped `ApplicationError` types, and automatic request
+  validation errors on employee, leave balance, and leave request endpoints use the project error
+  envelope. Route-local domain error translation is no longer the transaction/error boundary.
 - W4A6 locks the current public messages for these endpoint families: generic employee validation
   returns `Employee request validation failed`, leave balance validation returns
   `Leave balance request validation failed`, leave request validation returns
   `Leave request validation failed`, duplicate employee numbers return
   `Employee number already exists for this tenant`, and non-pending leave decisions return
   `Only pending leave requests can be decided`.
+- P0C adds safe persistence fallbacks: unmapped integrity failures return
+  `409 data_integrity_conflict`; stale or recognized concurrent writes return
+  `409 concurrent_write_conflict`. The named employee-number unique constraint continues to return
+  the more specific existing `409 employee_number_conflict` contract.
 - For employee and leave endpoints, tenant header errors are normalized before payload/query/path
   validation errors when both are present; this keeps missing or invalid tenant context from
   exposing unrelated validation details.
@@ -121,6 +158,26 @@ Task: `P0B Modular-monolith skeleton and import-boundary enforcement`
   exists, then idempotently creates or resets demo tenants, users, employees, and leave requests.
   The command refuses non-local database URL hosts before opening a connection; local hostnames are
   matched case-insensitively.
+
+## P0C Command Transaction Boundary
+
+`EmployeeCommandHandler` and `LeaveRequestCommandHandler` pass one tenant-scoped operation to
+`SqlAlchemyUnitOfWork.execute`. The UoW requires an idle request session, opens exactly one
+transaction, commits on successful operation completion, and rolls back when the service or a later
+composed operation fails. Services flush but do not decide durability. Session lifetime remains
+owned by the existing FastAPI database dependency.
+
+Read-only routes continue to call their SQLAlchemy-aware services with the request session directly.
+No generic repository has been inserted between query code and SQLAlchemy. No audit/outbox schema is
+introduced by P0C, but a future recorder can use the same command session before `execute` commits.
+The local demo seed remains a separate script command that already owns one transaction across all
+of its tenant/user/employee/leave seed stages; it is not a migrated API leaf service.
+
+Service rollback regressions inspect flushed employee insert/update/delete and leave
+create/decision values, roll back, and then use a fresh session to prove that no mutation was
+partially persisted. Dedicated forced post-flush command failures cover employee create and leave
+decision composition. Successful command regressions likewise use a fresh session to prove that the
+outer UoW, rather than the service, committed the write.
 
 ## PostgreSQL Baseline and DB Lifecycle
 
@@ -179,7 +236,35 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-P0B local gates:
+P0C regression coverage includes:
+
+- service-level no-commit/flush assertions for employee and leave migrated writes;
+- forced post-flush rollback with fresh-session persistence checks;
+- successful command persistence through the single UoW transaction owner;
+- centralized compatibility mapping for existing domain errors, the named employee duplicate
+  constraint, unknown integrity conflicts, and stale/recognized concurrent writes;
+- existing API, tenant-isolation, OpenAPI operation, migration, and smoke regressions.
+
+Required P0C completion gates are:
+
+- `uv run ruff check backend`
+- `uv run pytest -q`
+- `uv run python scripts/backend_api_smoke.py`
+
+P0C local gate evidence:
+
+- `uv run ruff check backend`: passed.
+- `uv run pytest -q`: passed, 385 fast tests passed and 7 PostgreSQL tests deselected; the one
+  existing Starlette `TestClient` deprecation warning remains.
+- `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, all 15 documented
+  endpoints covered.
+- The two new PostgreSQL command-transaction probes cover a synchronized employee unique race and
+  real `55P03` lock-conflict mapping. They were collected but could not be executed locally because
+  this worktree has neither a running Docker daemon nor an `IK_TEST_DATABASE_URL` admin DSN; the
+  configured PostgreSQL lane remains the required runtime evidence for those PostgreSQL-specific
+  claims.
+
+Historical P0B local gate evidence retained for continuity:
 
 - `uv run ruff check backend`: passed.
 - `uv run pytest -q`: passed, 365 fast tests passed and 5 PostgreSQL tests deselected; the one
@@ -201,6 +286,10 @@ P0B local gates:
   normalization beyond the employee and leave endpoint families already covered.
 - Cursor pagination standardization, sort controls, response metadata, and idempotency for critical
   POST/decision flows.
+- Leave decision winner semantics plus row-lock or optimistic-version enforcement and real
+  PostgreSQL concurrency proof.
+- Composite `(tenant_id, id)` candidate keys and tenant-consistent foreign keys for current
+  employee/user/leave relationships through expand-contract migrations.
 - Optional leave request detail endpoint if product workflow needs direct request reads.
 - Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.

@@ -62,7 +62,7 @@ taklit eden generic repository'ler önceden üretilmez.
 
 | Alan | Hedef paket | Sahiplik |
 |---|---|---|
-| Platform | `app.platform` | Config, DB runtime, tenancy mekanikleri, identity/session, authorization, audit, event, genel API error sözleşmesi, observability, object storage ve worker yetenekleri |
+| Platform | `app.platform` | Config, DB runtime ve transaction yetenekleri, tenancy mekanikleri, identity/session, authorization, audit, event, genel API error sözleşmesi, observability, object storage ve worker yetenekleri |
 | Identity | `app.platform.identity` | Kullanıcı kimliği, principal ve session güvenliği; çalışan özlük kimliği değildir |
 | Ürün çekirdeği | `app.modules.core` | Tenant yaşam döngüsü, ürün ayarları, plan ve feature flag; generic shared-code kovası değildir |
 | Organizasyon | `app.modules.organization` | Departman, şube, pozisyon, atama ve raporlama hattı |
@@ -111,6 +111,48 @@ aynı class/function nesnelerini re-export eder. Employee/leave route, schema, s
 modelleri yerinde kalır. Bu nedenle route/OpenAPI, tenant izolasyonu, migration ve veri sözleşmesi
 değişmez; geçiş compatibility importları geri çevrilerek DB veya API migration olmadan alınabilir.
 
+P0C'de bu artımlı geçiş, mevcut SQLAlchemy-aware employee ve leave servislerini taşımadan
+uygulama komut sınırına genişletilir. Transitional `EmployeeCommandHandler` ve
+`LeaveRequestCommandHandler`, tek transaction sahibi olarak `SqlAlchemyUnitOfWork.execute`
+çağırır. İç servisler gerekli DB constraint ve server-default davranışını görmek için
+`flush()` edebilir fakat `commit()` edemez. Bu değişiklik yeni tablo veya Alembic migration'ı
+oluşturmaz; ileride audit ve outbox yazımlarını aynı transaction'a ekleyebilecek bir sınır
+sağlar.
+
+### 4.4 Komut transaction ve hata sınırı
+
+Employee create/update/delete ile leave request create/approve/reject/cancel akışlarında
+transaction sahipliği şöyledir:
+
+```text
+FastAPI route
+  → transitional application command handler
+  → SqlAlchemyUnitOfWork.execute
+      → tenant-scoped business service write + flush
+      → future audit/outbox writes on the same session
+  → exactly one commit, or one rollback on failure
+```
+
+`SqlAlchemyUnitOfWork.execute` bu komutların tek begin/commit/rollback sahibidir. Command handler
+transaction'ı orkestre eder; `EmployeeService` ve `LeaveRequestService` bağımsız commit yapmaz.
+Liste/detail/dashboard/leave-balance gibi read akışları doğrudan request-scoped session ve
+SQLAlchemy-aware query service kullanmaya devam eder. UoW, SQLAlchemy metotlarını taklit eden
+generic repository veya tüm modülleri kapsayan bir god object değildir.
+
+Beklenen domain/application hataları transport-neutral `ApplicationError` tipleriyle API edge'e
+ulaşır ve tek mapper mevcut HTTP status/code/message sözleşmelerini korur. Çalışan numarasının
+`uq_employees_tenant_employee_number` constraint çakışması mevcut
+`employee_number_conflict` yanıtıdır. Bunun dışındaki tanımlı olmayan integrity hataları
+`409 data_integrity_conflict`; SQLAlchemy `StaleDataError` ve tanınan DB concurrency hataları
+`409 concurrent_write_conflict` olarak, DB hata metni veya constraint detayı sızdırmadan döner.
+Flush sonrası zorlanmış hata ve fresh-session doğrulamaları, employee/leave değişikliğinin
+kısmi persist edilmediğini kanıtlar.
+
+P0C leave kararlarına winner/locking/versioning veya idempotency eklemez; bunlar sonraki Faz-0
+concurrency/idempotency bloğudur. Tenant-owned ilişkiler için composite tenant foreign key
+migration'ları da ayrı Faz-0 database-hardening işidir. Mevcut tenant-scoped uygulama kontrolleri
+korunur ve bu ertelenen DB-level güvenceler uygulanmış gibi belgelenmez.
+
 ## 5. İstek yaşam döngüsü
 
 1. Request edge katmanından gelir.
@@ -119,8 +161,9 @@ değişmez; geçiş compatibility importları geri çevrilerek DB veya API migra
 4. Tenant context çözülür.
 5. Rate limit uygulanır.
 6. Permission/scope değerlendirilir.
-7. Service iş kuralını çalıştırır.
-8. DB transaction içinde tenant context set edilir.
+7. Read query doğrudan çalışır veya write isteği application command handler'a gider.
+8. Write komutu tek Unit of Work transaction'ı içinde ve tenant-scoped sorgularla çalışır;
+   PostgreSQL transaction-local tenant/RLS context'i sonraki Faz-0 tenant hardening işidir.
 9. Field masking uygulanır.
 10. Audit/domain event gerekiyorsa yazılır.
 11. Standart response döner.

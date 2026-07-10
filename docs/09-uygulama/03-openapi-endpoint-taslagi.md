@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-10 / W4C6 implementation report refresh.
+Son güncelleme: 2026-07-10 / P0C Unit of Work and stable error mapping.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -44,6 +44,11 @@ Geçerli uygulama notları:
 - W4C6 yalnız uygulama raporu ve smoke governance yenilemesidir. Bu tabloda yer alan 15 endpoint
   mevcut tamamlanmış yüzeyi temsil eder; yeni API operasyonu, response shape, model, migration
   veya tenant isolation davranışı eklenmemiştir.
+- P0C endpoint setini veya success response shape'ini değiştirmez. Employee ve leave write
+  operasyonları transitional application command handler üzerinden
+  `SqlAlchemyUnitOfWork.execute` ile tek transaction'da çalışır; business servisleri flush eder
+  fakat commit etmez. Read operasyonları request-scoped session ile doğrudan SQLAlchemy-aware
+  service/query kodunu kullanır. Generic repository eklenmemiştir.
 - W4B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre employee ve leave API'leri
   için concrete request/response örneklerini güncel tutar. Örnekler method/path, tenant header,
   query/body, success status/body, empty-list davranışı ve temsilî error zarflarını gösterir.
@@ -56,10 +61,10 @@ Geçerli uygulama notları:
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
   mekanizmasıdır.
-- Tenant header dependency hataları, employee/leave endpointlerinde route seviyesinde yakalanan
-  domain hataları ve employee, leave balance, leave request endpointlerindeki otomatik request
-  validation `422` hataları Bölüm 1'deki error zarfını döner. Diğer endpointlerdeki otomatik
-  FastAPI validation yanıtları henüz framework varsayılanındadır.
+- Tenant header dependency hataları, API edge'de merkezi olarak map edilen typed
+  `ApplicationError` hataları ve employee, leave balance, leave request endpointlerindeki otomatik
+  request validation `422` hataları Bölüm 1'deki error zarfını döner. Diğer endpointlerdeki
+  otomatik FastAPI validation yanıtları henüz framework varsayılanındadır.
 - Bu error zarfında `correlation_id`, `X-Correlation-Id` header'ı geldiyse aynı değer, gelmediyse
   `null` olur.
 - W4A6 itibarıyla employee, leave balance ve leave request endpointlerinde public hata mesajları
@@ -72,7 +77,19 @@ Geçerli uygulama notları:
   `employee_invalid_date_range`, `employee_invalid_lifecycle`, `employee_validation_error`,
   `leave_balance_validation_error`, `leave_request_not_found`,
   `leave_request_invalid_date_range`, `leave_request_transition_conflict`,
-  `leave_request_validation_error`, `user_not_found`.
+  `leave_request_validation_error`, `user_not_found`, `data_integrity_conflict` ve
+  `concurrent_write_conflict`.
+- `uq_employees_tenant_employee_number` unique constraint ihlali, pre-check yarışında da mevcut
+  `409 employee_number_conflict` code/message sözleşmesini korur. Başka bir tanımlı olmayan
+  integrity hatası SQL veya constraint detayı sızdırmadan `409 data_integrity_conflict` ve
+  `The request conflicts with persisted data` mesajını döner. SQLAlchemy `StaleDataError` veya
+  tanınan bir DB concurrency hatası `409 concurrent_write_conflict` ve
+  `The request conflicted with another write; retry the request` mesajını döner. Her iki yanıtta
+  da mevcut error zarfı ve correlation davranışı korunur.
+- P0C yeni schema/Alembic migration eklemez. Flush sonrası zorlanmış hata ve fresh-session
+  testleri employee/leave write'ın kısmi persist edilmediğini doğrular. Leave decision
+  winner/locking/versioning, kritik POST/decision idempotency ve tenant-owned ilişkilerde composite
+  tenant foreign key'ler sonraki Faz-0 işleridir; bu task bunları uygulanmış saymaz.
 - Cursor pagination standardı, idempotency, tüm response zarfı ve global correlation middleware
   henüz TODO'dur.
 - Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,

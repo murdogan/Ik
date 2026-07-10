@@ -1,8 +1,10 @@
 from typing import Annotated
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
 from app.api.dependencies import get_tenant_context
+from app.api.employees import get_employee_command_handler
 from app.api.errors import (
     ApiError,
     ApiErrorBody,
@@ -11,10 +13,13 @@ from app.api.errors import (
     request_validation_error_handler,
 )
 from app.core.tenancy import TenantContext
+from app.db.session import get_session
 from app.platform import errors as platform_errors
+from app.services.employee_commands import EmployeeCommandHandler
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 TENANT_ID = UUID("11111111-aaaa-4111-8111-111111111111")
 
@@ -38,6 +43,38 @@ def _client() -> TestClient:
         return {"tenant_id": str(context.tenant_id), "slug": context.slug}
 
     return TestClient(app)
+
+
+def test_command_handler_dependencies_share_one_request_session() -> None:
+    app = FastAPI()
+    session = Mock(spec=AsyncSession)
+    dependency_calls = 0
+
+    async def override_session():
+        nonlocal dependency_calls
+        dependency_calls += 1
+        yield session
+
+    @app.get("/command-session")
+    def command_session(
+        handler: Annotated[
+            EmployeeCommandHandler,
+            Depends(get_employee_command_handler),
+        ],
+    ) -> dict[str, bool]:
+        return {
+            "same_session": (
+                handler.service.session is handler.unit_of_work.session is session
+            )
+        }
+
+    app.dependency_overrides[get_session] = override_session
+
+    response = TestClient(app).get("/command-session")
+
+    assert response.status_code == 200
+    assert response.json() == {"same_session": True}
+    assert dependency_calls == 1
 
 
 def _assert_error_response(

@@ -4,17 +4,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_tenant_context
-from app.api.errors import (
-    EMPLOYEE_VALIDATION_RESPONSES,
-    employee_date_range_error,
-    employee_lifecycle_error,
-    employee_not_found_error,
-    employee_number_conflict_error,
-)
+from app.api.dependencies import get_tenant_context, get_unit_of_work
+from app.api.errors import EMPLOYEE_COMMAND_CONFLICT_RESPONSES, EMPLOYEE_VALIDATION_RESPONSES
 from app.api.openapi import EMPLOYEES_TAG
 from app.db.session import get_session
 from app.models.employee import EmployeeStatus
+from app.platform.db import SqlAlchemyUnitOfWork
 from app.platform.tenancy import TenantContext
 from app.schemas.employee import (
     EMPLOYEE_LIST_DEFAULT_LIMIT,
@@ -25,13 +20,8 @@ from app.schemas.employee import (
     EmployeeRead,
     EmployeeUpdate,
 )
-from app.services.employee_service import (
-    DuplicateEmployeeNumberError,
-    EmployeeDateRangeError,
-    EmployeeLifecycleError,
-    EmployeeNotFoundError,
-    EmployeeService,
-)
+from app.services.employee_commands import EmployeeCommandHandler
+from app.services.employee_service import EmployeeService
 
 router = APIRouter(
     prefix="/api/v1/employees",
@@ -44,6 +34,13 @@ def get_employee_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EmployeeService:
     return EmployeeService(session=session)
+
+
+def get_employee_command_handler(
+    service: Annotated[EmployeeService, Depends(get_employee_service)],
+    unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
+) -> EmployeeCommandHandler:
+    return EmployeeCommandHandler(service=service, unit_of_work=unit_of_work)
 
 
 def get_employee_list_filters(
@@ -127,20 +124,17 @@ async def list_employees(
         "rules are enforced before persistence."
     ),
     response_description="Created employee record.",
+    responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
 )
 async def create_employee(
     payload: EmployeeCreate,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
-    service: Annotated[EmployeeService, Depends(get_employee_service)],
+    command_handler: Annotated[
+        EmployeeCommandHandler,
+        Depends(get_employee_command_handler),
+    ],
 ) -> EmployeeRead:
-    try:
-        return await service.create_employee(tenant_context.tenant_id, payload)
-    except DuplicateEmployeeNumberError as exc:
-        raise employee_number_conflict_error() from exc
-    except EmployeeDateRangeError as exc:
-        raise employee_date_range_error(str(exc)) from exc
-    except EmployeeLifecycleError as exc:
-        raise employee_lifecycle_error(str(exc)) from exc
+    return await command_handler.create_employee(tenant_context.tenant_id, payload)
 
 
 @router.get(
@@ -158,10 +152,7 @@ async def get_employee(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> EmployeeRead:
-    try:
-        return await service.get_employee(tenant_context.tenant_id, employee_id)
-    except EmployeeNotFoundError as exc:
-        raise employee_not_found_error() from exc
+    return await service.get_employee(tenant_context.tenant_id, employee_id)
 
 
 @router.patch(
@@ -173,23 +164,22 @@ async def get_employee(
         "tenant isolation, employee number uniqueness, and employment lifecycle date rules."
     ),
     response_description="Updated employee record.",
+    responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
 )
 async def update_employee(
     employee_id: UUID,
     payload: EmployeeUpdate,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
-    service: Annotated[EmployeeService, Depends(get_employee_service)],
+    command_handler: Annotated[
+        EmployeeCommandHandler,
+        Depends(get_employee_command_handler),
+    ],
 ) -> EmployeeRead:
-    try:
-        return await service.update_employee(tenant_context.tenant_id, employee_id, payload)
-    except EmployeeNotFoundError as exc:
-        raise employee_not_found_error() from exc
-    except DuplicateEmployeeNumberError as exc:
-        raise employee_number_conflict_error() from exc
-    except EmployeeDateRangeError as exc:
-        raise employee_date_range_error(str(exc)) from exc
-    except EmployeeLifecycleError as exc:
-        raise employee_lifecycle_error(str(exc)) from exc
+    return await command_handler.update_employee(
+        tenant_context.tenant_id,
+        employee_id,
+        payload,
+    )
 
 
 @router.delete(
@@ -201,14 +191,15 @@ async def update_employee(
         "IDs from other tenants return the same not-found envelope as missing records."
     ),
     response_description="Employee deletion completed.",
+    responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
 )
 async def delete_employee(
     employee_id: UUID,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
-    service: Annotated[EmployeeService, Depends(get_employee_service)],
+    command_handler: Annotated[
+        EmployeeCommandHandler,
+        Depends(get_employee_command_handler),
+    ],
 ) -> Response:
-    try:
-        await service.delete_employee(tenant_context.tenant_id, employee_id)
-    except EmployeeNotFoundError as exc:
-        raise employee_not_found_error() from exc
+    await command_handler.delete_employee(tenant_context.tenant_id, employee_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

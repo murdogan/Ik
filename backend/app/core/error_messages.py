@@ -37,3 +37,7 @@ LEAVE_START_DATE_REQUIRED_MESSAGE = "Leave start date is required"
 LEAVE_END_DATE_REQUIRED_MESSAGE = "Leave end date is required"
 LEAVE_START_DATE_MUST_BE_DATE_MESSAGE = "Leave start date must be a date without time"
 LEAVE_END_DATE_MUST_BE_DATE_MESSAGE = "Leave end date must be a date without time"
+
+DATA_INTEGRITY_CONFLICT_MESSAGE = "The request conflicts with persisted data"
+CONCURRENT_WRITE_CONFLICT_MESSAGE = "The request conflicted with another write; retry the request"
+APPLICATION_COMMAND_FAILED_MESSAGE = "Application command failed"

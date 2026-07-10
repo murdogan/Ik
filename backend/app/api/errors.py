@@ -6,6 +6,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import Response
 
 from app.core.error_messages import (
+    APPLICATION_COMMAND_FAILED_MESSAGE,
+    CONCURRENT_WRITE_CONFLICT_MESSAGE,
+    DATA_INTEGRITY_CONFLICT_MESSAGE,
     EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
     EMPLOYEE_END_DATE_ONLY_FOR_TERMINATED_MESSAGE,
     EMPLOYEE_NOT_FOUND_MESSAGE,
@@ -17,11 +20,28 @@ from app.core.error_messages import (
     LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
     LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
     LEAVE_REQUEST_NOT_FOUND_MESSAGE,
+    LEAVE_REQUEST_ONLY_PENDING_CAN_BE_DECIDED_MESSAGE,
     LEAVE_REQUEST_VALIDATION_FAILED_MESSAGE,
     USER_NOT_FOUND_MESSAGE,
 )
+from app.platform.db import PersistenceConcurrencyError, PersistenceIntegrityError
 from app.platform.errors import ApiError, ApiErrorResponse, api_error_handler
 from app.platform.errors import ApiErrorBody as ApiErrorBody
+from app.platform.errors.application import ApplicationError
+from app.services.employee_service import (
+    EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
+    DuplicateEmployeeNumberError,
+    EmployeeDateRangeError,
+    EmployeeLifecycleError,
+    EmployeeNotFoundError,
+)
+from app.services.leave_request_service import (
+    LeaveRequestDateRangeError,
+    LeaveRequestEmployeeNotFoundError,
+    LeaveRequestNotFoundError,
+    LeaveRequestTransitionError,
+    LeaveRequestUserNotFoundError,
+)
 
 TENANT_ID_HEADER = "X-Tenant-Id"
 TENANT_SLUG_HEADER = "X-Tenant-Slug"
@@ -54,6 +74,9 @@ LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE = "leave_request_invalid_date_range"
 LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE = "leave_request_transition_conflict"
 USER_NOT_FOUND_ERROR_CODE = "user_not_found"
 USER_NOT_FOUND_ERROR_MESSAGE = USER_NOT_FOUND_MESSAGE
+DATA_INTEGRITY_CONFLICT_ERROR_CODE = "data_integrity_conflict"
+CONCURRENT_WRITE_CONFLICT_ERROR_CODE = "concurrent_write_conflict"
+APPLICATION_COMMAND_FAILED_ERROR_CODE = "application_command_failed"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -112,6 +135,78 @@ LEAVE_REQUEST_VALIDATION_RESPONSES = {
 }
 
 
+def _conflict_response(*, description: str, examples: dict[str, dict[str, Any]]) -> dict:
+    return {
+        status.HTTP_409_CONFLICT: {
+            "model": ApiErrorResponse,
+            "description": description,
+            "content": {"application/json": {"examples": examples}},
+        }
+    }
+
+
+def _error_example(code: str, message: str) -> dict[str, Any]:
+    return {
+        "value": {
+            "error": {
+                "code": code,
+                "message": message,
+                "details": None,
+                "correlation_id": "req_wf_demo_001",
+            }
+        }
+    }
+
+
+EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
+    description="Employee command conflict envelope.",
+    examples={
+        EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE: _error_example(
+            EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE,
+            EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE,
+        ),
+        DATA_INTEGRITY_CONFLICT_ERROR_CODE: _error_example(
+            DATA_INTEGRITY_CONFLICT_ERROR_CODE,
+            DATA_INTEGRITY_CONFLICT_MESSAGE,
+        ),
+        CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
+            CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
+            CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+    },
+)
+LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES = _conflict_response(
+    description="Leave request command persistence conflict envelope.",
+    examples={
+        DATA_INTEGRITY_CONFLICT_ERROR_CODE: _error_example(
+            DATA_INTEGRITY_CONFLICT_ERROR_CODE,
+            DATA_INTEGRITY_CONFLICT_MESSAGE,
+        ),
+        CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
+            CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
+            CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+    },
+)
+LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES = _conflict_response(
+    description="Leave request command conflict envelope.",
+    examples={
+        LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE: _error_example(
+            LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE,
+            LEAVE_REQUEST_ONLY_PENDING_CAN_BE_DECIDED_MESSAGE,
+        ),
+        DATA_INTEGRITY_CONFLICT_ERROR_CODE: _error_example(
+            DATA_INTEGRITY_CONFLICT_ERROR_CODE,
+            DATA_INTEGRITY_CONFLICT_MESSAGE,
+        ),
+        CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
+            CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
+            CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+    },
+)
+
+
 async def request_validation_error_handler(
     request: Request,
     exc: RequestValidationError,
@@ -122,6 +217,40 @@ async def request_validation_error_handler(
     if api_error is not None:
         return await api_error_handler(request, api_error)
     return await request_validation_exception_handler(request, exc)
+
+
+async def application_error_handler(request: Request, exc: ApplicationError) -> Response:
+    return await api_error_handler(request, application_error_to_api_error(exc))
+
+
+def application_error_to_api_error(exc: ApplicationError) -> ApiError:
+    if isinstance(exc, (EmployeeNotFoundError, LeaveRequestEmployeeNotFoundError)):
+        return employee_not_found_error()
+    if isinstance(exc, DuplicateEmployeeNumberError):
+        return employee_number_conflict_error()
+    if isinstance(exc, EmployeeDateRangeError):
+        return employee_date_range_error(str(exc))
+    if isinstance(exc, EmployeeLifecycleError):
+        return employee_lifecycle_error(str(exc))
+    if isinstance(exc, LeaveRequestNotFoundError):
+        return leave_request_not_found_error()
+    if isinstance(exc, LeaveRequestUserNotFoundError):
+        return user_not_found_error()
+    if isinstance(exc, LeaveRequestDateRangeError):
+        return leave_request_date_range_error(str(exc))
+    if isinstance(exc, LeaveRequestTransitionError):
+        return leave_request_transition_conflict_error(str(exc))
+    if isinstance(exc, PersistenceConcurrencyError):
+        return concurrent_write_conflict_error()
+    if isinstance(exc, PersistenceIntegrityError):
+        if exc.constraint_name == EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT:
+            return employee_number_conflict_error()
+        return data_integrity_conflict_error()
+    return ApiError(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code=APPLICATION_COMMAND_FAILED_ERROR_CODE,
+        message=APPLICATION_COMMAND_FAILED_MESSAGE,
+    )
 
 
 def tenant_header_missing_error() -> ApiError:
@@ -209,6 +338,22 @@ def leave_request_transition_conflict_error(message: str) -> ApiError:
         status_code=status.HTTP_409_CONFLICT,
         code=LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE,
         message=message,
+    )
+
+
+def data_integrity_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=DATA_INTEGRITY_CONFLICT_ERROR_CODE,
+        message=DATA_INTEGRITY_CONFLICT_MESSAGE,
+    )
+
+
+def concurrent_write_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
+        message=CONCURRENT_WRITE_CONFLICT_MESSAGE,
     )
 
 

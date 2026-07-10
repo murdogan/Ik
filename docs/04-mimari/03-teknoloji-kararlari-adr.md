@@ -18,6 +18,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-010 | AI | AI Gateway + provider soyutlama | Kabul |
 | ADR-011 | Deploy | Docker, ileride Kubernetes/Helm | Kabul |
 | ADR-012 | Auth | Kendi auth + SSO entegrasyonu | Kabul |
+| ADR-013 | Transaction/hata sınırı | Application command + Unit of Work, merkezi typed API mapping | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -223,7 +224,44 @@ Gerekçe:
 - Field-level permission ve HR scope modeli hazır auth ürünlerinde tam karşılanmaz.
 - Uygulama içi RBAC/ABAC zaten gerekli.
 
-## 14. Ertelenen kararlar
+## 14. ADR-013 Application command transaction ve hata sınırı
+
+Bağlam:
+
+- Employee ve leave business servislerinin kendi `commit()` çağrıları, domain değişikliği
+  ile ileride eklenecek audit/outbox kayıtlarını tek transaction'da birleştirmeyi engelliyordu.
+- Route bazında tekrarlanan exception dönüşümleri DB integrity/concurrency hataları için
+  kararlı ve merkezi bir API sözleşmesi sağlamıyordu.
+
+Karar:
+
+- Transitional `EmployeeCommandHandler` ve `LeaveRequestCommandHandler` write akışlarını
+  orkestre eder; `SqlAlchemyUnitOfWork.execute` bu akışların tek transaction sahibidir.
+- `EmployeeService` ve `LeaveRequestService` gerekli yerde `flush()` eder, hiçbir migrated command
+  path'inde `commit()` etmez. Commit veya hata halinde rollback UoW sınırındadır.
+- Read path'leri request-scoped `AsyncSession` ve optimize, SQLAlchemy-aware query/service kodunu
+  doğrudan kullanır; read için UoW zorunlu değildir.
+- Beklenen domain/application hataları HTTP bilgisi taşımayan `ApplicationError` tipleridir.
+  API edge'deki merkezi mapper mevcut employee/leave code, status ve public mesajlarını korur.
+- `uq_employees_tenant_employee_number` ihlali pre-check yarışında da mevcut
+  `409 employee_number_conflict` sözleşmesine döner. Diğer bilinmeyen integrity hataları DB
+  detayı sızdırmadan `409 data_integrity_conflict`; SQLAlchemy `StaleDataError` ve tanınan DB
+  concurrency hataları `409 concurrent_write_conflict` döner.
+- UoW yalnız transaction capability'sidir; SQLAlchemy API'sini yansıtan generic repository,
+  modüller-arası veri erişim katmanı veya god object eklenmez.
+
+Sonuç:
+
+- Employee ve leave servislerinin flush ettiği değişikliklerin daha sonraki komut hatasında
+  rollback olduğu fresh-session persistence testleriyle doğrulanabilir; ileride audit/outbox
+  aynı session ve transaction'a eklenebilir.
+- Bu karar schema/model değişikliği yapmaz ve Alembic migration gerektirmez.
+- P0C, leave decision winner/locking/versioning veya idempotency problemini çözülmüş saymaz;
+  bunlar sonraki Faz-0 concurrency/idempotency işidir.
+- Tenant-owned ilişkilerde composite tenant foreign key uygulaması da sonraki Faz-0
+  database-hardening migration bloğunda kalır. Mevcut tenant-scoped servis kontrolleri korunur.
+
+## 15. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -233,7 +271,7 @@ Gerekçe:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 15. İlgili dokümanlar
+## 16. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

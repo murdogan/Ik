@@ -7,12 +7,14 @@ from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.db import SqlAlchemyUnitOfWork
 from app.schemas.leave_request import (
     LeaveRequestCreate,
     LeaveRequestDecision,
     LeaveRequestListFilters,
     LeaveRequestListPagination,
 )
+from app.services.leave_request_commands import LeaveRequestCommandHandler
 from app.services.leave_request_service import (
     LeaveRequestEmployeeNotFoundError,
     LeaveRequestNotFoundError,
@@ -20,7 +22,7 @@ from app.services.leave_request_service import (
     LeaveRequestTransitionError,
     LeaveRequestUserNotFoundError,
 )
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -203,6 +205,63 @@ async def test_create_leave_request_allows_single_day_request() -> None:
         assert leave_request.status == LeaveRequestStatus.PENDING.value
         assert persisted is not None
         assert persisted.start_date == persisted.end_date == date(2026, 8, 3)
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_create_leave_request_flushes_without_commit_and_can_be_rolled_back() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        leave_request = await LeaveRequestService(session).create_leave_request(
+            TENANT_ID,
+            LeaveRequestCreate(
+                employee_id=EMPLOYEE_ID,
+                leave_type="annual",
+                start_date=date(2026, 8, 10),
+                end_date=date(2026, 8, 12),
+                requested_by_user_id=REQUESTING_USER_ID,
+            ),
+        )
+        leave_request_id = leave_request.id
+
+        assert inspect(leave_request).persistent
+
+        await session.rollback()
+
+        async with AsyncSession(engine, expire_on_commit=False) as verification_session:
+            persisted = await verification_session.get(LeaveRequest, leave_request_id)
+        assert persisted is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_create_leave_request_command_commits_the_service_flush() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        handler = LeaveRequestCommandHandler(
+            service=LeaveRequestService(session),
+            unit_of_work=SqlAlchemyUnitOfWork(session),
+        )
+
+        leave_request = await handler.create_leave_request(
+            TENANT_ID,
+            LeaveRequestCreate(
+                employee_id=EMPLOYEE_ID,
+                leave_type="wellbeing",
+                start_date=date(2026, 8, 17),
+                end_date=date(2026, 8, 17),
+                requested_by_user_id=REQUESTING_USER_ID,
+            ),
+        )
+        leave_request_id = leave_request.id
+
+        assert not session.in_transaction()
+        async with AsyncSession(engine, expire_on_commit=False) as verification_session:
+            persisted = await verification_session.get(LeaveRequest, leave_request_id)
+        assert persisted is not None
+        assert persisted.status == LeaveRequestStatus.PENDING.value
     finally:
         await session.close()
         await engine.dispose()
@@ -506,6 +565,34 @@ async def test_approve_leave_request_allows_empty_decision_note() -> None:
         assert leave_request.status == LeaveRequestStatus.APPROVED.value
         assert leave_request.decided_by_user_id == APPROVER_USER_ID
         assert leave_request.decision_note is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_decide_leave_request_flushes_without_commit_and_can_be_rolled_back() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        leave_request = await LeaveRequestService(session).approve_leave_request(
+            TENANT_ID,
+            PENDING_REQUEST_ID,
+            LeaveRequestDecision(
+                decided_by_user_id=APPROVER_USER_ID,
+                decision_note="Approved before outer rollback",
+            ),
+        )
+
+        assert leave_request.status == LeaveRequestStatus.APPROVED.value
+        assert not session.is_modified(leave_request, include_collections=False)
+
+        await session.rollback()
+
+        async with AsyncSession(engine, expire_on_commit=False) as verification_session:
+            persisted = await verification_session.get(LeaveRequest, PENDING_REQUEST_ID)
+        assert persisted is not None
+        assert persisted.status == LeaveRequestStatus.PENDING.value
+        assert persisted.decided_by_user_id is None
+        assert persisted.decision_note is None
     finally:
         await session.close()
         await engine.dispose()

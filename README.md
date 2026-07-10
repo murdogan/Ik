@@ -97,6 +97,23 @@ uygulanır. Varsayılanlar sırasıyla pool `5`, overflow `10`, pool bekleme `30
 recycle `1800` saniye, bağlantı `10` saniye, statement `30000` ms ve idle transaction
 `60000` ms'dir.
 
+P0C write transaction sınırında transitional `EmployeeCommandHandler` ve
+`LeaveRequestCommandHandler`, `SqlAlchemyUnitOfWork.execute` üzerinden tek transaction sahibini
+kullanır. Employee create/update/delete ile leave request create/approve/reject/cancel servisleri
+gerekli constraint ve generated-value davranışı için `flush()` eder fakat `commit()` etmez;
+başarılı komutu commit etme ve hata halinde rollback yapma sorumluluğu yalnız UoW'dedir. Read
+path'leri request-scoped session ve doğrudan SQLAlchemy-aware service/query koduyla basit kalır;
+SQLAlchemy metotlarını taklit eden generic repository eklenmemiştir. Flush sonrası zorlanmış hata
+ve fresh-session testleri employee/leave değişikliklerinin kısmi persist edilmediğini doğrular.
+Bu mimari değişiklik schema veya Alembic migration eklemez.
+Local demo seed ayrı bir script command'dır; tenant/user/employee/leave seed adımlarının tamamı
+için zaten tek dış transaction sahibidir ve migrated API leaf service commit'i değildir.
+
+Leave decision winner/locking/versioning ve kritik komut idempotency'si sonraki Faz-0
+concurrency/idempotency işidir. Tenant-owned ilişkilerde composite tenant foreign key uygulaması
+da sonraki Faz-0 database-hardening migration bloğunda kalır; P0C bu iki güvenceyi uygulanmış
+saymaz.
+
 Veritabanı migration komutları:
 
 ```bash
@@ -169,15 +186,20 @@ filtre/header açıklamaları güncel API docs okunabilirliği için netleştiri
 davranışı değişmedi. W4C6 implementation report refresh kapsamında tamamlanmış API yüzeyi ve
 kalan backend backlog'u güncellendi; yeni endpoint veya API davranış değişikliği eklenmedi.
 
-Tenant header dependency hataları, employee/leave endpointlerinin açıkça yakaladığı domain
-hataları ve employee, leave balance, leave request endpointlerindeki otomatik request validation
-`422` hataları şu zarfla döner:
+Tenant header dependency hataları, API edge'deki merkezi `ApplicationError` mapper'ının
+dönüştürdüğü typed domain/application hataları ve employee, leave balance, leave request
+endpointlerindeki otomatik request validation `422` hataları şu zarfla döner:
 `{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.
 Bu kapsam `tenant_header_missing`, `tenant_header_invalid`, `tenant_slug_header_invalid`,
 not-found, conflict, date-range, employee lifecycle, `employee_validation_error`,
 `leave_balance_validation_error`, `leave_request_validation_error` ve leave transition
 hatalarıdır. Diğer endpointlerdeki otomatik FastAPI validation `422` yanıtları henüz framework
 varsayılanındadır.
+P0C mevcut employee/leave status, code ve public mesajlarını korur. Named
+`uq_employees_tenant_employee_number` DB constraint ihlali pre-check yarışında da mevcut
+`409 employee_number_conflict` yanıtına map edilir. Diğer bilinmeyen integrity hataları DB
+detayı sızdırmadan `409 data_integrity_conflict`; SQLAlchemy `StaleDataError` ve tanınan DB
+concurrency hataları `409 concurrent_write_conflict` döner.
 W4A6 itibarıyla employee, leave balance ve leave request endpointlerinde bu public hata mesajları
 kod içi ortak sabitlerden üretilir. Tenant header hataları aynı request içinde payload/query/path
 validation hatası olsa bile önce normalize edilir; global FastAPI validation davranışı bu kapsamda

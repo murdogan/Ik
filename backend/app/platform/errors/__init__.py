@@ -6,6 +6,8 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.platform.errors.application import ApplicationError
+
 
 class ApiErrorBody(BaseModel):
     code: str
@@ -50,4 +52,10 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     )
 
 
-__all__ = ["ApiError", "ApiErrorBody", "ApiErrorResponse", "api_error_handler"]
+__all__ = [
+    "ApiError",
+    "ApiErrorBody",
+    "ApiErrorResponse",
+    "ApplicationError",
+    "api_error_handler",
+]

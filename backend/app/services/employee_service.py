@@ -2,6 +2,7 @@ from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.error_messages import (
@@ -14,6 +15,8 @@ from app.core.error_messages import (
     EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
 )
 from app.models.employee import Employee, EmployeeStatus
+from app.platform.db import constraint_name_from_error
+from app.platform.errors.application import ApplicationError
 from app.schemas.employee import (
     EmployeeCreate,
     EmployeeListFilters,
@@ -21,20 +24,25 @@ from app.schemas.employee import (
     EmployeeUpdate,
 )
 
+EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT = "uq_employees_tenant_employee_number"
+_SQLITE_EMPLOYEE_NUMBER_UNIQUE_SIGNATURE = (
+    "UNIQUE constraint failed: employees.tenant_id, employees.employee_number"
+)
 
-class EmployeeNotFoundError(Exception):
+
+class EmployeeNotFoundError(ApplicationError):
     pass
 
 
-class DuplicateEmployeeNumberError(Exception):
+class DuplicateEmployeeNumberError(ApplicationError):
     pass
 
 
-class EmployeeDateRangeError(ValueError):
+class EmployeeDateRangeError(ApplicationError, ValueError):
     pass
 
 
-class EmployeeLifecycleError(ValueError):
+class EmployeeLifecycleError(ApplicationError, ValueError):
     pass
 
 
@@ -96,7 +104,7 @@ class EmployeeService:
             **_employee_create_values(payload),
         )
         self.session.add(employee)
-        await self.session.commit()
+        await self._flush_employee_write()
         await self.session.refresh(employee)
         return employee
 
@@ -128,14 +136,22 @@ class EmployeeService:
         for field_name, value in values.items():
             setattr(employee, field_name, value)
 
-        await self.session.commit()
+        await self._flush_employee_write()
         await self.session.refresh(employee)
         return employee
 
     async def delete_employee(self, tenant_id: UUID, employee_id: UUID) -> None:
         employee = await self.get_employee(tenant_id, employee_id)
         await self.session.delete(employee)
-        await self.session.commit()
+        await self.session.flush()
+
+    async def _flush_employee_write(self) -> None:
+        try:
+            await self.session.flush()
+        except IntegrityError as exc:
+            if _is_employee_number_unique_violation(exc):
+                raise DuplicateEmployeeNumberError from exc
+            raise
 
     async def _get_employee_or_none(self, tenant_id: UUID, employee_id: UUID) -> Employee | None:
         statement = (
@@ -184,6 +200,12 @@ def _status_value(status: EmployeeStatus | str | None) -> str | None:
     if isinstance(status, EmployeeStatus):
         return status.value
     return status
+
+
+def _is_employee_number_unique_violation(exc: IntegrityError) -> bool:
+    if constraint_name_from_error(exc) == EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT:
+        return True
+    return _SQLITE_EMPLOYEE_NUMBER_UNIQUE_SIGNATURE in str(exc.orig)
 
 
 def _validate_date_order(start_date: date, end_date: date | None) -> None:

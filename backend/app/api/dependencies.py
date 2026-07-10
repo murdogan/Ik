@@ -2,7 +2,8 @@ from collections.abc import Callable
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Header, Request
+from fastapi import Depends, Header, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import (
     TENANT_ID_HEADER,
@@ -11,7 +12,15 @@ from app.api.errors import (
     tenant_header_missing_error,
     tenant_slug_header_invalid_error,
 )
+from app.db.session import get_session
+from app.platform.db import SqlAlchemyUnitOfWork
 from app.platform.tenancy import TenantContext
+
+
+def get_unit_of_work(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> SqlAlchemyUnitOfWork:
+    return SqlAlchemyUnitOfWork(session=session)
 
 
 def get_tenant_context(

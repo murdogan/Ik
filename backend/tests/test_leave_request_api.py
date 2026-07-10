@@ -1,8 +1,13 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, timedelta
+from typing import Annotated
 from uuid import UUID, uuid4
 
 import pytest
+from app.api.leave_requests import (
+    get_leave_request_command_handler,
+    get_leave_request_service,
+)
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
@@ -10,7 +15,14 @@ from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.db import PersistenceConcurrencyError, PersistenceIntegrityError
 from app.schemas.leave_request import LEAVE_REQUEST_LIST_DEFAULT_LIMIT
+from app.services.leave_request_service import (
+    LeaveRequestNotFoundError,
+    LeaveRequestService,
+    LeaveRequestUserNotFoundError,
+)
+from fastapi import Depends
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
@@ -38,6 +50,11 @@ NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 
 async def _client_with_database(
     extra_current_leave_request_count: int = 0,
+    dependency_overrides: dict[
+        Callable[..., object],
+        Callable[..., object],
+    ]
+    | None = None,
 ) -> tuple[AsyncClient, AsyncEngine]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
@@ -196,6 +213,7 @@ async def _client_with_database(
 
     app = create_app()
     app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides.update(dependency_overrides or {})
 
     return (
         AsyncClient(
@@ -247,6 +265,25 @@ def _decision_payload(decided_by_user_id: UUID = APPROVER_USER_ID) -> dict[str, 
         "decided_by_user_id": str(decided_by_user_id),
         "decision_note": "Coverage is planned",
     }
+
+
+class _FailAfterFlushedApprovalService(LeaveRequestService):
+    async def approve_leave_request(self, *args, **kwargs):
+        await super().approve_leave_request(*args, **kwargs)
+        raise LeaveRequestUserNotFoundError
+
+
+class _LeaveRequestNotFoundCommandHandler:
+    async def create_leave_request(self, *args, **kwargs):
+        raise LeaveRequestNotFoundError
+
+
+class _FailingPersistenceCommandHandler:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def create_leave_request(self, *args, **kwargs):
+        raise self.error
 
 
 async def test_create_leave_request_uses_tenant_header_and_pending_status() -> None:
@@ -752,6 +789,127 @@ async def test_approve_pending_leave_request() -> None:
         assert body["status"] == LeaveRequestStatus.APPROVED.value
         assert body["decided_by_user_id"] == str(APPROVER_USER_ID)
         assert body["decision_note"] == "Coverage is planned"
+
+        async_session = async_sessionmaker(engine, expire_on_commit=False)
+        async with async_session() as session:
+            persisted = await session.get(LeaveRequest, PENDING_REQUEST_ID)
+        assert persisted is not None
+        assert persisted.status == LeaveRequestStatus.APPROVED.value
+        assert persisted.decided_by_user_id == APPROVER_USER_ID
+        assert persisted.decision_note == "Coverage is planned"
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_decision_command_rolls_back_flushed_mutation_after_typed_error() -> None:
+    def override_service(
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> LeaveRequestService:
+        return _FailAfterFlushedApprovalService(session)
+
+    client, engine = await _client_with_database(
+        dependency_overrides={get_leave_request_service: override_service}
+    )
+    try:
+        response = await client.post(
+            f"/api/v1/leave-requests/{PENDING_REQUEST_ID}/approve",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "p0c-leave-rollback",
+            },
+            json=_decision_payload(),
+        )
+
+        _assert_error_response(
+            response,
+            status_code=404,
+            code="user_not_found",
+            message="User not found",
+            correlation_id="p0c-leave-rollback",
+        )
+        async_session = async_sessionmaker(engine, expire_on_commit=False)
+        async with async_session() as session:
+            persisted = await session.get(LeaveRequest, PENDING_REQUEST_ID)
+        assert persisted is not None
+        assert persisted.status == LeaveRequestStatus.PENDING.value
+        assert persisted.decided_by_user_id is None
+        assert persisted.decision_note is None
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_central_error_mapper_handles_typed_command_error_for_any_write_route() -> None:
+    handler = _LeaveRequestNotFoundCommandHandler()
+    client, engine = await _client_with_database(
+        dependency_overrides={get_leave_request_command_handler: lambda: handler}
+    )
+    try:
+        response = await client.post(
+            "/api/v1/leave-requests",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "p0c-leave-central-mapper",
+            },
+            json=_create_payload(),
+        )
+
+        _assert_error_response(
+            response,
+            status_code=404,
+            code="leave_request_not_found",
+            message="Leave request not found",
+            correlation_id="p0c-leave-central-mapper",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "message"),
+    [
+        (
+            PersistenceIntegrityError(constraint_name="safe_test_constraint"),
+            "data_integrity_conflict",
+            "The request conflicts with persisted data",
+        ),
+        (
+            PersistenceConcurrencyError(sqlstate="40001"),
+            "concurrent_write_conflict",
+            "The request conflicted with another write; retry the request",
+        ),
+    ],
+)
+async def test_central_error_mapper_safely_maps_persistence_command_errors(
+    error: Exception,
+    code: str,
+    message: str,
+) -> None:
+    handler = _FailingPersistenceCommandHandler(error)
+    client, engine = await _client_with_database(
+        dependency_overrides={get_leave_request_command_handler: lambda: handler}
+    )
+    try:
+        response = await client.post(
+            "/api/v1/leave-requests",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "p0c-persistence-conflict",
+            },
+            json=_create_payload(),
+        )
+
+        _assert_error_response(
+            response,
+            status_code=409,
+            code=code,
+            message=message,
+            correlation_id="p0c-persistence-conflict",
+        )
+        assert "safe_test_constraint" not in response.text
+        assert "40001" not in response.text
     finally:
         await client.aclose()
         await engine.dispose()
