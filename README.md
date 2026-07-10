@@ -125,7 +125,8 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
   `period_year` filtresi ve tenant-scoped çalışan kontrolü
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
-  `limit`/`offset` pagination, oluşturma/onay/red/iptal
+  `limit`/`offset` pagination, default `limit=50`, max `limit=200`, default `offset=0`,
+  oluşturma/onay/red/iptal
 
 Smoke testi ayrıca generated OpenAPI operasyonlarını ve güncel dokümanlardaki endpoint
 tablolarını kendi coverage registry'siyle karşılaştırır; dokümanlanan endpoint smoke kapsamı

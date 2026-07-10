@@ -10,6 +10,10 @@ from app.api.openapi import (
 )
 from app.main import create_app
 from app.schemas.employee import EMPLOYEE_LIST_DEFAULT_LIMIT, EMPLOYEE_LIST_MAX_LIMIT
+from app.schemas.leave_request import (
+    LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
+    LEAVE_REQUEST_LIST_MAX_LIMIT,
+)
 from fastapi.testclient import TestClient
 
 HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
@@ -87,7 +91,7 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         ("/api/v1/leave-requests", "get"): (
             LEAVE_REQUESTS_TAG,
             "List leave requests",
-            "overlapping date windows",
+            "tenant isolation is applied before bounded limit/offset pagination",
         ),
         ("/api/v1/leave-requests", "post"): (
             LEAVE_REQUESTS_TAG,
@@ -239,7 +243,10 @@ def test_leave_request_list_openapi_documents_filter_query_params() -> None:
     assert "Inclusive start" in params["start_date"]["description"]
     assert params["end_date"]["in"] == "query"
     assert "Inclusive end" in params["end_date"]["description"]
-    assert params["limit"]["schema"]["maximum"] == 200
+    assert params["limit"]["schema"]["default"] == LEAVE_REQUEST_LIST_DEFAULT_LIMIT
+    assert params["limit"]["schema"]["maximum"] == LEAVE_REQUEST_LIST_MAX_LIMIT
+    assert params["limit"]["schema"]["minimum"] == 1
+    assert params["offset"]["schema"]["default"] == 0
     assert params["offset"]["schema"]["minimum"] == 0
 
 

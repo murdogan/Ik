@@ -2,15 +2,15 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4A2 Employee pagination`
+Task: `W4A4 Leave request pagination`
 
 ## Scope
 
-- Locked the employee list `limit`/`offset` pagination contract with explicit OpenAPI regression
-  coverage for the shared default and maximum bounds.
+- Locked the leave request list `limit`/`offset` pagination contract with explicit API, schema,
+  service, and OpenAPI regression coverage for the shared default and maximum bounds.
 - Kept the completed API surface explicit: 14 generated OpenAPI operations plus the runtime
   `/openapi.json` schema endpoint.
-- Clarified employee pagination bounds in the current behavior notes without changing the response
+- Clarified leave request pagination bounds in README and API docs without changing the response
   shape.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
@@ -48,8 +48,9 @@ Task: `W4A2 Employee pagination`
   `employee_invalid_lifecycle`, and the database also has
   `ck_employees_lifecycle_status_dates`.
 - Leave request list supports `status`, `employee_id`, inclusive overlapping `start_date` and
-  `end_date` filters, plus bounded `limit` and `offset` pagination. Ordering is deterministic by
-  `created_at desc`, `start_date asc`, and `id asc`.
+  `end_date` filters, plus bounded `limit` and `offset` pagination. Filters remain scoped to the
+  current tenant before pagination. `limit` defaults to `50`, is capped at `200`, and `offset`
+  defaults to `0`. Ordering is deterministic by `created_at desc`, `start_date asc`, and `id asc`.
 - Leave request decision endpoints currently approve, reject, or cancel only pending requests and
   require the deciding user to belong to the same tenant.
 - Dashboard summary is DB-backed and tenant-scoped. It returns active employee count, workforce
@@ -99,10 +100,10 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W4A2 local gate run:
+W4A4 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 295 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 296 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered, including documented endpoint table checks.

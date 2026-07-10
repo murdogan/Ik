@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-10 / W4A2 Employee pagination.
+Son güncelleme: 2026-07-10 / W4A4 Leave request pagination.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -78,9 +78,10 @@ Geçerli uygulama notları:
   `start_date`/`end_date` tarih aralığı filtreleri testlerle sabitlenmiştir. Tarih aralığı, izin
   kaydının tarihleriyle overlap eden talepleri döndürür; tek taraflı tarih filtreleri de tenant
   scope içinde çalışır.
-- Leave request listesinde W2A4 itibarıyla `limit`/`offset` pagination (`limit` varsayılan `50`,
-  maksimum `200`; `offset` varsayılan `0`) tenant scope sonrası uygulanır. Sonuç sırası
-  `created_at desc`, `start_date asc`, `id asc` ile deterministiktir.
+- Leave request listesinde W4A4 itibarıyla `limit`/`offset` pagination sözleşmesi testlerle
+  sabitlenmiştir: `limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`.
+  Pagination tenant scope ve filtrelerden sonra uygulanır. Sonuç sırası `created_at desc`,
+  `start_date asc`, `id asc` ile deterministiktir.
 - Leave balance summary endpointi `leave_balance_summaries` read modelini okur. Bu W1C2/W2C2
   placeholder'ı yalnız manuel/açılış özet değerlerini döner; hak ediş/accrual motoru, resmi tatil
   hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon içermez. Response içinde
