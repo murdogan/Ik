@@ -599,6 +599,39 @@ async def test_list_leave_requests_filters_by_overlapping_date_range() -> None:
         await engine.dispose()
 
 
+async def test_list_leave_requests_supports_single_sided_date_filters_within_tenant() -> None:
+    client, engine = await _client_with_database()
+    try:
+        open_start_response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"start_date": "2026-07-22"},
+        )
+        open_end_response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"end_date": "2026-07-20"},
+        )
+
+        assert open_start_response.status_code == 200
+        assert [item["id"] for item in open_start_response.json()] == [
+            str(REJECTED_REQUEST_ID),
+            str(PENDING_REQUEST_ID),
+        ]
+        assert str(OTHER_REQUEST_ID) not in {
+            item["id"] for item in open_start_response.json()
+        }
+        assert open_end_response.status_code == 200
+        assert [item["id"] for item in open_end_response.json()] == [
+            str(PENDING_REQUEST_ID),
+            str(APPROVED_REQUEST_ID),
+        ]
+        assert str(OTHER_REQUEST_ID) not in {item["id"] for item in open_end_response.json()}
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_leave_requests_rejects_invalid_filter_date_range() -> None:
     client, engine = await _client_with_database()
     try:
