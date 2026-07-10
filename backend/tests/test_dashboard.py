@@ -210,6 +210,57 @@ async def test_dashboard_summary_counts_are_tenant_scoped_from_database() -> Non
     await engine.dispose()
 
 
+async def test_dashboard_summary_enrichment_reflects_database_changes() -> None:
+    session, engine = await _session_with_seed_data()
+    service = DashboardService(session=session, today=TODAY, recent_activity_limit=0)
+
+    before = await service.get_summary(TENANT_ID)
+    employee_id = UUID("a2000000-0000-4000-8000-000000000001")
+    session.add_all(
+        [
+            Employee(
+                id=employee_id,
+                tenant_id=TENANT_ID,
+                employee_number="WF-006",
+                first_name="Funda",
+                last_name="Acar",
+                department="Legal",
+                position="Counsel",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=TODAY,
+            ),
+            LeaveRequest(
+                id=UUID("a2000000-0000-4000-8000-000000000002"),
+                tenant_id=TENANT_ID,
+                employee_id=employee_id,
+                leave_type="annual",
+                start_date=TODAY + timedelta(days=10),
+                end_date=TODAY + timedelta(days=11),
+                status=LeaveRequestStatus.PENDING.value,
+                requested_by_user_id=USER_ID,
+            ),
+        ]
+    )
+    await session.commit()
+
+    after = await service.get_summary(TENANT_ID)
+
+    assert after.active_employee_count == before.active_employee_count + 1
+    assert after.employee_count == before.employee_count + 1
+    assert after.pending_leave_count == before.pending_leave_count + 1
+    assert after.pending_leave_requests == after.pending_leave_count
+    assert after.new_starters_this_month == before.new_starters_this_month + 1
+    assert after.department_distribution == [
+        DepartmentDistributionItem(department="People", count=2),
+        DepartmentDistributionItem(department="Engineering", count=1),
+        DepartmentDistributionItem(department="Legal", count=1),
+        DepartmentDistributionItem(department="Unassigned", count=1),
+    ]
+
+    await session.close()
+    await engine.dispose()
+
+
 async def test_dashboard_this_month_starters_use_calendar_month_window() -> None:
     session, engine = await _session_with_seed_data()
     session.add_all(

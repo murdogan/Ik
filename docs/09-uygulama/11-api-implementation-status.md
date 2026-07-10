@@ -2,19 +2,18 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4A4 Leave request pagination`
+Task: `W4A5 Dashboard enrichment`
 
 ## Scope
 
-- Locked the leave request list `limit`/`offset` pagination contract with explicit API, schema,
-  service, and OpenAPI regression coverage for the shared default and maximum bounds.
+- Locked the dashboard summary enrichment contract with explicit DB-backed regression coverage for
+  active employee count, pending leave count, department distribution, and this-month starters.
 - Kept the completed API surface explicit: 14 generated OpenAPI operations plus the runtime
   `/openapi.json` schema endpoint.
-- Clarified leave request pagination bounds in README and API docs without changing the response
-  shape.
+- Confirmed the existing dashboard response shape remains unchanged and documented as tenant-scoped.
+- No new endpoint, response envelope, model, migration, permission, or tenant isolation change.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
-- No request/response payload shape, model, migration, permission, or tenant isolation change.
 
 ## Completed API Surface
 
@@ -100,10 +99,10 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W4A4 local gate run:
+W4A5 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 296 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 297 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered, including documented endpoint table checks.
