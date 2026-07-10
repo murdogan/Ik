@@ -2,19 +2,20 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4C5 OpenAPI tag hygiene`
+Task: `W4C6 Implementation report refresh`
 
 ## Scope
 
-- Refined OpenAPI tag descriptions for the current `System`, `Public`, `Dashboard`, `Employees`,
-  `Leave Balances`, and `Leave Requests` groups.
-- Tightened route summaries/descriptions so generated docs show tenant-scoped domain workflows,
-  public/system endpoints, and pending leave request decision actions more clearly.
-- Updated OpenAPI metadata regression coverage to lock the improved tag catalog and operation
-  summary/description text.
-- Updated README and OpenAPI endpoint draft notes with the W4C5 metadata-only hygiene scope.
-- Kept the completed API surface explicit and unchanged: 14 generated OpenAPI operations plus the
+- Refreshed this implementation status report around the current completed API surface and
+  remaining backend backlog.
+- Reconfirmed the completed API surface is unchanged: 14 generated OpenAPI operations plus the
   runtime `/openapi.json` schema endpoint.
+- Synced README and `03-openapi-endpoint-taslagi.md` notes so the documented surface, current
+  behavior, smoke coverage, and backlog language all describe the same backend state.
+- Hardened `scripts/backend_api_smoke.py` so it now fails when any endpoint in the documented
+  smoke registry is listed in docs but not executed by the smoke runtime scenarios.
+- Carried forward W4C5 OpenAPI metadata hygiene: generated docs still use readable tag
+  descriptions and tenant-aware operation summaries/descriptions.
 - No endpoint behavior, response envelope, model, migration, permission, tenant isolation, or
   service-layer change.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
@@ -75,6 +76,9 @@ Task: `W4C5 OpenAPI tag hygiene`
   `Leave Requests`. W4C5 refines tag descriptions and operation summaries/descriptions for docs
   readability while keeping every path, method, request, response, and tenant requirement
   unchanged.
+- W4C6 is a report and smoke-governance refresh only. It does not add, remove, rename, or change
+  any API operation; it confirms the implementation report, OpenAPI endpoint draft, smoke registry,
+  and smoke runtime scenarios all agree on the same 15 documented endpoints.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -102,7 +106,7 @@ Task: `W4C5 OpenAPI tag hygiene`
 `uv run python scripts/backend_api_smoke.py` runs entirely local/in-memory through ASGI and SQLite.
 It does not use deploy, staging URLs, cron, tokens, credentials, `.env`, or external services.
 
-The script now verifies the documented API surface in three directions:
+The script now verifies the documented API surface in four directions:
 
 - Every generated OpenAPI operation must be listed in the smoke registry, and every OpenAPI
   operation in the registry must exist in the generated schema.
@@ -110,6 +114,8 @@ The script now verifies the documented API surface in three directions:
   runtime `/openapi.json` endpoint.
 - The `Güncel uygulama yüzeyi` table in `03-openapi-endpoint-taslagi.md` must match the same smoke
   registry.
+- Every endpoint in the smoke registry must be executed by at least one runtime smoke scenario,
+  including `/openapi.json` and each tenant-scoped domain path.
 
 The runtime scenarios currently verify:
 
@@ -125,24 +131,25 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W4C5 local gate run:
+W4C6 local gate run:
 
 - `uv run ruff check backend`: passed.
 - `uv run pytest`: passed, 329 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
-  endpoints covered, including documented endpoint table checks and OpenAPI operation drift
-  checks.
+  endpoints covered, including documented endpoint table checks, OpenAPI operation drift checks,
+  and `documented_endpoint_runtime_coverage`.
 
 ## Remaining Backend Backlog
 
-- Auth/session/RBAC dependencies and permission enforcement.
-- Tenant current/settings/onboarding endpoints and user/role management endpoints.
-- Standard `{ data, meta }` response envelope, global correlation middleware, and broader
-  validation/error normalization beyond employee and leave request endpoints.
-- Cursor pagination standardization, sorting controls, and idempotency for critical POST flows.
-- Optional leave request detail endpoint if the product workflow needs it.
-- Leave policy/accrual calculation, holiday calendars, adjustments/imports, and employee
+- Auth/session/RBAC dependencies, permission enforcement, and current-user context.
+- Tenant current/settings/onboarding endpoints plus user/role management endpoints.
+- Standard `{ data, meta }` response envelope, global correlation middleware, and validation/error
+  normalization beyond the employee and leave endpoint families already covered.
+- Cursor pagination standardization, sort controls, response metadata, and idempotency for critical
+  POST/decision flows.
+- Optional leave request detail endpoint if product workflow needs direct request reads.
+- Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.
-- Documents, reports, and export endpoints in later MVP phases.
+- Employee document, reporting, analytics, and export endpoints in later MVP phases.
 - CI/OpenAPI contract governance once workflow-token constraints are resolved outside this task.

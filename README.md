@@ -129,15 +129,17 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
   `limit`/`offset` pagination, default `limit=50`, max `limit=200`, default `offset=0`,
   oluşturma/onay/red/iptal
 
-Smoke testi ayrıca generated OpenAPI operasyonlarını ve güncel dokümanlardaki endpoint
-tablolarını kendi coverage registry'siyle karşılaştırır; dokümanlanan endpoint smoke kapsamı
-dışında kalırsa komut fail olur.
+Smoke testi ayrıca generated OpenAPI operasyonlarını, güncel dokümanlardaki endpoint tablolarını
+ve runtime'da gerçekten çağrılan endpoint setini kendi coverage registry'siyle karşılaştırır;
+dokümanlanan endpoint smoke kapsamı dışında kalırsa veya smoke senaryosunda hiç çağrılmazsa komut
+fail olur.
 
 OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
 `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W4C5 OpenAPI tag hygiene
 kapsamında tag açıklamaları, tenant-aware operation summary/description metinleri ve
 filtre/header açıklamaları güncel API docs okunabilirliği için netleştirildi; request/response
-davranışı değişmedi.
+davranışı değişmedi. W4C6 implementation report refresh kapsamında tamamlanmış API yüzeyi ve
+kalan backend backlog'u güncellendi; yeni endpoint veya API davranış değişikliği eklenmedi.
 
 Tenant header dependency hataları, employee/leave endpointlerinin açıkça yakaladığı domain
 hataları ve employee, leave balance, leave request endpointlerindeki otomatik request validation

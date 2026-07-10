@@ -76,9 +76,11 @@ DOCUMENTED_ENDPOINT_TABLES = {
     API_IMPLEMENTATION_STATUS_DOC: "## Completed API Surface",
     OPENAPI_ENDPOINT_DRAFT_DOC: "## 0. Güncel uygulama yüzeyi",
 }
+EXECUTED_DOCUMENTED_ENDPOINTS: set[tuple[str, str]] = set()
 
 
 async def main() -> None:
+    EXECUTED_DOCUMENTED_ENDPOINTS.clear()
     engine, session_factory = await _create_smoke_database()
     app = create_app()
 
@@ -117,6 +119,7 @@ async def main() -> None:
                 other_employee_id=other_employee_id,
                 other_tenant_leave_request_id=leave_request_ids["other_tenant"],
             )
+            _expect_executed_documented_endpoint_coverage()
     finally:
         app.dependency_overrides.clear()
         await engine.dispose()
@@ -126,8 +129,8 @@ async def main() -> None:
         f"tenant_id={TENANT_ID} "
         f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
         "checked=health,landing,openapi,documented_endpoint_tables,tenant_headers,"
-        "dashboard_counts,employee_filters,employees,leave_balances,leave_filters,"
-        "leave_requests,workflow_transitions"
+        "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,"
+        "employees,leave_balances,leave_filters,leave_requests,workflow_transitions"
     )
 
 
@@ -194,15 +197,23 @@ async def _create_smoke_database() -> tuple[AsyncEngine, async_sessionmaker[Asyn
 
 
 async def _smoke_system_endpoints(client: AsyncClient) -> None:
-    health = _expect_json(await client.get("/health"), 200, "GET /health")
+    health = _expect_json(
+        await _request_documented(client, "get", "/health"),
+        200,
+        "GET /health",
+    )
     _assert_equal(health["status"], "ok", "health status")
     _assert_equal(health["service"], "IK Platform API", "health service")
 
-    landing = await client.get("/")
+    landing = await _request_documented(client, "get", "/")
     _expect_status(landing, 200, "GET /")
     _assert_contains(landing.text, "Wealthy Falcon HR", "landing brand")
 
-    openapi = _expect_json(await client.get("/openapi.json"), 200, "GET /openapi.json")
+    openapi = _expect_json(
+        await _request_documented(client, "get", "/openapi.json"),
+        200,
+        "GET /openapi.json",
+    )
     _expect_documented_openapi_operations(openapi)
 
 
@@ -246,6 +257,38 @@ def _expect_documented_endpoint_table(doc_path: Path, heading: str) -> None:
         raise AssertionError(
             f"{doc_path} lists endpoints missing from backend smoke coverage under {heading}: "
             f"{_format_operations(extra_endpoints)}"
+        )
+
+
+async def _request_documented(
+    client: AsyncClient,
+    method: str,
+    path: str,
+    *,
+    documented_path: str | None = None,
+    **kwargs: Any,
+) -> Response:
+    response = await client.request(method.upper(), path, **kwargs)
+    _record_documented_endpoint(method, documented_path or path)
+    return response
+
+
+def _record_documented_endpoint(method: str, path: str) -> None:
+    operation = (method.lower(), path)
+    if operation not in DOCUMENTED_SMOKE_ENDPOINTS:
+        raise AssertionError(
+            "Smoke tried to record an endpoint outside documented coverage: "
+            f"{_format_operations([operation])}"
+        )
+    EXECUTED_DOCUMENTED_ENDPOINTS.add(operation)
+
+
+def _expect_executed_documented_endpoint_coverage() -> None:
+    missing_endpoints = sorted(DOCUMENTED_SMOKE_ENDPOINTS - EXECUTED_DOCUMENTED_ENDPOINTS)
+    if missing_endpoints:
+        raise AssertionError(
+            "Backend smoke did not execute documented endpoints: "
+            f"{_format_operations(missing_endpoints)}"
         )
 
 
@@ -363,7 +406,12 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
     other_employee_id = other_tenant_employee["id"]
 
     employees = _expect_json(
-        await client.get("/api/v1/employees", headers=TENANT_HEADERS),
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+        ),
         200,
         "GET /api/v1/employees",
     )
@@ -528,15 +576,24 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
     )
 
     detail = _expect_json(
-        await client.get(f"/api/v1/employees/{employee_id}", headers=TENANT_HEADERS),
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/employees/{employee_id}",
+            documented_path="/api/v1/employees/{employee_id}",
+            headers=TENANT_HEADERS,
+        ),
         200,
         "GET /api/v1/employees/{employee_id}",
     )
     _assert_equal(detail["employee_number"], "WF-SMOKE-001", "employee detail number")
 
     updated = _expect_json(
-        await client.patch(
+        await _request_documented(
+            client,
+            "patch",
             f"/api/v1/employees/{employee_id}",
+            documented_path="/api/v1/employees/{employee_id}",
             headers=TENANT_HEADERS,
             json={"status": EmployeeStatus.ON_LEAVE.value},
         ),
@@ -655,8 +712,11 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         "employee pagination",
     )
     _expect_status(
-        await client.delete(
+        await _request_documented(
+            client,
+            "delete",
             f"/api/v1/employees/{delete_candidate['id']}",
+            documented_path="/api/v1/employees/{employee_id}",
             headers=TENANT_HEADERS,
         ),
         204,
@@ -740,8 +800,11 @@ async def _smoke_leave_balance_endpoint(
         await session.commit()
 
     balances = _expect_json(
-        await client.get(
+        await _request_documented(
+            client,
+            "get",
             f"/api/v1/employees/{employee_id}/leave-balances",
+            documented_path="/api/v1/employees/{employee_id}/leave-balances",
             headers=TENANT_HEADERS,
             params={"period_year": period_year},
         ),
@@ -819,8 +882,11 @@ async def _smoke_leave_request_endpoints(
         "decision_note": decision_note,
     }
     approved = _expect_json(
-        await client.post(
+        await _request_documented(
+            client,
+            "post",
             f"/api/v1/leave-requests/{approved_request['id']}/approve",
+            documented_path="/api/v1/leave-requests/{leave_request_id}/approve",
             headers=TENANT_HEADERS,
             json=decision_payload,
         ),
@@ -844,8 +910,11 @@ async def _smoke_leave_request_endpoints(
     )
 
     rejected = _expect_json(
-        await client.post(
+        await _request_documented(
+            client,
+            "post",
             f"/api/v1/leave-requests/{rejected_request['id']}/reject",
+            documented_path="/api/v1/leave-requests/{leave_request_id}/reject",
             headers=TENANT_HEADERS,
             json=decision_payload,
         ),
@@ -869,8 +938,11 @@ async def _smoke_leave_request_endpoints(
     )
 
     cancelled = _expect_json(
-        await client.post(
+        await _request_documented(
+            client,
+            "post",
             f"/api/v1/leave-requests/{cancelled_request['id']}/cancel",
+            documented_path="/api/v1/leave-requests/{leave_request_id}/cancel",
             headers=TENANT_HEADERS,
             json=decision_payload,
         ),
@@ -927,7 +999,12 @@ async def _smoke_leave_request_endpoints(
     )
 
     leave_requests = _expect_json(
-        await client.get("/api/v1/leave-requests", headers=TENANT_HEADERS),
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+        ),
         200,
         "GET /api/v1/leave-requests",
     )
@@ -1266,7 +1343,12 @@ async def _smoke_dashboard_endpoint(
     other_tenant_leave_request_id: str,
 ) -> None:
     summary = _expect_json(
-        await client.get("/api/v1/dashboard/summary", headers=TENANT_HEADERS),
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/dashboard/summary",
+            headers=TENANT_HEADERS,
+        ),
         200,
         "GET /api/v1/dashboard/summary",
     )
@@ -1379,7 +1461,9 @@ async def _create_employee(
     headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     return _expect_json(
-        await client.post(
+        await _request_documented(
+            client,
+            "post",
             "/api/v1/employees",
             headers=headers or TENANT_HEADERS,
             json=payload,
@@ -1401,7 +1485,9 @@ async def _create_leave_request(
     start_date = date.today() + timedelta(days=day_offset)
     end_date = start_date + timedelta(days=1)
     return _expect_json(
-        await client.post(
+        await _request_documented(
+            client,
+            "post",
             "/api/v1/leave-requests",
             headers=headers or TENANT_HEADERS,
             json={
