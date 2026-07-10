@@ -343,6 +343,25 @@ async def test_list_leave_requests_combines_status_employee_and_date_filters() -
         await engine.dispose()
 
 
+async def test_list_leave_requests_accepts_constructed_raw_status_filter() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        filters = LeaveRequestListFilters.model_construct(
+            status=LeaveRequestStatus.APPROVED.value
+        )
+
+        leave_requests = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            filters=filters,
+        )
+
+        assert [leave_request.id for leave_request in leave_requests] == [APPROVED_REQUEST_ID]
+        assert {leave_request.tenant_id for leave_request in leave_requests} == {TENANT_ID}
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_list_leave_requests_paginates_after_tenant_scope() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -432,6 +451,28 @@ async def test_list_leave_requests_orders_created_at_ties_by_start_date_then_id(
         await engine.dispose()
 
 
+async def test_create_leave_request_rejects_null_requesting_user_without_insert() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        existing_ids = set(await session.scalars(select(LeaveRequest.id)))
+        payload = LeaveRequestCreate.model_construct(
+            employee_id=EMPLOYEE_ID,
+            leave_type="annual",
+            start_date=date(2026, 8, 3),
+            end_date=date(2026, 8, 7),
+            requested_by_user_id=None,
+        )
+
+        with pytest.raises(LeaveRequestUserNotFoundError):
+            await LeaveRequestService(session).create_leave_request(TENANT_ID, payload)
+
+        current_ids = set(await session.scalars(select(LeaveRequest.id)))
+        assert current_ids == existing_ids
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_decide_leave_request_checks_transition_before_decider_tenant() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -478,6 +519,33 @@ async def test_decide_leave_request_rejects_cross_tenant_decider_without_mutatio
                 TENANT_ID,
                 PENDING_REQUEST_ID,
                 LeaveRequestDecision(decided_by_user_id=OTHER_USER_ID),
+            )
+
+        leave_request = await session.scalar(
+            select(LeaveRequest).where(LeaveRequest.id == PENDING_REQUEST_ID)
+        )
+        assert leave_request is not None
+        assert leave_request.status == LeaveRequestStatus.PENDING.value
+        assert leave_request.decided_by_user_id is None
+        assert leave_request.decision_note is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_decide_leave_request_rejects_constructed_null_decider_without_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        payload = LeaveRequestDecision.model_construct(
+            decided_by_user_id=None,
+            decision_note="Approved outside schema validation",
+        )
+
+        with pytest.raises(LeaveRequestUserNotFoundError):
+            await LeaveRequestService(session).approve_leave_request(
+                TENANT_ID,
+                PENDING_REQUEST_ID,
+                payload,
             )
 
         leave_request = await session.scalar(

@@ -145,6 +145,20 @@ async def test_list_employees_treats_wildcard_search_as_literal_text() -> None:
         await engine.dispose()
 
 
+async def test_list_employees_accepts_constructed_raw_status_filter() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        filters = EmployeeListFilters.model_construct(status=EmployeeStatus.ON_LEAVE.value)
+
+        employees = await EmployeeService(session).list_employees(TENANT_ID, filters=filters)
+
+        assert [employee.employee_number for employee in employees] == ["WF-002"]
+        assert {employee.tenant_id for employee in employees} == {TENANT_ID}
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_list_employees_paginates_after_tenant_scope() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -256,6 +270,24 @@ async def test_update_employee_rejects_duplicate_number_without_mutation() -> No
         await engine.dispose()
 
 
+async def test_update_employee_accepts_constructed_raw_status_when_lifecycle_is_complete() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        payload = EmployeeUpdate.model_construct(
+            _fields_set={"status", "employment_end_date"},
+            status=EmployeeStatus.TERMINATED.value,
+            employment_end_date=date(2026, 7, 31),
+        )
+
+        employee = await EmployeeService(session).update_employee(TENANT_ID, EMPLOYEE_ID, payload)
+
+        assert employee.status == EmployeeStatus.TERMINATED.value
+        assert employee.employment_end_date == date(2026, 7, 31)
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_update_employee_rejects_constructed_null_status() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -336,6 +368,30 @@ async def test_update_employee_rejects_constructed_datetime_end_date_without_mut
         employee = await session.scalar(select(Employee).where(Employee.id == EMPLOYEE_ID))
         assert employee is not None
         assert employee.employment_end_date is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_start_after_existing_end_without_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        payload = EmployeeUpdate(employment_start_date=date(2026, 8, 1))
+
+        with pytest.raises(EmployeeDateRangeError, match="on or after start date"):
+            await EmployeeService(session).update_employee(
+                TENANT_ID,
+                TERMINATED_EMPLOYEE_ID,
+                payload,
+            )
+
+        employee = await session.scalar(
+            select(Employee).where(Employee.id == TERMINATED_EMPLOYEE_ID)
+        )
+        assert employee is not None
+        assert employee.employment_start_date == date(2026, 7, 1)
+        assert employee.employment_end_date == date(2026, 7, 31)
+        assert employee.status == EmployeeStatus.TERMINATED.value
     finally:
         await session.close()
         await engine.dispose()
