@@ -146,6 +146,10 @@ not-found, conflict, date-range, employee lifecycle, `employee_validation_error`
 `leave_balance_validation_error`, `leave_request_validation_error` ve leave transition
 hatalarıdır. Diğer endpointlerdeki otomatik FastAPI validation `422` yanıtları henüz framework
 varsayılanındadır.
+W4A6 itibarıyla employee, leave balance ve leave request endpointlerinde bu public hata mesajları
+kod içi ortak sabitlerden üretilir. Tenant header hataları aynı request içinde payload/query/path
+validation hatası olsa bile önce normalize edilir; global FastAPI validation davranışı bu kapsamda
+değiştirilmedi.
 
 Demo seed sonrası employee ve leave endpointleri için örnek tenant header'ları:
 
@@ -306,6 +310,8 @@ Employee lifecycle kuralı: `terminated` status `employment_end_date` gerektirir
 sonra bu kuralı bozan güncellemeler `employee_invalid_lifecycle` koduyla `422` döner.
 Employee endpointlerinde generic request validation hataları `employee_validation_error` kodu ve
 `Employee request validation failed` mesajıyla aynı error zarfını kullanır.
+Null `status` gibi lifecycle validation hataları ise generic validation yerine
+`employee_invalid_lifecycle` kodu ve sabit lifecycle mesajıyla döner.
 
 Leave balance summary örneği:
 
@@ -342,6 +348,8 @@ W3C2 testleri persistence katmanının yalnız manuel summary kolonlarını taş
 schema'sının manuel placeholder dışı calculation mode kabul etmediğini sabitler.
 Leave balance endpointinde generic request validation hataları `leave_balance_validation_error`
 kodu ve `Leave balance request validation failed` mesajıyla aynı error zarfını kullanır.
+Eksik tenant header, invalid path/query validation hatalarından önce `tenant_header_missing`
+zarfına normalize edilir.
 
 Leave request list örneği:
 
@@ -410,6 +418,9 @@ Leave request endpointlerinde generic request validation hataları
 `leave_request_validation_error` kodu ve `Leave request validation failed` mesajıyla aynı error
 zarfını kullanır. Leave create tarih sırası ve liste tarih aralığı kuralları
 `leave_request_invalid_date_range` koduyla `422` döner.
+Approve/reject/cancel decision endpointlerinde non-pending talepler aynı
+`leave_request_transition_conflict` kodu ve `Only pending leave requests can be decided` mesajını
+kullanır.
 
 Leave approve request/response örneği:
 

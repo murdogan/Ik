@@ -6,6 +6,22 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from app.core.error_messages import (
+    EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+    EMPLOYEE_END_DATE_ONLY_FOR_TERMINATED_MESSAGE,
+    EMPLOYEE_NOT_FOUND_MESSAGE,
+    EMPLOYEE_NUMBER_CONFLICT_MESSAGE,
+    EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE,
+    EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE,
+    EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
+    LEAVE_BALANCE_REQUEST_VALIDATION_FAILED_MESSAGE,
+    LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+    LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+    LEAVE_REQUEST_NOT_FOUND_MESSAGE,
+    LEAVE_REQUEST_VALIDATION_FAILED_MESSAGE,
+    USER_NOT_FOUND_MESSAGE,
+)
+
 TENANT_ID_HEADER = "X-Tenant-Id"
 TENANT_SLUG_HEADER = "X-Tenant-Slug"
 EMPLOYEE_API_PREFIX = "/api/v1/employees"
@@ -13,23 +29,23 @@ LEAVE_BALANCE_API_SEGMENT = "/leave-balances"
 LEAVE_REQUEST_API_PREFIX = "/api/v1/leave-requests"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
-EMPLOYEE_VALIDATION_ERROR_MESSAGE = "Employee request validation failed"
+EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
 LEAVE_BALANCE_VALIDATION_ERROR_CODE = "leave_balance_validation_error"
-LEAVE_BALANCE_VALIDATION_ERROR_MESSAGE = "Leave balance request validation failed"
+LEAVE_BALANCE_VALIDATION_ERROR_MESSAGE = LEAVE_BALANCE_REQUEST_VALIDATION_FAILED_MESSAGE
 LEAVE_REQUEST_VALIDATION_ERROR_CODE = "leave_request_validation_error"
-LEAVE_REQUEST_VALIDATION_ERROR_MESSAGE = "Leave request validation failed"
+LEAVE_REQUEST_VALIDATION_ERROR_MESSAGE = LEAVE_REQUEST_VALIDATION_FAILED_MESSAGE
 EMPLOYEE_NOT_FOUND_ERROR_CODE = "employee_not_found"
-EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = "Employee not found"
+EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = EMPLOYEE_NOT_FOUND_MESSAGE
 EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE = "employee_number_conflict"
-EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE = "Employee number already exists for this tenant"
+EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE = EMPLOYEE_NUMBER_CONFLICT_MESSAGE
 EMPLOYEE_INVALID_DATE_RANGE_ERROR_CODE = "employee_invalid_date_range"
 EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE = "employee_invalid_lifecycle"
 LEAVE_REQUEST_NOT_FOUND_ERROR_CODE = "leave_request_not_found"
-LEAVE_REQUEST_NOT_FOUND_ERROR_MESSAGE = "Leave request not found"
+LEAVE_REQUEST_NOT_FOUND_ERROR_MESSAGE = LEAVE_REQUEST_NOT_FOUND_MESSAGE
 LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE = "leave_request_invalid_date_range"
 LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE = "leave_request_transition_conflict"
 USER_NOT_FOUND_ERROR_CODE = "user_not_found"
-USER_NOT_FOUND_ERROR_MESSAGE = "User not found"
+USER_NOT_FOUND_ERROR_MESSAGE = USER_NOT_FOUND_MESSAGE
 
 
 class ApiErrorBody(BaseModel):
@@ -263,12 +279,12 @@ def _is_leave_balance_api_path(path: str) -> bool:
 
 def _employee_request_validation_error(exc: RequestValidationError) -> ApiError:
     messages = _validation_messages(exc)
-    if "Employment end date must be on or after start date" in messages:
-        return employee_date_range_error("Employment end date must be on or after start date")
+    if EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE in messages:
+        return employee_date_range_error(EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
     for lifecycle_message in (
-        "Terminated employees must have an employment end date",
-        "Employment end date is only allowed when status is terminated",
-        "Status must not be null",
+        EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
+        EMPLOYEE_END_DATE_ONLY_FOR_TERMINATED_MESSAGE,
+        EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE,
     ):
         if lifecycle_message in messages:
             return employee_lifecycle_error(lifecycle_message)
@@ -290,8 +306,8 @@ def _leave_balance_request_validation_error() -> ApiError:
 def _leave_request_validation_error(exc: RequestValidationError) -> ApiError:
     messages = _validation_messages(exc)
     for date_range_message in (
-        "Leave end date must be on or after start date",
-        "Leave request end_date filter must be on or after start_date",
+        LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+        LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
     ):
         if date_range_message in messages:
             return leave_request_date_range_error(date_range_message)

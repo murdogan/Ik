@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-10 / W4A5 Dashboard enrichment.
+Son güncelleme: 2026-07-10 / W4A6 API error consistency.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -56,6 +56,11 @@ Geçerli uygulama notları:
   FastAPI validation yanıtları henüz framework varsayılanındadır.
 - Bu error zarfında `correlation_id`, `X-Correlation-Id` header'ı geldiyse aynı değer, gelmediyse
   `null` olur.
+- W4A6 itibarıyla employee, leave balance ve leave request endpointlerinde public hata mesajları
+  kod içi ortak sabitlerden üretilir ve regresyon testleri tenant-header hatalarının payload/query
+  validation hatalarından önce aynı zarfla döndüğünü, null employee status lifecycle mesajını,
+  invalid leave request `employee_id` filtre mesajını ve approve/reject/cancel transition conflict
+  mesajını sabitler. Global FastAPI validation davranışı bu kapsamda değiştirilmemiştir.
 - Şu an kullanılan error code değerleri: `tenant_header_missing`, `tenant_header_invalid`,
   `tenant_slug_header_invalid`, `employee_not_found`, `employee_number_conflict`,
   `employee_invalid_date_range`, `employee_invalid_lifecycle`, `employee_validation_error`,
@@ -393,6 +398,8 @@ kayıtlarda `employment_end_date` `null` olmalıdır.
 Otomatik request validation hataları employee endpointlerinde `employee_validation_error` `422`
 zarfına normalize edilir. Tarih sırası ve lifecycle iş kuralları daha spesifik
 `employee_invalid_date_range` veya `employee_invalid_lifecycle` kodlarını kullanır.
+Eksik tenant header varsa employee endpointleri payload/path validation hatalarından önce
+`tenant_header_missing` `400` zarfını döner.
 
 Generic employee validation `422` örneği:
 
@@ -712,6 +719,8 @@ bulunamadığı için sırasıyla `employee_not_found` veya `user_not_found` `40
 Otomatik request validation hataları leave request endpointlerinde
 `leave_request_validation_error` `422` zarfına normalize edilir. Leave create tarih sırası ve
 liste tarih aralığı iş kuralları `leave_request_invalid_date_range` kodunu kullanır.
+Eksik tenant header varsa leave request endpointleri payload/query validation hatalarından önce
+`tenant_header_missing` `400` zarfını döner.
 
 Generic leave request validation `422` örneği:
 

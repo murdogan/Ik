@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
+import pytest
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
@@ -301,6 +302,27 @@ async def test_create_leave_request_rejects_client_controlled_status() -> None:
         await engine.dispose()
 
 
+async def test_leave_routes_prioritize_tenant_header_error_over_payload_validation() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/leave-requests",
+            headers={"X-Correlation-Id": "w4a6-leave-tenant-first"},
+            json={},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=400,
+            code="tenant_header_missing",
+            message="X-Tenant-Id header is required",
+            correlation_id="w4a6-leave-tenant-first",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_create_leave_request_rejects_datetime_strings_for_leave_dates() -> None:
     client, engine = await _client_with_database()
     try:
@@ -545,6 +567,30 @@ async def test_list_leave_request_filters_remain_tenant_scoped() -> None:
 
         assert response.status_code == 200
         assert response.json() == []
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_rejects_invalid_employee_id_filter_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w4a6-leave-filter-validation",
+            },
+            params={"employee_id": "not-a-uuid"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
+            correlation_id="w4a6-leave-filter-validation",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -809,6 +855,31 @@ async def test_approve_non_pending_leave_request_returns_conflict() -> None:
             status_code=409,
             code="leave_request_transition_conflict",
             message="Only pending leave requests can be decided",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+@pytest.mark.parametrize("action", ["approve", "reject", "cancel"])
+async def test_decision_routes_return_consistent_transition_conflict(action: str) -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            f"/api/v1/leave-requests/{APPROVED_REQUEST_ID}/{action}",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": f"w4a6-leave-{action}-conflict",
+            },
+            json=_decision_payload(),
+        )
+
+        _assert_error_response(
+            response,
+            status_code=409,
+            code="leave_request_transition_conflict",
+            message="Only pending leave requests can be decided",
+            correlation_id=f"w4a6-leave-{action}-conflict",
         )
     finally:
         await client.aclose()

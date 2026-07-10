@@ -2,15 +2,18 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4A5 Dashboard enrichment`
+Task: `W4A6 API error consistency`
 
 ## Scope
 
-- Locked the dashboard summary enrichment contract with explicit DB-backed regression coverage for
-  active employee count, pending leave count, department distribution, and this-month starters.
+- Standardized employee, leave balance, and leave request endpoint public error messages behind
+  shared backend constants without changing the response envelope or generated endpoint surface.
+- Added API regressions for tenant-header error precedence over payload/query validation,
+  employee null-status lifecycle normalization, invalid leave request employee filter validation,
+  leave balance tenant-header precedence, and approve/reject/cancel transition conflict messages.
 - Kept the completed API surface explicit: 14 generated OpenAPI operations plus the runtime
   `/openapi.json` schema endpoint.
-- Confirmed the existing dashboard response shape remains unchanged and documented as tenant-scoped.
+- Confirmed tenant isolation behavior and the existing success response shapes remain unchanged.
 - No new endpoint, response envelope, model, migration, permission, or tenant isolation change.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
@@ -64,6 +67,15 @@ Task: `W4A5 Dashboard enrichment`
   descriptions, and tenant-aware parameter/header descriptions.
 - Tenant dependency errors, route-level domain errors, and automatic request validation errors on
   employee, leave balance, and leave request endpoints use the project error envelope.
+- W4A6 locks the current public messages for these endpoint families: generic employee validation
+  returns `Employee request validation failed`, leave balance validation returns
+  `Leave balance request validation failed`, leave request validation returns
+  `Leave request validation failed`, duplicate employee numbers return
+  `Employee number already exists for this tenant`, and non-pending leave decisions return
+  `Only pending leave requests can be decided`.
+- For employee and leave endpoints, tenant header errors are normalized before payload/query/path
+  validation errors when both are present; this keeps missing or invalid tenant context from
+  exposing unrelated validation details.
 - FastAPI's generic request validation remains framework default outside the employee and leave
   endpoint scope.
 - Local demo seed remains a script command, not an API surface:
@@ -89,20 +101,22 @@ The runtime scenarios currently verify:
 
 - `/health`, `/`, and `/openapi.json`.
 - Tenant header missing, invalid, repeated, and cross-tenant behavior.
-- Employee create/list/detail/update/delete, filters, pagination, lifecycle status handling, and
-  tenant isolation.
+- Employee create/list/detail/update/delete, filters, pagination, lifecycle status handling, error
+  envelopes, and tenant isolation.
 - Leave balance read-only summaries, `period_year` filtering, placeholder flags, and tenant
   isolation.
 - Leave request create/list/approve/reject/cancel, filters, pagination, transition conflicts,
-  cross-tenant user/request checks, date-window behavior, and tenant isolation.
+  error envelopes, cross-tenant user/request checks, date-window behavior, and tenant isolation.
 - Dashboard counts, department distribution, recent activity shape, and tenant isolation.
 
 ## Verification
 
-W4A5 local gate run:
+W4A6 local gate run:
 
+- `uv run pytest backend/tests/test_employee_api.py backend/tests/test_leave_balance_api.py backend/tests/test_leave_request_api.py`:
+  passed, 89 tests passed.
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 297 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 304 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered, including documented endpoint table checks.

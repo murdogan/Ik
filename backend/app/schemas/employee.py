@@ -5,6 +5,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.error_messages import (
+    EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+    EMPLOYEE_END_DATE_ONLY_FOR_TERMINATED_MESSAGE,
+    EMPLOYEE_START_DATE_MUST_NOT_BE_NULL_MESSAGE,
+    EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE,
+    EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
+)
 from app.models.employee import EmployeeStatus
 from app.schemas.date_fields import DateOnly
 
@@ -50,7 +57,7 @@ class EmployeeCreate(BaseModel):
             self.employment_end_date is not None
             and self.employment_end_date < self.employment_start_date
         ):
-            raise ValueError("Employment end date must be on or after start date")
+            raise ValueError(EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
         _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
         return self
 
@@ -90,15 +97,15 @@ class EmployeeUpdate(BaseModel):
     def validate_date_order_when_complete(self) -> Self:
         fields_set = self.model_fields_set
         if "employment_start_date" in fields_set and self.employment_start_date is None:
-            raise ValueError("Employment start date must not be null")
+            raise ValueError(EMPLOYEE_START_DATE_MUST_NOT_BE_NULL_MESSAGE)
         if (
             self.employment_start_date is not None
             and self.employment_end_date is not None
             and self.employment_end_date < self.employment_start_date
         ):
-            raise ValueError("Employment end date must be on or after start date")
+            raise ValueError(EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
         if "status" in fields_set and self.status is None:
-            raise ValueError("Status must not be null")
+            raise ValueError(EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE)
         if "status" in fields_set and "employment_end_date" in fields_set:
             _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
         return self
@@ -149,8 +156,8 @@ def _validate_lifecycle_status_end_date(
 ) -> None:
     if status == EmployeeStatus.TERMINATED:
         if employment_end_date is None:
-            raise ValueError("Terminated employees must have an employment end date")
+            raise ValueError(EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE)
         return
 
     if employment_end_date is not None:
-        raise ValueError("Employment end date is only allowed when status is terminated")
+        raise ValueError(EMPLOYEE_END_DATE_ONLY_FOR_TERMINATED_MESSAGE)

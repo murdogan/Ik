@@ -4,6 +4,15 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.error_messages import (
+    EMPLOYEE_END_DATE_MUST_BE_DATE_MESSAGE,
+    EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+    EMPLOYEE_END_DATE_ONLY_FOR_TERMINATED_MESSAGE,
+    EMPLOYEE_START_DATE_MUST_BE_DATE_MESSAGE,
+    EMPLOYEE_START_DATE_REQUIRED_MESSAGE,
+    EMPLOYEE_STATUS_REQUIRED_MESSAGE,
+    EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
+)
 from app.models.employee import Employee, EmployeeStatus
 from app.schemas.employee import (
     EmployeeCreate,
@@ -179,7 +188,7 @@ def _status_value(status: EmployeeStatus | str | None) -> str | None:
 
 def _validate_date_order(start_date: date, end_date: date | None) -> None:
     if end_date is not None and end_date < start_date:
-        raise EmployeeDateRangeError("Employment end date must be on or after start date")
+        raise EmployeeDateRangeError(EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
 
 
 def _validate_employment_lifecycle(
@@ -190,28 +199,24 @@ def _validate_employment_lifecycle(
 ) -> None:
     start_date = _required_employment_date(
         start_date,
-        missing_message="Employment start date is required",
-        invalid_message="Employment start date must be a date without time",
+        missing_message=EMPLOYEE_START_DATE_REQUIRED_MESSAGE,
+        invalid_message=EMPLOYEE_START_DATE_MUST_BE_DATE_MESSAGE,
     )
     end_date = _optional_employment_date(
         end_date,
-        invalid_message="Employment end date must be a date without time",
+        invalid_message=EMPLOYEE_END_DATE_MUST_BE_DATE_MESSAGE,
     )
     _validate_date_order(start_date, end_date)
 
     status_value = _status_value(status)
     if status_value is None:
-        raise EmployeeLifecycleError("Employee status is required")
+        raise EmployeeLifecycleError(EMPLOYEE_STATUS_REQUIRED_MESSAGE)
     if status_value == EmployeeStatus.TERMINATED.value:
         if end_date is None:
-            raise EmployeeLifecycleError(
-                "Terminated employees must have an employment end date"
-            )
+            raise EmployeeLifecycleError(EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE)
         return
     if end_date is not None:
-        raise EmployeeLifecycleError(
-            "Employment end date is only allowed when status is terminated"
-        )
+        raise EmployeeLifecycleError(EMPLOYEE_END_DATE_ONLY_FOR_TERMINATED_MESSAGE)
 
 
 def _required_employment_date(

@@ -310,13 +310,18 @@ async def test_leave_balance_path_validation_uses_standard_error_envelope() -> N
 async def test_leave_balance_routes_require_tenant_header() -> None:
     client, engine = await _client_with_database()
     try:
-        response = await client.get(f"/api/v1/employees/{EMPLOYEE_ID}/leave-balances")
+        response = await client.get(
+            f"/api/v1/employees/{EMPLOYEE_ID}/leave-balances",
+            headers={"X-Correlation-Id": "w4a6-leave-balance-tenant"},
+            params={"period_year": 1800},
+        )
 
         _assert_error_response(
             response,
             status_code=400,
             code="tenant_header_missing",
             message="X-Tenant-Id header is required",
+            correlation_id="w4a6-leave-balance-tenant",
         )
     finally:
         await client.aclose()

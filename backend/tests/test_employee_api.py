@@ -330,6 +330,27 @@ async def test_create_employee_rejects_client_controlled_tenant_id() -> None:
         await engine.dispose()
 
 
+async def test_employee_routes_prioritize_tenant_header_error_over_payload_validation() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers={"X-Correlation-Id": "w4a6-employee-tenant-first"},
+            json={},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=400,
+            code="tenant_header_missing",
+            message="X-Tenant-Id header is required",
+            correlation_id="w4a6-employee-tenant-first",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_create_employee_rejects_datetime_string_for_employment_date() -> None:
     client, engine = await _client_with_database()
     try:
@@ -831,6 +852,30 @@ async def test_update_employee_rejects_null_start_date() -> None:
             status_code=422,
             code="employee_validation_error",
             message="Employee request validation failed",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_null_status_with_lifecycle_error_envelope() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w4a6-employee-null-status",
+            },
+            json={"status": None},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_invalid_lifecycle",
+            message="Status must not be null",
+            correlation_id="w4a6-employee-null-status",
         )
     finally:
         await client.aclose()

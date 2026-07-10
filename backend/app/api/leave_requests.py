@@ -14,6 +14,7 @@ from app.api.errors import (
     user_not_found_error,
 )
 from app.api.openapi import LEAVE_REQUESTS_TAG
+from app.core.error_messages import LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE
 from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
@@ -69,7 +70,7 @@ def get_leave_request_list_filters(
 ) -> LeaveRequestListFilters:
     if start_date is not None and end_date is not None and end_date < start_date:
         raise leave_request_date_range_error(
-            "Leave request end_date filter must be on or after start_date"
+            LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE
         )
     return LeaveRequestListFilters(
         status=status_filter,

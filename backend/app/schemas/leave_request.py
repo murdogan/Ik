@@ -3,6 +3,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.error_messages import (
+    LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+    LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+)
 from app.models.leave_request import LeaveRequestStatus
 from app.schemas.date_fields import DateOnly
 
@@ -29,7 +33,7 @@ class LeaveRequestCreate(BaseModel):
     @model_validator(mode="after")
     def validate_date_order(self) -> Self:
         if self.end_date < self.start_date:
-            raise ValueError("Leave end date must be on or after start date")
+            raise ValueError(LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
         return self
 
 
@@ -62,7 +66,7 @@ class LeaveRequestListFilters(BaseModel):
             and self.end_date is not None
             and self.end_date < self.start_date
         ):
-            raise ValueError("Leave request end_date filter must be on or after start_date")
+            raise ValueError(LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
         return self
 
 

@@ -4,6 +4,14 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.error_messages import (
+    LEAVE_END_DATE_MUST_BE_DATE_MESSAGE,
+    LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
+    LEAVE_END_DATE_REQUIRED_MESSAGE,
+    LEAVE_REQUEST_ONLY_PENDING_CAN_BE_DECIDED_MESSAGE,
+    LEAVE_START_DATE_MUST_BE_DATE_MESSAGE,
+    LEAVE_START_DATE_REQUIRED_MESSAGE,
+)
 from app.models.employee import Employee
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.user import User
@@ -141,7 +149,7 @@ class LeaveRequestService:
     ) -> LeaveRequest:
         leave_request = await self._get_leave_request(tenant_id, leave_request_id)
         if leave_request.status != LeaveRequestStatus.PENDING.value:
-            raise LeaveRequestTransitionError("Only pending leave requests can be decided")
+            raise LeaveRequestTransitionError(LEAVE_REQUEST_ONLY_PENDING_CAN_BE_DECIDED_MESSAGE)
 
         await self._ensure_user_in_tenant(tenant_id, payload.decided_by_user_id)
         leave_request.status = target_status.value
@@ -181,16 +189,16 @@ class LeaveRequestService:
 def _validate_date_order(start_date: object, end_date: object) -> None:
     start_date = _required_leave_date(
         start_date,
-        missing_message="Leave start date is required",
-        invalid_message="Leave start date must be a date without time",
+        missing_message=LEAVE_START_DATE_REQUIRED_MESSAGE,
+        invalid_message=LEAVE_START_DATE_MUST_BE_DATE_MESSAGE,
     )
     end_date = _required_leave_date(
         end_date,
-        missing_message="Leave end date is required",
-        invalid_message="Leave end date must be a date without time",
+        missing_message=LEAVE_END_DATE_REQUIRED_MESSAGE,
+        invalid_message=LEAVE_END_DATE_MUST_BE_DATE_MESSAGE,
     )
     if end_date < start_date:
-        raise LeaveRequestDateRangeError("Leave end date must be on or after start date")
+        raise LeaveRequestDateRangeError(LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
 
 
 def _required_leave_date(
