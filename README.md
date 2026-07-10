@@ -163,11 +163,12 @@ Eksik veya boş `X-Tenant-Id`, canonical hyphenated UUID olmayan tenant id değe
 `X-Tenant-Id` header'ları ve boş gönderilen `X-Tenant-Slug` `400` status koduyla aynı error
 zarfını döner.
 
-Bu W3B3 örnekleri mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün
+Bu W4B3 örnekleri mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün
 doğrudan schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
 HTTP request bloklarında gösterilen tenant header'ları her domain endpoint için zorunludur.
-Create ve decision örneklerindeki yeni `id` değerleri temsili server-generated kayıtlardır; gerçek
-çağrıda aktif tenant içindeki mevcut kayıt id'leri kullanılmalıdır.
+List endpointleri plain JSON array döner; eşleşen kayıt yoksa `200 []` yanıtı alınır ve pagination
+metadata dönmez. Create ve decision örneklerindeki yeni `id` değerleri temsili server-generated
+kayıtlardır; gerçek çağrıda aktif tenant içindeki mevcut kayıt id'leri kullanılmalıdır.
 
 Employee list örneği:
 
@@ -313,6 +314,32 @@ Employee endpointlerinde generic request validation hataları `employee_validati
 Null `status` gibi lifecycle validation hataları ise generic validation yerine
 `employee_invalid_lifecycle` kodu ve sabit lifecycle mesajıyla döner.
 
+Employee `404` not-found ve tenant scope dışı kayıt örneği:
+
+```json
+{
+  "error": {
+    "code": "employee_not_found",
+    "message": "Employee not found",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+Employee duplicate number `409` örneği:
+
+```json
+{
+  "error": {
+    "code": "employee_number_conflict",
+    "message": "Employee number already exists for this tenant",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
 Leave balance summary örneği:
 
 ```http
@@ -350,6 +377,8 @@ Leave balance endpointinde generic request validation hataları `leave_balance_v
 kodu ve `Leave balance request validation failed` mesajıyla aynı error zarfını kullanır.
 Eksik tenant header, invalid path/query validation hatalarından önce `tenant_header_missing`
 zarfına normalize edilir.
+Tenant içindeki çalışan için manuel bakiye özeti yoksa response `200 []` olur; tenant scope dışı
+çalışan için `employee_not_found` `404` zarfı döner.
 
 Leave request list örneği:
 
@@ -421,6 +450,32 @@ zarfını kullanır. Leave create tarih sırası ve liste tarih aralığı kural
 Approve/reject/cancel decision endpointlerinde non-pending talepler aynı
 `leave_request_transition_conflict` kodu ve `Only pending leave requests can be decided` mesajını
 kullanır.
+
+Invalid leave request date filter `422` örneği:
+
+```json
+{
+  "error": {
+    "code": "leave_request_invalid_date_range",
+    "message": "Leave request end_date filter must be on or after start_date",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+Cross-tenant veya eksik talep sahibi kullanıcı `404` örneği:
+
+```json
+{
+  "error": {
+    "code": "user_not_found",
+    "message": "User not found",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
 
 Leave approve request/response örneği:
 

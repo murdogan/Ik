@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-10 / W4A6 API error consistency.
+Son güncelleme: 2026-07-10 / W4B3 API docs examples.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -39,10 +39,11 @@ Geçerli uygulama notları:
   davranışı değişmemiştir. W3C6 itibarıyla smoke script generated OpenAPI operasyon seti,
   documented smoke registry ve güncel endpoint tablolarını path ve HTTP method seviyesinde
   iki yönlü doğrular.
-- W3B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
-  örnekleri taşır. Employee ve leave endpoint örnekleri method/path, tenant header, request body,
-  success response ve temel error zarfı seviyesinde gösterilir. Employee ve leave endpointleri
-  bugün doğrudan schema/list döner; Bölüm 1'deki `{ data, meta }` zarfı gelecek standart hedefidir.
+- W4B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre employee ve leave API'leri
+  için concrete request/response örneklerini güncel tutar. Örnekler method/path, tenant header,
+  query/body, success status/body, empty-list davranışı ve temsilî error zarflarını gösterir.
+  Employee ve leave endpointleri bugün doğrudan schema/list döner; Bölüm 1'deki `{ data, meta }`
+  zarfı gelecek standart hedefidir.
 - Domain endpointleri canonical hyphenated UUID formatında `X-Tenant-Id` header'ı ister.
   Compact, braces veya `urn:uuid:` UUID formları ve tekrarlı `X-Tenant-Id` header'ları
   geçersizdir. `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
@@ -132,11 +133,16 @@ X-Correlation-Id: req_wf_demo_001
 
 - Employee örnekleri mevcut `EmployeeRead`, `EmployeeCreate` ve `EmployeeUpdate` alanlarıyla
   sınırlıdır; hassas kimlik, ücret, belge veya bordro alanı yoktur.
+- Employee list ve leave request list örnekleri mevcut `limit`/`offset` pagination davranışını
+  gösterir; response body bugün plain JSON array'dir, pagination metadata dönmez.
 - Leave request örnekleri mevcut `LeaveRequestRead`, `LeaveRequestCreate` ve
   `LeaveRequestDecision` alanlarını gösterir. Approval/reject/cancel işlemleri aynı decision body
   shape'ini kullanır.
 - Leave balance örneği read-only manuel placeholder response shape'ini gösterir. Demo seed çalışan
   ve leave request kayıtları üretir; bakiye read modeli ayrıca manuel/test verisiyle doldurulur.
+- Error örnekleri employee, leave balance ve leave request endpointlerinde kullanılan normalize
+  `{ "error": { ... } }` zarfına aittir; diğer endpointlerdeki FastAPI validation yanıtları henüz
+  bu kapsamda değildir.
 - Create response örneklerindeki `id` değerleri server-generated temsili UUID'lerdir; request body
   içinde gönderilmez.
 - Decision transition örneklerindeki `f400...0011` ve `f400...0012` gibi path id'leri bağımsız
@@ -347,6 +353,12 @@ Response `200` örneği:
 ]
 ```
 
+Eşleşen kayıt yoksa response `200` ve boş array'dir:
+
+```json
+[]
+```
+
 ### `POST /api/v1/employees`
 
 Yetki: `employee:create:tenant`.
@@ -413,6 +425,9 @@ Generic employee validation `422` örneği:
   }
 }
 ```
+
+Bu zarf invalid `status`, `limit > 200`, `limit < 1`, `offset < 0`, geçersiz UUID path ve field
+validation hataları için de kullanılır.
 
 Duplicate employee number `409` örneği:
 
@@ -552,6 +567,9 @@ X-Correlation-Id: req_wf_demo_001
 
 Response `204`: body dönmez.
 
+Silinen, eksik veya tenant scope dışındaki çalışan tekrar okunursa aynı `employee_not_found` `404`
+zarfı döner.
+
 ## 8. Leave endpointleri
 
 | Method | Path | Permission | Not |
@@ -605,6 +623,12 @@ Response `200` örneği:
 ]
 ```
 
+Çalışan tenant içindeyse ama manuel bakiye özeti yoksa response `200` ve boş array'dir:
+
+```json
+[]
+```
+
 Generic leave balance validation `422` örneği:
 
 ```json
@@ -617,6 +641,9 @@ Generic leave balance validation `422` örneği:
   }
 }
 ```
+
+Tenant scope dışındaki veya eksik çalışan için employee endpointleriyle aynı `employee_not_found`
+`404` zarfı döner.
 
 ### `GET /api/v1/leave-requests`
 
@@ -659,6 +686,12 @@ Response `200` örneği:
     "decision_note": null
   }
 ]
+```
+
+Eşleşen talep yoksa response `200` ve boş array'dir:
+
+```json
+[]
 ```
 
 Invalid filter range `422` örneği:
@@ -729,6 +762,19 @@ Generic leave request validation `422` örneği:
   "error": {
     "code": "leave_request_validation_error",
     "message": "Leave request validation failed",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+Cross-tenant veya eksik talep sahibi kullanıcı `404` örneği:
+
+```json
+{
+  "error": {
+    "code": "user_not_found",
+    "message": "User not found",
     "details": null,
     "correlation_id": "req_wf_demo_001"
   }

@@ -2,15 +2,18 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4B1 Demo seed command`
+Task: `W4B3 API docs examples`
 
 ## Scope
 
-- Reconfirmed the local demo seed command remains a script-only data utility, not an API surface.
-- Hardened the local database URL guard so local hostnames are matched case-insensitively before
-  the command opens a database connection.
-- Added a focused seed command regression for uppercase `LOCALHOST` allowlist handling, alongside
-  the existing idempotent command and tenant-scoped service coverage.
+- Refreshed the OpenAPI endpoint draft and README local API section with concrete employee and
+  leave request/response examples.
+- Kept examples aligned with the current FastAPI behavior: tenant headers are required, list
+  endpoints return plain arrays, empty matches return `200 []`, and create/decision IDs are
+  server-generated or existing tenant-scoped path values.
+- Added representative normalized error envelope examples for employee not-found/conflict,
+  leave balance validation/not-found behavior, leave request date-filter validation, user
+  not-found, and decision transition conflicts.
 - Kept the completed API surface explicit and unchanged: 14 generated OpenAPI operations plus the
   runtime `/openapi.json` schema endpoint.
 - No new endpoint, response envelope, model, migration, permission, or tenant isolation change.
@@ -64,6 +67,9 @@ Task: `W4B1 Demo seed command`
 - OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
   `Leave Requests`. Current operations have explicit summaries, descriptions, response
   descriptions, and tenant-aware parameter/header descriptions.
+- README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
+  list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
+  approve/reject/cancel decision flows.
 - Tenant dependency errors, route-level domain errors, and automatic request validation errors on
   employee, leave balance, and leave request endpoints use the project error envelope.
 - W4A6 locks the current public messages for these endpoint families: generic employee validation
@@ -111,10 +117,8 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W4B1 local gate run:
+W4B3 local gate run:
 
-- `uv run pytest backend/tests/test_demo_seed_service.py backend/tests/test_demo_seed_command.py`:
-  passed, 6 tests passed.
 - `uv run ruff check backend`: passed.
 - `uv run pytest`: passed, 305 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
