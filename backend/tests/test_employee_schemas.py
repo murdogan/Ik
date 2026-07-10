@@ -305,3 +305,38 @@ def test_employee_read_accepts_model_lifecycle_status_string() -> None:
 
     assert payload.status == EmployeeStatus.TERMINATED
     assert payload.employment_end_date == date(2026, 7, 31)
+
+
+def test_employee_read_rejects_terminated_status_without_end_date() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeRead(
+            id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            employee_number="WF-001",
+            first_name="Ada",
+            last_name="Yilmaz",
+            email=None,
+            department="People",
+            position="HR Specialist",
+            status=EmployeeStatus.TERMINATED,
+            employment_start_date=date(2026, 7, 1),
+            employment_end_date=None,
+        )
+
+
+@pytest.mark.parametrize("status", [EmployeeStatus.ACTIVE, EmployeeStatus.ON_LEAVE])
+def test_employee_read_rejects_end_date_for_current_statuses(
+    status: EmployeeStatus,
+) -> None:
+    with pytest.raises(ValidationError):
+        EmployeeRead(
+            id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            employee_number="WF-001",
+            first_name="Ada",
+            last_name="Yilmaz",
+            email=None,
+            department="People",
+            position="HR Specialist",
+            status=status,
+            employment_start_date=date(2026, 7, 1),
+            employment_end_date=date(2026, 7, 31),
+        )

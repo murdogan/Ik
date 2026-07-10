@@ -149,6 +149,11 @@ class EmployeeRead(BaseModel):
     employment_start_date: DateOnly
     employment_end_date: DateOnly | None
 
+    @model_validator(mode="after")
+    def validate_lifecycle_status_end_date(self) -> Self:
+        _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
+        return self
+
 
 def _validate_lifecycle_status_end_date(
     status: EmployeeStatus | None,

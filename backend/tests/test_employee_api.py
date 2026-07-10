@@ -446,6 +446,30 @@ async def test_list_employees_returns_current_tenant_records_only() -> None:
         await engine.dispose()
 
 
+async def test_list_employees_exposes_lifecycle_fields_for_supported_statuses() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get("/api/v1/employees", headers=_tenant_headers())
+
+        assert response.status_code == 200
+        employees_by_number = {
+            employee["employee_number"]: employee for employee in response.json()
+        }
+        assert employees_by_number["WF-001"]["status"] == EmployeeStatus.ACTIVE.value
+        assert employees_by_number["WF-001"]["employment_start_date"] == "2026-07-01"
+        assert employees_by_number["WF-001"]["employment_end_date"] is None
+        assert employees_by_number["WF-010"]["status"] == EmployeeStatus.ON_LEAVE.value
+        assert employees_by_number["WF-010"]["employment_start_date"] == "2026-07-02"
+        assert employees_by_number["WF-010"]["employment_end_date"] is None
+        assert employees_by_number["WF-020"]["status"] == EmployeeStatus.TERMINATED.value
+        assert employees_by_number["WF-020"]["employment_start_date"] == "2026-07-03"
+        assert employees_by_number["WF-020"]["employment_end_date"] == "2026-07-31"
+        assert all("tenant_id" not in employee for employee in employees_by_number.values())
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employee_blank_filter_values_are_ignored() -> None:
     client, engine = await _client_with_database()
     try:
