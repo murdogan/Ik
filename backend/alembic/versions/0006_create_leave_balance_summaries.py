@@ -17,7 +17,21 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _widen_existing_postgresql_version_column() -> None:
+    if op.get_bind().dialect.name == "postgresql":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=128),
+            existing_nullable=False,
+        )
+
+
 def upgrade() -> None:
+    # PostgreSQL enforces Alembic's historical VARCHAR(32) default. This migration's
+    # published 35-character revision id must remain compatible with databases at 0005.
+    _widen_existing_postgresql_version_column()
     op.create_table(
         "leave_balance_summaries",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),

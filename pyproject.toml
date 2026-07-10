@@ -26,6 +26,10 @@ dev = [
 testpaths = ["backend/tests"]
 pythonpath = ["backend"]
 asyncio_mode = "auto"
+addopts = "-m 'not postgres'"
+markers = [
+    "postgres: requires an explicitly configured disposable PostgreSQL integration environment",
+]
 
 [tool.ruff]
 line-length = 100

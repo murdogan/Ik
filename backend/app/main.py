@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
@@ -9,18 +12,40 @@ from app.api.landing import router as landing_router
 from app.api.leave_balances import router as leave_balances_router
 from app.api.leave_requests import router as leave_requests_router
 from app.api.openapi import OPENAPI_TAGS
-from app.core.config import get_settings
+from app.core.config import APP_SETTINGS_STATE_KEY, Settings, get_settings
+from app.db.session import (
+    DATABASE_RUNTIME_STATE_KEY,
+    create_database_runtime,
+)
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    settings = getattr(application.state, APP_SETTINGS_STATE_KEY, None)
+    if settings is None:
+        settings = get_settings()
+    runtime = create_database_runtime(settings)
+    setattr(application.state, DATABASE_RUNTIME_STATE_KEY, runtime)
+    try:
+        yield
+    finally:
+        try:
+            await runtime.dispose()
+        finally:
+            delattr(application.state, DATABASE_RUNTIME_STATE_KEY)
+
+
+def create_app(*, settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
+        lifespan=lifespan,
         docs_url="/docs" if settings.environment != "prod" else None,
         redoc_url="/redoc" if settings.environment != "prod" else None,
         openapi_tags=OPENAPI_TAGS,
     )
+    setattr(app.state, APP_SETTINGS_STATE_KEY, settings)
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     app.include_router(dashboard_router)

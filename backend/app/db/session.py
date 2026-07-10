@@ -1,18 +1,82 @@
 from collections.abc import AsyncIterator
-from functools import lru_cache
+from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from fastapi import Request
+from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import StaticPool
 
-from app.core.config import get_settings
+from app.core.config import Settings
+
+DATABASE_RUNTIME_STATE_KEY = "database_runtime"
 
 
-@lru_cache
-def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
-    return async_sessionmaker(engine, expire_on_commit=False)
+@dataclass(slots=True)
+class DatabaseRuntime:
+    engine: AsyncEngine
+    session_factory: async_sessionmaker[AsyncSession]
+
+    async def dispose(self) -> None:
+        await self.engine.dispose()
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as session:
+def build_engine_options(settings: Settings) -> dict[str, Any]:
+    database_url = make_url(settings.database_url)
+    options: dict[str, Any] = {"pool_pre_ping": True}
+
+    if database_url.get_backend_name() == "postgresql":
+        if database_url.drivername != "postgresql+asyncpg":
+            raise ValueError("PostgreSQL database URLs must use the asyncpg driver")
+        options.update(
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
+            pool_timeout=settings.database_pool_timeout_seconds,
+            pool_recycle=settings.database_pool_recycle_seconds,
+            connect_args={
+                "timeout": settings.database_connect_timeout_seconds,
+                "server_settings": {
+                    "statement_timeout": str(settings.database_statement_timeout_ms),
+                    "idle_in_transaction_session_timeout": str(
+                        settings.database_idle_transaction_timeout_ms
+                    ),
+                },
+            },
+        )
+    elif database_url.get_backend_name() == "sqlite" and database_url.database in {
+        None,
+        "",
+        ":memory:",
+    }:
+        options.update(
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+            use_insertmanyvalues=False,
+        )
+
+    return options
+
+
+def create_database_runtime(settings: Settings) -> DatabaseRuntime:
+    engine = create_async_engine(
+        settings.database_url,
+        **build_engine_options(settings),
+    )
+    return DatabaseRuntime(
+        engine=engine,
+        session_factory=async_sessionmaker(engine, expire_on_commit=False),
+    )
+
+
+async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    runtime = getattr(request.app.state, DATABASE_RUNTIME_STATE_KEY, None)
+    if runtime is None:
+        raise RuntimeError("Database runtime is unavailable outside the application lifespan")
+
+    async with runtime.session_factory() as session:
         yield session

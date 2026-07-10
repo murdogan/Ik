@@ -1,11 +1,37 @@
 import asyncio
 from logging.config import fileConfig
+from typing import Any
 
 from alembic import context
+from alembic.ddl.postgresql import PostgresqlImpl
 from app.db.base import Base
 from app.models import Employee, LeaveBalanceSummary, LeaveRequest, Tenant, User  # noqa: F401
-from sqlalchemy import pool
+from sqlalchemy import String, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.sql.schema import Table
+
+
+class ApplicationPostgresqlImpl(PostgresqlImpl):
+    """Keep published migration identifiers intact beyond Alembic's 32-char default."""
+
+    __dialect__ = "postgresql"
+
+    def version_table_impl(
+        self,
+        *,
+        version_table: str,
+        version_table_schema: str | None,
+        version_table_pk: bool,
+        **kwargs: Any,
+    ) -> Table:
+        table = super().version_table_impl(
+            version_table=version_table,
+            version_table_schema=version_table_schema,
+            version_table_pk=version_table_pk,
+            **kwargs,
+        )
+        table.c.version_num.type = String(128)
+        return table
 
 config = context.config
 
@@ -41,10 +67,11 @@ async def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
+    try:
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+    finally:
+        await connectable.dispose()
 
 
 if context.is_offline_mode():

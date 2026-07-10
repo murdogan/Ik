@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
-from collections.abc import AsyncIterator
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -21,8 +21,9 @@ OPENAPI_ENDPOINT_DRAFT_DOC = (
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.core.config import Settings
 from app.db.base import Base
-from app.db.session import get_session
+from app.db.session import DATABASE_RUNTIME_STATE_KEY
 from app.main import create_app
 from app.models.employee import EmployeeStatus
 from app.models.leave_balance_summary import LeaveBalanceSummary
@@ -30,13 +31,12 @@ from app.models.leave_request import LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
 
 TENANT_ID = UUID("11111111-aaaa-4111-8111-111111111111")
 OTHER_TENANT_ID = UUID("44444444-dddd-4444-8444-444444444444")
@@ -79,18 +79,25 @@ DOCUMENTED_ENDPOINT_TABLES = {
 EXECUTED_DOCUMENTED_ENDPOINTS: set[tuple[str, str]] = set()
 
 
-async def main() -> None:
+async def main(database_url: str | None = None) -> None:
     EXECUTED_DOCUMENTED_ENDPOINTS.clear()
-    engine, session_factory = await _create_smoke_database()
-    app = create_app()
+    if database_url is not None:
+        _ensure_disposable_postgresql_database(database_url)
+    settings = Settings(
+        _env_file=None,
+        environment="local",
+        database_url=database_url or "sqlite+aiosqlite:///:memory:",
+    )
+    app = create_app(settings=settings)
 
-    async def override_session() -> AsyncIterator[AsyncSession]:
-        async with session_factory() as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_session
-
-    try:
+    async with app.router.lifespan_context(app):
+        runtime = getattr(app.state, DATABASE_RUNTIME_STATE_KEY)
+        session_factory = runtime.session_factory
+        await _prepare_smoke_database(
+            runtime.engine,
+            session_factory,
+            create_schema=database_url is None,
+        )
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://backend-smoke.local",
@@ -120,9 +127,6 @@ async def main() -> None:
                 other_tenant_leave_request_id=leave_request_ids["other_tenant"],
             )
             _expect_executed_documented_endpoint_coverage()
-    finally:
-        app.dependency_overrides.clear()
-        await engine.dispose()
 
     print(
         "BACKEND_SMOKE_OK "
@@ -134,17 +138,16 @@ async def main() -> None:
     )
 
 
-async def _create_smoke_database() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        use_insertmanyvalues=False,
-    )
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+async def _prepare_smoke_database(
+    engine: AsyncEngine,
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    create_schema: bool,
+) -> None:
+    if create_schema:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
 
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         session.add_all(
             [
@@ -192,9 +195,6 @@ async def _create_smoke_database() -> tuple[AsyncEngine, async_sessionmaker[Asyn
             ]
         )
         await session.commit()
-
-    return engine, session_factory
-
 
 async def _smoke_system_endpoints(client: AsyncClient) -> None:
     health = _expect_json(
@@ -1534,5 +1534,29 @@ def _format_operations(operations: list[tuple[str, str]]) -> list[str]:
     return [f"{method.upper()} {path}" for method, path in operations]
 
 
+def _ensure_disposable_postgresql_database(database_url: str) -> None:
+    url = make_url(database_url)
+    if url.get_backend_name() != "postgresql" or not (
+        url.database and url.database.startswith("ik_p0a_")
+    ):
+        raise ValueError(
+            "--database-url must target an isolated PostgreSQL database whose name starts "
+            "with 'ik_p0a_'"
+        )
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the backend API smoke scenario")
+    parser.add_argument(
+        "--database-url",
+        help=(
+            "Optional URL for an already migrated disposable integration-test database. "
+            "The default remains an in-memory SQLite database."
+        ),
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    args = _parse_args()
+    asyncio.run(main(database_url=args.database_url))

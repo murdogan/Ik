@@ -14,6 +14,20 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ik
+          POSTGRES_PASSWORD: ik
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ik -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,5 +48,10 @@ jobs:
       - name: Ruff check
         run: uv run ruff check backend
 
-      - name: Tests
-        run: uv run pytest
+      - name: Fast SQLite tests
+        run: uv run pytest -q -m "not postgres"
+
+      - name: PostgreSQL integration and migration tests
+        env:
+          IK_TEST_DATABASE_URL: postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres
+        run: uv run pytest -q -m postgres

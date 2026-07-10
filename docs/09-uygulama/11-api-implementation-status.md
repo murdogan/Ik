@@ -1,11 +1,22 @@
 # API Implementation Status Report
 
 Date: 2026-07-10
-Branch: `codex/continuous-24h-backend`
-Task: `W4C6 Implementation report refresh`
+Branch: `codex/mvp-phase0-until-20260711-1100`
+Task: `P0A PostgreSQL integration-test baseline and application DB lifecycle`
 
 ## Scope
 
+- Added an opt-in real PostgreSQL integration lane while preserving the default fast SQLite suite.
+- Moved runtime engine/sessionmaker ownership into FastAPI lifespan with deterministic engine
+  disposal at shutdown.
+- Added environment-driven pool, acquisition/recycle, connect, statement, and idle-transaction
+  timeout configuration. PostgreSQL 16 uses `statement_timeout` and
+  `idle_in_transaction_session_timeout`.
+- Added PostgreSQL Alembic upgrade/downgrade/drift coverage and current-API compatibility coverage
+  against an isolated temporary database.
+- Preserved the published Alembic revision identifiers and widened PostgreSQL's version column to
+  128 characters, including the upgrade path from an existing 32-character column at revision
+  0005; SQLite had not enforced this PostgreSQL failure mode.
 - Refreshed this implementation status report around the current completed API surface and
   remaining backend backlog.
 - Reconfirmed the completed API surface is unchanged: 14 generated OpenAPI operations plus the
@@ -16,8 +27,8 @@ Task: `W4C6 Implementation report refresh`
   smoke registry is listed in docs but not executed by the smoke runtime scenarios.
 - Carried forward W4C5 OpenAPI metadata hygiene: generated docs still use readable tag
   descriptions and tenant-aware operation summaries/descriptions.
-- No endpoint behavior, response envelope, model, migration, permission, tenant isolation, or
-  service-layer change.
+- No endpoint/OpenAPI behavior, response envelope, model, permission, tenant isolation, auth/RBAC,
+  or product-feature change.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -101,6 +112,33 @@ Task: `W4C6 Implementation report refresh`
   The command refuses non-local database URL hosts before opening a connection; local hostnames are
   matched case-insensitively.
 
+## PostgreSQL Baseline and DB Lifecycle
+
+The normal `uv run pytest -q` gate remains the fast SQLite lane. PostgreSQL tests are marked
+`postgres` and require an explicit administration URL:
+
+```bash
+docker compose up -d --wait postgres
+IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
+```
+
+The fixture creates a unique temporary database, runs migration and API scenarios there, and drops
+it after the test session; it does not downgrade or clear the database named by the administration
+URL. Runtime engine/sessionmaker creation belongs to FastAPI lifespan and shutdown disposes the
+engine. Pool and timeout overrides use these environment variables:
+
+- `IK_DATABASE_POOL_SIZE`
+- `IK_DATABASE_MAX_OVERFLOW`
+- `IK_DATABASE_POOL_TIMEOUT_SECONDS`
+- `IK_DATABASE_POOL_RECYCLE_SECONDS`
+- `IK_DATABASE_CONNECT_TIMEOUT_SECONDS`
+- `IK_DATABASE_STATEMENT_TIMEOUT_MS`
+- `IK_DATABASE_IDLE_TRANSACTION_TIMEOUT_MS`
+
+This foundation changes database wiring and test evidence only. The completed API/OpenAPI operation
+set and intentional tenant-header compatibility remain unchanged; auth, RBAC, RLS, and new product
+features are outside P0A.
+
 ## Smoke Coverage
 
 `uv run python scripts/backend_api_smoke.py` runs entirely local/in-memory through ASGI and SQLite.
@@ -131,11 +169,13 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W4C6 local gate run:
+P0A local gates:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 329 tests passed, 1 existing Starlette `TestClient` deprecation
-  warning.
+- `uv run pytest -q`: passed, 336 fast tests passed and 5 PostgreSQL tests deselected; the one
+  existing Starlette `TestClient` deprecation warning remains.
+- `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres`: passed against PostgreSQL 16.4,
+  5 PostgreSQL integration tests passed and 336 fast tests were deselected.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered, including documented endpoint table checks, OpenAPI operation drift checks,
   and `documented_endpoint_runtime_coverage`.
@@ -152,4 +192,5 @@ W4C6 local gate run:
 - Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.
 - Employee document, reporting, analytics, and export endpoints in later MVP phases.
-- CI/OpenAPI contract governance once workflow-token constraints are resolved outside this task.
+- Activating the documented CI template remains repository administration outside P0A; the
+  template now describes both the fast SQLite and PostgreSQL service-backed test steps.

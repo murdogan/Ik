@@ -15,6 +15,35 @@ Bu doküman, IK Platform'un test piramidi, otomasyon katmanları, domain kritik 
 
 Hedef: Kritik domain logic yüksek kapsam, UI/E2E daha az ama kritik akış odaklı olmalıdır.
 
+### 1.1 Veritabanı test hatları
+
+Varsayılan komut hızlı SQLite unit/API/migration testlerini çalıştırır. PostgreSQL
+bağlantısı gerektiren testler `postgres` marker'ıyla opt-in tutulur:
+
+```bash
+uv run pytest -q
+```
+
+Gerçek PostgreSQL 16 hattı lokal Docker'da ve aynı ortam sözleşmesiyle CI'da şöyle çalışır:
+
+```bash
+docker compose up -d --wait postgres
+IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
+```
+
+`IK_TEST_DATABASE_URL` bu hat için zorunludur. Fixture verilen yönetim URL'si üzerinden her test
+oturumu için izole ve benzersiz bir geçici veritabanı oluşturur, Alembic ve API testlerini orada
+çalıştırır ve sonunda veritabanını siler. PostgreSQL hattı en az şunları kanıtlar:
+
+- Alembic `base → head → base` upgrade/downgrade ve model metadata drift kontrolü.
+- PostgreSQL UUID/timestamp tipleri ile index, unique, foreign-key ve check constraint davranışları.
+- Mevcut tenant-scoped API ve OpenAPI operasyon setinin PostgreSQL üzerindeki uyumluluğu.
+- Pool/bağlantı yaşam döngüsü ile `statement_timeout` ve PostgreSQL 16 uyumlu
+  `idle_in_transaction_session_timeout` ayarları.
+
+PostgreSQL'e özgü bir iddia SQLite sonucu ile geçmiş sayılmaz. FastAPI lifespan runtime engine
+ve sessionmaker'ın sahibidir; shutdown testi engine dispose davranışını da kapsar.
+
 ## 2. Kritik E2E akışları
 
 - Login + MFA hazırlığı.
@@ -120,7 +149,8 @@ V1 yerleşik bordro motorunda golden dataset zorunlu olur.
 
 | Paket | Tetik |
 |---|---|
-| PR hızlı paket | Unit + integration + contract + smoke |
+| PR hızlı paket | SQLite unit/API + contract + smoke |
+| PR PostgreSQL paket | Gerçek DB API + migration upgrade/downgrade/drift |
 | Gece tam paket | E2E, security, performance subset |
 | Deploy sonrası smoke | Prod sentetik tenant |
 | Release regresyonu | Staging bake + kritik flows |
@@ -148,6 +178,7 @@ GA/pilot çıkış kriterleri:
 - API değiştiyse OpenAPI güncellenir.
 - Yetki değiştiyse permission matrix güncellenir.
 - Migration varsa migration smoke geçer.
+- PostgreSQL'e özgü persistence/migration değişikliğinde `postgres` hattı geçer.
 - Kritik akış etkileniyorsa E2E güncellenir.
 - Security taraması temizdir.
 - Docs ilgili yerde güncellenmiştir.

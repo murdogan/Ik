@@ -482,9 +482,8 @@ def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
 
 
 def test_dashboard_summary_endpoint_requires_tenant_header() -> None:
-    client = TestClient(create_app())
-
-    response = client.get("/api/v1/dashboard/summary")
+    with TestClient(create_app()) as client:
+        response = client.get("/api/v1/dashboard/summary")
 
     assert response.status_code == 400
     assert response.json() == {
@@ -498,12 +497,11 @@ def test_dashboard_summary_endpoint_requires_tenant_header() -> None:
 
 
 def test_dashboard_summary_endpoint_rejects_invalid_tenant_header() -> None:
-    client = TestClient(create_app())
-
-    response = client.get(
-        "/api/v1/dashboard/summary",
-        headers={"X-Tenant-Id": "not-a-uuid", "X-Correlation-Id": "dashboard-tenant"},
-    )
+    with TestClient(create_app()) as client:
+        response = client.get(
+            "/api/v1/dashboard/summary",
+            headers={"X-Tenant-Id": "not-a-uuid", "X-Correlation-Id": "dashboard-tenant"},
+        )
 
     assert response.status_code == 400
     assert response.json() == {

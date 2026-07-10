@@ -66,8 +66,36 @@ Commit öncesi kalite kapıları:
 
 ```bash
 uv run ruff check backend
-uv run pytest
+uv run pytest -q
 ```
+
+`uv run pytest -q` varsayılan hızlı hattıdır. PostgreSQL bağlantısı istemeden SQLite
+unit/API/migration testlerini çalıştırır; `postgres` işaretli entegrasyon testleri ayrı ve
+opt-in'dir.
+
+Gerçek PostgreSQL 16 entegrasyon, API ve migration hattını lokal Docker ile çalıştırmak için:
+
+```bash
+docker compose up -d --wait postgres
+IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
+```
+
+`IK_TEST_DATABASE_URL` PostgreSQL hattı için zorunludur. Test fixture'ı bu URL'yi yalnızca
+yönetim bağlantısı olarak kullanır, benzersiz ve geçici bir test veritabanı oluşturur ve test
+oturumu sonunda siler; uygulama veya geliştirici veritabanında upgrade/downgrade çalıştırmaz.
+Bu hat Alembic upgrade/downgrade ve drift kontrollerini, PostgreSQL'e özgü tip/kısıt
+davranışlarını ve mevcut API sözleşmesini gerçek PostgreSQL üzerinde doğrular.
+
+Uygulama veritabanı engine/sessionmaker yaşam döngüsünü FastAPI lifespan yönetir ve
+kapanışta engine'i dispose eder. Runtime ayarları `IK_DATABASE_POOL_SIZE`,
+`IK_DATABASE_MAX_OVERFLOW`, `IK_DATABASE_POOL_TIMEOUT_SECONDS`,
+`IK_DATABASE_POOL_RECYCLE_SECONDS`, `IK_DATABASE_CONNECT_TIMEOUT_SECONDS`,
+`IK_DATABASE_STATEMENT_TIMEOUT_MS` ve `IK_DATABASE_IDLE_TRANSACTION_TIMEOUT_MS` ortam
+değişkenleriyle override edilebilir. PostgreSQL 16'da sorgu ve açık kalmış transaction
+korumaları sırasıyla `statement_timeout` ve `idle_in_transaction_session_timeout` olarak
+uygulanır. Varsayılanlar sırasıyla pool `5`, overflow `10`, pool bekleme `30` saniye,
+recycle `1800` saniye, bağlantı `10` saniye, statement `30000` ms ve idle transaction
+`60000` ms'dir.
 
 Veritabanı migration komutları:
 
@@ -659,7 +687,8 @@ CI şunları çalıştırır:
 
 - `uv sync --all-groups`
 - `uv run ruff check backend`
-- `uv run pytest`
+- `uv run pytest -q -m "not postgres"`
+- PostgreSQL 16 service ile `uv run pytest -q -m postgres`
 
 ## Durum
 

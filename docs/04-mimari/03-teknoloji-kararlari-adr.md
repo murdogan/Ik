@@ -59,6 +59,20 @@ Sonuç:
 Karar:
 
 - Ana veritabanı PostgreSQL.
+- Uygulama runtime engine ve sessionmaker'ı FastAPI lifespan başlangıcında oluşturulur;
+  sahiplik uygulamadadır ve engine kapanışta dispose edilir.
+- Pool ve timeout değerleri ortam konfigürasyonudur:
+  `IK_DATABASE_POOL_SIZE`, `IK_DATABASE_MAX_OVERFLOW`,
+  `IK_DATABASE_POOL_TIMEOUT_SECONDS`, `IK_DATABASE_POOL_RECYCLE_SECONDS`,
+  `IK_DATABASE_CONNECT_TIMEOUT_SECONDS`, `IK_DATABASE_STATEMENT_TIMEOUT_MS` ve
+  `IK_DATABASE_IDLE_TRANSACTION_TIMEOUT_MS`.
+- PostgreSQL 16 için server-side sınırlar `statement_timeout` ve
+  `idle_in_transaction_session_timeout` ile uygulanır.
+- Yayınlanmış migration kimliklerini değiştirmeden korumak için PostgreSQL Alembic
+  `version_num` kolonu 128 karakterdir; 0006 migration'ı mevcut 32 karakterlik kolonları
+  upgrade sırasında genişletir.
+- Hızlı test hattı SQLite kullanır; persistence, migration ve PostgreSQL'e özgü iddialar
+  gerçek PostgreSQL entegrasyon hattında kanıtlanır.
 
 Gerekçe:
 
@@ -73,6 +87,10 @@ Sonuç:
 
 - Tenant izolasyonu DB seviyesinde de desteklenebilir.
 - Büyük rapor ve analytics için ileride read replica/warehouse gerekebilir.
+- Gizli/global cache'lenmiş engine yerine uygulama kapsamında açık sahiplik vardır; test ve
+  shutdown akışları bağlantıları deterministik olarak kapatabilir.
+- SQLite test engine'lerine PostgreSQL/QueuePool'a özgü parametreler uygulanmaz.
+- Bu karar API/OpenAPI, auth, RBAC veya RLS davranışını değiştirmez.
 
 ## 5. ADR-004 Redis
 
