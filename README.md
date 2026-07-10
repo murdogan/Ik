@@ -110,9 +110,19 @@ Local demo seed ayrı bir script command'dır; tenant/user/employee/leave seed a
 için zaten tek dış transaction sahibidir ve migrated API leaf service commit'i değildir.
 
 Leave decision winner/locking/versioning ve kritik komut idempotency'si sonraki Faz-0
-concurrency/idempotency işidir. Tenant-owned ilişkilerde composite tenant foreign key uygulaması
-da sonraki Faz-0 database-hardening migration bloğunda kalır; P0C bu iki güvenceyi uygulanmış
-saymaz.
+concurrency/idempotency işidir.
+
+P0D ile mevcut tenant-owned parent tablolarından `employees` ve `users` için `(tenant_id, id)`
+candidate key'leri; `leave_requests` ve `leave_balance_summaries` içindeki dört employee/user
+referansı için `(tenant_id, foreign_id)` composite foreign key'leri eklenmiştir. `0009` expand
+migration'ı sekiz mevcut ilişkiyi orphan/cross-tenant veri için tarar, PostgreSQL'de candidate
+index'leri concurrent ve tekrar çalıştırılabilir biçimde kurar, yeni foreign key'leri `NOT VALID`
+olarak eski scalar foreign key'lerle birlikte devreye alır ve concurrent-index penceresini kapatmak
+için preflight'ı constraint lock'ları altında yeniden çalıştırır. `0010` contract migration'ı yeni
+foreign key'leri validate ettikten sonra yalnız eski employee/user scalar foreign key'lerini
+kaldırır. Böylece doğrudan DB write yolu tenant'lar arası employee/user bağlantısı kuramaz;
+tenant root foreign key'leri ve mevcut servis guard'ları korunur. RLS bu değişikliğin parçası
+değildir ve Faz 1'de ayrıca uygulanacaktır.
 
 Veritabanı migration komutları:
 

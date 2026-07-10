@@ -2,7 +2,7 @@ from uuid import UUID
 
 from app.db.base import Base
 from app.models.leave_balance_summary import LeaveBalanceSummary
-from sqlalchemy import CheckConstraint, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 
 
 def test_leave_balance_summary_model_is_registered_in_metadata() -> None:
@@ -61,17 +61,34 @@ def test_leave_balance_summary_persistence_stays_manual_placeholder_only() -> No
 
 def test_leave_balance_summary_foreign_keys_are_tenant_scoped_and_cascading() -> None:
     tenant_id = LeaveBalanceSummary.__table__.columns["tenant_id"]
-    employee_id = LeaveBalanceSummary.__table__.columns["employee_id"]
     tenant_foreign_keys = list(tenant_id.foreign_keys)
-    employee_foreign_keys = list(employee_id.foreign_keys)
+    employee_foreign_keys = {
+        constraint.name: (
+            tuple(element.parent.name for element in constraint.elements),
+            constraint.referred_table.name,
+            tuple(element.column.name for element in constraint.elements),
+            constraint.ondelete,
+        )
+        for constraint in LeaveBalanceSummary.__table__.constraints
+        if isinstance(constraint, ForeignKeyConstraint) and constraint.name is not None
+    }
 
-    assert len(tenant_foreign_keys) == 1
-    assert tenant_foreign_keys[0].target_fullname == "tenants.id"
-    assert tenant_foreign_keys[0].ondelete == "CASCADE"
+    tenant_root_foreign_keys = [
+        foreign_key
+        for foreign_key in tenant_foreign_keys
+        if foreign_key.target_fullname == "tenants.id"
+    ]
+    assert len(tenant_root_foreign_keys) == 1
+    assert tenant_root_foreign_keys[0].ondelete == "CASCADE"
     assert tenant_id.index is True
-    assert len(employee_foreign_keys) == 1
-    assert employee_foreign_keys[0].target_fullname == "employees.id"
-    assert employee_foreign_keys[0].ondelete == "CASCADE"
+    assert employee_foreign_keys[
+        "fk_leave_balance_summaries_tenant_employee_id_employees"
+    ] == (
+        ("tenant_id", "employee_id"),
+        "employees",
+        ("tenant_id", "id"),
+        "CASCADE",
+    )
 
 
 def test_leave_balance_summary_constraints_are_named() -> None:

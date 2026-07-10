@@ -1,6 +1,6 @@
 from app.db.base import Base
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint
 
 
 def test_leave_request_model_is_registered_in_metadata() -> None:
@@ -58,7 +58,11 @@ def test_leave_request_status_values_match_approval_lifecycle() -> None:
 
 def test_leave_request_tenant_foreign_key_cascades_on_tenant_delete() -> None:
     tenant_id = LeaveRequest.__table__.columns["tenant_id"]
-    foreign_keys = list(tenant_id.foreign_keys)
+    foreign_keys = [
+        foreign_key
+        for foreign_key in tenant_id.foreign_keys
+        if foreign_key.target_fullname == "tenants.id"
+    ]
 
     assert len(foreign_keys) == 1
     assert foreign_keys[0].target_fullname == "tenants.id"
@@ -66,26 +70,36 @@ def test_leave_request_tenant_foreign_key_cascades_on_tenant_delete() -> None:
     assert tenant_id.index is True
 
 
-def test_leave_request_employee_foreign_key_cascades_on_employee_delete() -> None:
-    employee_id = LeaveRequest.__table__.columns["employee_id"]
-    foreign_keys = list(employee_id.foreign_keys)
+def test_leave_request_tenant_owned_foreign_keys_include_tenant_id() -> None:
+    foreign_keys = {
+        constraint.name: (
+            tuple(element.parent.name for element in constraint.elements),
+            constraint.referred_table.name,
+            tuple(element.column.name for element in constraint.elements),
+            constraint.ondelete,
+        )
+        for constraint in LeaveRequest.__table__.constraints
+        if isinstance(constraint, ForeignKeyConstraint) and constraint.name is not None
+    }
 
-    assert len(foreign_keys) == 1
-    assert foreign_keys[0].target_fullname == "employees.id"
-    assert foreign_keys[0].ondelete == "CASCADE"
-
-
-def test_leave_request_user_foreign_keys_reference_users() -> None:
-    requested_by = LeaveRequest.__table__.columns["requested_by_user_id"]
-    decided_by = LeaveRequest.__table__.columns["decided_by_user_id"]
-
-    requested_by_foreign_keys = list(requested_by.foreign_keys)
-    decided_by_foreign_keys = list(decided_by.foreign_keys)
-
-    assert len(requested_by_foreign_keys) == 1
-    assert requested_by_foreign_keys[0].target_fullname == "users.id"
-    assert len(decided_by_foreign_keys) == 1
-    assert decided_by_foreign_keys[0].target_fullname == "users.id"
+    assert foreign_keys["fk_leave_requests_tenant_employee_id_employees"] == (
+        ("tenant_id", "employee_id"),
+        "employees",
+        ("tenant_id", "id"),
+        "CASCADE",
+    )
+    assert foreign_keys["fk_leave_requests_tenant_requested_by_user_id_users"] == (
+        ("tenant_id", "requested_by_user_id"),
+        "users",
+        ("tenant_id", "id"),
+        None,
+    )
+    assert foreign_keys["fk_leave_requests_tenant_decided_by_user_id_users"] == (
+        ("tenant_id", "decided_by_user_id"),
+        "users",
+        ("tenant_id", "id"),
+        None,
+    )
 
 
 def test_leave_request_check_constraints_are_named() -> None:

@@ -1,6 +1,15 @@
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +45,12 @@ class LeaveBalanceSummary(Base, TimestampMixin):
             "employee_id",
             "period_year",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "employee_id"],
+            ["employees.tenant_id", "employees.id"],
+            name="fk_leave_balance_summaries_tenant_employee_id_employees",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
@@ -47,7 +62,6 @@ class LeaveBalanceSummary(Base, TimestampMixin):
     )
     employee_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("employees.id", ondelete="CASCADE"),
         nullable=False,
     )
     leave_type: Mapped[str] = mapped_column(String(64), nullable=False)

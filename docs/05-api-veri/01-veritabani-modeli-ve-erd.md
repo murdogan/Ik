@@ -4,7 +4,9 @@ Bu doküman, IK Platform'un ana veri modelini, domain tablolarını, tenant izol
 
 ## 1. Karar özeti
 
-Ana veri deposu PostgreSQL'dir. Tüm tenant-owned tablolarda `tenant_id` bulunur. Hassas alanlar uygulama seviyesinde şifrelenir veya maskelenir. Tenant izolasyonu uygulama katmanı ve mümkünse PostgreSQL RLS ile korunur.
+Ana veri deposu PostgreSQL'dir. Tüm tenant-owned tablolarda `tenant_id` bulunur. Hassas alanlar
+uygulama seviyesinde şifrelenir veya maskelenir. Tenant izolasyonu uygulama guard'ları,
+tenant-owned ilişkilerde composite foreign key'ler ve Faz 1 PostgreSQL RLS ile katmanlı korunur.
 
 ## 2. Kavramsal ERD
 
@@ -46,12 +48,20 @@ erDiagram
 | Kural | Açıklama |
 |---|---|
 | `tenant_id` zorunlu | Tenant-owned tüm tablolarda bulunur |
+| Tenant-owned ilişki | Parent `(tenant_id, id)` candidate key; child `(tenant_id, foreign_id)` composite foreign key taşır |
 | UUID | Dışa açık ID'ler tahmin edilemez olmalıdır |
 | Soft delete | Yasal saklama gerektiren veri hard delete edilmez |
 | Version | Kritik kayıtlarda optimistic locking için `version` bulunur |
 | Audit | Kritik değişikliklerde before/after hash veya snapshot tutulur |
 | Effective dating | Assignment, ücret, pozisyon gibi tarihsel veri aralıkla tutulur |
 | Reference data | Mevzuat, tatil, para birimi gibi değerler versiyonlanır |
+
+Mevcut Faz 0 şemasında `employees` ve `users` parent candidate key taşır.
+`leave_requests.employee_id`, `requested_by_user_id`, `decided_by_user_id` ile
+`leave_balance_summaries.employee_id` referansları child `tenant_id` kolonuyla birlikte parent'ın
+`(tenant_id, id)` anahtarına bağlanır. Root ownership ilişkileri doğrudan `tenant_id → tenants.id`
+olarak kalır. Bu kural yeni tenant-owned ilişki eklenirken de migration ve model metadata'sında
+birlikte temsil edilmelidir.
 
 ## 5. İndeks stratejisi
 
@@ -104,7 +114,7 @@ Kurallar:
 
 - App DB rolü `BYPASSRLS` alamaz.
 - Transaction başında tenant context set edilir.
-- RLS'siz tenant tablosu CI'da fail etmelidir.
+- Faz 1 RLS rollout'u başladığında policy'siz tenant tablosu CI'da fail etmelidir.
 
 ## 9. Backup ve restore
 
@@ -123,6 +133,8 @@ Kurallar:
 - Critical tablolar için indeks stratejisi tanımlıdır.
 - Audit/time/webhook gibi yüksek hacimli tablolar partition adayıdır.
 - Cross-tenant testler veri modeliyle desteklenir.
+- PostgreSQL doğrudan write negatif testleri composite foreign key constraint adını doğrular;
+  SQLite sonucu PostgreSQL constraint kanıtı sayılmaz.
 
 ## 11. İlgili dokümanlar
 

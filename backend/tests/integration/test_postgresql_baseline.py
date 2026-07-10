@@ -68,8 +68,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_users_status",
 }
 EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
+    "uq_employees_tenant_id_id",
     "uq_employees_tenant_employee_number",
     "uq_leave_balance_summaries_tenant_employee_type_period",
+    "uq_users_tenant_id_id",
     "uq_users_tenant_email",
 }
 EXPECTED_FOREIGN_KEY_COUNTS = {

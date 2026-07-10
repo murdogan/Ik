@@ -235,10 +235,26 @@ def _run_alembic_upgrade_head_subprocess(
     )
 
 
+def _run_alembic_upgrade_head_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head", "--sql"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
     assert config.get_main_option("script_location") == "backend/alembic"
+
+
+def test_alembic_uses_one_transaction_per_expand_contract_revision() -> None:
+    env_text = Path("backend/alembic/env.py").read_text()
+
+    assert env_text.count("transaction_per_migration=True") == 2
 
 
 def test_core_migration_chain_is_linear() -> None:
@@ -253,8 +269,14 @@ def test_core_migration_chain_is_linear() -> None:
     employee_lifecycle_revision = script.get_revision(
         "0008_employee_lifecycle_status_dates"
     )
+    tenant_integrity_expand_revision = script.get_revision(
+        "0009_expand_tenant_relational_integrity"
+    )
+    tenant_integrity_contract_revision = script.get_revision(
+        "0010_contract_tenant_relational_integrity"
+    )
 
-    assert script.get_heads() == ["0008_employee_lifecycle_status_dates"]
+    assert script.get_heads() == ["0010_contract_tenant_relational_integrity"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -271,6 +293,14 @@ def test_core_migration_chain_is_linear() -> None:
     assert timestamp_revision.down_revision == "0006_create_leave_balance_summaries"
     assert employee_lifecycle_revision is not None
     assert employee_lifecycle_revision.down_revision == "0007_enforce_timestamp_not_null"
+    assert tenant_integrity_expand_revision is not None
+    assert tenant_integrity_expand_revision.down_revision == (
+        "0008_employee_lifecycle_status_dates"
+    )
+    assert tenant_integrity_contract_revision is not None
+    assert tenant_integrity_contract_revision.down_revision == (
+        "0009_expand_tenant_relational_integrity"
+    )
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -295,6 +325,16 @@ def test_alembic_upgrade_head_subprocess_creates_current_model_schema(
     _assert_database_matches_current_model_schema(database_path)
 
 
+def test_alembic_offline_sql_renders_p0d_preflight_and_expand_contract() -> None:
+    result = _run_alembic_upgrade_head_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "tenant relational integrity preflight failed" in result.stdout
+    assert "CREATE UNIQUE INDEX CONCURRENTLY" in result.stdout
+    assert "NOT VALID" in result.stdout
+    assert "VALIDATE CONSTRAINT" in result.stdout
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -315,6 +355,18 @@ def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None
         assert schema_diffs == []
     finally:
         engine.dispose()
+
+
+def test_sqlite_p0d_downgrade_reupgrade_preserves_head_schema(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-p0d-round-trip.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+
+    alembic_command.upgrade(config, "head")
+    alembic_command.downgrade(config, "0008_employee_lifecycle_status_dates")
+    alembic_command.upgrade(config, "head")
+
+    _assert_database_matches_current_model_schema(database_path)
 
 
 def test_initial_tenant_migration_exists() -> None:
@@ -402,6 +454,25 @@ def test_employee_lifecycle_status_dates_migration_exists() -> None:
     assert "ck_employees_lifecycle_status_dates" in text
     assert "status = 'terminated'" in text
     assert "employment_end_date is not null" in text
+
+
+def test_tenant_relational_integrity_migrations_use_expand_contract_sequence() -> None:
+    expand_migration = Path(
+        "backend/alembic/versions/0009_expand_tenant_relational_integrity.py"
+    )
+    contract_migration = Path(
+        "backend/alembic/versions/0010_contract_tenant_relational_integrity.py"
+    )
+
+    assert expand_migration.exists()
+    assert contract_migration.exists()
+    expand_text = expand_migration.read_text()
+    contract_text = contract_migration.read_text()
+    assert "TENANT_RELATIONSHIP_PREFLIGHT_SQL" in expand_text
+    assert "CREATE UNIQUE INDEX CONCURRENTLY" in expand_text
+    assert "NOT VALID" in expand_text
+    assert "0009_expand_tenant_relational_integrity" in contract_text
+    assert "VALIDATE CONSTRAINT" in contract_text
 
 
 def test_readme_documents_migration_commands() -> None:

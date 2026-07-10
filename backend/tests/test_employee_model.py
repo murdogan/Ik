@@ -68,6 +68,16 @@ def test_employee_number_is_unique_within_tenant() -> None:
     assert Employee.__table__.columns["employee_number"].unique is not True
 
 
+def test_employee_has_tenant_id_candidate_key_for_tenant_owned_children() -> None:
+    unique_constraints = {
+        tuple(column.name for column in constraint.columns): constraint.name
+        for constraint in Employee.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert unique_constraints[("tenant_id", "id")] == "uq_employees_tenant_id_id"
+
+
 def test_employee_tenant_foreign_key_cascades_on_tenant_delete() -> None:
     tenant_id = Employee.__table__.columns["tenant_id"]
     foreign_keys = list(tenant_id.foreign_keys)

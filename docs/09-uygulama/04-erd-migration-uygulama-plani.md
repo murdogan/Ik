@@ -8,23 +8,41 @@ Bu doküman, foundation ERD dokümanını implementasyon sırasına indirger. Am
 - Dışa açık ID'ler UUID olmalıdır.
 - Migration küçük ve geri alınabilir olmalıdır.
 - Büyük/destructive değişiklikler expand-contract yaklaşımıyla yapılır.
+- Tenant-owned parent ilişkileri `(tenant_id, id)` candidate key ve child tarafında
+  `(tenant_id, foreign_id)` composite foreign key kullanır.
+- Constraint expand adımından önce orphan/cross-tenant preflight çalışır; contract ancak yeni
+  constraint validate edildikten sonra eski constraint'i kaldırır.
 - Migration testleri model metadata ve migration dosyası varlığını doğrular.
-- RLS/tenant guard testleri DB bağlantısı hazır olduğunda zorunlu olur.
+- Tenant guard testleri Faz 0'da; RLS catalog/policy testleri Faz 1 rollout'unda zorunludur.
+
+### 1.1 Uygulanan P0D geçişi
+
+Mevcut gerçek Alembic zincirindeki `0009_expand_tenant_relational_integrity`, employee/user
+candidate key'lerini ve dört leave composite foreign key'ini eski scalar constraint'lerle birlikte
+ekler. PostgreSQL'de yeni foreign key'ler `NOT VALID` olarak yeni write'ları hemen korur; constraint
+lock'ları bırakılmadan tekrarlanan preflight concurrent-index penceresindeki write yarışını kapatır.
+`0010_contract_tenant_relational_integrity` bunları validate eder ve yalnız eski tenant-owned
+employee/user scalar foreign key'lerini kaldırır. Downgrade sırası önce eski constraint'leri geri
+getirip validate eder. RLS bu geçişe dahil değildir; Faz 1 işidir.
 
 ## 2. Migration sırası
 
-| Rev | Tablo/alan | Faz | Gerekçe |
+Bu tablo ilk ürün planındaki kavramsal uygulama sırasıdır; `Plan` değerleri yayınlanmış Alembic
+revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1 bölümü ve migration
+history'si otoritatiftir.
+
+| Plan | Tablo/alan | Faz | Gerekçe |
 |---|---|---|---|
-| 0001 | `tenants` | Sprint-0 | Tüm izolasyonun temeli |
-| 0002 | `users` | Sprint-0 | Auth ve tenant admin için temel |
-| 0003 | `roles`, `permissions`, `user_roles` | Sprint-1 | RBAC olmadan protected endpoint olmaz |
-| 0004 | `employees` | Sprint-1 | Core HR değerinin başlangıcı |
-| 0005 | `departments`, `positions` minimal | Sprint-1/S2 | Employee assignment için gerekli |
-| 0006 | `employee_assignments` | S2 | Effective-dated org ilişkisi |
-| 0007 | `audit_events` | S2 | Kritik değişikliklerin izlenmesi |
-| 0008 | `employee_documents`, `document_types` | S3 | Özlük belge yönetimi |
-| 0009 | `leave_types`, `leave_balances` | S4 | İzin motoru başlangıcı |
-| 0010 | `leave_requests`, `approval_tasks` | S4/S5 | İzin ve onay akışı |
+| Plan 01 | `tenants` | Sprint-0 | Tüm izolasyonun temeli |
+| Plan 02 | `users` | Sprint-0 | Auth ve tenant admin için temel |
+| Plan 03 | `roles`, `permissions`, `user_roles` | Sprint-1 | RBAC olmadan protected endpoint olmaz |
+| Plan 04 | `employees` | Sprint-1 | Core HR değerinin başlangıcı |
+| Plan 05 | `departments`, `positions` minimal | Sprint-1/S2 | Employee assignment için gerekli |
+| Plan 06 | `employee_assignments` | S2 | Effective-dated org ilişkisi |
+| Plan 07 | `audit_events` | S2 | Kritik değişikliklerin izlenmesi |
+| Plan 08 | `employee_documents`, `document_types` | S3 | Özlük belge yönetimi |
+| Plan 09 | `leave_types`, `leave_balances` | S4 | İzin motoru başlangıcı |
+| Plan 10 | `leave_requests`, `approval_tasks` | S4/S5 | İzin ve onay akışı |
 
 ## 3. İlk tenant tabloları
 
@@ -150,6 +168,9 @@ WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
 | Alembic history | Zincir doğru mu |
 | RLS catalog test | Tenant tablolarında RLS açık mı |
 | Cross-tenant query | Tenant A verisi Tenant B'den görünmüyor mu |
+| Relational preflight | Orphan ve cross-tenant satırlar constraint DDL'den önce raporlanıyor mu |
+| PostgreSQL direct write | Her composite ilişki servis bypass edildiğinde cross-tenant write'ı reddediyor mu |
+| Data-preserving round trip | Valid satırlar `0008 → head → 0008 → head` boyunca korunuyor mu |
 
 ## 8. Seed planı
 

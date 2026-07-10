@@ -2,7 +2,7 @@ from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text
+from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +36,22 @@ class LeaveRequest(Base, TimestampMixin):
             "status",
             "created_at",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "employee_id"],
+            ["employees.tenant_id", "employees.id"],
+            name="fk_leave_requests_tenant_employee_id_employees",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "requested_by_user_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_leave_requests_tenant_requested_by_user_id_users",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "decided_by_user_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_leave_requests_tenant_decided_by_user_id_users",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
@@ -47,7 +63,6 @@ class LeaveRequest(Base, TimestampMixin):
     )
     employee_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("employees.id", ondelete="CASCADE"),
         nullable=False,
     )
     leave_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -58,12 +73,10 @@ class LeaveRequest(Base, TimestampMixin):
     )
     requested_by_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
         nullable=False,
     )
     decided_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
         nullable=True,
     )
     decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)

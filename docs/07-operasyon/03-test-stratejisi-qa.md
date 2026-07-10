@@ -37,6 +37,9 @@ oturumu için izole ve benzersiz bir geçici veritabanı oluşturur, Alembic ve 
 
 - Alembic `base → head → base` upgrade/downgrade ve model metadata drift kontrolü.
 - PostgreSQL UUID/timestamp tipleri ile index, unique, foreign-key ve check constraint davranışları.
+- Tenant relational-integrity preflight'ının orphan/cross-tenant tespiti, composite foreign
+  key'lerin validation durumu, servis bypass eden doğrudan write negatifleri ve valid veri koruyan
+  expand-contract upgrade/downgrade akışı.
 - Mevcut tenant-scoped API ve OpenAPI operasyon setinin PostgreSQL üzerindeki uyumluluğu.
 - Pool/bağlantı yaşam döngüsü ile `statement_timeout` ve PostgreSQL 16 uyumlu
   `idle_in_transaction_session_timeout` ayarları.
@@ -115,6 +118,8 @@ V1 yerleşik bordro motorunda golden dataset zorunlu olur.
 - Tenant tablosunda `tenant_id` bulunur.
 - RLS veya tenant guard eksik tablo CI'da yakalanır.
 - App katmanı bypass edilerek DB seviyesinde cross-tenant erişim test edilir.
+- Tenant-owned foreign key'ler için yanlış `(tenant_id, foreign_id)` kombinasyonu her ilişki ve
+  named constraint bazında gerçek PostgreSQL'de reddedilir.
 - Cache key tenant prefix içerir.
 - Object storage pre-signed URL tenant kontrolü ister.
 - Search/vector sonuçları tenant dışına çıkmaz.

@@ -19,6 +19,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-011 | Deploy | Docker, ileride Kubernetes/Helm | Kabul |
 | ADR-012 | Auth | Kendi auth + SSO entegrasyonu | Kabul |
 | ADR-013 | Transaction/hata sınırı | Application command + Unit of Work, merkezi typed API mapping | Kabul |
+| ADR-014 | Tenant ilişkisel bütünlüğü | Composite tenant foreign key + expand-contract | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -259,9 +260,43 @@ Sonuç:
 - P0C, leave decision winner/locking/versioning veya idempotency problemini çözülmüş saymaz;
   bunlar sonraki Faz-0 concurrency/idempotency işidir.
 - Tenant-owned ilişkilerde composite tenant foreign key uygulaması da sonraki Faz-0
-  database-hardening migration bloğunda kalır. Mevcut tenant-scoped servis kontrolleri korunur.
+  database-hardening migration bloğunun sorumluluğudur. P0D bu katmanı ADR-014 ile uygular;
+  mevcut tenant-scoped servis kontrolleri korunur.
 
-## 15. Ertelenen kararlar
+## 15. ADR-014 Tenant ilişkisel bütünlüğü
+
+Bağlam:
+
+- Tenant-owned child tablolar `tenant_id` taşısa da yalnız global parent `id` kolonuna bağlanan
+  scalar foreign key'ler doğrudan DB write, import veya bakım yolu üzerinden cross-tenant ilişki
+  kurulmasına izin veriyordu.
+- Uygulama guard'ı bu veri modelinin tek koruması olmamalıdır. RLS ise Faz 1 kapsamındadır ve ilişki
+  bütünlüğü constraint'inin alternatifi değildir.
+
+Karar:
+
+- Başka tenant-owned tablolar tarafından referans verilen parent'ta `(tenant_id, id)` candidate
+  key; child'da `(tenant_id, foreign_id)` composite foreign key zorunludur.
+- Mevcut şemada `employees` ve `users` candidate key taşır. `leave_requests` employee/requester/
+  decider ilişkileri ile `leave_balance_summaries` employee ilişkisi composite'tir; delete ve
+  nullability davranışı eski sözleşmeyle aynıdır.
+- Geçiş iki revision expand-contract'tır: preflight + concurrent candidate index + `NOT VALID`
+  composite foreign key; ardından validation + eski scalar foreign key removal. Downgrade önce eski
+  constraint'i geri getirip validate eder.
+- Root `tenant_id → tenants.id` foreign key'leri ve uygulama tenant guard'ları korunur. RLS Faz 1'e
+  ertelenmiştir.
+- SQLite yalnız hızlı metadata/migration uyumu sağlar. PostgreSQL concurrent index, validation ve
+  doğrudan write iddiaları gerçek PostgreSQL 16 testleriyle kanıtlanır.
+
+Sonuç:
+
+- API servisi bypass edilse bile cross-tenant leave employee/user bağlantıları persist edilemez.
+- Preflight bozuk mevcut veride constraint DDL'den önce fail olur; valid veri upgrade/downgrade
+  boyunca korunur.
+- Yeni tenant-owned ilişki tasarımında tenant kimliği foreign key'in ayrılmaz parçasıdır.
+- Endpoint/OpenAPI, auth/RBAC ve ürün davranışı değişmez.
+
+## 16. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -271,7 +306,7 @@ Sonuç:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 16. İlgili dokümanlar
+## 17. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

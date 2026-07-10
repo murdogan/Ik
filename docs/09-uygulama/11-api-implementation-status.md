@@ -2,9 +2,34 @@
 
 Date: 2026-07-10
 Branch: `codex/mvp-phase0-until-20260711-1100`
-Task: `P0C Unit of Work transaction boundary and stable error mapping`
+Task: `P0D Tenant relational integrity with expand-contract composite foreign keys`
 
 ## Scope
+
+### P0D tenant relational integrity
+
+- Inventoried every currently implemented foreign key. Root ownership references from
+  `users`, `employees`, `leave_requests`, and `leave_balance_summaries` to `tenants.id` remain
+  scalar; the four employee/user references owned by leave tables now include the child tenant.
+- Added `(tenant_id, id)` candidate keys to the only currently referenced tenant-owned parents,
+  `employees` and `users`.
+- Replaced the tenant-owned scalar references at final head with named composite foreign keys for
+  leave request employee/requester/decider and leave balance employee, preserving existing
+  `CASCADE`, `NO ACTION`, nullability, and nullable decider `MATCH SIMPLE` behavior.
+- Added a two-revision expand-contract migration. `0009` runs a reusable preflight query across all
+  eight implemented relationships, builds resumable PostgreSQL candidate indexes concurrently,
+  adds composite FKs `NOT VALID` while legacy FKs remain, and repeats the preflight under the new
+  constraint locks to close the concurrent-index write window. `0010` validates the new constraints
+  before dropping only the four legacy employee/user scalar FKs.
+- Downgrade restores and validates legacy FKs before composite FKs and candidate keys are removed.
+  Valid-data migration round-trip tests preserve existing leave rows.
+- Added real PostgreSQL tests that identify orphan/cross-tenant preflight rows, assert exact
+  candidate/composite constraint definitions and validation state, and bypass application services
+  to reject every cross-tenant relationship by its named composite constraint.
+- Kept SQLite as fast model/migration/API compatibility coverage only; it is not evidence for
+  PostgreSQL concurrent index, `NOT VALID`, validation, or direct-write behavior.
+- P0D changes no endpoint, OpenAPI schema, response/error contract, auth/RBAC behavior, or product
+  feature. Existing application tenant guards remain; PostgreSQL RLS remains Phase 1.
 
 ### P0C transaction and error boundary
 
@@ -28,9 +53,9 @@ Task: `P0C Unit of Work transaction boundary and stable error mapping`
   cannot leave the migrated domain mutation partially persisted.
 - P0C changes no table/model schema and adds no Alembic migration. It establishes the boundary that
   later audit/outbox writers can join without implementing those later features now.
-- Leave decision winner/locking/versioning and idempotency remain later Phase-0 work. Composite
-  tenant foreign keys for tenant-owned relationships likewise remain in the later database-hardening
-  migration block; P0C does not claim either issue is fixed.
+- Leave decision winner/locking/versioning and idempotency remain later Phase-0 work. P0C itself did
+  not change relational constraints; the subsequent P0D block now supplies composite tenant
+  foreign keys without changing P0C transaction ownership.
 - No endpoint path, method, success response shape, tenant isolation rule, auth/RBAC behavior, or
   product feature changes. The only new HTTP outcomes are safe stable mappings for persistence
   failures that previously could escape as internal errors.
@@ -159,6 +184,38 @@ Task: `P0C Unit of Work transaction boundary and stable error mapping`
   The command refuses non-local database URL hosts before opening a connection; local hostnames are
   matched case-insensitively.
 
+## P0D Tenant Relational Integrity
+
+Final model metadata and the Alembic head represent these tenant-owned relationships:
+
+| Child columns | Parent candidate key | Delete/null behavior |
+|---|---|---|
+| `leave_requests(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE CASCADE`, required |
+| `leave_requests(tenant_id, requested_by_user_id)` | `users(tenant_id, id)` | `NO ACTION`, required |
+| `leave_requests(tenant_id, decided_by_user_id)` | `users(tenant_id, id)` | `NO ACTION`, nullable id / `MATCH SIMPLE` |
+| `leave_balance_summaries(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE CASCADE`, required |
+
+`TENANT_RELATIONSHIP_PREFLIGHT_SQL` also inventories the four root
+`tenant_id → tenants.id` links, so orphan ownership rows and the four cross-tenant child links are
+reported before constraint DDL. The migration raises a grouped relationship/type/count summary and
+does not advance the revision until data is repaired.
+
+PostgreSQL `0009` creates the candidate indexes with `CREATE UNIQUE INDEX CONCURRENTLY`, detects
+unexpected name collisions, and replaces a matching invalid leftover index on retry. It then
+attaches real unique constraints and adds composite FKs `NOT VALID`; those FKs enforce subsequent
+writes immediately while the old scalar FKs coexist. A second preflight runs before the expand
+transaction releases its table locks, so a row committed during concurrent index creation cannot
+silently enter the expanded revision. `0010` validates all four composite FKs before removing the
+legacy constraints. If contract validation nevertheless detects damaged existing data, the database
+stays at the safe expanded revision with both constraint generations available for repair.
+Alembic uses `transaction_per_migration=True`, so this boundary also holds when an operator invokes
+one `upgrade head` command rather than running the two revisions separately.
+
+The SQLite migration branch rebuilds tables only to preserve the fast migration-chain and metadata
+checks. P0D enforcement evidence lives exclusively in the `postgres`-marked integration tests.
+Existing API/service tenant checks remain defense-in-depth, and RLS is intentionally unchanged for
+Phase 1.
+
 ## P0C Command Transaction Boundary
 
 `EmployeeCommandHandler` and `LeaveRequestCommandHandler` pass one tenant-scoped operation to
@@ -236,7 +293,41 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-P0C regression coverage includes:
+P0D regression coverage includes:
+
+- model metadata and migrated-schema parity for both parent candidate keys and all four composite
+  foreign keys;
+- PostgreSQL preflight detection of both cross-tenant and deliberately injected orphan rows before
+  expansion;
+- exact PostgreSQL constraint definitions, validation state, and named direct-write rejection for
+  each tenant-owned relationship;
+- valid-data `0008 → head → 0008 → head` preservation, including legacy constraint restoration;
+- existing API, tenant-isolation, OpenAPI operation, migration, and smoke regressions.
+
+Required P0D completion gates are:
+
+- `uv run ruff check backend`
+- `uv run pytest -q`
+- `uv run python scripts/backend_api_smoke.py`
+- `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` for the PostgreSQL-specific acceptance
+  evidence.
+
+P0D local gate evidence:
+
+- `uv run ruff check backend`: passed.
+- `uv run pytest -q`: passed, 390 fast tests passed and 12 PostgreSQL tests deselected; the one
+  existing Starlette `TestClient` deprecation warning remains.
+- `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, all 15 documented
+  endpoints covered.
+- PostgreSQL 16.4 user-space test cluster with
+  `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres`: passed, 12 integration tests passed and
+  390 fast tests deselected. This includes five P0D-specific PostgreSQL tests plus the existing
+  migration/drift/API/runtime and command-transaction probes.
+- Generated `alembic upgrade head --sql` was also applied successfully to an empty disposable
+  PostgreSQL 16.4 database, including the online-equivalent preflight blocks, concurrent candidate
+  indexes, `NOT VALID` FKs, per-revision commits, validation, and contract removal.
+
+Historical P0C regression coverage includes:
 
 - service-level no-commit/flush assertions for employee and leave migrated writes;
 - forced post-flush rollback with fresh-session persistence checks;
@@ -245,13 +336,13 @@ P0C regression coverage includes:
   constraint, unknown integrity conflicts, and stale/recognized concurrent writes;
 - existing API, tenant-isolation, OpenAPI operation, migration, and smoke regressions.
 
-Required P0C completion gates are:
+Required P0C completion gates were:
 
 - `uv run ruff check backend`
 - `uv run pytest -q`
 - `uv run python scripts/backend_api_smoke.py`
 
-P0C local gate evidence:
+Historical P0C local gate evidence:
 
 - `uv run ruff check backend`: passed.
 - `uv run pytest -q`: passed, 385 fast tests passed and 7 PostgreSQL tests deselected; the one
@@ -288,8 +379,6 @@ Historical P0B local gate evidence retained for continuity:
   POST/decision flows.
 - Leave decision winner semantics plus row-lock or optimistic-version enforcement and real
   PostgreSQL concurrency proof.
-- Composite `(tenant_id, id)` candidate keys and tenant-consistent foreign keys for current
-  employee/user/leave relationships through expand-contract migrations.
 - Optional leave request detail endpoint if product workflow needs direct request reads.
 - Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.

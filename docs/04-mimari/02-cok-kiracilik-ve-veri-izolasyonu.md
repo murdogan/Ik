@@ -6,7 +6,8 @@ Bu doküman, IK Platform'un çok kiracılı SaaS modelini, tenant çözümleme y
 
 Varsayılan model:
 
-> Shared application + shared PostgreSQL schema + `tenant_id` + uygulama seviyesi tenant guard + mümkünse PostgreSQL RLS.
+> Shared application + shared PostgreSQL schema + `tenant_id` + composite tenant foreign key +
+> uygulama seviyesi tenant guard + Faz 1 PostgreSQL RLS.
 
 Enterprise için dedicated DB veya dedicated deployment opsiyonu açık bırakılır; ancak ilk ürün shared modelle ilerler.
 
@@ -59,16 +60,35 @@ Kurallar:
 | Auth | JWT/session içinde tenant claim |
 | Middleware | Tenant context zorunlu |
 | Repository | Her sorguda tenant filtresi |
-| DB | RLS veya merkezi tenant guard |
+| DB | Tenant-owned ilişkilerde composite foreign key; Faz 1'de RLS |
 | Cache | `tenant:{tenant_id}` prefix |
 | Object storage | Tenant prefix ve metadata |
 | Search/vector | Tenant filter ve ACL hash |
 | Logs | Tenant tag var, PII yok |
 | Tests | Cross-tenant negatif testler |
 
-## 6. PostgreSQL RLS yaklaşımı
+## 6. İlişkisel tenant bütünlüğü
 
-RLS kullanılırsa her tenant tablosunda şu prensip uygulanır:
+Faz 0'da doğrudan DB write'ları dahil tenant sahipliği şu kuralla korunur:
+
+- Tenant-owned bir tablo başka bir tenant-owned parent'a bağlanıyorsa parent üzerinde
+  `(tenant_id, id)` candidate key bulunur.
+- Child foreign key hem tenant'ı hem referansı taşır:
+  `(tenant_id, foreign_id) → parent(tenant_id, id)`.
+- `tenants` global ownership root'udur; `child.tenant_id → tenants.id` ilişkileri scalar kalır.
+- Nullable referanslarda PostgreSQL varsayılanı `MATCH SIMPLE` korunur. Örneğin henüz
+  kararlaştırılmamış izin talebinin `decided_by_user_id` değeri null olabilir.
+
+Mevcut uygulama yüzeyinde candidate key'ler `employees` ve `users`; composite ilişkiler ise izin
+talebinin employee/requester/decider referansları ile izin bakiye özetinin employee referansıdır.
+Expand-contract migration önce orphan/cross-tenant preflight çalıştırır, yeni constraint'leri eski
+constraint'lerle birlikte ekler ve validate eder; contract ancak doğrulamadan sonra eski scalar
+referansları kaldırır. Uygulama tenant guard'ları korunur. Composite foreign key ile RLS birbirinin
+alternatifi değildir.
+
+## 7. PostgreSQL RLS yaklaşımı
+
+RLS Faz 1'de uygulanırsa her tenant tablosunda şu prensip uygulanır:
 
 ```sql
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
@@ -85,9 +105,9 @@ Kritik noktalar:
 
 - Uygulama DB rolünde `BYPASSRLS` olmamalıdır.
 - Background job da tenant context set etmelidir.
-- RLS'siz tenant tablosu CI'da fail etmelidir.
+- Faz 1 RLS rollout'u başladığında policy'siz tenant tablosu CI'da fail etmelidir.
 
-## 7. Cache, dosya ve arama izolasyonu
+## 8. Cache, dosya ve arama izolasyonu
 
 | Alan | Kural |
 |---|---|
@@ -98,7 +118,7 @@ Kritik noktalar:
 | Search index | Metadata tenant filter zorunlu |
 | Vector index | ACL hash ve tenant_id olmadan arama yapılmaz |
 
-## 8. Tenant yaşam döngüsü
+## 9. Tenant yaşam döngüsü
 
 | Aşama | Sistem davranışı |
 |---|---|
@@ -109,7 +129,7 @@ Kritik noktalar:
 | Offboarding | Veri export, bekleme süresi, imha planı |
 | Closed | Veri imha ve kapanış audit kaydı |
 
-## 9. Enterprise dedicated opsiyon
+## 10. Enterprise dedicated opsiyon
 
 Enterprise müşteriler için:
 
@@ -121,7 +141,7 @@ Enterprise müşteriler için:
 
 Kural: Müşteri bazlı fork yapılmaz; özelleştirme feature flag ve ayarlarla yapılır.
 
-## 10. Noisy neighbor önlemleri
+## 11. Noisy neighbor önlemleri
 
 | Kaynak | Önlem |
 |---|---|
@@ -132,26 +152,30 @@ Kural: Müşteri bazlı fork yapılmaz; özelleştirme feature flag ve ayarlarla
 | AI | Tenant kota ve kullanım limiti |
 | Webhook | Devre kesici ve retry sınırı |
 
-## 11. Test gereksinimleri
+## 12. Test gereksinimleri
 
 - Tenant A kullanıcısı Tenant B employee kaydını göremez.
+- Uygulama servisleri bypass edilse bile PostgreSQL doğrudan write ile Tenant A child kaydı Tenant B
+  employee/user kaydına bağlanamaz.
+- Preflight orphan ile cross-tenant satırları ayrı raporlar; valid veri upgrade/downgrade boyunca
+  korunur.
 - Tenant A document URL'i Tenant B'de çalışmaz.
 - Cache key cross-tenant çakışmaz.
 - Background job tenant context olmadan fail eder.
 - Export sadece tenant kapsamındaki satırları içerir.
 - Search/vector sonuçları tenant dışına çıkmaz.
 
-## 12. Riskler
+## 13. Riskler
 
 | Risk | Önlem |
 |---|---|
-| Repository'de tenant filtresi unutulur | RLS + test + base repository |
+| Repository'de tenant filtresi unutulur | Zorunlu query guard + negatif test + Faz 1 RLS |
 | Cache sızıntısı | Tenant-aware helper zorunlu |
 | Object URL sızıntısı | Pre-signed URL ACL kontrolü |
 | Superadmin kötüye kullanım | Break-glass, süreli erişim, tam audit |
 | Dedicated müşteride migration sapması | Migration dashboard ve aynı kod tabanı |
 
-## 13. İlgili dokümanlar
+## 14. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [CORE, AUTH ve RBAC Modülleri](../03-moduller/01-core-auth-rbac.md)

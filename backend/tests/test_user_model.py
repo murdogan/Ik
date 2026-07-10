@@ -44,6 +44,16 @@ def test_user_email_is_unique_within_tenant() -> None:
     assert User.__table__.columns["email"].unique is not True
 
 
+def test_user_has_tenant_id_candidate_key_for_tenant_owned_children() -> None:
+    unique_constraints = {
+        tuple(column.name for column in constraint.columns): constraint.name
+        for constraint in User.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert unique_constraints[("tenant_id", "id")] == "uq_users_tenant_id_id"
+
+
 def test_user_tenant_foreign_key_cascades_on_tenant_delete() -> None:
     tenant_id = User.__table__.columns["tenant_id"]
     foreign_keys = list(tenant_id.foreign_keys)

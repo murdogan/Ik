@@ -39,6 +39,7 @@ class Employee(Base, TimestampMixin):
             "employee_number",
             name="uq_employees_tenant_employee_number",
         ),
+        UniqueConstraint("tenant_id", "id", name="uq_employees_tenant_id_id"),
         Index("ix_employees_tenant_status", "tenant_id", "status"),
     )
 
