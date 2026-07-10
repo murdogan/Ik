@@ -31,10 +31,11 @@ def get_leave_balance_service(
 @router.get(
     "/{employee_id}/leave-balances",
     response_model=list[LeaveBalanceSummaryRead],
-    summary="List employee leave balances",
+    summary="List employee leave balance summaries",
     description=(
-        "Lists stored manual leave balance summaries for an employee in the current tenant. "
-        "This read-only placeholder does not calculate accruals or call external integrations."
+        "Lists stored manual leave balance summary rows for one employee in the current tenant. "
+        "This read-only placeholder does not calculate accruals, synthesize rows from leave "
+        "requests, or call external integrations."
     ),
     response_description="Employee leave balance summary list.",
 )

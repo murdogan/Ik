@@ -134,9 +134,10 @@ tablolarını kendi coverage registry'siyle karşılaştırır; dokümanlanan en
 dışında kalırsa komut fail olur.
 
 OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
-`Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W3C5 OpenAPI tag hygiene
+`Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W4C5 OpenAPI tag hygiene
 kapsamında tag açıklamaları, tenant-aware operation summary/description metinleri ve
-filtre/header açıklamaları okunabilirlik için güncellendi; request/response davranışı değişmedi.
+filtre/header açıklamaları güncel API docs okunabilirliği için netleştirildi; request/response
+davranışı değişmedi.
 
 Tenant header dependency hataları, employee/leave endpointlerinin açıkça yakaladığı domain
 hataları ve employee, leave balance, leave request endpointlerindeki otomatik request validation

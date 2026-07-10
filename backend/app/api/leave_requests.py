@@ -108,11 +108,11 @@ def get_leave_request_list_pagination(
 @router.get(
     "",
     response_model=list[LeaveRequestRead],
-    summary="List leave requests",
+    summary="List tenant leave requests",
     description=(
-        "Lists leave requests in the current tenant from the tenant header context. Optional "
-        "filters cover workflow status, employee, and overlapping date windows; tenant "
-        "isolation is applied before bounded limit/offset pagination."
+        "Lists leave request review records for the current tenant from the tenant header "
+        "context. Optional filters cover workflow status, employee, and overlapping date "
+        "windows; tenant isolation is applied before bounded limit/offset pagination."
     ),
     response_description="Leave request list.",
 )
@@ -132,7 +132,7 @@ async def list_leave_requests(
     "",
     response_model=LeaveRequestRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Create leave request",
+    summary="Create tenant leave request",
     description=(
         "Creates a pending leave request in the current tenant. The employee and requesting user "
         "must both belong to the tenant from the request headers, and leave dates must be "
@@ -158,7 +158,7 @@ async def create_leave_request(
 @router.post(
     "/{leave_request_id}/approve",
     response_model=LeaveRequestRead,
-    summary="Approve leave request",
+    summary="Approve pending leave request",
     description=(
         "Approves a pending leave request in the current tenant and records the supplied "
         "decision metadata. Leave request IDs from other tenants return the same not-found "
@@ -189,7 +189,7 @@ async def approve_leave_request(
 @router.post(
     "/{leave_request_id}/reject",
     response_model=LeaveRequestRead,
-    summary="Reject leave request",
+    summary="Reject pending leave request",
     description=(
         "Rejects a pending leave request in the current tenant and records the supplied decision "
         "metadata. Leave request IDs from other tenants return the same not-found envelope as "
@@ -220,7 +220,7 @@ async def reject_leave_request(
 @router.post(
     "/{leave_request_id}/cancel",
     response_model=LeaveRequestRead,
-    summary="Cancel leave request",
+    summary="Cancel pending leave request",
     description=(
         "Cancels a pending leave request in the current tenant and records the supplied decision "
         "metadata. Leave request IDs from other tenants return the same not-found envelope as "

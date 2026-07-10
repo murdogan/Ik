@@ -9,41 +9,42 @@ OPENAPI_TAGS = [
     {
         "name": SYSTEM_TAG,
         "description": (
-            "Public operational endpoints for API health and platform readiness checks."
+            "Public operational checks for service health, version, and environment readiness; "
+            "these endpoints do not require tenant context."
         ),
     },
     {
         "name": PUBLIC_TAG,
         "description": (
-            "Browser-facing public pages exposed outside tenant-scoped Wealthy Falcon HR APIs."
+            "Browser-facing Wealthy Falcon HR pages served outside the tenant-scoped JSON API."
         ),
     },
     {
         "name": DASHBOARD_TAG,
         "description": (
-            "Tenant-scoped HR dashboard metrics for workforce counts, leave workload, and "
-            "recent activity."
+            "Tenant-scoped HR dashboard metrics for workforce counts, leave workload, department "
+            "distribution, new starters, and recent activity."
         ),
     },
     {
         "name": EMPLOYEES_TAG,
         "description": (
-            "Tenant-scoped employee directory, profile lookup, lifecycle status, and record "
-            "management."
+            "Tenant-scoped employee master data for directory search, profile lookup, lifecycle "
+            "status, and record changes."
         ),
     },
     {
         "name": LEAVE_BALANCES_TAG,
         "description": (
-            "Tenant-scoped read-only manual leave balance summaries; no accrual engine or "
-            "external integrations are exposed."
+            "Tenant-scoped read-only manual leave balance summaries for HR review; no accrual "
+            "engine or external integrations are exposed."
         ),
     },
     {
         "name": LEAVE_REQUESTS_TAG,
         "description": (
-            "Tenant-scoped leave request intake, filtering, and pending-request decision "
-            "workflow."
+            "Tenant-scoped leave request intake, filtered review queues, and pending-request "
+            "approve, reject, or cancel decisions."
         ),
     },
 ]

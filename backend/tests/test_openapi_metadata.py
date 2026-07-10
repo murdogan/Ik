@@ -27,12 +27,12 @@ def test_openapi_uses_readable_tag_catalog() -> None:
     assert response.status_code == 200
     assert response.json()["tags"] == OPENAPI_TAGS
     descriptions = {tag["name"]: tag["description"] for tag in response.json()["tags"]}
-    assert "API health and platform readiness" in descriptions[SYSTEM_TAG]
-    assert "Browser-facing public pages" in descriptions[PUBLIC_TAG]
-    assert "workforce counts, leave workload" in descriptions[DASHBOARD_TAG]
-    assert "employee directory" in descriptions[EMPLOYEES_TAG]
+    assert "service health, version, and environment readiness" in descriptions[SYSTEM_TAG]
+    assert "outside the tenant-scoped JSON API" in descriptions[PUBLIC_TAG]
+    assert "department distribution, new starters" in descriptions[DASHBOARD_TAG]
+    assert "employee master data" in descriptions[EMPLOYEES_TAG]
     assert "no accrual engine" in descriptions[LEAVE_BALANCES_TAG]
-    assert "intake, filtering" in descriptions[LEAVE_REQUESTS_TAG]
+    assert "filtered review queues" in descriptions[LEAVE_REQUESTS_TAG]
 
 
 def test_current_operations_have_readable_openapi_metadata() -> None:
@@ -45,72 +45,72 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
     expected_metadata = {
         ("/health", "get"): (
             SYSTEM_TAG,
-            "Get API health status",
-            "public Wealthy Falcon HR service status metadata",
+            "Check API health",
+            "service availability",
         ),
         ("/", "get"): (
             PUBLIC_TAG,
-            "Open public landing page",
-            "outside the tenant-scoped API surface",
+            "Serve public landing page",
+            "outside the tenant-scoped JSON API surface",
         ),
         ("/api/v1/dashboard/summary", "get"): (
             DASHBOARD_TAG,
-            "Get tenant dashboard summary",
+            "Read tenant dashboard summary",
             "active workforce counts",
         ),
         ("/api/v1/employees", "get"): (
             EMPLOYEES_TAG,
-            "List employees",
+            "List tenant employees",
             "tenant isolation is applied before bounded limit/offset pagination",
         ),
         ("/api/v1/employees", "post"): (
             EMPLOYEES_TAG,
-            "Create employee",
+            "Create tenant employee",
             "lifecycle date rules are enforced before persistence",
         ),
         ("/api/v1/employees/{employee_id}", "get"): (
             EMPLOYEES_TAG,
-            "Get employee",
+            "Read tenant employee",
             "same not-found envelope as missing records",
         ),
         ("/api/v1/employees/{employee_id}", "patch"): (
             EMPLOYEES_TAG,
-            "Update employee",
+            "Update tenant employee",
             "employee number uniqueness",
         ),
         ("/api/v1/employees/{employee_id}", "delete"): (
             EMPLOYEES_TAG,
-            "Delete employee",
+            "Delete tenant employee",
             "Employee IDs from other tenants return the same not-found envelope",
         ),
         ("/api/v1/employees/{employee_id}/leave-balances", "get"): (
             LEAVE_BALANCES_TAG,
-            "List employee leave balances",
+            "List employee leave balance summaries",
             "read-only placeholder does not calculate accruals",
         ),
         ("/api/v1/leave-requests", "get"): (
             LEAVE_REQUESTS_TAG,
-            "List leave requests",
+            "List tenant leave requests",
             "tenant isolation is applied before bounded limit/offset pagination",
         ),
         ("/api/v1/leave-requests", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Create leave request",
+            "Create tenant leave request",
             "ordered before persistence",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/approve", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Approve leave request",
+            "Approve pending leave request",
             "same not-found envelope as missing records",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/reject", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Reject leave request",
+            "Reject pending leave request",
             "same not-found envelope as missing records",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Cancel leave request",
+            "Cancel pending leave request",
             "same not-found envelope as missing records",
         ),
     }

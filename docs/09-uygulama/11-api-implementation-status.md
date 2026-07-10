@@ -2,17 +2,21 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4C2 Leave balance placeholder model plan`
+Task: `W4C5 OpenAPI tag hygiene`
 
 ## Scope
 
-- Kept the existing `leave_balance_summaries` read model as the minimal domain placeholder.
-- Added W4C2 regression coverage proving leave balance reads use only stored manual summary rows:
-  existing leave requests do not synthesize accrual or balance records.
-- Updated README and OpenAPI endpoint draft notes to make the placeholder limitation explicit.
+- Refined OpenAPI tag descriptions for the current `System`, `Public`, `Dashboard`, `Employees`,
+  `Leave Balances`, and `Leave Requests` groups.
+- Tightened route summaries/descriptions so generated docs show tenant-scoped domain workflows,
+  public/system endpoints, and pending leave request decision actions more clearly.
+- Updated OpenAPI metadata regression coverage to lock the improved tag catalog and operation
+  summary/description text.
+- Updated README and OpenAPI endpoint draft notes with the W4C5 metadata-only hygiene scope.
 - Kept the completed API surface explicit and unchanged: 14 generated OpenAPI operations plus the
   runtime `/openapi.json` schema endpoint.
-- No new endpoint, response envelope, model, migration, permission, or tenant isolation change.
+- No endpoint behavior, response envelope, model, migration, permission, tenant isolation, or
+  service-layer change.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 
@@ -68,8 +72,9 @@ Task: `W4C2 Leave balance placeholder model plan`
   requests. A tenant employee with leave request records but no manual balance summary rows gets
   `200 []`.
 - OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
-  `Leave Requests`. Current operations have explicit summaries, descriptions, response
-  descriptions, and tenant-aware parameter/header descriptions.
+  `Leave Requests`. W4C5 refines tag descriptions and operation summaries/descriptions for docs
+  readability while keeping every path, method, request, response, and tenant requirement
+  unchanged.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -120,14 +125,14 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W4C2 local gate run:
+W4C5 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 323 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 329 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
-  endpoints covered, including documented endpoint table checks and the W4C2 leave balance
-  non-synthesis check.
+  endpoints covered, including documented endpoint table checks and OpenAPI operation drift
+  checks.
 
 ## Remaining Backend Backlog
 

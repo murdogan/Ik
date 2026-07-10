@@ -11,10 +11,11 @@ router = APIRouter(tags=[PUBLIC_TAG])
 @router.get(
     "/",
     response_class=HTMLResponse,
-    summary="Open public landing page",
+    summary="Serve public landing page",
     description=(
-        "Returns the public Wealthy Falcon HR landing page HTML for browser requests. This "
-        "endpoint is outside the tenant-scoped API surface."
+        "Serves the public Wealthy Falcon HR landing page HTML for browser requests. This "
+        "endpoint is outside the tenant-scoped JSON API surface and does not require tenant "
+        "headers."
     ),
     response_description="Public landing page HTML.",
 )

@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-10 / W4B3 API docs examples.
+Son güncelleme: 2026-07-10 / W4C5 OpenAPI tag hygiene.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -31,14 +31,15 @@ runtime/OpenAPI registry'si ile karşılaştırır.
 
 Geçerli uygulama notları:
 
-- OpenAPI dokümanı W3C5 itibarıyla okunabilir tag kataloğu kullanır:
+- OpenAPI dokümanı W4C5 itibarıyla güncel okunabilir tag kataloğu kullanır:
   `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
   Mevcut operasyonların her biri açık, tenant-aware `summary` ve `description` metadata'sı taşır;
   tag açıklamaları, route açıklamaları ve filtre/header açıklamaları docs okunabilirliği için
-  netleştirilmiştir. Bu değişiklik yalnız dokümantasyon okunabilirliği içindir; request/response
-  davranışı değişmemiştir. W3C6 itibarıyla smoke script generated OpenAPI operasyon seti,
-  documented smoke registry ve güncel endpoint tablolarını path ve HTTP method seviyesinde
-  iki yönlü doğrular.
+  netleştirilmiştir. Operation summary metinleri tenant kapsamını, public/system ayrımını ve
+  pending leave request karar akışını daha açık gösterir. Bu değişiklik yalnız dokümantasyon
+  okunabilirliği içindir; request/response davranışı değişmemiştir. W3C6 itibarıyla smoke script
+  generated OpenAPI operasyon seti, documented smoke registry ve güncel endpoint tablolarını path
+  ve HTTP method seviyesinde iki yönlü doğrular.
 - W4B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre employee ve leave API'leri
   için concrete request/response örneklerini güncel tutar. Örnekler method/path, tenant header,
   query/body, success status/body, empty-list davranışı ve temsilî error zarflarını gösterir.
