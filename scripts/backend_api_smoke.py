@@ -12,6 +12,12 @@ from uuid import UUID, uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "backend"
+API_IMPLEMENTATION_STATUS_DOC = (
+    ROOT / "docs" / "09-uygulama" / "11-api-implementation-status.md"
+)
+OPENAPI_ENDPOINT_DRAFT_DOC = (
+    ROOT / "docs" / "09-uygulama" / "03-openapi-endpoint-taslagi.md"
+)
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
@@ -66,6 +72,10 @@ DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
 }
 DOCUMENTED_SMOKE_ENDPOINTS = DOCUMENTED_OPENAPI_OPERATIONS | DOCUMENTED_RUNTIME_ENDPOINTS
+DOCUMENTED_ENDPOINT_TABLES = {
+    API_IMPLEMENTATION_STATUS_DOC: "## Completed API Surface",
+    OPENAPI_ENDPOINT_DRAFT_DOC: "## 0. Güncel uygulama yüzeyi",
+}
 
 
 async def main() -> None:
@@ -84,6 +94,7 @@ async def main() -> None:
             base_url="http://backend-smoke.local",
         ) as client:
             await _smoke_system_endpoints(client)
+            _smoke_documented_endpoint_tables()
             await _smoke_tenant_header_errors(client)
             primary_employee_id, secondary_employee_id, other_employee_id = (
                 await _smoke_employee_endpoints(client)
@@ -113,8 +124,8 @@ async def main() -> None:
         "BACKEND_SMOKE_OK "
         f"tenant_id={TENANT_ID} "
         f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
-        "checked=health,landing,openapi,tenant_headers,dashboard,employees,"
-        "leave_balances,leave_requests"
+        "checked=health,landing,openapi,documented_endpoint_tables,tenant_headers,"
+        "dashboard,employees,leave_balances,leave_requests"
     )
 
 
@@ -212,6 +223,61 @@ def _expect_documented_openapi_operations(openapi: dict[str, Any]) -> None:
             "OpenAPI has operations missing from backend smoke documentation: "
             f"{_format_operations(undocumented_operations)}"
         )
+
+
+def _smoke_documented_endpoint_tables() -> None:
+    for doc_path, heading in DOCUMENTED_ENDPOINT_TABLES.items():
+        _expect_documented_endpoint_table(doc_path, heading)
+
+
+def _expect_documented_endpoint_table(doc_path: Path, heading: str) -> None:
+    section = _read_markdown_section(doc_path, heading)
+    actual_endpoints = _parse_markdown_endpoint_table(section)
+    missing_endpoints = sorted(DOCUMENTED_SMOKE_ENDPOINTS - actual_endpoints)
+    extra_endpoints = sorted(actual_endpoints - DOCUMENTED_SMOKE_ENDPOINTS)
+    if missing_endpoints:
+        raise AssertionError(
+            f"{doc_path} is missing smoke-documented endpoints under {heading}: "
+            f"{_format_operations(missing_endpoints)}"
+        )
+    if extra_endpoints:
+        raise AssertionError(
+            f"{doc_path} lists endpoints missing from backend smoke coverage under {heading}: "
+            f"{_format_operations(extra_endpoints)}"
+        )
+
+
+def _read_markdown_section(doc_path: Path, heading: str) -> list[str]:
+    lines = doc_path.read_text(encoding="utf-8").splitlines()
+    try:
+        start = lines.index(heading) + 1
+    except ValueError as exc:
+        raise AssertionError(f"{doc_path} is missing heading {heading!r}") from exc
+
+    heading_level = len(heading) - len(heading.lstrip("#"))
+    section: list[str] = []
+    for line in lines[start:]:
+        if line.startswith("#"):
+            line_level = len(line) - len(line.lstrip("#"))
+            if line_level <= heading_level:
+                break
+        section.append(line)
+    return section
+
+
+def _parse_markdown_endpoint_table(lines: list[str]) -> set[tuple[str, str]]:
+    endpoints: set[tuple[str, str]] = set()
+    for line in lines:
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        method = cells[0].lower()
+        path = cells[1]
+        if method in HTTP_METHODS and path.startswith("/"):
+            endpoints.add((method, path))
+    return endpoints
 
 
 async def _smoke_tenant_header_errors(client: AsyncClient) -> None:

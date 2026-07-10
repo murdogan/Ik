@@ -127,6 +127,10 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
   `limit`/`offset` pagination, oluşturma/onay/red/iptal
 
+Smoke testi ayrıca generated OpenAPI operasyonlarını ve güncel dokümanlardaki endpoint
+tablolarını kendi coverage registry'siyle karşılaştırır; dokümanlanan endpoint smoke kapsamı
+dışında kalırsa komut fail olur.
+
 OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
 `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W3C5 OpenAPI tag hygiene
 kapsamında tag açıklamaları, tenant-aware operation summary/description metinleri ve

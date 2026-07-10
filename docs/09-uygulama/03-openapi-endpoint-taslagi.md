@@ -2,10 +2,14 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-10 / W3C5)
+## 0. Güncel uygulama yüzeyi
+
+Son güncelleme: 2026-07-10 / W3C6 implementation report refresh.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
-lokal backend smoke kapsamındadır.
+lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
+`docs/09-uygulama/11-api-implementation-status.md` içindeki completed surface tablosu ve kendi
+runtime/OpenAPI registry'si ile karşılaştırır.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -32,8 +36,9 @@ Geçerli uygulama notları:
   Mevcut operasyonların her biri açık, tenant-aware `summary` ve `description` metadata'sı taşır;
   tag açıklamaları, route açıklamaları ve filtre/header açıklamaları docs okunabilirliği için
   netleştirilmiştir. Bu değişiklik yalnız dokümantasyon okunabilirliği içindir; request/response
-  davranışı değişmemiştir. Smoke script generated OpenAPI operasyon setiyle documented smoke
-  registry'yi path ve HTTP method seviyesinde iki yönlü doğrular.
+  davranışı değişmemiştir. W3C6 itibarıyla smoke script generated OpenAPI operasyon seti,
+  documented smoke registry ve güncel endpoint tablolarını path ve HTTP method seviyesinde
+  iki yönlü doğrular.
 - W3B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
   örnekleri taşır. Employee ve leave endpoint örnekleri method/path, tenant header, request body,
   success response ve temel error zarfı seviyesinde gösterilir. Employee ve leave endpointleri

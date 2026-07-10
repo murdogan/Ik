@@ -2,40 +2,40 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W3C5 OpenAPI tag hygiene`
+Task: `W3C6 Implementation report refresh`
 
 ## Scope
 
-- Refined the OpenAPI tag catalog descriptions while keeping the existing tag names stable:
-  `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and `Leave Requests`.
-- Reworded current route summaries, operation descriptions, and response descriptions for clearer
-  tenant-aware API docs.
-- Extended OpenAPI metadata regression coverage for the refreshed copy and leave balance
-  `period_year` parameter description.
+- Refreshed the implementation status report against the current FastAPI route surface.
+- Kept the completed API surface explicit: 14 generated OpenAPI operations plus the runtime
+  `/openapi.json` schema endpoint.
+- Added smoke coverage for the documented endpoint tables in this report and
+  `docs/09-uygulama/03-openapi-endpoint-taslagi.md`.
+- Clarified current behavior notes and the remaining backend backlog without expanding runtime
+  API behavior.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
-- No runtime API behavior, request/response payload shape, model, migration, or tenant isolation
-  change.
+- No request/response payload shape, model, migration, permission, or tenant isolation change.
 
 ## Completed API Surface
 
 | Method | Path | Status | Smoke coverage |
 |---|---|---|---|
-| GET | `/health` | Implemented | Health response and documented OpenAPI operation |
-| GET | `/` | Implemented | Wealthy Falcon HR landing response and documented OpenAPI operation |
-| GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and documented operation drift check |
-| GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped enriched metrics and documented OpenAPI operation |
-| GET | `/api/v1/employees` | Implemented | Tenant list, filters, pagination, and documented OpenAPI operation |
-| POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, and documented OpenAPI operation |
-| GET | `/api/v1/employees/{employee_id}` | Implemented | Detail, tenant isolation, and documented OpenAPI operation |
-| PATCH | `/api/v1/employees/{employee_id}` | Implemented | Partial update, lifecycle rules, and documented OpenAPI operation |
-| DELETE | `/api/v1/employees/{employee_id}` | Implemented | Delete, not-found check, and documented OpenAPI operation |
-| GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Manual summaries, period filter, tenant isolation, and documented OpenAPI operation |
-| GET | `/api/v1/leave-requests` | Implemented | Tenant list, filters, pagination, and documented OpenAPI operation |
-| POST | `/api/v1/leave-requests` | Implemented | Pending create, tenant checks, and documented OpenAPI operation |
-| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Pending-only transition, tenant checks, and documented OpenAPI operation |
-| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Pending-only transition and documented OpenAPI operation |
-| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Pending-only transition and documented OpenAPI operation |
+| GET | `/health` | Implemented | Health response, OpenAPI operation, and docs-table registry |
+| GET | `/` | Implemented | Wealthy Falcon HR landing response, OpenAPI operation, and docs-table registry |
+| GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and docs-table registry |
+| GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
+| GET | `/api/v1/employees` | Implemented | Tenant list, filters, pagination, OpenAPI operation, and docs-table registry |
+| POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, OpenAPI operation, and docs-table registry |
+| GET | `/api/v1/employees/{employee_id}` | Implemented | Detail lookup, tenant isolation, OpenAPI operation, and docs-table registry |
+| PATCH | `/api/v1/employees/{employee_id}` | Implemented | Partial update, lifecycle rules, OpenAPI operation, and docs-table registry |
+| DELETE | `/api/v1/employees/{employee_id}` | Implemented | Delete, not-found behavior, OpenAPI operation, and docs-table registry |
+| GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Manual summaries, period filter, tenant isolation, OpenAPI operation, and docs-table registry |
+| GET | `/api/v1/leave-requests` | Implemented | Tenant list, filters, pagination, OpenAPI operation, and docs-table registry |
+| POST | `/api/v1/leave-requests` | Implemented | Pending create, tenant checks, OpenAPI operation, and docs-table registry |
+| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Pending-only transition, tenant checks, OpenAPI operation, and docs-table registry |
+| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Pending-only transition, tenant checks, OpenAPI operation, and docs-table registry |
+| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Pending-only transition, tenant checks, OpenAPI operation, and docs-table registry |
 
 ## Current Behavior Notes
 
@@ -50,16 +50,17 @@ Task: `W3C5 OpenAPI tag hygiene`
 - Leave request list supports `status`, `employee_id`, inclusive overlapping `start_date` and
   `end_date` filters, plus bounded `limit` and `offset` pagination. Ordering is deterministic by
   `created_at desc`, `start_date asc`, and `id asc`.
+- Leave request decision endpoints currently approve, reject, or cancel only pending requests and
+  require the deciding user to belong to the same tenant.
 - Dashboard summary is DB-backed and tenant-scoped. It returns active employee count, workforce
   count, pending leave count, new starters this month, department distribution, recent activity,
   and compatibility fields currently used by the frontend-facing contract.
 - Leave balance summaries are read-only manual placeholders backed by
   `leave_balance_summaries`. They return `calculation_mode: "manual_placeholder"` and
   `external_integration_enabled: false`; no accrual engine, holiday calendar calculation,
-  payroll/bordro, SGK, bank, PDKS, AI, or external integration exists. W3C2 regression tests
-  explicitly keep this as a stored-summary placeholder.
+  payroll/bordro, SGK, bank, PDKS, AI, or external integration exists.
 - OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
-  `Leave Requests`. Current operations have explicit W3C5 summaries, descriptions, response
+  `Leave Requests`. Current operations have explicit summaries, descriptions, response
   descriptions, and tenant-aware parameter/header descriptions.
 - Tenant dependency errors, route-level domain errors, and automatic request validation errors on
   employee, leave balance, and leave request endpoints use the project error envelope.
@@ -75,11 +76,18 @@ Task: `W3C5 OpenAPI tag hygiene`
 `uv run python scripts/backend_api_smoke.py` runs entirely local/in-memory through ASGI and SQLite.
 It does not use deploy, staging URLs, cron, tokens, credentials, `.env`, or external services.
 
-The script currently verifies:
+The script now verifies the documented API surface in three directions:
+
+- Every generated OpenAPI operation must be listed in the smoke registry, and every OpenAPI
+  operation in the registry must exist in the generated schema.
+- The `Completed API Surface` table in this report must match the smoke registry, including the
+  runtime `/openapi.json` endpoint.
+- The `Güncel uygulama yüzeyi` table in `03-openapi-endpoint-taslagi.md` must match the same smoke
+  registry.
+
+The runtime scenarios currently verify:
 
 - `/health`, `/`, and `/openapi.json`.
-- OpenAPI operation drift: every documented operation must exist in generated OpenAPI, and every
-  generated OpenAPI operation must be listed in the documented smoke registry.
 - Tenant header missing, invalid, repeated, and cross-tenant behavior.
 - Employee create/list/detail/update/delete, filters, pagination, lifecycle status handling, and
   tenant isolation.
@@ -91,15 +99,13 @@ The script currently verifies:
 
 ## Verification
 
-W3C5 local gate run:
+W3C6 local gate run:
 
-- `uv run pytest backend/tests/test_openapi_metadata.py`: passed, 8 tests passed, 1 existing
-  Starlette `TestClient` deprecation warning.
 - `uv run ruff check backend`: passed.
 - `uv run pytest`: passed, 292 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
-  endpoints covered.
+  endpoints covered, including documented endpoint table checks.
 
 ## Remaining Backend Backlog
 
