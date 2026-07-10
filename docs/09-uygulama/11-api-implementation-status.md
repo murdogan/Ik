@@ -1,20 +1,21 @@
 # API Implementation Status Report
 
-Date: 2026-07-09
+Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W3C2 Leave balance placeholder model plan`
+Task: `W3C5 OpenAPI tag hygiene`
 
 ## Scope
 
-- Reconfirmed that the existing `leave_balance_summaries` read model is the appropriate minimal
-  domain placeholder for leave balance summaries.
-- Added regression coverage that keeps the placeholder persistence model limited to stored manual
-  summary columns and keeps the response schema on `manual_placeholder` calculation mode only.
-- Refreshed docs around the current leave balance limitation instead of adding payroll, accrual,
-  holiday, PDKS, AI, or external integration behavior.
+- Refined the OpenAPI tag catalog descriptions while keeping the existing tag names stable:
+  `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and `Leave Requests`.
+- Reworded current route summaries, operation descriptions, and response descriptions for clearer
+  tenant-aware API docs.
+- Extended OpenAPI metadata regression coverage for the refreshed copy and leave balance
+  `period_year` parameter description.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
-- No API behavior, schema, model, migration, or tenant isolation change.
+- No runtime API behavior, request/response payload shape, model, migration, or tenant isolation
+  change.
 
 ## Completed API Surface
 
@@ -58,8 +59,8 @@ Task: `W3C2 Leave balance placeholder model plan`
   payroll/bordro, SGK, bank, PDKS, AI, or external integration exists. W3C2 regression tests
   explicitly keep this as a stored-summary placeholder.
 - OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
-  `Leave Requests`. Current operations have explicit summaries, descriptions, and tenant-aware
-  parameter/header descriptions.
+  `Leave Requests`. Current operations have explicit W3C5 summaries, descriptions, response
+  descriptions, and tenant-aware parameter/header descriptions.
 - Tenant dependency errors, route-level domain errors, and automatic request validation errors on
   employee, leave balance, and leave request endpoints use the project error envelope.
 - FastAPI's generic request validation remains framework default outside the employee and leave
@@ -90,12 +91,12 @@ The script currently verifies:
 
 ## Verification
 
-W3C2 local gate run:
+W3C5 local gate run:
 
-- `uv run pytest backend/tests/test_leave_balance_model.py backend/tests/test_leave_balance_schemas.py backend/tests/test_openapi_metadata.py`:
-  passed, 20 tests passed, 1 existing Starlette `TestClient` deprecation warning.
+- `uv run pytest backend/tests/test_openapi_metadata.py`: passed, 8 tests passed, 1 existing
+  Starlette `TestClient` deprecation warning.
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 282 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 292 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered.

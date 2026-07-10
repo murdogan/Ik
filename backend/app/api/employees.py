@@ -99,13 +99,13 @@ def get_employee_list_pagination(
 @router.get(
     "",
     response_model=list[EmployeeRead],
-    summary="List tenant employees",
+    summary="List employees",
     description=(
-        "Returns employees for the current tenant from the tenant header context. Optional "
-        "filters cover department, lifecycle status, and employee number or email search, with "
-        "bounded limit/offset pagination."
+        "Lists employees in the current tenant from the tenant header context. Optional filters "
+        "cover department, lifecycle status, and employee number or email search; tenant "
+        "isolation is applied before bounded limit/offset pagination."
     ),
-    response_description="Tenant employee list.",
+    response_description="Employee list.",
 )
 async def list_employees(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
@@ -120,12 +120,13 @@ async def list_employees(
     "",
     response_model=EmployeeRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Create tenant employee",
+    summary="Create employee",
     description=(
-        "Creates an employee in the current tenant from the tenant header context. Employee "
-        "numbers must remain unique within that tenant, and lifecycle date rules are enforced."
+        "Creates an employee record in the current tenant from the tenant header context. "
+        "Employee numbers must remain unique within that tenant, and lifecycle date rules are "
+        "enforced before persistence."
     ),
-    response_description="Created employee.",
+    response_description="Created employee record.",
 )
 async def create_employee(
     payload: EmployeeCreate,
@@ -145,12 +146,12 @@ async def create_employee(
 @router.get(
     "/{employee_id}",
     response_model=EmployeeRead,
-    summary="Read tenant employee",
+    summary="Get employee",
     description=(
-        "Returns one employee by id when the employee belongs to the current tenant. Employees "
-        "from other tenants are treated as not found."
+        "Returns one employee record only when it belongs to the current tenant. Employee IDs "
+        "from other tenants return the same not-found envelope as missing records."
     ),
-    response_description="Tenant employee.",
+    response_description="Employee record.",
 )
 async def get_employee(
     employee_id: UUID,
@@ -166,12 +167,12 @@ async def get_employee(
 @router.patch(
     "/{employee_id}",
     response_model=EmployeeRead,
-    summary="Update tenant employee",
+    summary="Update employee",
     description=(
-        "Partially updates an employee in the current tenant while preserving tenant isolation, "
-        "employee number uniqueness, and employment lifecycle date rules."
+        "Partially updates an employee record in the current tenant while preserving tenant "
+        "isolation, employee number uniqueness, and employment lifecycle date rules."
     ),
-    response_description="Updated employee.",
+    response_description="Updated employee record.",
 )
 async def update_employee(
     employee_id: UUID,
@@ -194,12 +195,12 @@ async def update_employee(
 @router.delete(
     "/{employee_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete tenant employee",
+    summary="Delete employee",
     description=(
-        "Deletes an employee by id when the employee belongs to the current tenant. Employees "
-        "from other tenants are treated as not found."
+        "Deletes an employee record by id only when it belongs to the current tenant. Employee "
+        "IDs from other tenants return the same not-found envelope as missing records."
     ),
-    response_description="Employee deleted.",
+    response_description="Employee deletion completed.",
 )
 async def delete_employee(
     employee_id: UUID,

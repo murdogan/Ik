@@ -22,13 +22,13 @@ def get_dashboard_service(
 @router.get(
     "/summary",
     response_model=DashboardSummary,
-    summary="Read tenant dashboard summary",
+    summary="Get tenant dashboard summary",
     description=(
-        "Returns HR operating metrics for the current tenant from the tenant header context, "
-        "including workforce counts, pending leave, department distribution, new starters, and "
-        "recent activity."
+        "Returns tenant-scoped HR operating metrics from the tenant header context, including "
+        "active workforce counts, pending leave workload, department distribution, new starters, "
+        "and recent activity."
     ),
-    response_description="Tenant dashboard summary metrics.",
+    response_description="Dashboard summary metrics.",
 )
 async def dashboard_summary(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],

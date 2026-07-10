@@ -22,12 +22,12 @@ def test_openapi_uses_readable_tag_catalog() -> None:
     assert response.status_code == 200
     assert response.json()["tags"] == OPENAPI_TAGS
     descriptions = {tag["name"]: tag["description"] for tag in response.json()["tags"]}
-    assert "API health" in descriptions[SYSTEM_TAG]
-    assert "outside tenant-scoped APIs" in descriptions[PUBLIC_TAG]
-    assert "dashboard views" in descriptions[DASHBOARD_TAG]
-    assert "profile lookup" in descriptions[EMPLOYEES_TAG]
+    assert "API health and platform readiness" in descriptions[SYSTEM_TAG]
+    assert "Browser-facing public pages" in descriptions[PUBLIC_TAG]
+    assert "workforce counts, leave workload" in descriptions[DASHBOARD_TAG]
+    assert "employee directory" in descriptions[EMPLOYEES_TAG]
     assert "no accrual engine" in descriptions[LEAVE_BALANCES_TAG]
-    assert "pending-request decision workflow" in descriptions[LEAVE_REQUESTS_TAG]
+    assert "intake, filtering" in descriptions[LEAVE_REQUESTS_TAG]
 
 
 def test_current_operations_have_readable_openapi_metadata() -> None:
@@ -40,73 +40,73 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
     expected_metadata = {
         ("/health", "get"): (
             SYSTEM_TAG,
-            "Check API health",
-            "public Wealthy Falcon HR API status metadata",
+            "Get API health status",
+            "public Wealthy Falcon HR service status metadata",
         ),
         ("/", "get"): (
             PUBLIC_TAG,
-            "Serve Wealthy Falcon HR landing",
-            "landing page HTML for browser requests",
+            "Open public landing page",
+            "outside the tenant-scoped API surface",
         ),
         ("/api/v1/dashboard/summary", "get"): (
             DASHBOARD_TAG,
-            "Read tenant dashboard summary",
-            "tenant header context",
+            "Get tenant dashboard summary",
+            "active workforce counts",
         ),
         ("/api/v1/employees", "get"): (
             EMPLOYEES_TAG,
-            "List tenant employees",
-            "bounded limit/offset pagination",
+            "List employees",
+            "tenant isolation is applied before bounded limit/offset pagination",
         ),
         ("/api/v1/employees", "post"): (
             EMPLOYEES_TAG,
-            "Create tenant employee",
-            "lifecycle date rules are enforced",
+            "Create employee",
+            "lifecycle date rules are enforced before persistence",
         ),
         ("/api/v1/employees/{employee_id}", "get"): (
             EMPLOYEES_TAG,
-            "Read tenant employee",
-            "Employees from other tenants are treated as not found",
+            "Get employee",
+            "same not-found envelope as missing records",
         ),
         ("/api/v1/employees/{employee_id}", "patch"): (
             EMPLOYEES_TAG,
-            "Update tenant employee",
-            "employment lifecycle date rules",
+            "Update employee",
+            "employee number uniqueness",
         ),
         ("/api/v1/employees/{employee_id}", "delete"): (
             EMPLOYEES_TAG,
-            "Delete tenant employee",
-            "Employees from other tenants are treated as not found",
+            "Delete employee",
+            "Employee IDs from other tenants return the same not-found envelope",
         ),
         ("/api/v1/employees/{employee_id}/leave-balances", "get"): (
             LEAVE_BALANCES_TAG,
-            "List employee leave balance summaries",
-            "reads stored summaries only",
+            "List employee leave balances",
+            "read-only placeholder does not calculate accruals",
         ),
         ("/api/v1/leave-requests", "get"): (
             LEAVE_REQUESTS_TAG,
-            "List tenant leave requests",
-            "bounded limit/offset pagination",
+            "List leave requests",
+            "overlapping date windows",
         ),
         ("/api/v1/leave-requests", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Create tenant leave request",
-            "leave dates must be ordered",
+            "Create leave request",
+            "ordered before persistence",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/approve", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Approve tenant leave request",
-            "Leave requests from other tenants are treated as not found",
+            "Approve leave request",
+            "same not-found envelope as missing records",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/reject", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Reject tenant leave request",
-            "Leave requests from other tenants are treated as not found",
+            "Reject leave request",
+            "same not-found envelope as missing records",
         ),
         ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Cancel tenant leave request",
-            "Leave requests from other tenants are treated as not found",
+            "Cancel leave request",
+            "same not-found envelope as missing records",
         ),
     }
 
@@ -146,6 +146,10 @@ def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:
     paths = response.json()["paths"]
     leave_balance_path = "/api/v1/employees/{employee_id}/leave-balances"
     assert set(paths[leave_balance_path]) == {"get"}
+    params = {
+        parameter["name"]: parameter for parameter in paths[leave_balance_path]["get"]["parameters"]
+    }
+    assert "single period year" in params["period_year"]["description"]
 
     mutating_methods = {"post", "put", "patch", "delete"}
     tagged_mutations = [

@@ -2,7 +2,7 @@
 
 Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request/response sözleşmelerini, permission etkisini ve hata davranışını taslak seviyesinde tanımlar. Amaç, backend ve frontend geliştirmeye başlamadan önce contract-first ilerlemektir.
 
-## 0. Güncel uygulama yüzeyi (2026-07-09 / W3B3)
+## 0. Güncel uygulama yüzeyi (2026-07-10 / W3C5)
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır.
@@ -27,13 +27,13 @@ lokal backend smoke kapsamındadır.
 
 Geçerli uygulama notları:
 
-- OpenAPI dokümanı W2C5 itibarıyla okunabilir tag kataloğu kullanır:
+- OpenAPI dokümanı W3C5 itibarıyla okunabilir tag kataloğu kullanır:
   `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
   Mevcut operasyonların her biri açık, tenant-aware `summary` ve `description` metadata'sı taşır;
-  filtre/header açıklamaları da docs okunabilirliği için netleştirilmiştir. Bu değişiklik yalnız
-  dokümantasyon okunabilirliği içindir; request/response davranışı değişmemiştir. W2C6 status
-  refresh kapsamında smoke script generated OpenAPI operasyon setiyle documented smoke registry'yi
-  path ve HTTP method seviyesinde iki yönlü doğrular.
+  tag açıklamaları, route açıklamaları ve filtre/header açıklamaları docs okunabilirliği için
+  netleştirilmiştir. Bu değişiklik yalnız dokümantasyon okunabilirliği içindir; request/response
+  davranışı değişmemiştir. Smoke script generated OpenAPI operasyon setiyle documented smoke
+  registry'yi path ve HTTP method seviyesinde iki yönlü doğrular.
 - W3B3 kapsamında bu taslak, mevcut FastAPI response shape'ine göre concrete request/response
   örnekleri taşır. Employee ve leave endpoint örnekleri method/path, tenant header, request body,
   success response ve temel error zarfı seviyesinde gösterilir. Employee ve leave endpointleri

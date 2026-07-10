@@ -9,40 +9,41 @@ OPENAPI_TAGS = [
     {
         "name": SYSTEM_TAG,
         "description": (
-            "Public operational endpoints for API health, uptime, and platform readiness checks."
+            "Public operational endpoints for API health and platform readiness checks."
         ),
     },
     {
         "name": PUBLIC_TAG,
         "description": (
-            "Public Wealthy Falcon HR browser endpoints exposed outside tenant-scoped APIs."
+            "Browser-facing public pages exposed outside tenant-scoped Wealthy Falcon HR APIs."
         ),
     },
     {
         "name": DASHBOARD_TAG,
         "description": (
-            "Tenant-scoped HR operating metrics for executive and people-team dashboard views."
+            "Tenant-scoped HR dashboard metrics for workforce counts, leave workload, and "
+            "recent activity."
         ),
     },
     {
         "name": EMPLOYEES_TAG,
         "description": (
-            "Tenant-scoped employee master data, profile lookup, and employment lifecycle "
-            "operations."
+            "Tenant-scoped employee directory, profile lookup, lifecycle status, and record "
+            "management."
         ),
     },
     {
         "name": LEAVE_BALANCES_TAG,
         "description": (
-            "Tenant-scoped read-only manual leave balance summaries with no accrual engine or "
-            "external integrations."
+            "Tenant-scoped read-only manual leave balance summaries; no accrual engine or "
+            "external integrations are exposed."
         ),
     },
     {
         "name": LEAVE_REQUESTS_TAG,
         "description": (
-            "Tenant-scoped leave request listing, creation, and pending-request decision "
-            "workflow endpoints."
+            "Tenant-scoped leave request intake, filtering, and pending-request decision "
+            "workflow."
         ),
     },
 ]

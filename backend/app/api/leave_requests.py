@@ -107,13 +107,13 @@ def get_leave_request_list_pagination(
 @router.get(
     "",
     response_model=list[LeaveRequestRead],
-    summary="List tenant leave requests",
+    summary="List leave requests",
     description=(
-        "Returns leave requests for the current tenant from the tenant header context. Optional "
-        "filters cover workflow status, employee, and overlapping date windows, with bounded "
-        "limit/offset pagination."
+        "Lists leave requests in the current tenant from the tenant header context. Optional "
+        "filters cover workflow status, employee, and overlapping date windows; tenant "
+        "isolation is applied before bounded limit/offset pagination."
     ),
-    response_description="Tenant leave request list.",
+    response_description="Leave request list.",
 )
 async def list_leave_requests(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
@@ -128,13 +128,13 @@ async def list_leave_requests(
     "",
     response_model=LeaveRequestRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Create tenant leave request",
+    summary="Create leave request",
     description=(
-        "Creates a pending leave request in the current tenant. The employee and requesting "
-        "user must both belong to the tenant from the request headers, and leave dates must be "
-        "ordered."
+        "Creates a pending leave request in the current tenant. The employee and requesting user "
+        "must both belong to the tenant from the request headers, and leave dates must be "
+        "ordered before persistence."
     ),
-    response_description="Created leave request.",
+    response_description="Created leave request record.",
 )
 async def create_leave_request(
     payload: LeaveRequestCreate,
@@ -154,12 +154,13 @@ async def create_leave_request(
 @router.post(
     "/{leave_request_id}/approve",
     response_model=LeaveRequestRead,
-    summary="Approve tenant leave request",
+    summary="Approve leave request",
     description=(
         "Approves a pending leave request in the current tenant and records the supplied "
-        "decision metadata. Leave requests from other tenants are treated as not found."
+        "decision metadata. Leave request IDs from other tenants return the same not-found "
+        "envelope as missing records."
     ),
-    response_description="Approved leave request.",
+    response_description="Approved leave request record.",
 )
 async def approve_leave_request(
     leave_request_id: UUID,
@@ -184,12 +185,13 @@ async def approve_leave_request(
 @router.post(
     "/{leave_request_id}/reject",
     response_model=LeaveRequestRead,
-    summary="Reject tenant leave request",
+    summary="Reject leave request",
     description=(
-        "Rejects a pending leave request in the current tenant and records the supplied "
-        "decision metadata. Leave requests from other tenants are treated as not found."
+        "Rejects a pending leave request in the current tenant and records the supplied decision "
+        "metadata. Leave request IDs from other tenants return the same not-found envelope as "
+        "missing records."
     ),
-    response_description="Rejected leave request.",
+    response_description="Rejected leave request record.",
 )
 async def reject_leave_request(
     leave_request_id: UUID,
@@ -214,12 +216,13 @@ async def reject_leave_request(
 @router.post(
     "/{leave_request_id}/cancel",
     response_model=LeaveRequestRead,
-    summary="Cancel tenant leave request",
+    summary="Cancel leave request",
     description=(
-        "Cancels a pending leave request in the current tenant and records the supplied "
-        "decision metadata. Leave requests from other tenants are treated as not found."
+        "Cancels a pending leave request in the current tenant and records the supplied decision "
+        "metadata. Leave request IDs from other tenants return the same not-found envelope as "
+        "missing records."
     ),
-    response_description="Cancelled leave request.",
+    response_description="Cancelled leave request record.",
 )
 async def cancel_leave_request(
     leave_request_id: UUID,

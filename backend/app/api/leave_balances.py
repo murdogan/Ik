@@ -31,13 +31,12 @@ def get_leave_balance_service(
 @router.get(
     "/{employee_id}/leave-balances",
     response_model=list[LeaveBalanceSummaryRead],
-    summary="List employee leave balance summaries",
+    summary="List employee leave balances",
     description=(
-        "Returns read-only manual leave balance summaries for an employee in the current tenant. "
-        "This placeholder endpoint reads stored summaries only; it does not calculate accruals "
-        "or call external integrations."
+        "Lists stored manual leave balance summaries for an employee in the current tenant. "
+        "This read-only placeholder does not calculate accruals or call external integrations."
     ),
-    response_description="Employee leave balance summaries.",
+    response_description="Employee leave balance summary list.",
 )
 async def list_employee_leave_balances(
     employee_id: UUID,
@@ -48,7 +47,7 @@ async def list_employee_leave_balances(
         Query(
             ge=1900,
             le=2200,
-            description="Filters balance summaries to one period year.",
+            description="Filters balance summaries to a single period year.",
         ),
     ] = None,
 ) -> list[LeaveBalanceSummaryRead]:
