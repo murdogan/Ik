@@ -119,27 +119,42 @@ async def _query_dashboard_counts(
     tenant_id: UUID,
     today: date,
 ) -> _DashboardCounts:
-    start_date, end_date = _month_window(today)
     return _DashboardCounts(
-        active_employee_count=await _scalar_count(
-            session,
-            _active_employee_count_statement(tenant_id),
+        active_employee_count=await _query_active_employee_count(session, tenant_id),
+        employee_count=await _query_current_employee_count(session, tenant_id),
+        pending_leave_count=await _query_pending_leave_count(session, tenant_id),
+        new_starters_this_month=await _query_new_starters_this_month(
+            session=session,
+            tenant_id=tenant_id,
+            today=today,
         ),
-        employee_count=await _scalar_count(
-            session,
-            _current_employee_count_statement(tenant_id),
-        ),
-        pending_leave_count=await _scalar_count(
-            session,
-            _pending_leave_count_statement(tenant_id),
-        ),
-        new_starters_this_month=await _scalar_count(
-            session,
-            _new_starters_count_statement(
-                tenant_id=tenant_id,
-                start_date=start_date,
-                end_date=end_date,
-            ),
+    )
+
+
+async def _query_active_employee_count(session: AsyncSession, tenant_id: UUID) -> int:
+    return await _scalar_count(session, _active_employee_count_statement(tenant_id))
+
+
+async def _query_current_employee_count(session: AsyncSession, tenant_id: UUID) -> int:
+    return await _scalar_count(session, _current_employee_count_statement(tenant_id))
+
+
+async def _query_pending_leave_count(session: AsyncSession, tenant_id: UUID) -> int:
+    return await _scalar_count(session, _pending_leave_count_statement(tenant_id))
+
+
+async def _query_new_starters_this_month(
+    session: AsyncSession,
+    tenant_id: UUID,
+    today: date,
+) -> int:
+    start_date, end_date = _month_window(today)
+    return await _scalar_count(
+        session,
+        _new_starters_count_statement(
+            tenant_id=tenant_id,
+            start_date=start_date,
+            end_date=end_date,
         ),
     )
 
