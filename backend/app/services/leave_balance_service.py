@@ -42,6 +42,7 @@ class LeaveBalanceService:
             select(Employee.id)
             .where(Employee.tenant_id == tenant_id)
             .where(Employee.id == employee_id)
+            .where(Employee.archived_at.is_(None))
         )
         if await self.session.scalar(statement) is None:
             raise LeaveBalanceEmployeeNotFoundError

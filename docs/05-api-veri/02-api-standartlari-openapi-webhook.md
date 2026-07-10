@@ -10,7 +10,7 @@ Bu doküman, IK Platform HTTP API'lerinin URL, response, hata, pagination, idemp
 | OpenAPI | Tüm endpointler schema ve örnekle belgelenir |
 | Tenant-aware | Tenant token/session/host üzerinden çözülür |
 | Permission-first | Protected endpoint permission dependency ister |
-| Idempotency | Kritik POST endpointlerinde `Idempotency-Key` |
+| Idempotency | Desteklenen kritik POST endpointlerinde opsiyonel `X-Idempotency-Key` |
 | Pagination | Büyük listelerde cursor-based pagination |
 | Async jobs | Import, export, payroll, AI ve rapor işlemleri async |
 | Correlation | Her response `correlation_id`/`trace_id` taşır |
@@ -68,12 +68,13 @@ Hata response:
 | HTTP | Code | Anlam |
 |---|---|---|
 | 400 | `SYS_400_MALFORMED_REQUEST` | Bozuk istek |
+| 400 | `idempotency_key_invalid` | Opsiyonel key boş, whitespace içeriyor, çok uzun veya tekrarlı |
 | 401 | `AUTH_401_UNAUTHENTICATED` | Login/token yok |
 | 403 | `AUTH_403_PERMISSION_DENIED` | Yetki yok |
 | 403 | `CORE_403_TENANT_MISMATCH` | Tenant uyuşmazlığı |
 | 404 | `SYS_404_NOT_FOUND` | Kaynak yok veya scope dışı |
 | 409 | `SYS_409_CONFLICT` | Çakışma |
-| 409 | `SYS_409_IDEMPOTENCY_MISMATCH` | Aynı key farklı gövde |
+| 409 | `idempotency_key_mismatch` | Aynı tenant key'i farklı komut, hedef veya semantic body ile kullanıldı |
 | 422 | `VAL_422_VALIDATION` | Validasyon/iş kuralı |
 | 423 | `{MOD}_423_LOCKED` | Kilitli dönem |
 | 429 | `SYS_429_RATE_LIMITED` | Limit aşıldı |
@@ -92,14 +93,40 @@ Hata response:
 
 ## 6. Idempotency
 
-Kritik POST endpointlerinde `X-Idempotency-Key` kullanılır.
+Mevcut Faz-0 yüzeyinde employee create, leave request create ve leave
+approve/reject/cancel komutları opsiyonel `X-Idempotency-Key` kabul eder. Header gönderilmezse
+geriye dönük uyumlu normal komut davranışı korunur.
 
 Kurallar:
 
-- Aynı key + aynı body = aynı response döner.
-- Aynı key + farklı body = `409 SYS_409_IDEMPOTENCY_MISMATCH`.
-- TTL ilk etapta 24 saat olabilir.
-- Bordro/onay gibi kritik işlemler ayrıca domain state machine ile korunur.
+- Key tenant genelinde tektir; aynı key farklı tenant'larda birbirinden bağımsızdır.
+- Key 1-128 whitespace içermeyen karakterdir. Boş, whitespace içeren veya tekrarlı header
+  `400 idempotency_key_invalid` döner.
+- Aynı key + aynı semantic komut/hedef/body, ilk başarılı response snapshot'ını ve aynı resource
+  ID/status değerini tekrar döner. JSON alan sırası veya schema'nın normalize ettiği eşdeğer input
+  yeni bir write üretmez.
+- Aynı tenant key'inin farklı komut, hedef veya semantic body ile tekrar kullanılması
+  `409 idempotency_key_mismatch` döner ve ikinci write çalışmaz.
+- Idempotency receipt'i ve domain write aynı Unit of Work transaction'ındadır. Başarısız komut
+  receipt'i de geri alır; düzeltilmiş altyapı/veri sonrası aynı semantic istek aynı key ile yeniden
+  denenebilir.
+- Henüz TTL veya cleanup işi yoktur. Receipt silinmediği sürece key aynı tenant içinde rezerve
+  kalır; 24 saatlik expiry uygulanmış gibi varsayılmaz.
+- İzin kararları idempotency'ye ek olarak tenant-scoped row lock ve pending-only state machine ile
+  korunur; idempotency key state transition kuralının yerine geçmez.
+
+### 6.1 Employee archive ve retention sınırı
+
+Normal `DELETE /api/v1/employees/{employee_id}` fiziksel silme yapmaz; aynı path ve `204`
+sözleşmesini koruyarak `archived_at` set eder. Tekrarlı DELETE no-op olarak yine `204` döner.
+Arşivlenen çalışan normal liste/detail/update, yeni izin talebi, bakiye okuma ve dashboard işgücü
+yüzeylerinden gizlenir; employee number tenant içinde rezerve kalır ve mevcut leave/balance geçmişi
+korunur.
+
+Employee purge için HTTP endpoint yoktur. Child employee ilişkileri geçmişi korumak için
+`ON DELETE RESTRICT` kullanır. Fiziksel tenant graph temizliği yalnız açık retention/onay ve
+offboarding kontrolleri olan kısıtlı tenant-root operasyonuna aittir; normal employee API'sinin
+yetkisi değildir.
 
 ## 7. Async operation standardı
 

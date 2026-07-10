@@ -86,7 +86,7 @@ def test_leave_request_tenant_owned_foreign_keys_include_tenant_id() -> None:
         ("tenant_id", "employee_id"),
         "employees",
         ("tenant_id", "id"),
-        "CASCADE",
+        "RESTRICT",
     )
     assert foreign_keys["fk_leave_requests_tenant_requested_by_user_id_users"] == (
         ("tenant_id", "requested_by_user_id"),

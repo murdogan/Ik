@@ -5,10 +5,11 @@ from uuid import UUID, uuid4
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
+from app.models.command_idempotency import CommandIdempotency
 from app.models.employee import Employee, EmployeeStatus
 from app.models.tenant import Tenant, TenantStatus
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -1067,7 +1068,131 @@ async def test_create_employee_rejects_duplicate_employee_number_within_tenant()
         await engine.dispose()
 
 
-async def test_delete_employee_hard_deletes_current_tenant_record() -> None:
+async def test_create_employee_idempotency_replays_and_rejects_changed_payload() -> None:
+    client, engine = await _client_with_database()
+    payload = {
+        "employee_number": "WF-IDEMPOTENT",
+        "first_name": "Retry",
+        "last_name": "Safe",
+        "employment_start_date": "2026-07-10",
+    }
+    headers = {
+        **_tenant_headers(),
+        "X-Idempotency-Key": "employee-create-retry-001",
+        "X-Correlation-Id": "p0e-employee-idempotency",
+    }
+    try:
+        first_response = await client.post(
+            "/api/v1/employees",
+            headers=headers,
+            json=payload,
+        )
+        replay_response = await client.post(
+            "/api/v1/employees",
+            headers=headers,
+            json=payload,
+        )
+        mismatch_response = await client.post(
+            "/api/v1/employees",
+            headers=headers,
+            json={**payload, "first_name": "Changed"},
+        )
+
+        assert first_response.status_code == 201
+        assert replay_response.status_code == 201
+        assert replay_response.json() == first_response.json()
+        _assert_error_response(
+            mismatch_response,
+            status_code=409,
+            code="idempotency_key_mismatch",
+            message=(
+                "X-Idempotency-Key was already used for a different request in this tenant"
+            ),
+            correlation_id="p0e-employee-idempotency",
+        )
+
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            employee_count = await session.scalar(
+                select(func.count())
+                .select_from(Employee)
+                .where(Employee.tenant_id == TENANT_ID)
+                .where(Employee.employee_number == "WF-IDEMPOTENT")
+            )
+            receipt_count = await session.scalar(
+                select(func.count())
+                .select_from(CommandIdempotency)
+                .where(CommandIdempotency.tenant_id == TENANT_ID)
+                .where(
+                    CommandIdempotency.idempotency_key
+                    == "employee-create-retry-001"
+                )
+            )
+        assert employee_count == 1
+        assert receipt_count == 1
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_create_employee_rejects_repeated_idempotency_header() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=[
+                ("X-Tenant-Id", str(TENANT_ID)),
+                ("X-Idempotency-Key", "first-key"),
+                ("X-Idempotency-Key", "second-key"),
+                ("X-Correlation-Id", "p0e-idempotency-header"),
+            ],
+            json={
+                "employee_number": "WF-HEADER",
+                "first_name": "Header",
+                "last_name": "Validation",
+                "employment_start_date": "2026-07-10",
+            },
+        )
+        whitespace_response = await client.post(
+            "/api/v1/employees",
+            headers={
+                **_tenant_headers(),
+                "X-Idempotency-Key": "invalid key",
+                "X-Correlation-Id": "p0e-idempotency-whitespace",
+            },
+            json={
+                "employee_number": "WF-HEADER",
+                "first_name": "Header",
+                "last_name": "Validation",
+                "employment_start_date": "2026-07-10",
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=400,
+            code="idempotency_key_invalid",
+            message=(
+                "X-Idempotency-Key must be sent at most once and contain 1 to 128 "
+                "non-whitespace characters"
+            ),
+            correlation_id="p0e-idempotency-header",
+        )
+        _assert_error_response(
+            whitespace_response,
+            status_code=400,
+            code="idempotency_key_invalid",
+            message=(
+                "X-Idempotency-Key must be sent at most once and contain 1 to 128 "
+                "non-whitespace characters"
+            ),
+            correlation_id="p0e-idempotency-whitespace",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_delete_employee_archives_current_tenant_record_idempotently() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.delete(
@@ -1082,14 +1207,27 @@ async def test_delete_employee_hard_deletes_current_tenant_record() -> None:
             f"/api/v1/employees/{OTHER_EMPLOYEE_ID}",
             headers=_tenant_headers(),
         )
+        repeated_response = await client.delete(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+        )
 
         assert response.status_code == 204
+        assert repeated_response.status_code == 204
         _assert_error_response(
             get_response,
             status_code=404,
             code="employee_not_found",
             message="Employee not found",
         )
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            archived_employee = await session.get(Employee, EMPLOYEE_ID)
+            other_employee = await session.get(Employee, OTHER_EMPLOYEE_ID)
+        assert archived_employee is not None
+        assert archived_employee.archived_at is not None
+        assert archived_employee.status == EmployeeStatus.ACTIVE.value
+        assert other_employee is not None
+        assert other_employee.archived_at is None
         _assert_error_response(
             cross_tenant_response,
             status_code=404,

@@ -2,9 +2,45 @@
 
 Date: 2026-07-10
 Branch: `codex/mvp-phase0-until-20260711-1100`
-Task: `P0D Tenant relational integrity with expand-contract composite foreign keys`
+Task: `P0E Concurrency, idempotency and destructive-delete hardening`
 
 ## Scope
+
+### P0E concurrency, idempotency and archive hardening
+
+- Added database-backed, tenant-global command receipts for optional `X-Idempotency-Key` on
+  employee create, leave request create, and leave approve/reject/cancel. The same semantic
+  command/target/body replays the first successful response snapshot and resource ID; reusing the
+  same tenant key for a different command, target, or body returns
+  `409 idempotency_key_mismatch` without a second domain write.
+- Receipt claim/completion and the domain write share the existing Unit of Work transaction.
+  Failed commands roll back their incomplete receipt. The unique
+  `uq_command_idempotency_tenant_key` constraint chooses one winner for concurrent claims; the
+  loser reopens a clean transaction and replays the committed receipt.
+- Keys are independent across tenants. Empty, whitespace-bearing, longer-than-128-character, or
+  repeated headers return `400 idempotency_key_invalid`. No receipt TTL/cleanup job exists yet, so
+  completed keys remain reserved while their tenant exists.
+- Leave decisions now read the tenant-scoped request row with PostgreSQL `SELECT ... FOR UPDATE`
+  inside the command transaction. Concurrent approve/reject/cancel operations therefore produce
+  exactly one terminal winner; a different-key loser observes the committed terminal state and
+  returns the existing `409 leave_request_transition_conflict`. An equivalent same-key retry
+  replays the first successful decision snapshot.
+- `DELETE /api/v1/employees/{employee_id}` keeps its path and `204` response but now archives by
+  setting `archived_at`. Repeating DELETE is a no-op `204`. Normal list/detail/update, new leave,
+  leave-balance, dashboard workforce, and employee-activity reads hide archived employees;
+  employee number remains reserved and existing leave/balance history remains stored.
+- Changed the leave-request and leave-balance employee composite FKs to `ON DELETE RESTRICT`, so
+  direct employee deletion cannot cascade away history. There is no employee purge HTTP endpoint.
+  Tenant-root graph deletion remains only a restricted retention/offboarding operation with
+  explicit approval outside the normal employee command surface.
+- Added Alembic revision `0011_p0e_concurrency_idempotency_archive`, fast SQLite command/API/model/
+  migration regressions, local smoke replay/archive scenarios, and real PostgreSQL proofs for the
+  leave one-winner race, concurrent same-key create, and retention-safe employee archive.
+- `0011` downgrade refuses to discard non-null archive markers or idempotency receipts until an
+  operator explicitly exports/remediates that retained state; SQLite and PostgreSQL regressions
+  prove the failed downgrade leaves the head revision and retained rows intact.
+- P0E adds no auth/RBAC/RLS, audit/outbox, worker/TTL cleanup, payroll/bordro, SGK, banking, PDKS,
+  AI, external integration, deployment, or new product module.
 
 ### P0D tenant relational integrity
 
@@ -13,9 +49,10 @@ Task: `P0D Tenant relational integrity with expand-contract composite foreign ke
   scalar; the four employee/user references owned by leave tables now include the child tenant.
 - Added `(tenant_id, id)` candidate keys to the only currently referenced tenant-owned parents,
   `employees` and `users`.
-- Replaced the tenant-owned scalar references at final head with named composite foreign keys for
-  leave request employee/requester/decider and leave balance employee, preserving existing
-  `CASCADE`, `NO ACTION`, nullability, and nullable decider `MATCH SIMPLE` behavior.
+- Replaced tenant-owned scalar references with named composite foreign keys for leave request
+  employee/requester/decider and leave balance employee. P0E current head keeps requester/decider
+  `NO ACTION` and nullable decider `MATCH SIMPLE`, while employee history relationships are now
+  `RESTRICT` rather than destructive cascade.
 - Added a two-revision expand-contract migration. `0009` runs a reusable preflight query across all
   eight implemented relationships, builds resumable PostgreSQL candidate indexes concurrently,
   adds composite FKs `NOT VALID` while legacy FKs remain, and repeats the preflight under the new
@@ -35,9 +72,10 @@ Task: `P0D Tenant relational integrity with expand-contract composite foreign ke
 
 - Added `SqlAlchemyUnitOfWork.execute` as the sole begin/commit/rollback owner for the transitional
   `EmployeeCommandHandler` and `LeaveRequestCommandHandler` write paths.
-- Employee create/update/delete and leave request create/approve/reject/cancel now run through those
-  application command handlers. The underlying business services may `flush()` so constraints and
-  generated values are visible, but migrated service methods never `commit()` independently.
+- Employee create/update/archive (the compatible DELETE path) and leave request
+  create/approve/reject/cancel run through those application command handlers. The underlying
+  business services may `flush()` so constraints and generated values are visible, but migrated
+  service methods never `commit()` independently.
 - Kept employee/leave/dashboard/balance read paths direct and SQLAlchemy-aware; P0C adds no generic
   repository, distributed transaction abstraction, or god object.
 - Added the transport-neutral `ApplicationError` contract and one API-edge mapper. Existing
@@ -53,9 +91,9 @@ Task: `P0D Tenant relational integrity with expand-contract composite foreign ke
   cannot leave the migrated domain mutation partially persisted.
 - P0C changes no table/model schema and adds no Alembic migration. It establishes the boundary that
   later audit/outbox writers can join without implementing those later features now.
-- Leave decision winner/locking/versioning and idempotency remain later Phase-0 work. P0C itself did
-  not change relational constraints; the subsequent P0D block now supplies composite tenant
-  foreign keys without changing P0C transaction ownership.
+- P0C itself did not implement leave decision locking or idempotency; P0E now composes both on that
+  unchanged transaction boundary. P0D supplies composite tenant foreign keys, and P0E changes only
+  the employee-history delete action to retention-safe `RESTRICT`.
 - No endpoint path, method, success response shape, tenant isolation rule, auth/RBAC behavior, or
   product feature changes. The only new HTTP outcomes are safe stable mappings for persistence
   failures that previously could escape as internal errors.
@@ -107,21 +145,26 @@ Task: `P0D Tenant relational integrity with expand-contract composite foreign ke
 | GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and docs-table registry |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant list, filters, pagination, OpenAPI operation, and docs-table registry |
-| POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, OpenAPI operation, and docs-table registry |
-| GET | `/api/v1/employees/{employee_id}` | Implemented | Detail lookup, tenant isolation, OpenAPI operation, and docs-table registry |
-| PATCH | `/api/v1/employees/{employee_id}` | Implemented | Partial update, lifecycle rules, OpenAPI operation, and docs-table registry |
-| DELETE | `/api/v1/employees/{employee_id}` | Implemented | Delete, not-found behavior, OpenAPI operation, and docs-table registry |
-| GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Manual summaries, period filter, tenant isolation, OpenAPI operation, and docs-table registry |
+| POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
+| GET | `/api/v1/employees/{employee_id}` | Implemented | Active detail lookup, archive hiding, tenant isolation, OpenAPI, and smoke |
+| PATCH | `/api/v1/employees/{employee_id}` | Implemented | Active partial update, lifecycle/archive rules, OpenAPI, and smoke |
+| DELETE | `/api/v1/employees/{employee_id}` | Implemented | Idempotent archive via `archived_at`, history retention, OpenAPI, and smoke |
+| GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Active-employee manual summaries, archive hiding, tenant isolation, OpenAPI, and smoke |
 | GET | `/api/v1/leave-requests` | Implemented | Tenant list, filters, pagination, OpenAPI operation, and docs-table registry |
-| POST | `/api/v1/leave-requests` | Implemented | Pending create, tenant checks, OpenAPI operation, and docs-table registry |
-| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Pending-only transition, tenant checks, OpenAPI operation, and docs-table registry |
-| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Pending-only transition, tenant checks, OpenAPI operation, and docs-table registry |
-| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Pending-only transition, tenant checks, OpenAPI operation, and docs-table registry |
+| POST | `/api/v1/leave-requests` | Implemented | Active-employee pending create, tenant checks, optional idempotent replay, OpenAPI, and smoke |
+| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
+| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
+| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 
 ## Current Behavior Notes
 
 - Domain endpoints require exactly one canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
   remains optional but cannot be blank or repeated when sent.
+- Employee create, leave request create, and leave approve/reject/cancel accept an optional
+  `X-Idempotency-Key`. The key is tenant-global: equivalent semantic retries replay the first
+  successful snapshot, while a changed command, target, or body returns
+  `409 idempotency_key_mismatch` without a second write. Same key values in different tenants are
+  independent. No TTL/cleanup is active.
 - W4B4 tightened tenant dependency error text and route regressions: invalid or repeated tenant id
   headers return `tenant_header_invalid` with
   `X-Tenant-Id header must be a single canonical hyphenated UUID`, before unrelated
@@ -133,13 +176,20 @@ Task: `P0D Tenant relational integrity with expand-contract composite foreign ke
   and `on_leave` require `employment_end_date: null`. Violations return
   `employee_invalid_lifecycle`, and the database also has
   `ck_employees_lifecycle_status_dates`.
+- Employee DELETE is an idempotent archive command: the first call sets `archived_at`, and repeat
+  calls preserve it and return `204`. Normal employee list/detail/update, new leave request,
+  leave-balance, dashboard workforce/count/distribution/new-starter, and employee-activity reads
+  exclude archived rows. The employee row, employee number, and existing leave/balance history are
+  retained; historical leave list/activity remains available within its tenant.
 - Leave request list supports `status`, `employee_id`, inclusive overlapping `start_date` and
   `end_date` filters, plus bounded `limit` and `offset` pagination. Filters remain scoped to the
   current tenant before pagination. `limit` defaults to `50`, is capped at `200`, and `offset`
   defaults to `0`. Ordering is deterministic by `created_at desc`, `start_date asc`, and `id asc`.
-- Leave request decision endpoints currently approve, reject, or cancel only pending requests and
-  require the deciding user to belong to the same tenant. P0C moves their commit boundary but does
-  not yet add a winner rule, row lock, optimistic version, or idempotency key.
+- Leave request decision endpoints approve, reject, or cancel only pending requests and require the
+  deciding user to belong to the same tenant. The tenant-scoped row is locked through the command
+  transaction. Concurrent contradictory decisions have exactly one success; the loser receives
+  the stable transition conflict. Equivalent keyed retries replay the first successful terminal
+  response rather than re-running the transition.
 - Dashboard summary is DB-backed and tenant-scoped. It returns active employee count, workforce
   count, pending leave count, new starters this month, department distribution, recent activity,
   and compatibility fields currently used by the frontend-facing contract.
@@ -173,6 +223,9 @@ Task: `P0D Tenant relational integrity with expand-contract composite foreign ke
   `409 data_integrity_conflict`; stale or recognized concurrent writes return
   `409 concurrent_write_conflict`. The named employee-number unique constraint continues to return
   the more specific existing `409 employee_number_conflict` contract.
+- P0E adds `400 idempotency_key_invalid` for an unusable/repeated key and
+  `409 idempotency_key_mismatch` when a tenant-global key is reused with a different semantic
+  command. Neither response exposes the stored request fingerprint or response payload.
 - For employee and leave endpoints, tenant header errors are normalized before payload/query/path
   validation errors when both are present; this keeps missing or invalid tenant context from
   exposing unrelated validation details.
@@ -184,16 +237,16 @@ Task: `P0D Tenant relational integrity with expand-contract composite foreign ke
   The command refuses non-local database URL hosts before opening a connection; local hostnames are
   matched case-insensitively.
 
-## P0D Tenant Relational Integrity
+## Current Tenant Relational Integrity and Retention
 
 Final model metadata and the Alembic head represent these tenant-owned relationships:
 
 | Child columns | Parent candidate key | Delete/null behavior |
 |---|---|---|
-| `leave_requests(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE CASCADE`, required |
+| `leave_requests(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE RESTRICT`, required |
 | `leave_requests(tenant_id, requested_by_user_id)` | `users(tenant_id, id)` | `NO ACTION`, required |
 | `leave_requests(tenant_id, decided_by_user_id)` | `users(tenant_id, id)` | `NO ACTION`, nullable id / `MATCH SIMPLE` |
-| `leave_balance_summaries(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE CASCADE`, required |
+| `leave_balance_summaries(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE RESTRICT`, required |
 
 `TENANT_RELATIONSHIP_PREFLIGHT_SQL` also inventories the four root
 `tenant_id → tenants.id` links, so orphan ownership rows and the four cross-tenant child links are
@@ -216,6 +269,12 @@ checks. P0D enforcement evidence lives exclusively in the `postgres`-marked inte
 Existing API/service tenant checks remain defense-in-depth, and RLS is intentionally unchanged for
 Phase 1.
 
+Revision `0011_p0e_concurrency_idempotency_archive` replaces only the two employee-history delete
+actions with `RESTRICT`; it does not weaken their P0D composite tenant keys. Root ownership FKs to
+`tenants.id` remain graph-level cascade boundaries so a separately authorized retention/offboarding
+procedure can remove an entire tenant graph. No HTTP employee purge route exposes that boundary,
+and normal DELETE only sets `employees.archived_at`.
+
 ## P0C Command Transaction Boundary
 
 `EmployeeCommandHandler` and `LeaveRequestCommandHandler` pass one tenant-scoped operation to
@@ -230,7 +289,7 @@ introduced by P0C, but a future recorder can use the same command session before
 The local demo seed remains a separate script command that already owns one transaction across all
 of its tenant/user/employee/leave seed stages; it is not a migrated API leaf service.
 
-Service rollback regressions inspect flushed employee insert/update/delete and leave
+Service rollback regressions inspect flushed employee insert/update/archive and leave
 create/decision values, roll back, and then use a fresh session to prove that no mutation was
 partially persisted. Dedicated forced post-flush command failures cover employee create and leave
 decision composition. Successful command regressions likewise use a fresh session to prove that the
@@ -283,15 +342,52 @@ The runtime scenarios currently verify:
 
 - `/health`, `/`, and `/openapi.json`.
 - Tenant header missing, invalid, repeated, and cross-tenant behavior.
-- Employee create/list/detail/update/delete, filters, pagination, lifecycle status handling, error
-  envelopes, and tenant isolation.
+- Employee create/idempotent replay/list/detail/update/archive/repeated archive, filters,
+  pagination, lifecycle status handling, error envelopes, history-preserving visibility, and
+  tenant isolation.
 - Leave balance read-only summaries, `period_year` filtering, placeholder flags, tenant
   isolation, and the absence of synthetic balances from leave request records.
-- Leave request create/list/approve/reject/cancel, filters, pagination, transition conflicts,
-  error envelopes, cross-tenant user/request checks, date-window behavior, and tenant isolation.
+- Leave request create/list/approve/reject/cancel, keyed decision replay, filters, pagination,
+  transition conflicts, error envelopes, cross-tenant user/request checks, date-window behavior,
+  and tenant isolation.
 - Dashboard counts, department distribution, recent activity shape, and tenant isolation.
 
 ## Verification
+
+P0E regression coverage includes:
+
+- fast database-backed command tests for semantic replay, changed payload/command mismatch,
+  tenant-global key isolation, keyed leave create/decision replay, and failed-command receipt
+  rollback;
+- employee API/service/dashboard/leave/balance regressions proving archive visibility,
+  idempotent repeated `204`, employee-number reservation, preserved history, and tenant isolation;
+- migration/model parity for `archived_at`, `command_idempotency`, its named tenant-key unique
+  constraint, and both employee child `RESTRICT` relationships;
+- real PostgreSQL tests proving one terminal approve/reject winner, one resource/receipt for a
+  concurrent same-key leave create, preserved leave/balance history after archive, and named FK
+  rejection of a direct employee deletion;
+- updated OpenAPI metadata and local smoke coverage for optional idempotency and archive semantics.
+
+Required P0E completion gates are:
+
+- `uv run ruff check backend`
+- `uv run pytest -q`
+- `uv run python scripts/backend_api_smoke.py`
+- `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` for PostgreSQL row-lock, concurrent
+  claim, and retention-FK evidence.
+
+P0E local gate evidence:
+
+- `uv run ruff check backend`: passed.
+- `uv run pytest -q`: passed, 407 fast tests passed and 16 PostgreSQL tests deselected; the one
+  existing Starlette `TestClient` deprecation warning remains.
+- `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, all 15 documented
+  endpoints covered, including create/decision replay and repeated employee archive scenarios.
+- PostgreSQL 16.4 user-space test cluster with
+  `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres`: passed, 16 integration tests passed and
+  407 fast tests deselected. This includes synchronized duplicate-create, leave-decision,
+  same-key claim, archive/history retention, direct-delete rejection, migration/drift, tenant
+  integrity, runtime, and PostgreSQL-backed API smoke coverage.
 
 P0D regression coverage includes:
 
@@ -375,10 +471,11 @@ Historical P0B local gate evidence retained for continuity:
 - Tenant current/settings/onboarding endpoints plus user/role management endpoints.
 - Standard `{ data, meta }` response envelope, global correlation middleware, and validation/error
   normalization beyond the employee and leave endpoint families already covered.
-- Cursor pagination standardization, sort controls, response metadata, and idempotency for critical
-  POST/decision flows.
-- Leave decision winner semantics plus row-lock or optimistic-version enforcement and real
-  PostgreSQL concurrency proof.
+- Cursor pagination standardization, sort controls, and response metadata.
+- Idempotency receipt TTL/cleanup policy and expansion beyond the current employee-create and
+  leave-create/decision command scope.
+- Authorized retention/offboarding orchestration around the tenant-root graph boundary; there is
+  intentionally no employee purge HTTP endpoint.
 - Optional leave request detail endpoint if product workflow needs direct request reads.
 - Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.

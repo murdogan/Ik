@@ -80,7 +80,7 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         ),
         ("/api/v1/employees/{employee_id}", "delete"): (
             EMPLOYEES_TAG,
-            "Delete tenant employee",
+            "Archive tenant employee",
             "Employee IDs from other tenants return the same not-found envelope",
         ),
         ("/api/v1/employees/{employee_id}/leave-balances", "get"): (
@@ -285,6 +285,7 @@ def test_employee_and_leave_commands_document_stable_conflict_envelopes() -> Non
             "employee_number_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
+            "idempotency_key_mismatch",
         },
         ("/api/v1/employees/{employee_id}", "patch"): {
             "employee_number_conflict",
@@ -295,20 +296,24 @@ def test_employee_and_leave_commands_document_stable_conflict_envelopes() -> Non
             "leave_request_transition_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
+            "idempotency_key_mismatch",
         },
         ("/api/v1/leave-requests", "post"): {
             "data_integrity_conflict",
             "concurrent_write_conflict",
+            "idempotency_key_mismatch",
         },
         ("/api/v1/leave-requests/{leave_request_id}/reject", "post"): {
             "leave_request_transition_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
+            "idempotency_key_mismatch",
         },
         ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"): {
             "leave_request_transition_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
+            "idempotency_key_mismatch",
         },
     }
     for (path, method), expected_examples in operations.items():
@@ -318,3 +323,42 @@ def test_employee_and_leave_commands_document_stable_conflict_envelopes() -> Non
         assert response_409["description"].endswith("conflict envelope.")
         assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
         assert set(media_type["examples"]) == expected_examples
+
+
+def test_critical_post_commands_document_optional_tenant_scoped_idempotency_key() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    idempotent_operations = [
+        ("/api/v1/employees", "post"),
+        ("/api/v1/leave-requests", "post"),
+        ("/api/v1/leave-requests/{leave_request_id}/approve", "post"),
+        ("/api/v1/leave-requests/{leave_request_id}/reject", "post"),
+        ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"),
+    ]
+    for path, method in idempotent_operations:
+        operation = paths[path][method]
+        header = next(
+            parameter
+            for parameter in operation["parameters"]
+            if parameter["name"] == "X-Idempotency-Key"
+        )
+        assert header["in"] == "header"
+        assert header["required"] is False
+        assert "tenant-scoped retry key" in header["description"]
+        response_400 = operation["responses"]["400"]
+        media_type = response_400["content"]["application/json"]
+        assert response_400["description"] == (
+            "Idempotency key validation error envelope."
+        )
+        assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
+        assert set(media_type["examples"]) == {"idempotency_key_invalid"}
+
+    patch_headers = {
+        parameter["name"]
+        for parameter in paths["/api/v1/employees/{employee_id}"]["patch"]["parameters"]
+    }
+    assert "X-Idempotency-Key" not in patch_headers

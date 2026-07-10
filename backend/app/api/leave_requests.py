@@ -4,8 +4,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_tenant_context, get_unit_of_work
+from app.api.dependencies import (
+    get_command_idempotency_service,
+    get_idempotency_key,
+    get_tenant_context,
+    get_unit_of_work,
+)
 from app.api.errors import (
+    IDEMPOTENCY_KEY_INVALID_RESPONSES,
     LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
     LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES,
     LEAVE_REQUEST_VALIDATION_RESPONSES,
@@ -27,6 +33,7 @@ from app.schemas.leave_request import (
     LeaveRequestListPagination,
     LeaveRequestRead,
 )
+from app.services.command_idempotency import CommandIdempotencyService
 from app.services.leave_request_commands import LeaveRequestCommandHandler
 from app.services.leave_request_service import LeaveRequestService
 
@@ -46,8 +53,16 @@ def get_leave_request_service(
 def get_leave_request_command_handler(
     service: Annotated[LeaveRequestService, Depends(get_leave_request_service)],
     unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
+    idempotency: Annotated[
+        CommandIdempotencyService,
+        Depends(get_command_idempotency_service),
+    ],
 ) -> LeaveRequestCommandHandler:
-    return LeaveRequestCommandHandler(service=service, unit_of_work=unit_of_work)
+    return LeaveRequestCommandHandler(
+        service=service,
+        unit_of_work=unit_of_work,
+        idempotency=idempotency,
+    )
 
 
 def get_leave_request_list_filters(
@@ -133,10 +148,14 @@ async def list_leave_requests(
     description=(
         "Creates a pending leave request in the current tenant. The employee and requesting user "
         "must both belong to the tenant from the request headers, and leave dates must be "
-        "ordered before persistence."
+        "ordered before persistence. An optional X-Idempotency-Key replays the first successful "
+        "response for an equivalent retry in this tenant."
     ),
     response_description="Created leave request record.",
-    responses=LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES,
+    responses={
+        **LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES,
+        **IDEMPOTENCY_KEY_INVALID_RESPONSES,
+    },
 )
 async def create_leave_request(
     payload: LeaveRequestCreate,
@@ -145,8 +164,13 @@ async def create_leave_request(
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
     ],
+    idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
-    return await command_handler.create_leave_request(tenant_context.tenant_id, payload)
+    return await command_handler.create_leave_request(
+        tenant_context.tenant_id,
+        payload,
+        idempotency_key,
+    )
 
 
 @router.post(
@@ -156,10 +180,14 @@ async def create_leave_request(
     description=(
         "Approves a pending leave request in the current tenant and records the supplied "
         "decision metadata. Leave request IDs from other tenants return the same not-found "
-        "envelope as missing records."
+        "envelope as missing records. The tenant-scoped row is locked for the decision, and an "
+        "optional X-Idempotency-Key replays an equivalent successful retry."
     ),
     response_description="Approved leave request record.",
-    responses=LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
+    responses={
+        **LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
+        **IDEMPOTENCY_KEY_INVALID_RESPONSES,
+    },
 )
 async def approve_leave_request(
     leave_request_id: UUID,
@@ -169,11 +197,13 @@ async def approve_leave_request(
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
     ],
+    idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
     return await command_handler.approve_leave_request(
         tenant_context.tenant_id,
         leave_request_id,
         payload,
+        idempotency_key,
     )
 
 
@@ -184,10 +214,14 @@ async def approve_leave_request(
     description=(
         "Rejects a pending leave request in the current tenant and records the supplied decision "
         "metadata. Leave request IDs from other tenants return the same not-found envelope as "
-        "missing records."
+        "missing records. The tenant-scoped row is locked for the decision, and an optional "
+        "X-Idempotency-Key replays an equivalent successful retry."
     ),
     response_description="Rejected leave request record.",
-    responses=LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
+    responses={
+        **LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
+        **IDEMPOTENCY_KEY_INVALID_RESPONSES,
+    },
 )
 async def reject_leave_request(
     leave_request_id: UUID,
@@ -197,11 +231,13 @@ async def reject_leave_request(
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
     ],
+    idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
     return await command_handler.reject_leave_request(
         tenant_context.tenant_id,
         leave_request_id,
         payload,
+        idempotency_key,
     )
 
 
@@ -212,10 +248,14 @@ async def reject_leave_request(
     description=(
         "Cancels a pending leave request in the current tenant and records the supplied decision "
         "metadata. Leave request IDs from other tenants return the same not-found envelope as "
-        "missing records."
+        "missing records. The tenant-scoped row is locked for the decision, and an optional "
+        "X-Idempotency-Key replays an equivalent successful retry."
     ),
     response_description="Cancelled leave request record.",
-    responses=LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
+    responses={
+        **LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
+        **IDEMPOTENCY_KEY_INVALID_RESPONSES,
+    },
 )
 async def cancel_leave_request(
     leave_request_id: UUID,
@@ -225,9 +265,11 @@ async def cancel_leave_request(
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
     ],
+    idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
     return await command_handler.cancel_leave_request(
         tenant_context.tenant_id,
         leave_request_id,
         payload,
+        idempotency_key,
     )

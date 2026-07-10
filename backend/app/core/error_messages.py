@@ -40,4 +40,10 @@ LEAVE_END_DATE_MUST_BE_DATE_MESSAGE = "Leave end date must be a date without tim
 
 DATA_INTEGRITY_CONFLICT_MESSAGE = "The request conflicts with persisted data"
 CONCURRENT_WRITE_CONFLICT_MESSAGE = "The request conflicted with another write; retry the request"
+IDEMPOTENCY_KEY_INVALID_MESSAGE = (
+    "X-Idempotency-Key must be sent at most once and contain 1 to 128 non-whitespace characters"
+)
+IDEMPOTENCY_KEY_MISMATCH_MESSAGE = (
+    "X-Idempotency-Key was already used for a different request in this tenant"
+)
 APPLICATION_COMMAND_FAILED_MESSAGE = "Application command failed"

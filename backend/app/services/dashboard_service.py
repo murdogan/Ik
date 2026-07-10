@@ -251,6 +251,7 @@ def _active_employee_count_statement(tenant_id: UUID):
     return (
         select(func.count(Employee.id))
         .where(Employee.tenant_id == tenant_id)
+        .where(Employee.archived_at.is_(None))
         .where(Employee.status == EmployeeStatus.ACTIVE.value)
     )
 
@@ -259,6 +260,7 @@ def _current_employee_count_statement(tenant_id: UUID):
     return (
         select(func.count(Employee.id))
         .where(Employee.tenant_id == tenant_id)
+        .where(Employee.archived_at.is_(None))
         .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
     )
 
@@ -275,6 +277,7 @@ def _new_starters_count_statement(tenant_id: UUID, start_date: date, end_date: d
     return (
         select(func.count(Employee.id))
         .where(Employee.tenant_id == tenant_id)
+        .where(Employee.archived_at.is_(None))
         .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
         .where(Employee.employment_start_date >= start_date)
         .where(Employee.employment_start_date < end_date)
@@ -290,6 +293,7 @@ def _department_distribution_statement(tenant_id: UUID):
             employee_count.label("employee_count"),
         )
         .where(Employee.tenant_id == tenant_id)
+        .where(Employee.archived_at.is_(None))
         .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
         .group_by(department_label)
         .order_by(employee_count.desc(), department_label.asc())
@@ -312,6 +316,7 @@ def _recent_employee_activity_statement(tenant_id: UUID, limit: int):
             Employee.created_at.label("occurred_at"),
         )
         .where(Employee.tenant_id == tenant_id)
+        .where(Employee.archived_at.is_(None))
         .order_by(Employee.created_at.desc())
         .limit(limit)
     )

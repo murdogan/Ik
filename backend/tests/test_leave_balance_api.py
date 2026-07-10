@@ -11,6 +11,7 @@ from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -392,6 +393,42 @@ async def test_leave_balance_route_is_exposed_in_openapi() -> None:
         assert "period_year" in {
             parameter["name"] for parameter in paths[path]["get"]["parameters"]
         }
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_employee_archive_hides_but_preserves_leave_balance_history() -> None:
+    client, engine = await _client_with_database()
+    try:
+        archive_response = await client.delete(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+        )
+        balance_response = await client.get(
+            f"/api/v1/employees/{EMPLOYEE_ID}/leave-balances",
+            headers=_tenant_headers(),
+        )
+
+        assert archive_response.status_code == 204
+        _assert_error_response(
+            balance_response,
+            status_code=404,
+            code="employee_not_found",
+            message="Employee not found",
+        )
+
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            employee = await session.get(Employee, EMPLOYEE_ID)
+            balance_count = await session.scalar(
+                select(func.count())
+                .select_from(LeaveBalanceSummary)
+                .where(LeaveBalanceSummary.tenant_id == TENANT_ID)
+                .where(LeaveBalanceSummary.employee_id == EMPLOYEE_ID)
+            )
+        assert employee is not None
+        assert employee.archived_at is not None
+        assert balance_count == 3
     finally:
         await client.aclose()
         await engine.dispose()

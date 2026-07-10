@@ -6,8 +6,10 @@ from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import (
+    IDEMPOTENCY_KEY_HEADER,
     TENANT_ID_HEADER,
     TENANT_SLUG_HEADER,
+    idempotency_key_invalid_error,
     tenant_header_invalid_error,
     tenant_header_missing_error,
     tenant_slug_header_invalid_error,
@@ -15,12 +17,44 @@ from app.api.errors import (
 from app.db.session import get_session
 from app.platform.db import SqlAlchemyUnitOfWork
 from app.platform.tenancy import TenantContext
+from app.services.command_idempotency import CommandIdempotencyService
 
 
 def get_unit_of_work(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> SqlAlchemyUnitOfWork:
     return SqlAlchemyUnitOfWork(session=session)
+
+
+def get_command_idempotency_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CommandIdempotencyService:
+    return CommandIdempotencyService(session=session)
+
+
+def get_idempotency_key(
+    request: Request,
+    x_idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias=IDEMPOTENCY_KEY_HEADER,
+            description=(
+                "Optional tenant-scoped retry key. Reusing it with the same command request "
+                "replays the first successful response."
+            ),
+        ),
+    ] = None,
+) -> str | None:
+    values = request.headers.getlist(IDEMPOTENCY_KEY_HEADER)
+    if len(values) > 1:
+        raise idempotency_key_invalid_error()
+    if not values:
+        return x_idempotency_key
+
+    value = values[0]
+    if not value or len(value) > 128 or any(character.isspace() for character in value):
+        raise idempotency_key_invalid_error()
+    return value
 
 
 def get_tenant_context(

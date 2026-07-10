@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select
@@ -58,7 +58,11 @@ class EmployeeService:
     ) -> list[Employee]:
         filters = filters or EmployeeListFilters()
         pagination = pagination or EmployeeListPagination()
-        statement = select(Employee).where(Employee.tenant_id == tenant_id)
+        statement = (
+            select(Employee)
+            .where(Employee.tenant_id == tenant_id)
+            .where(Employee.archived_at.is_(None))
+        )
 
         if filters.department is not None:
             statement = statement.where(
@@ -141,8 +145,15 @@ class EmployeeService:
         return employee
 
     async def delete_employee(self, tenant_id: UUID, employee_id: UUID) -> None:
-        employee = await self.get_employee(tenant_id, employee_id)
-        await self.session.delete(employee)
+        employee = await self._get_employee_or_none(
+            tenant_id,
+            employee_id,
+            include_archived=True,
+        )
+        if employee is None:
+            raise EmployeeNotFoundError
+        if employee.archived_at is None:
+            employee.archived_at = datetime.now(UTC)
         await self.session.flush()
 
     async def _flush_employee_write(self) -> None:
@@ -153,12 +164,20 @@ class EmployeeService:
                 raise DuplicateEmployeeNumberError from exc
             raise
 
-    async def _get_employee_or_none(self, tenant_id: UUID, employee_id: UUID) -> Employee | None:
+    async def _get_employee_or_none(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+        *,
+        include_archived: bool = False,
+    ) -> Employee | None:
         statement = (
             select(Employee)
             .where(Employee.tenant_id == tenant_id)
             .where(Employee.id == employee_id)
         )
+        if not include_archived:
+            statement = statement.where(Employee.archived_at.is_(None))
         return await self.session.scalar(statement)
 
     async def _ensure_employee_number_available(

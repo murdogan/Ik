@@ -25,11 +25,34 @@ lock'ları bırakılmadan tekrarlanan preflight concurrent-index penceresindeki 
 employee/user scalar foreign key'lerini kaldırır. Downgrade sırası önce eski constraint'leri geri
 getirip validate eder. RLS bu geçişe dahil değildir; Faz 1 işidir.
 
+### 1.2 Uygulanan P0E concurrency, idempotency ve archive geçişi
+
+`0011_p0e_concurrency_idempotency_archive`, normal employee silme akışını veri koruyan archive
+semantiğine taşır ve retry receipt'leri için tenant-owned `command_idempotency` tablosunu ekler:
+
+- `employees.archived_at` nullable timestamptz alanı ve `(tenant_id, archived_at)` sorgu indexi
+  eklenir. Mevcut satırlar `null` kaldığı için migration normal görünürlüğü değiştirmeden uygulanır.
+- `command_idempotency`, tenant-global `(tenant_id, idempotency_key)` unique constraint'i,
+  command adı, semantic request fingerprint'i, resource ID, ilk başarılı response JSON snapshot'ı
+  ve completion timestamp'i taşır. Receipt ile domain write aynı application transaction'ındadır.
+- Leave request ve leave balance child ilişkilerinin employee delete davranışı
+  `ON DELETE RESTRICT` olur. Böylece normal veya doğrudan employee fiziksel silmesi mevcut geçmişi
+  cascade ile yok edemez.
+- Downgrade, archived employee veya idempotency receipt varsa retention preflight'ta fail olur;
+  export/remediation sonrası temiz state'te child ilişkilerini önceki `CASCADE` davranışına
+  döndürür, receipt tablosunu/indexini ve `archived_at` alanını kaldırır. Bu downgrade yalnız
+  kontrollü rollback içindir; production retention politikası olarak kullanılmaz.
+
+Leave karar one-winner davranışı kolon/version migration'ı gerektirmez. Application command
+transaction'ı tenant + leave request ID ile `SELECT ... FOR UPDATE` kullanır; lock sonrası yalnız
+`pending` state terminal karara geçebilir. Gerçek PostgreSQL concurrency testi eşzamanlı
+approve/reject işlemlerinden tam birinin başarılı olduğunu doğrular.
+
 ## 2. Migration sırası
 
 Bu tablo ilk ürün planındaki kavramsal uygulama sırasıdır; `Plan` değerleri yayınlanmış Alembic
-revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1 bölümü ve migration
-history'si otoritatiftir.
+revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1/1.2 bölümleri,
+migration history'si ve Alembic head otoritatiftir.
 
 | Plan | Tablo/alan | Faz | Gerekçe |
 |---|---|---|---|
@@ -137,12 +160,50 @@ MVP minimal alanlar:
 - `status`
 - `employment_start_date`
 - `employment_end_date`
+- `archived_at`
 - `created_at`
 - `updated_at`
 
 Unique: `(tenant_id, employee_number)`.
 
+`archived_at is null` normal employee yüzeyidir. Normal `DELETE` satırı kaldırmaz, `archived_at`
+set eder ve tekrarlandığında no-op olur. Unique constraint arşivlenen employee number'ını tenant
+içinde rezerve tutar.
+
 Hassas alanlar ilk migration'a alınmayabilir; TCKN/IBAN gibi alanlar field encryption planı netleşince eklenmelidir.
+
+### `command_idempotency`
+
+Faz-0 alanları:
+
+- `id`
+- `tenant_id`
+- `idempotency_key`
+- `command_name`
+- `request_fingerprint`
+- `resource_id`
+- `response_payload`
+- `created_at`
+- `completed_at`
+
+Unique: `(tenant_id, idempotency_key)`. Aynı key başka tenant'ta bağımsızdır; aynı tenant'ta
+farklı komut, hedef veya semantic body ile reuse `idempotency_key_mismatch` üretir. Başarılı
+receipt ilk response snapshot'ını replay eder. Henüz TTL/cleanup migration'ı veya worker'ı yoktur;
+key receipt kaldığı sürece rezerve kalır.
+
+### Employee history ve retention sınırı
+
+- `leave_requests(tenant_id, employee_id)` ve
+  `leave_balance_summaries(tenant_id, employee_id)` current head'de
+  `employees(tenant_id, id)` parent'ına `ON DELETE RESTRICT` ile bağlıdır.
+- Normal employee list/detail/update, yeni leave request ve leave-balance erişimi yalnız
+  `archived_at is null` employee'leri kabul eder; dashboard workforce/employee activity de archive
+  kayıtlarını dışlar.
+- Eski leave request ve leave balance satırları korunur. Employee number yeniden dağıtılmaz.
+- Employee purge için HTTP endpoint yoktur. Tenant-owned kayıtların `tenant_id → tenants.id`
+  root ownership FKs'i graph-level `ON DELETE CASCADE` sınırı olarak kalır; bu sınır yalnız açık
+  retention/onay politikasına bağlı, kısıtlı tenant-root offboarding operasyonunda kullanılabilir.
+  Normal employee komutu veya kullanıcı yetkisi değildir.
 
 ## 6. RLS/tenant guard planı
 
@@ -171,6 +232,10 @@ WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
 | Relational preflight | Orphan ve cross-tenant satırlar constraint DDL'den önce raporlanıyor mu |
 | PostgreSQL direct write | Her composite ilişki servis bypass edildiğinde cross-tenant write'ı reddediyor mu |
 | Data-preserving round trip | Valid satırlar `0008 → head → 0008 → head` boyunca korunuyor mu |
+| Concurrent leave decision | PostgreSQL row lock approve/reject için tam bir terminal winner sağlıyor mu |
+| Concurrent idempotency | Aynı tenant/key ile yarışan create komutları tek resource ve receipt üretiyor mu |
+| Archive retention | Normal DELETE satırı/history'yi koruyor ve child FK fiziksel silmeyi `RESTRICT` ediyor mu |
+| Idempotency rollback | Başarısız keyed komut receipt bırakmadan aynı key ile retry edilebiliyor mu |
 
 ## 8. Seed planı
 
@@ -191,6 +256,10 @@ Seed verisi gerçek kişisel veri içermemelidir.
 - Hassas alanlar encryption kararı olmadan rastgele eklenmez.
 - RLS testleri planlanmıştır.
 - Seed verisi sentetik olacaktır.
+- Employee normal DELETE archive eder; history ve employee number korunur.
+- Leave kararları PostgreSQL row lock ile one-winner'dır.
+- Desteklenen keyed komutlar tenant-global receipt ile ilk başarılı snapshot'ı replay eder.
+- P0E receipt TTL/cleanup ve employee purge HTTP endpointi eklemez.
 
 ## 10. Uygulamaya geçmeden önce açık kontroller
 

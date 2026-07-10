@@ -20,6 +20,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-012 | Auth | Kendi auth + SSO entegrasyonu | Kabul |
 | ADR-013 | Transaction/hata sınırı | Application command + Unit of Work, merkezi typed API mapping | Kabul |
 | ADR-014 | Tenant ilişkisel bütünlüğü | Composite tenant foreign key + expand-contract | Kabul |
+| ADR-015 | Concurrency/idempotency/arşiv | PostgreSQL receipt, tenant-scoped row lock, çalışan arşivi | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -115,11 +116,12 @@ Kullanım alanları:
 - Rate limit.
 - Session/denylist yardımcı verisi.
 - Queue broker.
-- Idempotency key.
 
 Karar:
 
 - Redis kalıcı ana veri deposu değildir; kaybı tolere edilmeyen veri PostgreSQL'de kalır.
+- Kritik HTTP komutlarının durable idempotency receipt ve response snapshot kayıtları ADR-015
+  uyarınca PostgreSQL'de tutulur; Redis bu sözleşmenin kayıt sistemi değildir.
 
 ## 6. ADR-005 Next.js + TypeScript
 
@@ -257,11 +259,10 @@ Sonuç:
   rollback olduğu fresh-session persistence testleriyle doğrulanabilir; ileride audit/outbox
   aynı session ve transaction'a eklenebilir.
 - Bu karar schema/model değişikliği yapmaz ve Alembic migration gerektirmez.
-- P0C, leave decision winner/locking/versioning veya idempotency problemini çözülmüş saymaz;
-  bunlar sonraki Faz-0 concurrency/idempotency işidir.
-- Tenant-owned ilişkilerde composite tenant foreign key uygulaması da sonraki Faz-0
-  database-hardening migration bloğunun sorumluluğudur. P0D bu katmanı ADR-014 ile uygular;
-  mevcut tenant-scoped servis kontrolleri korunur.
+- P0C tek transaction ve hata sınırını kurmuştur. Leave decision winner, idempotency ve çalışan
+  arşivleme davranışı daha sonra P0E kapsamında ADR-015 ile bu sınır üzerinde uygulanmıştır.
+- P0C tenant-owned composite foreign key katmanını değiştirmemiştir; bu katman daha sonra P0D'de
+  ADR-014 ile uygulanmış ve mevcut tenant-scoped servis kontrolleri korunmuştur.
 
 ## 15. ADR-014 Tenant ilişkisel bütünlüğü
 
@@ -278,8 +279,9 @@ Karar:
 - Başka tenant-owned tablolar tarafından referans verilen parent'ta `(tenant_id, id)` candidate
   key; child'da `(tenant_id, foreign_id)` composite foreign key zorunludur.
 - Mevcut şemada `employees` ve `users` candidate key taşır. `leave_requests` employee/requester/
-  decider ilişkileri ile `leave_balance_summaries` employee ilişkisi composite'tir; delete ve
-  nullability davranışı eski sözleşmeyle aynıdır.
+  decider ilişkileri ile `leave_balance_summaries` employee ilişkisi composite'tir. Requester ve
+  decider nullability davranışı korunur; employee history ilişkilerinin silme politikası P0E ile
+  ADR-015'teki `RESTRICT` kuralına geçirilmiştir.
 - Geçiş iki revision expand-contract'tır: preflight + concurrent candidate index + `NOT VALID`
   composite foreign key; ardından validation + eski scalar foreign key removal. Downgrade önce eski
   constraint'i geri getirip validate eder.
@@ -296,7 +298,60 @@ Sonuç:
 - Yeni tenant-owned ilişki tasarımında tenant kimliği foreign key'in ayrılmaz parçasıdır.
 - Endpoint/OpenAPI, auth/RBAC ve ürün davranışı değişmez.
 
-## 16. Ertelenen kararlar
+## 16. ADR-015 Concurrency, idempotency ve çalışan arşivi
+
+Bağlam:
+
+- Employee number availability pre-check'i tek başına eşzamanlı insert yarışını kapatmıyordu.
+- İki bağımsız leave decision transaction'ı aynı `pending` kaydı okuyup çelişkili karar
+  yazabiliyordu.
+- Retry edilen kritik POST/decision komutları aynı domain kaydını birden fazla kez üretebiliyordu.
+- Normal employee DELETE işlemi çalışanı ve bağlı izin/bakiye geçmişini fiziksel olarak
+  silebiliyordu.
+
+Karar:
+
+- `uq_employees_tenant_employee_number` veritabanı constraint'i authoritative winner'dır. Named
+  constraint ihlali, availability pre-check yarışında da kararlı `409 employee_number_conflict`
+  sözleşmesine map edilir.
+- Leave approve/reject/cancel komutları kaydı hem `tenant_id` hem resource id ile seçer ve
+  PostgreSQL blocking `SELECT ... FOR UPDATE` row lock alır. İlk transaction terminal kararı
+  commit eder; bekleyen transaction güncel status'u görüp mevcut
+  `409 leave_request_transition_conflict` sözleşmesine düşer.
+- Employee create, leave create ve leave approve/reject/cancel endpointleri opsiyonel
+  `X-Idempotency-Key` kabul eder. Key namespace'i tenant genelidir: `(tenant_id, idempotency_key)`
+  unique constraint'i aynı tenant içinde command'lar arasında da tek sahip seçer.
+- İlk başarılı komut `command_idempotency` tablosunda command adı, canonical request fingerprint,
+  resource id, tamamlanma zamanı ve response snapshot'ını domain write ile aynı Unit of Work
+  transaction'ında saklar. Aynı key + aynı command/body snapshot'tan eşdeğer yanıtı replay eder;
+  aynı key + farklı command/body DB ayrıntısı sızdırmadan `409 idempotency_key_mismatch` döner.
+- Receipt'ler için TTL/cleanup job henüz yoktur. Süreli silme davranışı ayrıca retention kararı ve
+  güvenli worker uygulaması olmadan varsayılmaz.
+- Normal employee DELETE compatibility route'u fiziksel delete yerine `employees.archived_at`
+  yazar. Arşivli çalışan employee list/detail/update yüzeylerinden, yeni leave oluşturma ve normal
+  leave-balance erişiminden gizlenir; dashboard workforce sorguları da arşivliyi saymaz. Aynı
+  tenant'ta tekrarlanan DELETE no-op `204` döner.
+- Employee number unique constraint'i arşivli kayıtları da kapsar; arşivleme identifier'ı yeniden
+  kullanıma açmaz.
+- `leave_requests` ve `leave_balance_summaries` employee composite foreign key'leri
+  `ON DELETE RESTRICT` kullanır. Böylece servis atlanarak yapılan doğrudan employee hard delete,
+  geçmiş varken veritabanında reddedilir ve geçmiş satırlar korunur.
+- Public employee purge endpoint'i yoktur. Root `tenant_id → tenants.id` cascade yalnız kısıtlı
+  operatör retention/offboarding prosedürü içindir; normal employee API'sinin silme yolu değildir.
+- `0011` downgrade, archive marker veya idempotency receipt varken sessiz veri/semantik kaybına
+  izin vermez; operatör export/remediation yapana kadar retention preflight ile durur.
+
+Sonuç:
+
+- Concurrent duplicate employee create için tam bir winner, concurrent leave decision için tek
+  terminal sonuç ve retry edilen kritik komut için tek resource/receipt PostgreSQL testleriyle
+  doğrulanır.
+- Arşivli çalışan normal API yüzeyinde silinmiş gibi görünürken employee, leave request ve leave
+  balance kayıtları retention amacıyla veritabanında kalır.
+- Key'ler tenant'lar arasında çakışmaz; row lock ve archive sorguları tenant predicate'ini
+  korur. Bu karar auth/RBAC veya RLS yerine geçmez.
+
+## 17. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -306,7 +361,7 @@ Sonuç:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 17. İlgili dokümanlar
+## 18. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

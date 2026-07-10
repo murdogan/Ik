@@ -15,7 +15,14 @@ from alembic.script import ScriptDirectory
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import create_database_runtime
-from app.models import Employee, LeaveBalanceSummary, LeaveRequest, Tenant, User  # noqa: F401
+from app.models import (  # noqa: F401
+    CommandIdempotency,
+    Employee,
+    LeaveBalanceSummary,
+    LeaveRequest,
+    Tenant,
+    User,
+)
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError
@@ -29,6 +36,9 @@ ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = ROOT / "alembic.ini"
 
 EXPECTED_UUID_COLUMNS = {
+    ("command_idempotency", "id"),
+    ("command_idempotency", "resource_id"),
+    ("command_idempotency", "tenant_id"),
     ("employees", "id"),
     ("employees", "tenant_id"),
     ("leave_balance_summaries", "employee_id"),
@@ -53,8 +63,13 @@ EXPECTED_TIMESTAMP_COLUMNS = {
         "users",
     }
     for column_name in {"created_at", "updated_at"}
+} | {
+    ("command_idempotency", "created_at"),
+    ("command_idempotency", "completed_at"),
+    ("employees", "archived_at"),
 }
 EXPECTED_CHECK_CONSTRAINTS = {
+    "ck_command_idempotency_completion",
     "ck_employees_date_order",
     "ck_employees_lifecycle_status_dates",
     "ck_employees_status",
@@ -68,6 +83,7 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_users_status",
 }
 EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
+    "uq_command_idempotency_tenant_key",
     "uq_employees_tenant_id_id",
     "uq_employees_tenant_employee_number",
     "uq_leave_balance_summaries_tenant_employee_type_period",
@@ -75,6 +91,7 @@ EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_users_tenant_email",
 }
 EXPECTED_FOREIGN_KEY_COUNTS = {
+    "command_idempotency": 1,
     "employees": 1,
     "leave_balance_summaries": 2,
     "leave_requests": 4,

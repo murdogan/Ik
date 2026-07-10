@@ -364,18 +364,30 @@ async def _smoke_tenant_header_errors(client: AsyncClient) -> None:
 
 async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]:
     today = date.today().isoformat()
+    employee_idempotency_headers = {
+        **TENANT_HEADERS,
+        "X-Idempotency-Key": "smoke-employee-create-001",
+    }
+    employee_payload = {
+        "employee_number": "WF-SMOKE-001",
+        "first_name": "Ada",
+        "last_name": "Yilmaz",
+        "email": "ada.smoke@wealthyfalcon.test",
+        "department": "People",
+        "position": "HR Specialist",
+        "employment_start_date": today,
+    }
     created = await _create_employee(
         client,
-        {
-            "employee_number": "WF-SMOKE-001",
-            "first_name": "Ada",
-            "last_name": "Yilmaz",
-            "email": "ada.smoke@wealthyfalcon.test",
-            "department": "People",
-            "position": "HR Specialist",
-            "employment_start_date": today,
-        },
+        employee_payload,
+        headers=employee_idempotency_headers,
     )
+    replayed_create = await _create_employee(
+        client,
+        employee_payload,
+        headers=employee_idempotency_headers,
+    )
+    _assert_equal(replayed_create, created, "employee create idempotency replay")
     employee_id = created["id"]
     secondary = await _create_employee(
         client,
@@ -728,7 +740,15 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
             headers=TENANT_HEADERS,
         ),
         404,
-        "GET deleted /api/v1/employees/{employee_id}",
+        "GET archived /api/v1/employees/{employee_id}",
+    )
+    _expect_status(
+        await client.delete(
+            f"/api/v1/employees/{delete_candidate['id']}",
+            headers=TENANT_HEADERS,
+        ),
+        204,
+        "repeat archive /api/v1/employees/{employee_id}",
     )
 
     terminated = await _create_employee(
@@ -887,7 +907,10 @@ async def _smoke_leave_request_endpoints(
             "post",
             f"/api/v1/leave-requests/{approved_request['id']}/approve",
             documented_path="/api/v1/leave-requests/{leave_request_id}/approve",
-            headers=TENANT_HEADERS,
+            headers={
+                **TENANT_HEADERS,
+                "X-Idempotency-Key": "smoke-leave-approve-001",
+            },
             json=decision_payload,
         ),
         200,
@@ -908,6 +931,19 @@ async def _smoke_leave_request_endpoints(
         decision_note,
         "approved leave decision note",
     )
+    replayed_approval = _expect_json(
+        await client.post(
+            f"/api/v1/leave-requests/{approved_request['id']}/approve",
+            headers={
+                **TENANT_HEADERS,
+                "X-Idempotency-Key": "smoke-leave-approve-001",
+            },
+            json=decision_payload,
+        ),
+        200,
+        "replay POST /api/v1/leave-requests/{leave_request_id}/approve",
+    )
+    _assert_equal(replayed_approval, approved, "leave approval idempotency replay")
 
     rejected = _expect_json(
         await _request_documented(

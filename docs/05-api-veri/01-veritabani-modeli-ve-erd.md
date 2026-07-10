@@ -14,12 +14,14 @@ tenant-owned ilişkilerde composite foreign key'ler ve Faz 1 PostgreSQL RLS ile 
 erDiagram
   tenants ||--o{ users : has
   tenants ||--o{ employees : has
+  tenants ||--o{ command_idempotency : owns
   users ||--o{ sessions : opens
   roles ||--o{ role_permissions : grants
   users ||--o{ user_roles : assigned
   employees ||--o{ employee_assignments : has
   employees ||--o{ employee_documents : owns
   employees ||--o{ leave_requests : requests
+  employees ||--o{ leave_balance_summaries : retains
   employees ||--o{ timesheet_days : has
   payroll_periods ||--o{ payroll_runs : has
   payroll_runs ||--o{ payroll_run_items : includes
@@ -32,7 +34,7 @@ erDiagram
 
 | Domain | Tablolar |
 |---|---|
-| CORE/AUTH/RBAC | `tenants`, `tenant_settings`, `users`, `sessions`, `roles`, `permissions`, `user_roles` |
+| CORE/AUTH/RBAC | `tenants`, `tenant_settings`, `users`, `sessions`, `roles`, `permissions`, `user_roles`, `command_idempotency` |
 | EMP/DOC | `employees`, `employee_profiles`, `employee_employments`, `employee_assignments`, `employee_documents`, `document_types` |
 | ORG | `legal_entities`, `branches`, `departments`, `positions`, `headcount_requests` |
 | LEAVE/TIME | `leave_types`, `leave_balances`, `leave_requests`, `holiday_calendars`, `shift_assignments`, `time_clock_events`, `timesheet_days` |
@@ -50,8 +52,8 @@ erDiagram
 | `tenant_id` zorunlu | Tenant-owned tüm tablolarda bulunur |
 | Tenant-owned ilişki | Parent `(tenant_id, id)` candidate key; child `(tenant_id, foreign_id)` composite foreign key taşır |
 | UUID | Dışa açık ID'ler tahmin edilemez olmalıdır |
-| Soft delete | Yasal saklama gerektiren veri hard delete edilmez |
-| Version | Kritik kayıtlarda optimistic locking için `version` bulunur |
+| Archive | Yasal saklama gerektiren employee verisi `archived_at` ile gizlenir; normal API hard delete yapmaz |
+| Concurrency | Kritik transition kaydı tenant-scoped row lock veya uygun olduğunda optimistic `version` ile korunur |
 | Audit | Kritik değişikliklerde before/after hash veya snapshot tutulur |
 | Effective dating | Assignment, ücret, pozisyon gibi tarihsel veri aralıkla tutulur |
 | Reference data | Mevzuat, tatil, para birimi gibi değerler versiyonlanır |
@@ -63,11 +65,30 @@ Mevcut Faz 0 şemasında `employees` ve `users` parent candidate key taşır.
 olarak kalır. Bu kural yeni tenant-owned ilişki eklenirken de migration ve model metadata'sında
 birlikte temsil edilmelidir.
 
+P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurallar şöyledir:
+
+- `employees.archived_at is null` normal employee görünürlüğünü ifade eder. Arşivli satır
+  list/detail/update, yeni leave ve normal leave-balance erişiminden gizlenir; aynı tenant'ta
+  tekrarlanan archive komutu no-op'tur.
+- `(tenant_id, employee_number)` unique constraint'i arşivli satırı kapsamaya devam eder; çalışan
+  numarası arşivlemeyle yeniden kullanıma açılmaz.
+- `leave_requests` ve `leave_balance_summaries` employee composite foreign key'leri
+  `ON DELETE RESTRICT` taşır. Arşiv geçmiş satırları silmez; doğrudan employee hard delete de child
+  geçmiş varken reddedilir.
+- Public employee purge yolu yoktur. Root tenant cascade yalnız kısıtlı operatör
+  retention/offboarding prosedürü içindir.
+- `command_idempotency` tenant-genel key namespace'inde command adı, request fingerprint, resource
+  id, tamamlanma zamanı ve response snapshot saklar. Aynı key/istek replay edilir; farklı
+  command/body `409 idempotency_key_mismatch` üretir. Receipt TTL/cleanup henüz uygulanmamıştır.
+- Leave terminal kararları `(tenant_id, id)` ile seçilen blocking PostgreSQL row lock altında
+  verilir; yalnız bir pending transition kazanır.
+
 ## 5. İndeks stratejisi
 
 | Tablo | İndeks |
 |---|---|
-| `employees` | `(tenant_id, employee_number) unique`, `(tenant_id, status)`, isim arama index'i |
+| `employees` | `(tenant_id, employee_number) unique`, `(tenant_id, status)`, `(tenant_id, archived_at)`, isim arama index'i |
+| `command_idempotency` | `(tenant_id, idempotency_key) unique`, `(tenant_id)` |
 | `employee_assignments` | `(tenant_id, employee_id, valid_from desc)`, `(tenant_id, department_id)` |
 | `employee_documents` | `(tenant_id, employee_id, document_type_id)`, `(tenant_id, valid_until)` |
 | `leave_requests` | `(tenant_id, employee_id, start_date)`, `(tenant_id, status, created_at desc)` |
@@ -135,6 +156,10 @@ Kurallar:
 - Cross-tenant testler veri modeliyle desteklenir.
 - PostgreSQL doğrudan write negatif testleri composite foreign key constraint adını doğrular;
   SQLite sonucu PostgreSQL constraint kanıtı sayılmaz.
+- Concurrent leave decision ve aynı-key idempotency winner davranışı gerçek PostgreSQL bağımsız
+  session testleriyle doğrulanır.
+- Normal employee archive leave/balance geçmişini korur; doğrudan hard delete history FK'leri
+  nedeniyle reddedilir.
 
 ## 11. İlgili dokümanlar
 

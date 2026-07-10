@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import app.models as model_package
+import pytest
 from alembic import command as alembic_command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
@@ -245,6 +246,26 @@ def _run_alembic_upgrade_head_offline_subprocess() -> subprocess.CompletedProces
     )
 
 
+def _run_alembic_p0e_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            (
+                "0011_p0e_concurrency_idempotency_archive:"
+                "0010_contract_tenant_relational_integrity"
+            ),
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -275,8 +296,9 @@ def test_core_migration_chain_is_linear() -> None:
     tenant_integrity_contract_revision = script.get_revision(
         "0010_contract_tenant_relational_integrity"
     )
+    p0e_revision = script.get_revision("0011_p0e_concurrency_idempotency_archive")
 
-    assert script.get_heads() == ["0010_contract_tenant_relational_integrity"]
+    assert script.get_heads() == ["0011_p0e_concurrency_idempotency_archive"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -301,6 +323,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert tenant_integrity_contract_revision.down_revision == (
         "0009_expand_tenant_relational_integrity"
     )
+    assert p0e_revision is not None
+    assert p0e_revision.down_revision == "0010_contract_tenant_relational_integrity"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -335,6 +359,14 @@ def test_alembic_offline_sql_renders_p0d_preflight_and_expand_contract() -> None
     assert "VALIDATE CONSTRAINT" in result.stdout
 
 
+def test_alembic_offline_p0e_downgrade_renders_retention_preflight() -> None:
+    result = _run_alembic_p0e_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p0e_downgrade_preflight$" in result.stdout
+    assert "P0E downgrade preflight failed" in result.stdout
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -367,6 +399,101 @@ def test_sqlite_p0d_downgrade_reupgrade_preserves_head_schema(tmp_path: Path) ->
     alembic_command.upgrade(config, "head")
 
     _assert_database_matches_current_model_schema(database_path)
+
+
+def test_p0e_downgrade_refuses_to_discard_retained_state(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-p0e-retention-guard.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_id = "11111111aaaa41118111111111111111"
+    employee_id = "22222222bbbb42228222222222222222"
+    receipt_id = "33333333cccc43338333333333333333"
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'p0e-guard', 'P0E Guard', 'active', 'core', 'tr-1', "
+                    "'tr-TR', 'Europe/Istanbul', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into employees ("
+                    "id, tenant_id, employee_number, first_name, last_name, status, "
+                    "employment_start_date, archived_at, created_at, updated_at"
+                    ") values ("
+                    ":id, :tenant_id, 'P0E-GUARD', 'Guard', 'Employee', 'active', "
+                    "'2026-07-01', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": employee_id, "tenant_id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into command_idempotency ("
+                    "id, tenant_id, idempotency_key, command_name, request_fingerprint, "
+                    "created_at"
+                    ") values ("
+                    ":id, :tenant_id, 'guard-key', 'employees.create', :fingerprint, "
+                    "CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {
+                    "id": receipt_id,
+                    "tenant_id": tenant_id,
+                    "fingerprint": "0" * 64,
+                },
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "P0E downgrade preflight failed.*archived_employees=1, "
+                "command_idempotency=1"
+            ),
+        ):
+            alembic_command.downgrade(
+                config,
+                "0010_contract_tenant_relational_integrity",
+            )
+
+        with engine.connect() as connection:
+            revision = connection.scalar(text("select version_num from alembic_version"))
+            archived_at = connection.scalar(
+                text("select archived_at from employees where id = :id"),
+                {"id": employee_id},
+            )
+            receipt_count = connection.scalar(
+                text("select count(*) from command_idempotency")
+            )
+        assert revision == "0011_p0e_concurrency_idempotency_archive"
+        assert archived_at is not None
+        assert receipt_count == 1
+
+        with engine.begin() as connection:
+            connection.execute(text("delete from command_idempotency"))
+            connection.execute(
+                text("update employees set archived_at = null where id = :id"),
+                {"id": employee_id},
+            )
+        alembic_command.downgrade(
+            config,
+            "0010_contract_tenant_relational_integrity",
+        )
+        with engine.connect() as connection:
+            revision = connection.scalar(text("select version_num from alembic_version"))
+        assert revision == "0010_contract_tenant_relational_integrity"
+    finally:
+        engine.dispose()
 
 
 def test_initial_tenant_migration_exists() -> None:
@@ -473,6 +600,19 @@ def test_tenant_relational_integrity_migrations_use_expand_contract_sequence() -
     assert "NOT VALID" in expand_text
     assert "0009_expand_tenant_relational_integrity" in contract_text
     assert "VALIDATE CONSTRAINT" in contract_text
+
+
+def test_p0e_concurrency_idempotency_archive_migration_exists() -> None:
+    migration = Path(
+        "backend/alembic/versions/0011_p0e_concurrency_idempotency_archive.py"
+    )
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "command_idempotency" in text
+    assert "uq_command_idempotency_tenant_key" in text
+    assert "archived_at" in text
+    assert 'ondelete="RESTRICT"' in text
 
 
 def test_readme_documents_migration_commands() -> None:

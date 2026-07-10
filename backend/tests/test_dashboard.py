@@ -12,6 +12,7 @@ from app.schemas.dashboard import DashboardSummary, DepartmentDistributionItem
 from app.services.dashboard_service import DashboardService
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -205,6 +206,39 @@ async def test_dashboard_summary_counts_are_tenant_scoped_from_database() -> Non
         DepartmentDistributionItem(department="Engineering", count=1),
         DepartmentDistributionItem(department="Unassigned", count=1),
     ]
+
+    await session.close()
+    await engine.dispose()
+
+
+async def test_dashboard_excludes_archived_employees_from_workforce_views() -> None:
+    session, engine = await _session_with_seed_data()
+    archived_employee_id = UUID("5aaaaaaa-5555-4555-8555-555555555555")
+    await session.execute(
+        update(Employee)
+        .where(Employee.employee_number == "WF-001")
+        .values(archived_at=NOW)
+    )
+    await session.flush()
+
+    summary = await DashboardService(
+        session=session,
+        today=TODAY,
+        recent_activity_limit=20,
+    ).get_summary(TENANT_ID)
+
+    assert summary.active_employee_count == 2
+    assert summary.employee_count == 3
+    assert summary.new_starters_this_month == 1
+    assert summary.department_distribution == [
+        DepartmentDistributionItem(department="Engineering", count=1),
+        DepartmentDistributionItem(department="People", count=1),
+        DepartmentDistributionItem(department="Unassigned", count=1),
+    ]
+    assert not any(
+        item.entity_type == "employee" and item.entity_id == archived_employee_id
+        for item in summary.recent_activity
+    )
 
     await session.close()
     await engine.dispose()

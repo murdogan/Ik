@@ -420,6 +420,7 @@ async def _upsert_employees(
         employee.status = fixture.status.value
         employee.employment_start_date = fixture.employment_start_date
         employee.employment_end_date = fixture.employment_end_date
+        employee.archived_at = None
         employees[fixture.key] = employee
     return employees
 

@@ -59,7 +59,7 @@ def test_leave_balance_summary_persistence_stays_manual_placeholder_only() -> No
     }
 
 
-def test_leave_balance_summary_foreign_keys_are_tenant_scoped_and_cascading() -> None:
+def test_leave_balance_summary_foreign_keys_are_tenant_scoped_and_retention_safe() -> None:
     tenant_id = LeaveBalanceSummary.__table__.columns["tenant_id"]
     tenant_foreign_keys = list(tenant_id.foreign_keys)
     employee_foreign_keys = {
@@ -87,7 +87,7 @@ def test_leave_balance_summary_foreign_keys_are_tenant_scoped_and_cascading() ->
         ("tenant_id", "employee_id"),
         "employees",
         ("tenant_id", "id"),
-        "CASCADE",
+        "RESTRICT",
     )
 
 

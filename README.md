@@ -99,7 +99,7 @@ recycle `1800` saniye, bağlantı `10` saniye, statement `30000` ms ve idle tran
 
 P0C write transaction sınırında transitional `EmployeeCommandHandler` ve
 `LeaveRequestCommandHandler`, `SqlAlchemyUnitOfWork.execute` üzerinden tek transaction sahibini
-kullanır. Employee create/update/delete ile leave request create/approve/reject/cancel servisleri
+kullanır. Employee create/update/archive ile leave request create/approve/reject/cancel servisleri
 gerekli constraint ve generated-value davranışı için `flush()` eder fakat `commit()` etmez;
 başarılı komutu commit etme ve hata halinde rollback yapma sorumluluğu yalnız UoW'dedir. Read
 path'leri request-scoped session ve doğrudan SQLAlchemy-aware service/query koduyla basit kalır;
@@ -108,9 +108,6 @@ ve fresh-session testleri employee/leave değişikliklerinin kısmi persist edil
 Bu mimari değişiklik schema veya Alembic migration eklemez.
 Local demo seed ayrı bir script command'dır; tenant/user/employee/leave seed adımlarının tamamı
 için zaten tek dış transaction sahibidir ve migrated API leaf service commit'i değildir.
-
-Leave decision winner/locking/versioning ve kritik komut idempotency'si sonraki Faz-0
-concurrency/idempotency işidir.
 
 P0D ile mevcut tenant-owned parent tablolarından `employees` ve `users` için `(tenant_id, id)`
 candidate key'leri; `leave_requests` ve `leave_balance_summaries` içindeki dört employee/user
@@ -123,6 +120,22 @@ foreign key'leri validate ettikten sonra yalnız eski employee/user scalar forei
 kaldırır. Böylece doğrudan DB write yolu tenant'lar arası employee/user bağlantısı kuramaz;
 tenant root foreign key'leri ve mevcut servis guard'ları korunur. RLS bu değişikliğin parçası
 değildir ve Faz 1'de ayrıca uygulanacaktır.
+
+P0E ile kritik create/decision POST komutları opsiyonel canonical `X-Idempotency-Key` destekler.
+Key tenant genelinde unique'tir; aynı tenant/key ve aynı semantik request ilk başarılı
+`201`/`200` body'sini kalıcı receipt'ten tekrar oynatır. Command, hedef id veya body değişirse
+`409 idempotency_key_mismatch` döner; aynı key başka tenant'ta bağımsızdır. Receipt'ler şimdilik
+TTL temizliği olmadan saklanır. Leave approve/reject/cancel komutları tenant-scoped satırı
+PostgreSQL row lock ile serialize eder; eşzamanlı farklı kararlardan yalnız biri kazanır ve kaybeden
+mevcut `409 leave_request_transition_conflict` sözleşmesini alır.
+
+`DELETE /api/v1/employees/{employee_id}` path ve `204` uyumluluğunu koruyarak artık
+`archived_at` yazar; aynı tenant için tekrar çağrı no-op `204` döner. Normal employee
+liste/detail/update, dashboard, yeni leave request ve leave-balance eligibility yolları arşivli
+kaydı görünmez sayar. Employee number tarihsel kimlik olarak reserved kalır; mevcut leave request
+ve balance kayıtları korunur. Bu iki child foreign key artık `ON DELETE RESTRICT` kullanır. Public
+purge endpoint'i yoktur; tenant-root cascade yalnız kısıtlı operator retention/offboarding yolu
+olarak değerlendirilir.
 
 Veritabanı migration komutları:
 

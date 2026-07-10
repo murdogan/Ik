@@ -19,6 +19,7 @@ EXPECTED_PLATFORM_PACKAGES = {
     "errors",
     "events",
     "identity",
+    "idempotency",
     "observability",
     "storage",
     "tenancy",

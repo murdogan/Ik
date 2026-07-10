@@ -4,8 +4,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_tenant_context, get_unit_of_work
-from app.api.errors import EMPLOYEE_COMMAND_CONFLICT_RESPONSES, EMPLOYEE_VALIDATION_RESPONSES
+from app.api.dependencies import (
+    get_command_idempotency_service,
+    get_idempotency_key,
+    get_tenant_context,
+    get_unit_of_work,
+)
+from app.api.errors import (
+    EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
+    EMPLOYEE_VALIDATION_RESPONSES,
+    IDEMPOTENCY_KEY_INVALID_RESPONSES,
+    IDEMPOTENT_EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
+)
 from app.api.openapi import EMPLOYEES_TAG
 from app.db.session import get_session
 from app.models.employee import EmployeeStatus
@@ -20,6 +30,7 @@ from app.schemas.employee import (
     EmployeeRead,
     EmployeeUpdate,
 )
+from app.services.command_idempotency import CommandIdempotencyService
 from app.services.employee_commands import EmployeeCommandHandler
 from app.services.employee_service import EmployeeService
 
@@ -39,8 +50,16 @@ def get_employee_service(
 def get_employee_command_handler(
     service: Annotated[EmployeeService, Depends(get_employee_service)],
     unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
+    idempotency: Annotated[
+        CommandIdempotencyService,
+        Depends(get_command_idempotency_service),
+    ],
 ) -> EmployeeCommandHandler:
-    return EmployeeCommandHandler(service=service, unit_of_work=unit_of_work)
+    return EmployeeCommandHandler(
+        service=service,
+        unit_of_work=unit_of_work,
+        idempotency=idempotency,
+    )
 
 
 def get_employee_list_filters(
@@ -121,10 +140,14 @@ async def list_employees(
     description=(
         "Creates an employee master-data record in the current tenant from the tenant header "
         "context. Employee numbers must remain unique within that tenant, and lifecycle date "
-        "rules are enforced before persistence."
+        "rules are enforced before persistence. An optional X-Idempotency-Key replays the first "
+        "successful response for an equivalent retry in this tenant."
     ),
     response_description="Created employee record.",
-    responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
+    responses={
+        **IDEMPOTENT_EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
+        **IDEMPOTENCY_KEY_INVALID_RESPONSES,
+    },
 )
 async def create_employee(
     payload: EmployeeCreate,
@@ -133,8 +156,13 @@ async def create_employee(
         EmployeeCommandHandler,
         Depends(get_employee_command_handler),
     ],
+    idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> EmployeeRead:
-    return await command_handler.create_employee(tenant_context.tenant_id, payload)
+    return await command_handler.create_employee(
+        tenant_context.tenant_id,
+        payload,
+        idempotency_key,
+    )
 
 
 @router.get(
@@ -185,12 +213,14 @@ async def update_employee(
 @router.delete(
     "/{employee_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete tenant employee",
+    summary="Archive tenant employee",
     description=(
-        "Deletes an employee record by id only when it belongs to the current tenant. Employee "
-        "IDs from other tenants return the same not-found envelope as missing records."
+        "Archives an employee record by id only when it belongs to the current tenant. The "
+        "record and its leave/balance history remain retained; archived employees are hidden "
+        "from normal employee reads. Repeating the archive is a no-op. Employee IDs from other "
+        "tenants return the same not-found envelope as missing records."
     ),
-    response_description="Employee deletion completed.",
+    response_description="Employee archive completed.",
     responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
 )
 async def delete_employee(

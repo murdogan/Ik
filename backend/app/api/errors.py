@@ -16,6 +16,8 @@ from app.core.error_messages import (
     EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE,
     EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE,
     EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
+    IDEMPOTENCY_KEY_INVALID_MESSAGE,
+    IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
     LEAVE_BALANCE_REQUEST_VALIDATION_FAILED_MESSAGE,
     LEAVE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
     LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
@@ -28,6 +30,10 @@ from app.platform.db import PersistenceConcurrencyError, PersistenceIntegrityErr
 from app.platform.errors import ApiError, ApiErrorResponse, api_error_handler
 from app.platform.errors import ApiErrorBody as ApiErrorBody
 from app.platform.errors.application import ApplicationError
+from app.platform.idempotency import (
+    IdempotencyKeyMismatchError,
+    IdempotencyReplayUnavailableError,
+)
 from app.services.employee_service import (
     EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
     DuplicateEmployeeNumberError,
@@ -45,6 +51,7 @@ from app.services.leave_request_service import (
 
 TENANT_ID_HEADER = "X-Tenant-Id"
 TENANT_SLUG_HEADER = "X-Tenant-Slug"
+IDEMPOTENCY_KEY_HEADER = "X-Idempotency-Key"
 TENANT_ID_HEADER_MISSING_MESSAGE = f"{TENANT_ID_HEADER} header is required"
 TENANT_ID_HEADER_INVALID_MESSAGE = (
     f"{TENANT_ID_HEADER} header must be a single canonical hyphenated UUID"
@@ -76,6 +83,8 @@ USER_NOT_FOUND_ERROR_CODE = "user_not_found"
 USER_NOT_FOUND_ERROR_MESSAGE = USER_NOT_FOUND_MESSAGE
 DATA_INTEGRITY_CONFLICT_ERROR_CODE = "data_integrity_conflict"
 CONCURRENT_WRITE_CONFLICT_ERROR_CODE = "concurrent_write_conflict"
+IDEMPOTENCY_KEY_INVALID_ERROR_CODE = "idempotency_key_invalid"
+IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE = "idempotency_key_mismatch"
 APPLICATION_COMMAND_FAILED_ERROR_CODE = "application_command_failed"
 
 
@@ -133,6 +142,28 @@ LEAVE_REQUEST_VALIDATION_RESPONSES = {
         },
     }
 }
+IDEMPOTENCY_KEY_INVALID_RESPONSES = {
+    status.HTTP_400_BAD_REQUEST: {
+        "model": ApiErrorResponse,
+        "description": "Idempotency key validation error envelope.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    IDEMPOTENCY_KEY_INVALID_ERROR_CODE: {
+                        "value": {
+                            "error": {
+                                "code": IDEMPOTENCY_KEY_INVALID_ERROR_CODE,
+                                "message": IDEMPOTENCY_KEY_INVALID_MESSAGE,
+                                "details": None,
+                                "correlation_id": "req_wf_demo_001",
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    }
+}
 
 
 def _conflict_response(*, description: str, examples: dict[str, dict[str, Any]]) -> dict:
@@ -175,6 +206,17 @@ EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
         ),
     },
 )
+IDEMPOTENT_EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
+    description="Idempotent employee command conflict envelope.",
+    examples={
+        **EMPLOYEE_COMMAND_CONFLICT_RESPONSES[status.HTTP_409_CONFLICT]["content"]
+        ["application/json"]["examples"],
+        IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE: _error_example(
+            IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE,
+            IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
+        ),
+    },
+)
 LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES = _conflict_response(
     description="Leave request command persistence conflict envelope.",
     examples={
@@ -185,6 +227,10 @@ LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES = _conflict_response(
         CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
             CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
             CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+        IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE: _error_example(
+            IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE,
+            IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
         ),
     },
 )
@@ -202,6 +248,10 @@ LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES = _conflict_response(
         CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
             CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
             CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+        IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE: _error_example(
+            IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE,
+            IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
         ),
     },
 )
@@ -240,6 +290,10 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return leave_request_date_range_error(str(exc))
     if isinstance(exc, LeaveRequestTransitionError):
         return leave_request_transition_conflict_error(str(exc))
+    if isinstance(exc, IdempotencyKeyMismatchError):
+        return idempotency_key_mismatch_error()
+    if isinstance(exc, IdempotencyReplayUnavailableError):
+        return concurrent_write_conflict_error()
     if isinstance(exc, PersistenceConcurrencyError):
         return concurrent_write_conflict_error()
     if isinstance(exc, PersistenceIntegrityError):
@@ -274,6 +328,14 @@ def tenant_slug_header_invalid_error() -> ApiError:
         status_code=status.HTTP_400_BAD_REQUEST,
         code="tenant_slug_header_invalid",
         message=TENANT_SLUG_HEADER_INVALID_MESSAGE,
+    )
+
+
+def idempotency_key_invalid_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=IDEMPOTENCY_KEY_INVALID_ERROR_CODE,
+        message=IDEMPOTENCY_KEY_INVALID_MESSAGE,
     )
 
 
@@ -354,6 +416,14 @@ def concurrent_write_conflict_error() -> ApiError:
         status_code=status.HTTP_409_CONFLICT,
         code=CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
         message=CONCURRENT_WRITE_CONFLICT_MESSAGE,
+    )
+
+
+def idempotency_key_mismatch_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE,
+        message=IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
     )
 
 

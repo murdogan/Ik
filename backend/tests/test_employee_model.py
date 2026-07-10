@@ -23,6 +23,7 @@ def test_employee_table_has_documented_mvp_columns() -> None:
         "status",
         "employment_start_date",
         "employment_end_date",
+        "archived_at",
         "created_at",
         "updated_at",
     ]:
@@ -43,7 +44,13 @@ def test_employee_required_columns_match_minimal_record() -> None:
     ]:
         assert columns[name].nullable is False
 
-    for name in ["email", "department", "position", "employment_end_date"]:
+    for name in [
+        "email",
+        "department",
+        "position",
+        "employment_end_date",
+        "archived_at",
+    ]:
         assert columns[name].nullable is True
 
 
@@ -125,3 +132,15 @@ def test_employee_has_tenant_status_index() -> None:
     }
 
     assert indexes["ix_employees_tenant_status"] == ("tenant_id", "status")
+
+
+def test_employee_has_tenant_archive_index() -> None:
+    indexes = {
+        index.name: tuple(column.name for column in index.columns)
+        for index in Employee.__table__.indexes
+    }
+
+    assert indexes["ix_employees_tenant_archived_at"] == (
+        "tenant_id",
+        "archived_at",
+    )

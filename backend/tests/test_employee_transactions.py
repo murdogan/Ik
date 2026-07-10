@@ -139,7 +139,7 @@ async def test_employee_service_update_does_not_commit_and_can_be_rolled_back(
         assert persisted.position == "HR Specialist"
 
 
-async def test_employee_service_delete_does_not_commit_and_can_be_rolled_back(
+async def test_employee_service_archive_does_not_commit_and_can_be_rolled_back(
     employee_database: EmployeeDatabase,
 ) -> None:
     _, session_factory = employee_database
@@ -157,6 +157,7 @@ async def test_employee_service_delete_does_not_commit_and_can_be_rolled_back(
         persisted = await verification_session.get(Employee, EMPLOYEE_ID)
         assert persisted is not None
         assert persisted.tenant_id == TENANT_ID
+        assert persisted.archived_at is None
 
 
 async def test_employee_command_handler_commits_a_successful_write(

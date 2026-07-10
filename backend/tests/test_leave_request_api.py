@@ -11,6 +11,7 @@ from app.api.leave_requests import (
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
+from app.models.command_idempotency import CommandIdempotency
 from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
@@ -24,7 +25,7 @@ from app.services.leave_request_service import (
 )
 from fastapi import Depends
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -797,6 +798,67 @@ async def test_approve_pending_leave_request() -> None:
         assert persisted.status == LeaveRequestStatus.APPROVED.value
         assert persisted.decided_by_user_id == APPROVER_USER_ID
         assert persisted.decision_note == "Coverage is planned"
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_decision_idempotency_replays_and_rejects_action_reuse() -> None:
+    client, engine = await _client_with_database()
+    headers = {
+        **_tenant_headers(),
+        "X-Idempotency-Key": "leave-decision-retry-001",
+        "X-Correlation-Id": "p0e-leave-decision-idempotency",
+    }
+    payload = {
+        "decided_by_user_id": str(APPROVER_USER_ID),
+        "decision_note": "Stable decision",
+    }
+    try:
+        first_response = await client.post(
+            f"/api/v1/leave-requests/{PENDING_REQUEST_ID}/approve",
+            headers=headers,
+            json=payload,
+        )
+        replay_response = await client.post(
+            f"/api/v1/leave-requests/{PENDING_REQUEST_ID}/approve",
+            headers=headers,
+            json=payload,
+        )
+        mismatch_response = await client.post(
+            f"/api/v1/leave-requests/{PENDING_REQUEST_ID}/reject",
+            headers=headers,
+            json=payload,
+        )
+
+        assert first_response.status_code == 200
+        assert replay_response.status_code == 200
+        assert replay_response.json() == first_response.json()
+        _assert_error_response(
+            mismatch_response,
+            status_code=409,
+            code="idempotency_key_mismatch",
+            message=(
+                "X-Idempotency-Key was already used for a different request in this tenant"
+            ),
+            correlation_id="p0e-leave-decision-idempotency",
+        )
+
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            persisted = await session.get(LeaveRequest, PENDING_REQUEST_ID)
+            receipt_count = await session.scalar(
+                select(func.count())
+                .select_from(CommandIdempotency)
+                .where(CommandIdempotency.tenant_id == TENANT_ID)
+                .where(
+                    CommandIdempotency.idempotency_key
+                    == "leave-decision-retry-001"
+                )
+            )
+        assert persisted is not None
+        assert persisted.status == LeaveRequestStatus.APPROVED.value
+        assert persisted.decision_note == "Stable decision"
+        assert receipt_count == 1
     finally:
         await client.aclose()
         await engine.dispose()

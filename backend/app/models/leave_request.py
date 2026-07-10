@@ -40,7 +40,7 @@ class LeaveRequest(Base, TimestampMixin):
             ["tenant_id", "employee_id"],
             ["employees.tenant_id", "employees.id"],
             name="fk_leave_requests_tenant_employee_id_employees",
-            ondelete="CASCADE",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "requested_by_user_id"],

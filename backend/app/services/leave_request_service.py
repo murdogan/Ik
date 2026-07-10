@@ -168,6 +168,8 @@ class LeaveRequestService:
             select(LeaveRequest)
             .where(LeaveRequest.tenant_id == tenant_id)
             .where(LeaveRequest.id == leave_request_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         leave_request = await self.session.scalar(statement)
         if leave_request is None:
@@ -179,6 +181,7 @@ class LeaveRequestService:
             select(Employee.id)
             .where(Employee.tenant_id == tenant_id)
             .where(Employee.id == employee_id)
+            .where(Employee.archived_at.is_(None))
         )
         if await self.session.scalar(statement) is None:
             raise LeaveRequestEmployeeNotFoundError

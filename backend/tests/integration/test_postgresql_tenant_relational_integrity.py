@@ -40,6 +40,17 @@ COMPOSITE_CONSTRAINTS = {
         "REFERENCES employees(tenant_id, id) ON DELETE CASCADE"
     ),
 }
+HEAD_COMPOSITE_CONSTRAINTS = {
+    **COMPOSITE_CONSTRAINTS,
+    "fk_leave_requests_tenant_employee_id_employees": (
+        "FOREIGN KEY (tenant_id, employee_id) "
+        "REFERENCES employees(tenant_id, id) ON DELETE RESTRICT"
+    ),
+    "fk_leave_balance_summaries_tenant_employee_id_employees": (
+        "FOREIGN KEY (tenant_id, employee_id) "
+        "REFERENCES employees(tenant_id, id) ON DELETE RESTRICT"
+    ),
+}
 CANDIDATE_KEY_CONSTRAINTS = {
     "uq_employees_tenant_id_id": "UNIQUE (tenant_id, id)",
     "uq_users_tenant_id_id": "UNIQUE (tenant_id, id)",
@@ -164,8 +175,8 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
     ) == fixture_snapshot
     head_constraints = asyncio.run(_named_constraint_definitions(p0d_postgres_database))
     assert {
-        name: head_constraints[name] for name in COMPOSITE_CONSTRAINTS
-    } == COMPOSITE_CONSTRAINTS
+        name: head_constraints[name] for name in HEAD_COMPOSITE_CONSTRAINTS
+    } == HEAD_COMPOSITE_CONSTRAINTS
     assert {
         name: head_constraints[name] for name in CANDIDATE_KEY_CONSTRAINTS
     } == CANDIDATE_KEY_CONSTRAINTS

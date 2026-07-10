@@ -49,7 +49,7 @@ class LeaveBalanceSummary(Base, TimestampMixin):
             ["tenant_id", "employee_id"],
             ["employees.tenant_id", "employees.id"],
             name="fk_leave_balance_summaries_tenant_employee_id_employees",
-            ondelete="CASCADE",
+            ondelete="RESTRICT",
         ),
     )
 

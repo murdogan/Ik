@@ -5,7 +5,14 @@ from typing import Any
 from alembic import context
 from alembic.ddl.postgresql import PostgresqlImpl
 from app.db.base import Base
-from app.models import Employee, LeaveBalanceSummary, LeaveRequest, Tenant, User  # noqa: F401
+from app.models import (  # noqa: F401
+    CommandIdempotency,
+    Employee,
+    LeaveBalanceSummary,
+    LeaveRequest,
+    Tenant,
+    User,
+)
 from sqlalchemy import String, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.sql.schema import Table

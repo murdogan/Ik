@@ -1,8 +1,16 @@
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,6 +49,7 @@ class Employee(Base, TimestampMixin):
         ),
         UniqueConstraint("tenant_id", "id", name="uq_employees_tenant_id_id"),
         Index("ix_employees_tenant_status", "tenant_id", "status"),
+        Index("ix_employees_tenant_archived_at", "tenant_id", "archived_at"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
@@ -61,3 +70,7 @@ class Employee(Base, TimestampMixin):
     )
     employment_start_date: Mapped[date] = mapped_column(nullable=False)
     employment_end_date: Mapped[date | None] = mapped_column(nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )

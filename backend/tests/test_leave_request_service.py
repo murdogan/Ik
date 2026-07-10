@@ -353,6 +353,38 @@ async def test_create_leave_request_rejects_cross_tenant_employee_without_insert
         await engine.dispose()
 
 
+async def test_archived_employee_keeps_leave_history_but_cannot_open_new_request() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        employee = await session.get(Employee, EMPLOYEE_ID)
+        assert employee is not None
+        employee.archived_at = NOW
+        await session.flush()
+
+        existing_requests = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            filters=LeaveRequestListFilters(employee_id=EMPLOYEE_ID),
+        )
+        existing_ids = {leave_request.id for leave_request in existing_requests}
+
+        with pytest.raises(LeaveRequestEmployeeNotFoundError):
+            await LeaveRequestService(session).create_leave_request(
+                TENANT_ID,
+                LeaveRequestCreate(
+                    employee_id=EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 9, 1),
+                    end_date=date(2026, 9, 2),
+                    requested_by_user_id=REQUESTING_USER_ID,
+                ),
+            )
+
+        assert {PENDING_REQUEST_ID, APPROVED_REQUEST_ID} <= existing_ids
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_list_leave_requests_uses_inclusive_overlap_boundaries() -> None:
     session, engine = await _session_with_seed_data()
     try:

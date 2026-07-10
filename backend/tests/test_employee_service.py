@@ -413,7 +413,7 @@ async def test_update_employee_allows_reactivation_when_end_date_is_cleared() ->
         await engine.dispose()
 
 
-async def test_delete_employee_is_tenant_scoped_without_cross_tenant_mutation() -> None:
+async def test_delete_employee_archives_idempotently_without_cross_tenant_mutation() -> None:
     session, engine = await _session_with_seed_data()
     try:
         with pytest.raises(EmployeeNotFoundError):
@@ -427,8 +427,33 @@ async def test_delete_employee_is_tenant_scoped_without_cross_tenant_mutation() 
 
         await EmployeeService(session).delete_employee(TENANT_ID, EMPLOYEE_ID)
 
-        deleted_employee = await session.scalar(select(Employee).where(Employee.id == EMPLOYEE_ID))
-        assert deleted_employee is None
+        archived_employee = await session.scalar(
+            select(Employee).where(Employee.id == EMPLOYEE_ID)
+        )
+        assert archived_employee is not None
+        assert archived_employee.archived_at is not None
+        archived_at = archived_employee.archived_at
+
+        await EmployeeService(session).delete_employee(TENANT_ID, EMPLOYEE_ID)
+
+        assert archived_employee.archived_at == archived_at
+        with pytest.raises(EmployeeNotFoundError):
+            await EmployeeService(session).get_employee(TENANT_ID, EMPLOYEE_ID)
+        listed_ids = {
+            employee.id
+            for employee in await EmployeeService(session).list_employees(TENANT_ID)
+        }
+        assert EMPLOYEE_ID not in listed_ids
+        with pytest.raises(DuplicateEmployeeNumberError):
+            await EmployeeService(session).create_employee(
+                TENANT_ID,
+                EmployeeCreate(
+                    employee_number="WF-001",
+                    first_name="Replacement",
+                    last_name="Employee",
+                    employment_start_date=date(2026, 7, 10),
+                ),
+            )
     finally:
         await session.close()
         await engine.dispose()

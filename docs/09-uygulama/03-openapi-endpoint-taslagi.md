@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-10 / P0C Unit of Work and stable error mapping.
+Son güncelleme: 2026-07-10 / P0E concurrency, idempotency and archive hardening.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -18,16 +18,16 @@ runtime/OpenAPI registry'si ile karşılaştırır.
 | GET | `/openapi.json` | Uygulandı | FastAPI generated schema; smoke bu şemayla documented operation drift kontrolü yapar |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; `department`, `status`, `q` filtreleri ve `limit`/`offset` pagination var |
-| POST | `/api/v1/employees` | Uygulandı | Server tenant context kullanır, duplicate employee number `409` |
+| POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |
 | GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | Uygulandı | Partial update, tarih aralığı validasyonu |
-| DELETE | `/api/v1/employees/{employee_id}` | Uygulandı | Mevcut davranış hard delete |
+| DELETE | `/api/v1/employees/{employee_id}` | Uygulandı | Aynı path/`204` ile idempotent archive; history korunur |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | Uygulandı | Tenant-scoped, read-only manuel izin bakiyesi özeti; `period_year` filtresi var |
 | GET | `/api/v1/leave-requests` | Uygulandı | Tenant-scoped liste; `status`, `employee_id`, `start_date`, `end_date` filtreleri ve `limit`/`offset` pagination var |
-| POST | `/api/v1/leave-requests` | Uygulandı | Pending talep oluşturur, çalışan ve isteyen kullanıcı tenant içinde olmalı |
-| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Uygulandı | Yalnız pending talep onaylanır |
-| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note destekler |
-| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Uygulandı | Yalnız pending talep iptal edilir |
+| POST | `/api/v1/leave-requests` | Uygulandı | Pending talep; tenant guard ve opsiyonel tenant-global idempotency |
+| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
+| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note, row-lock one-winner ve opsiyonel idempotency |
+| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
 
 Geçerli uygulama notları:
 
@@ -57,6 +57,13 @@ Geçerli uygulama notları:
 - Domain endpointleri canonical hyphenated UUID formatında `X-Tenant-Id` header'ı ister.
   Compact, braces veya `urn:uuid:` UUID formları ve tekrarlı `X-Tenant-Id` header'ları
   geçersizdir. `X-Tenant-Slug` opsiyoneldir ve gönderilirse boş olamaz.
+- Employee create, leave request create ve approve/reject/cancel endpointleri opsiyonel
+  `X-Idempotency-Key` kabul eder. Key tenant genelinde tektir. Aynı semantic komut, hedef ve body
+  ilk başarılı response snapshot'ını tekrar döner; farklı komut, hedef veya body aynı key ile
+  gönderilirse ikinci write çalışmadan `409 idempotency_key_mismatch` döner. Receipt ve domain
+  write aynı transaction'dadır; başarısız komut key'i rezerve bırakmaz. Henüz TTL/cleanup yoktur.
+  Boş, whitespace içeren, 128 karakterden uzun veya tekrarlı key
+  `400 idempotency_key_invalid` döner.
 - Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef
   standarttır, mevcut scaffold davranışı değildir.
 - Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
@@ -77,8 +84,8 @@ Geçerli uygulama notları:
   `employee_invalid_date_range`, `employee_invalid_lifecycle`, `employee_validation_error`,
   `leave_balance_validation_error`, `leave_request_not_found`,
   `leave_request_invalid_date_range`, `leave_request_transition_conflict`,
-  `leave_request_validation_error`, `user_not_found`, `data_integrity_conflict` ve
-  `concurrent_write_conflict`.
+  `leave_request_validation_error`, `user_not_found`, `idempotency_key_invalid`,
+  `idempotency_key_mismatch`, `data_integrity_conflict` ve `concurrent_write_conflict`.
 - `uq_employees_tenant_employee_number` unique constraint ihlali, pre-check yarışında da mevcut
   `409 employee_number_conflict` code/message sözleşmesini korur. Başka bir tanımlı olmayan
   integrity hatası SQL veya constraint detayı sızdırmadan `409 data_integrity_conflict` ve
@@ -86,12 +93,19 @@ Geçerli uygulama notları:
   tanınan bir DB concurrency hatası `409 concurrent_write_conflict` ve
   `The request conflicted with another write; retry the request` mesajını döner. Her iki yanıtta
   da mevcut error zarfı ve correlation davranışı korunur.
-- P0C yeni schema/Alembic migration eklemez. Flush sonrası zorlanmış hata ve fresh-session
-  testleri employee/leave write'ın kısmi persist edilmediğini doğrular. Leave decision
-  winner/locking/versioning, kritik POST/decision idempotency ve tenant-owned ilişkilerde composite
-  tenant foreign key'ler sonraki Faz-0 işleridir; bu task bunları uygulanmış saymaz.
-- Cursor pagination standardı, idempotency, tüm response zarfı ve global correlation middleware
-  henüz TODO'dur.
+- P0C'nin transaction sınırı korunur. P0E `command_idempotency` receipt'ini domain write ile aynı
+  Unit of Work içine alır; leave karar satırını tenant-scoped `SELECT ... FOR UPDATE` ile kilitler.
+  Aynı pending talebe eşzamanlı çelişkili kararların yalnız biri başarılı olur; lock sonrası
+  terminal state'i gören kaybeden mevcut `409 leave_request_transition_conflict` sözleşmesini alır.
+  Gerçek PostgreSQL testleri one-winner davranışını ve concurrent aynı-key replay'i kanıtlar.
+- P0E employee DELETE'i fiziksel silmeden archive'a çevirir. `archived_at` set edilen kayıt normal
+  employee list/detail/update, yeni leave create, leave-balance okuma, dashboard workforce ve
+  employee activity yüzeylerinden gizlenir. Aynı DELETE tekrar `204` döner; employee number
+  rezerve, mevcut leave/balance geçmişi kalıcıdır. Employee child foreign key'leri
+  `ON DELETE RESTRICT` kullanır.
+- Cursor pagination standardı, tüm response zarfı ve global correlation middleware henüz
+  TODO'dur. Idempotency'nin mevcut kapsamı yalnız yukarıda sayılan POST/decision komutlarıdır;
+  receipt TTL/cleanup işi ayrıca backlog'dur.
 - Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,
   `pending_leave_count`, `employee_count`, `pending_leave_requests`,
   `new_starters_this_month`, `department_distribution` ve `recent_activity` döner.
@@ -100,6 +114,10 @@ Geçerli uygulama notları:
   `pending_leave_count` ile uyumlu geriye dönük alandır. W4A5 kapsamında bu zenginleştirilmiş
   alanlar API seviyesinde DB-backed ve tenant-scoped testle sabitlenmiştir.
 - Employee listesinde `department`, `status` ve employee number/email üzerinden `q` filtreleri
+  uygulanır.
+- Employee list/detail/update normal yüzeyi yalnız `archived_at is null` kayıtları görür.
+  Arşivlenmiş employee'nin eski leave request kayıtları tenant-scoped leave history listesinde
+  tutulmaya devam eder; yeni leave request veya normal balance erişimi açılamaz.
 - Employee listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`)
   uygulanmıştır.
 - Leave request listesinde W2A3 itibarıyla `status`, `employee_id` ve inclusive
@@ -193,7 +211,7 @@ Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, canonical hyphenated UUID olmayan değe
 - Error zarfı: `{ error: { code, message, details, correlation_id } }`
 - Protected endpointlerde tenant context zorunlu.
 - Büyük listelerde pagination zorunlu.
-- Kritik POST işlemlerinde idempotency header desteklenmelidir.
+- Desteklenen kritik POST işlemlerinde opsiyonel `X-Idempotency-Key` kullanılır.
 
 ## 2. MVP endpoint grupları
 
@@ -393,6 +411,7 @@ POST /api/v1/employees
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
 X-Correlation-Id: req_wf_demo_001
+X-Idempotency-Key: employee-create-wf-010
 Content-Type: application/json
 ```
 
@@ -426,6 +445,12 @@ Response `201` örneği:
   "employment_end_date": null
 }
 ```
+
+Bu header opsiyoneldir. Aynı tenant içinde `employee-create-wf-010` key'i ve aynı normalize
+edilmiş body tekrar gönderilirse yeni employee oluşturulmaz; yukarıdaki ilk başarılı `201`
+snapshot'ı aynı `id` ile replay edilir. Aynı key başka bir create body veya başka bir komut için
+kullanılırsa `409 idempotency_key_mismatch` döner. Arşivlenen kayıt satırda kaldığı için employee
+number da tenant içinde rezerve kalır ve yeni create `employee_number_conflict` alır.
 
 Lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve `on_leave`
 kayıtlarda `employment_end_date` `null` olmalıdır.
@@ -590,8 +615,17 @@ X-Correlation-Id: req_wf_demo_001
 
 Response `204`: body dönmez.
 
-Silinen, eksik veya tenant scope dışındaki çalışan tekrar okunursa aynı `employee_not_found` `404`
-zarfı döner.
+Bu operasyon fiziksel delete değildir. Tenant içindeki kayıt bulunursa `archived_at` set edilir;
+aynı path tekrar çağrıldığında timestamp değiştirilmeden no-op `204` döner. Arşivlenen, eksik veya
+tenant scope dışındaki çalışan normal detail/update/leave-balance yüzeyinde aynı
+`employee_not_found` `404` zarfını döner ve normal list/dashboard workforce yüzeyine girmez. Yeni
+leave request açılamaz.
+
+Employee satırı, employee number ve mevcut leave request/leave balance geçmişi korunur. Bu child
+ilişkiler `ON DELETE RESTRICT` olduğundan geçmişi olan employee satırı doğrudan fiziksel silinemez.
+Employee purge HTTP endpointi yoktur. Fiziksel tenant graph temizliği ancak açık retention/onay
+politikasına bağlı, kısıtlı tenant-root offboarding operasyonudur; normal employee API kapsamı
+değildir.
 
 ## 8. Leave endpointleri
 
@@ -742,6 +776,7 @@ POST /api/v1/leave-requests
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
 X-Correlation-Id: req_wf_demo_001
+X-Idempotency-Key: leave-create-2026-09-14
 Content-Type: application/json
 ```
 
@@ -754,6 +789,11 @@ Content-Type: application/json
   "requested_by_user_id": "f2000000-0000-4000-8000-000000000002"
 }
 ```
+
+Aynı tenant-global key ve aynı semantic leave create body tekrar gönderilirse ikinci talep
+oluşturulmaz; ilk `201` snapshot'ı aynı leave request `id` ile replay edilir. Arşivlenmiş employee
+tenant içinde normal create hedefi sayılmaz ve `employee_not_found` döner; geçmiş leave kayıtları
+silinmez.
 
 Response `201` örneği:
 
@@ -819,6 +859,7 @@ POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000001/approve
 X-Tenant-Id: f1000000-0000-4000-8000-000000000001
 X-Tenant-Slug: wealthy-falcon-demo
 X-Correlation-Id: req_wf_demo_001
+X-Idempotency-Key: leave-decision-f400-0001
 Content-Type: application/json
 ```
 
@@ -828,6 +869,12 @@ Content-Type: application/json
   "decision_note": "Approved with team coverage."
 }
 ```
+
+Karar komutu tenant-scoped leave request satırını transaction içinde `FOR UPDATE` ile kilitler.
+Approve/reject/cancel aynı pending satır için eşzamanlı çalışırsa lock'u alan yalnız bir komut
+terminal kararı yazar; diğer komut commit sonrasında terminal state'i görür ve
+`409 leave_request_transition_conflict` alır. Aynı `X-Idempotency-Key` ile aynı kararın retry'ı ise
+transition'ı tekrar çalıştırmaz, ilk başarılı `200` snapshot'ını replay eder.
 
 Response `200` örneği:
 
@@ -926,6 +973,20 @@ Non-pending transition `409` örneği:
   "error": {
     "code": "leave_request_transition_conflict",
     "message": "Only pending leave requests can be decided",
+    "details": null,
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+Aynı tenant-global idempotency key'in başka action, leave request hedefi veya decision body ile
+yeniden kullanılması ikinci karar write'ını çalıştırmadan aşağıdaki `409` zarfını döner:
+
+```json
+{
+  "error": {
+    "code": "idempotency_key_mismatch",
+    "message": "X-Idempotency-Key was already used for a different request in this tenant",
     "details": null,
     "correlation_id": "req_wf_demo_001"
   }
