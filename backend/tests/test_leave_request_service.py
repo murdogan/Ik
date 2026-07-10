@@ -38,6 +38,10 @@ PENDING_REQUEST_ID = UUID("aaaaaaaa-1111-4aaa-8aaa-aaaaaaaa1111")
 APPROVED_REQUEST_ID = UUID("bbbbbbbb-2222-4bbb-8bbb-bbbbbbbb2222")
 BOUNDARY_REQUEST_ID = UUID("cccccccc-3333-4ccc-8ccc-cccccccc3333")
 OTHER_REQUEST_ID = UUID("dddddddd-4444-4ddd-8ddd-dddddddd4444")
+REJECTED_REQUEST_ID = UUID("eeeeeeee-5555-4eee-8eee-eeeeeeee5555")
+CANCELLED_REQUEST_ID = UUID("ffffffff-6666-4fff-8fff-ffffffff6666")
+ORDERED_FIRST_REQUEST_ID = UUID("abababab-7777-4aba-8aba-abababab7777")
+ORDERED_SECOND_REQUEST_ID = UUID("bcbcbcbc-8888-4bcb-8bcb-bcbcbcbc8888")
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 
 
@@ -242,6 +246,30 @@ async def test_create_leave_request_rejects_missing_requesting_user() -> None:
         await engine.dispose()
 
 
+async def test_create_leave_request_rejects_cross_tenant_requesting_user_without_insert() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        existing_ids = set(await session.scalars(select(LeaveRequest.id)))
+
+        with pytest.raises(LeaveRequestUserNotFoundError):
+            await LeaveRequestService(session).create_leave_request(
+                TENANT_ID,
+                LeaveRequestCreate(
+                    employee_id=EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 8, 3),
+                    end_date=date(2026, 8, 7),
+                    requested_by_user_id=OTHER_USER_ID,
+                ),
+            )
+
+        current_ids = set(await session.scalars(select(LeaveRequest.id)))
+        assert current_ids == existing_ids
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_create_leave_request_rejects_cross_tenant_employee_without_insert() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -355,6 +383,55 @@ async def test_list_leave_requests_supports_single_sided_date_filters() -> None:
         await engine.dispose()
 
 
+async def test_list_leave_requests_orders_created_at_ties_by_start_date_then_id() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        session.add_all(
+            [
+                LeaveRequest(
+                    id=ORDERED_SECOND_REQUEST_ID,
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 9, 10),
+                    end_date=date(2026, 9, 10),
+                    status=LeaveRequestStatus.PENDING.value,
+                    requested_by_user_id=REQUESTING_USER_ID,
+                    created_at=NOW + timedelta(hours=1),
+                ),
+                LeaveRequest(
+                    id=ORDERED_FIRST_REQUEST_ID,
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 9, 1),
+                    end_date=date(2026, 9, 1),
+                    status=LeaveRequestStatus.PENDING.value,
+                    requested_by_user_id=REQUESTING_USER_ID,
+                    created_at=NOW + timedelta(hours=1),
+                ),
+            ]
+        )
+        await session.commit()
+
+        leave_requests = await LeaveRequestService(session).list_leave_requests(
+            TENANT_ID,
+            filters=LeaveRequestListFilters(
+                status=LeaveRequestStatus.PENDING,
+                employee_id=EMPLOYEE_ID,
+            ),
+            pagination=LeaveRequestListPagination(limit=2),
+        )
+
+        assert [leave_request.id for leave_request in leave_requests] == [
+            ORDERED_FIRST_REQUEST_ID,
+            ORDERED_SECOND_REQUEST_ID,
+        ]
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_decide_leave_request_checks_transition_before_decider_tenant() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -371,6 +448,23 @@ async def test_decide_leave_request_checks_transition_before_decider_tenant() ->
         assert leave_request is not None
         assert leave_request.status == LeaveRequestStatus.APPROVED.value
         assert leave_request.decided_by_user_id == APPROVER_USER_ID
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_approve_leave_request_allows_empty_decision_note() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        leave_request = await LeaveRequestService(session).approve_leave_request(
+            TENANT_ID,
+            PENDING_REQUEST_ID,
+            LeaveRequestDecision(decided_by_user_id=APPROVER_USER_ID),
+        )
+
+        assert leave_request.status == LeaveRequestStatus.APPROVED.value
+        assert leave_request.decided_by_user_id == APPROVER_USER_ID
+        assert leave_request.decision_note is None
     finally:
         await session.close()
         await engine.dispose()
@@ -398,6 +492,26 @@ async def test_decide_leave_request_rejects_cross_tenant_decider_without_mutatio
         await engine.dispose()
 
 
+async def test_reject_leave_request_sets_decider_and_note() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        leave_request = await LeaveRequestService(session).reject_leave_request(
+            TENANT_ID,
+            PENDING_REQUEST_ID,
+            LeaveRequestDecision(
+                decided_by_user_id=APPROVER_USER_ID,
+                decision_note="Coverage conflict",
+            ),
+        )
+
+        assert leave_request.status == LeaveRequestStatus.REJECTED.value
+        assert leave_request.decided_by_user_id == APPROVER_USER_ID
+        assert leave_request.decision_note == "Coverage conflict"
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_cancel_leave_request_sets_decider_and_note() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -413,6 +527,58 @@ async def test_cancel_leave_request_sets_decider_and_note() -> None:
         assert leave_request.status == LeaveRequestStatus.CANCELLED.value
         assert leave_request.decided_by_user_id == APPROVER_USER_ID
         assert leave_request.decision_note == "Employee withdrew the request"
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("request_id", "status"),
+    [
+        (REJECTED_REQUEST_ID, LeaveRequestStatus.REJECTED),
+        (CANCELLED_REQUEST_ID, LeaveRequestStatus.CANCELLED),
+    ],
+)
+async def test_decide_leave_request_rejects_terminal_status_without_mutation(
+    request_id: UUID,
+    status: LeaveRequestStatus,
+) -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        session.add(
+            LeaveRequest(
+                id=request_id,
+                tenant_id=TENANT_ID,
+                employee_id=EMPLOYEE_ID,
+                leave_type="annual",
+                start_date=date(2026, 8, 10),
+                end_date=date(2026, 8, 10),
+                status=status.value,
+                requested_by_user_id=REQUESTING_USER_ID,
+                decided_by_user_id=APPROVER_USER_ID,
+                decision_note="Already decided",
+                created_at=NOW + timedelta(minutes=1),
+            )
+        )
+        await session.commit()
+
+        with pytest.raises(LeaveRequestTransitionError):
+            await LeaveRequestService(session).approve_leave_request(
+                TENANT_ID,
+                request_id,
+                LeaveRequestDecision(
+                    decided_by_user_id=APPROVER_USER_ID,
+                    decision_note="New decision",
+                ),
+            )
+
+        leave_request = await session.scalar(
+            select(LeaveRequest).where(LeaveRequest.id == request_id)
+        )
+        assert leave_request is not None
+        assert leave_request.status == status.value
+        assert leave_request.decided_by_user_id == APPROVER_USER_ID
+        assert leave_request.decision_note == "Already decided"
     finally:
         await session.close()
         await engine.dispose()

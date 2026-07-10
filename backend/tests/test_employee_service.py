@@ -27,6 +27,7 @@ OTHER_TENANT_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SECOND_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 OTHER_EMPLOYEE_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+TERMINATED_EMPLOYEE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 
 
 async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
@@ -96,6 +97,19 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 department="People",
                 status=EmployeeStatus.ACTIVE.value,
                 employment_start_date=date(2026, 7, 1),
+            ),
+            Employee(
+                id=TERMINATED_EMPLOYEE_ID,
+                tenant_id=TENANT_ID,
+                employee_number="WF-003",
+                first_name="Cem",
+                last_name="Kaya",
+                email="cem@wealthyfalcon.test",
+                department="Engineering",
+                position="Backend Engineer",
+                status=EmployeeStatus.TERMINATED.value,
+                employment_start_date=date(2026, 7, 1),
+                employment_end_date=date(2026, 7, 31),
             ),
         ]
     )
@@ -220,6 +234,28 @@ async def test_update_employee_number_allows_match_in_different_tenant() -> None
         await engine.dispose()
 
 
+async def test_update_employee_rejects_duplicate_number_without_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        payload = EmployeeUpdate(employee_number="WF-002", position="People Lead")
+
+        with pytest.raises(DuplicateEmployeeNumberError):
+            await EmployeeService(session).update_employee(TENANT_ID, EMPLOYEE_ID, payload)
+
+        employee = await session.scalar(select(Employee).where(Employee.id == EMPLOYEE_ID))
+        duplicate_owner = await session.scalar(
+            select(Employee).where(Employee.id == SECOND_EMPLOYEE_ID)
+        )
+        assert employee is not None
+        assert duplicate_owner is not None
+        assert employee.employee_number == "WF-001"
+        assert employee.position == "HR Specialist"
+        assert duplicate_owner.employee_number == "WF-002"
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_update_employee_rejects_constructed_null_status() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -247,6 +283,26 @@ async def test_update_employee_rejects_constructed_null_start_date() -> None:
         await engine.dispose()
 
 
+async def test_update_employee_rejects_constructed_end_date_for_active_without_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        payload = EmployeeUpdate.model_construct(
+            _fields_set={"employment_end_date"},
+            employment_end_date=date(2026, 7, 31),
+        )
+
+        with pytest.raises(EmployeeLifecycleError, match="only allowed"):
+            await EmployeeService(session).update_employee(TENANT_ID, EMPLOYEE_ID, payload)
+
+        employee = await session.scalar(select(Employee).where(Employee.id == EMPLOYEE_ID))
+        assert employee is not None
+        assert employee.status == EmployeeStatus.ACTIVE.value
+        assert employee.employment_end_date is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_update_employee_rejects_constructed_datetime_start_date_without_mutation() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -261,6 +317,43 @@ async def test_update_employee_rejects_constructed_datetime_start_date_without_m
         employee = await session.scalar(select(Employee).where(Employee.id == EMPLOYEE_ID))
         assert employee is not None
         assert employee.employment_start_date == date(2026, 7, 1)
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_update_employee_allows_reactivation_when_end_date_is_cleared() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        employee = await EmployeeService(session).update_employee(
+            TENANT_ID,
+            TERMINATED_EMPLOYEE_ID,
+            EmployeeUpdate(status=EmployeeStatus.ACTIVE, employment_end_date=None),
+        )
+
+        assert employee.status == EmployeeStatus.ACTIVE.value
+        assert employee.employment_end_date is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_delete_employee_is_tenant_scoped_without_cross_tenant_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        with pytest.raises(EmployeeNotFoundError):
+            await EmployeeService(session).delete_employee(TENANT_ID, OTHER_EMPLOYEE_ID)
+
+        other_employee = await session.scalar(
+            select(Employee).where(Employee.id == OTHER_EMPLOYEE_ID)
+        )
+        assert other_employee is not None
+        assert other_employee.tenant_id == OTHER_TENANT_ID
+
+        await EmployeeService(session).delete_employee(TENANT_ID, EMPLOYEE_ID)
+
+        deleted_employee = await session.scalar(select(Employee).where(Employee.id == EMPLOYEE_ID))
+        assert deleted_employee is None
     finally:
         await session.close()
         await engine.dispose()
