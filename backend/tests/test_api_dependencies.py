@@ -3,7 +3,11 @@ from uuid import UUID
 
 import pytest
 from app.api.dependencies import get_tenant_context
-from app.api.errors import ApiError, api_error_handler, request_validation_error_handler
+from app.api.errors import (
+    ApiError,
+    api_error_handler,
+    request_validation_error_handler,
+)
 from app.core.tenancy import TenantContext
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -123,7 +127,7 @@ def test_tenant_dependency_rejects_invalid_tenant_header(tenant_header: str) -> 
         response,
         status_code=400,
         code="tenant_header_invalid",
-        message="X-Tenant-Id header must be a valid UUID",
+        message="X-Tenant-Id header must be a single canonical hyphenated UUID",
         correlation_id="tenant-invalid",
     )
 
@@ -142,7 +146,7 @@ def test_tenant_dependency_rejects_repeated_tenant_header() -> None:
         response,
         status_code=400,
         code="tenant_header_invalid",
-        message="X-Tenant-Id header must be a valid UUID",
+        message="X-Tenant-Id header must be a single canonical hyphenated UUID",
         correlation_id="tenant-repeated",
     )
 
@@ -161,7 +165,7 @@ def test_tenant_dependency_rejects_blank_tenant_slug_header() -> None:
         response,
         status_code=400,
         code="tenant_slug_header_invalid",
-        message="X-Tenant-Slug header must be non-empty when provided",
+        message="X-Tenant-Slug header must be sent at most once and be non-empty when provided",
         correlation_id="tenant-slug-blank",
     )
 
@@ -181,6 +185,6 @@ def test_tenant_dependency_rejects_repeated_tenant_slug_header() -> None:
         response,
         status_code=400,
         code="tenant_slug_header_invalid",
-        message="X-Tenant-Slug header must be non-empty when provided",
+        message="X-Tenant-Slug header must be sent at most once and be non-empty when provided",
         correlation_id="tenant-slug-repeated",
     )

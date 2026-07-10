@@ -509,7 +509,7 @@ def test_dashboard_summary_endpoint_rejects_invalid_tenant_header() -> None:
     assert response.json() == {
         "error": {
             "code": "tenant_header_invalid",
-            "message": "X-Tenant-Id header must be a valid UUID",
+            "message": "X-Tenant-Id header must be a single canonical hyphenated UUID",
             "details": None,
             "correlation_id": "dashboard-tenant",
         }

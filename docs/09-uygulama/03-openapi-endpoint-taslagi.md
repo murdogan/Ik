@@ -150,13 +150,13 @@ X-Correlation-Id: req_wf_demo_001
   mevcut bir pending leave request id'si kullanılmalıdır.
 
 Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, canonical hyphenated UUID olmayan değerler, tekrarlı
-`X-Tenant-Id` header'ları veya boş gönderilen `X-Tenant-Slug` `400` döner. Örnek:
+`X-Tenant-Id` header'ları veya boş/tekrarlı gönderilen `X-Tenant-Slug` `400` döner. Örnek:
 
 ```json
 {
   "error": {
     "code": "tenant_header_invalid",
-    "message": "X-Tenant-Id header must be a valid UUID",
+    "message": "X-Tenant-Id header must be a single canonical hyphenated UUID",
     "details": null,
     "correlation_id": "req_wf_demo_001"
   }

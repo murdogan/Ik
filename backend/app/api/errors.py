@@ -24,6 +24,13 @@ from app.core.error_messages import (
 
 TENANT_ID_HEADER = "X-Tenant-Id"
 TENANT_SLUG_HEADER = "X-Tenant-Slug"
+TENANT_ID_HEADER_MISSING_MESSAGE = f"{TENANT_ID_HEADER} header is required"
+TENANT_ID_HEADER_INVALID_MESSAGE = (
+    f"{TENANT_ID_HEADER} header must be a single canonical hyphenated UUID"
+)
+TENANT_SLUG_HEADER_INVALID_MESSAGE = (
+    f"{TENANT_SLUG_HEADER} header must be sent at most once and be non-empty when provided"
+)
 EMPLOYEE_API_PREFIX = "/api/v1/employees"
 LEAVE_BALANCE_API_SEGMENT = "/leave-balances"
 LEAVE_REQUEST_API_PREFIX = "/api/v1/leave-requests"
@@ -163,7 +170,7 @@ def tenant_header_missing_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_400_BAD_REQUEST,
         code="tenant_header_missing",
-        message=f"{TENANT_ID_HEADER} header is required",
+        message=TENANT_ID_HEADER_MISSING_MESSAGE,
     )
 
 
@@ -171,7 +178,7 @@ def tenant_header_invalid_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_400_BAD_REQUEST,
         code="tenant_header_invalid",
-        message=f"{TENANT_ID_HEADER} header must be a valid UUID",
+        message=TENANT_ID_HEADER_INVALID_MESSAGE,
     )
 
 
@@ -179,7 +186,7 @@ def tenant_slug_header_invalid_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_400_BAD_REQUEST,
         code="tenant_slug_header_invalid",
-        message=f"{TENANT_SLUG_HEADER} header must be non-empty when provided",
+        message=TENANT_SLUG_HEADER_INVALID_MESSAGE,
     )
 
 

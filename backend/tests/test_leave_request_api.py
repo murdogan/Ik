@@ -966,6 +966,54 @@ async def test_leave_request_routes_require_tenant_header() -> None:
         await engine.dispose()
 
 
+async def test_leave_request_routes_reject_invalid_tenant_before_payload_validation() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/leave-requests",
+            headers={
+                "X-Tenant-Id": str(TENANT_ID).upper(),
+                "X-Correlation-Id": "w4b4-leave-tenant-invalid",
+            },
+            json={},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=400,
+            code="tenant_header_invalid",
+            message="X-Tenant-Id header must be a single canonical hyphenated UUID",
+            correlation_id="w4b4-leave-tenant-invalid",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_leave_request_routes_reject_repeated_tenant_header() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/leave-requests",
+            headers=[
+                ("X-Tenant-Id", str(TENANT_ID)),
+                ("X-Tenant-Id", str(OTHER_TENANT_ID)),
+                ("X-Correlation-Id", "w4b4-leave-tenant-repeated"),
+            ],
+        )
+
+        _assert_error_response(
+            response,
+            status_code=400,
+            code="tenant_header_invalid",
+            message="X-Tenant-Id header must be a single canonical hyphenated UUID",
+            correlation_id="w4b4-leave-tenant-repeated",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_leave_request_routes_are_exposed_in_openapi() -> None:
     client, engine = await _client_with_database()
     try:

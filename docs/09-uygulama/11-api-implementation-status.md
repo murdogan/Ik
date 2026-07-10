@@ -44,6 +44,10 @@ Task: `W4B3 API docs examples`
 
 - Domain endpoints require exactly one canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
   remains optional but cannot be blank or repeated when sent.
+- W4B4 tightened tenant dependency error text and route regressions: invalid or repeated tenant id
+  headers return `tenant_header_invalid` with
+  `X-Tenant-Id header must be a single canonical hyphenated UUID`, before unrelated
+  payload/query/path validation errors.
 - Employee list supports `department`, `status`, `q`, `limit`, and `offset`. Filters are scoped to
   the current tenant before pagination. `limit` defaults to `50`, is capped at `200`, and `offset`
   defaults to `0`.

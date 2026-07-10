@@ -328,6 +328,30 @@ async def test_leave_balance_routes_require_tenant_header() -> None:
         await engine.dispose()
 
 
+async def test_leave_balance_routes_reject_invalid_tenant_header_before_query_validation() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            f"/api/v1/employees/{EMPLOYEE_ID}/leave-balances",
+            headers={
+                "X-Tenant-Id": f"urn:uuid:{TENANT_ID}",
+                "X-Correlation-Id": "w4b4-leave-balance-tenant-invalid",
+            },
+            params={"period_year": 1800},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=400,
+            code="tenant_header_invalid",
+            message="X-Tenant-Id header must be a single canonical hyphenated UUID",
+            correlation_id="w4b4-leave-balance-tenant-invalid",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_leave_balance_route_is_exposed_in_openapi() -> None:
     client, engine = await _client_with_database()
     try:

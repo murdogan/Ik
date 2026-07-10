@@ -149,7 +149,8 @@ varsayılanındadır.
 W4A6 itibarıyla employee, leave balance ve leave request endpointlerinde bu public hata mesajları
 kod içi ortak sabitlerden üretilir. Tenant header hataları aynı request içinde payload/query/path
 validation hatası olsa bile önce normalize edilir; global FastAPI validation davranışı bu kapsamda
-değiştirilmedi.
+değiştirilmedi. W4B4 itibarıyla invalid tenant id mesajı gerçek sözleşmeyi açıkça söyler:
+`X-Tenant-Id header must be a single canonical hyphenated UUID`.
 
 Demo seed sonrası employee ve leave endpointleri için örnek tenant header'ları:
 
@@ -161,7 +162,8 @@ X-Correlation-Id: req_wf_demo_001
 
 Eksik veya boş `X-Tenant-Id`, canonical hyphenated UUID olmayan tenant id değerleri, tekrarlı
 `X-Tenant-Id` header'ları ve boş gönderilen `X-Tenant-Slug` `400` status koduyla aynı error
-zarfını döner.
+zarfını döner. Tekrarlı veya boş `X-Tenant-Slug` için mesaj
+`X-Tenant-Slug header must be sent at most once and be non-empty when provided` olur.
 
 Bu W4B3 örnekleri mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün
 doğrudan schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
