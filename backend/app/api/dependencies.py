@@ -11,7 +11,7 @@ from app.api.errors import (
     tenant_header_missing_error,
     tenant_slug_header_invalid_error,
 )
-from app.core.tenancy import TenantContext
+from app.platform.tenancy import TenantContext
 
 
 def get_tenant_context(

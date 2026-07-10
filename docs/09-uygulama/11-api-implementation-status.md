@@ -2,10 +2,20 @@
 
 Date: 2026-07-10
 Branch: `codex/mvp-phase0-until-20260711-1100`
-Task: `P0A PostgreSQL integration-test baseline and application DB lifecycle`
+Task: `P0B Modular-monolith skeleton and import-boundary enforcement`
 
 ## Scope
 
+- Added the canonical `app.platform` and `app.modules` package skeleton from the master plan,
+  without moving employee/leave routes, services, schemas, or SQLAlchemy models.
+- Made `app.platform.tenancy.TenantContext` canonical while preserving
+  `app.core.tenancy.TenantContext` as the exact same class through a compatibility re-export.
+- Extracted the generic API error body/response, exception, and handler to `app.platform.errors`;
+  `app.api.errors` keeps every existing public import and module-specific mapping compatible.
+- Added an AST-based import-boundary gate with synthetic negative cases and whole-application cycle
+  detection. It adds no runtime/dev dependency and causes no lockfile change.
+- Documented platform and module ownership, dependency direction, the legacy migration zone, and
+  the incremental rollback path in the architecture overview and ADR-002.
 - Added an opt-in real PostgreSQL integration lane while preserving the default fast SQLite suite.
 - Moved runtime engine/sessionmaker ownership into FastAPI lifespan with deterministic engine
   disposal at shutdown.
@@ -169,16 +179,19 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-P0A local gates:
+P0B local gates:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest -q`: passed, 336 fast tests passed and 5 PostgreSQL tests deselected; the one
+- `uv run pytest -q`: passed, 365 fast tests passed and 5 PostgreSQL tests deselected; the one
   existing Starlette `TestClient` deprecation warning remains.
-- `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres`: passed against PostgreSQL 16.4,
-  5 PostgreSQL integration tests passed and 336 fast tests were deselected.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered, including documented endpoint table checks, OpenAPI operation drift checks,
   and `documented_endpoint_runtime_coverage`.
+- Focused boundary, tenancy, error-contract, employee, leave, OpenAPI, service, and migration
+  regressions passed: 203 tests.
+- P0B changes no schema, migration, query, transaction, or PostgreSQL-specific behavior, so the
+  opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
+  baseline remains 5 integration tests passed.
 
 ## Remaining Backend Backlog
 
@@ -192,5 +205,5 @@ P0A local gates:
 - Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.
 - Employee document, reporting, analytics, and export endpoints in later MVP phases.
-- Activating the documented CI template remains repository administration outside P0A; the
+- Activating the documented CI template remains repository administration outside this block; the
   template now describes both the fast SQLite and PostgreSQL service-backed test steps.

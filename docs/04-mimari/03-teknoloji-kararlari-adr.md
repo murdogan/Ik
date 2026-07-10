@@ -42,6 +42,12 @@ Sonuç:
 Karar:
 
 - MVP/V1 için mikroservis değil, modüler monolit.
+- Canonical sınırlar cross-cutting yetenekler için `app.platform`, ürün sahipliği için
+  `app.modules.<module>` paketleridir.
+- Geçiş artımlıdır: legacy paket yalnız canonical hedefi import/re-export edebilir; canonical paket
+  legacy pakete geri bağımlı olamaz.
+- Katman ve modül yönleri AST tabanlı import-boundary testiyle, bütün `app` import grafiği de cycle
+  testiyle korunur. Yeni üçüncü taraf architecture dependency'si eklenmez.
 
 Gerekçe:
 
@@ -51,7 +57,14 @@ Gerekçe:
 
 Sonuç:
 
-- Modül sınırları import/test ile korunmalıdır.
+- Presentation application'a; application domain/portlara; infrastructure application portlarına
+  doğru bağımlanır. Domain FastAPI, Pydantic, SQLAlchemy, settings veya provider client import etmez.
+- Platform ürün modülüne; bir ürün modülü başka modülün infrastructure/ORM katmanına bağımlanmaz ve
+  başka modülün tablosuna doğrudan yazmaz.
+- Mevcut flat `api/core/db/models/schemas/services` paketleri tek seferde taşınmaz. Compatibility
+  importları public class/function identity'sini ve mevcut API davranışını korur.
+- Generic repository, speculative DDD katmanı veya mikroservis ayrıştırması bu kararın parçası
+  değildir.
 - Payroll, AI, reporting ve integration worker ileride ayrışma adayıdır.
 
 ## 4. ADR-003 PostgreSQL

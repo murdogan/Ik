@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_context
 from app.api.openapi import DASHBOARD_TAG
-from app.core.tenancy import TenantContext
 from app.db.session import get_session
+from app.platform.tenancy import TenantContext
 from app.schemas.dashboard import DashboardSummary
 from app.services.dashboard_service import DashboardService
 

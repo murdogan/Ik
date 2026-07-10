@@ -39,38 +39,77 @@ MVP'de mikroservis mimarisi tercih edilmez. Ürün alanı geniş olsa da ekip ve
 
 ## 4. Modüler monolit sınırları
 
-İlk kod tabanı tek uygulama olabilir ama modül sınırları baştan net olmalıdır.
-
-Önerilen backend paketleri:
+Tek deploy korunur; platform yetenekleri ile ürün modülleri aynı proses içinde fakat tek yönlü
+import kurallarıyla ayrılır. Faz 0 hedef paketleri şöyledir:
 
 ```text
-app/
-  core/          config, db, tenancy, authz, audit, events
+backend/app/
+  platform/
+    config/ db/ tenancy/ identity/ authorization/
+    audit/ events/ errors/ observability/ storage/ workers/
   modules/
-    auth/
-    employee/
-    document/
-    organization/
-    leave/
-    selfservice/
-    time_attendance/
-    payroll/
-    ats/
-    performance/
-    learning/
-    reporting/
-    ai/
-    integrations/
-  workers/
+    core/ organization/ employees/ documents/ leave/
+    self_service/ notifications/ reporting/
+  api/            HTTP composition and incremental compatibility routes
   main.py
 ```
 
-Kurallar:
+Bir ürün modülüne kod eklendiğinde yalnız ihtiyaç duyduğu katmanlar açılır:
+`domain/`, `application/`, `infrastructure/` ve `presentation/`. Boş katmanlar veya her tabloyu
+taklit eden generic repository'ler önceden üretilmez.
+
+### 4.1 Sahiplik haritası
+
+| Alan | Hedef paket | Sahiplik |
+|---|---|---|
+| Platform | `app.platform` | Config, DB runtime, tenancy mekanikleri, identity/session, authorization, audit, event, genel API error sözleşmesi, observability, object storage ve worker yetenekleri |
+| Identity | `app.platform.identity` | Kullanıcı kimliği, principal ve session güvenliği; çalışan özlük kimliği değildir |
+| Ürün çekirdeği | `app.modules.core` | Tenant yaşam döngüsü, ürün ayarları, plan ve feature flag; generic shared-code kovası değildir |
+| Organizasyon | `app.modules.organization` | Departman, şube, pozisyon, atama ve raporlama hattı |
+| Çalışanlar | `app.modules.employees` | Çalışan ana kaydı, profil ve çalışma yaşam döngüsü |
+| Dokümanlar | `app.modules.documents` | Doküman metadata, checklist, hassasiyet ve retention; binary provider `platform.storage` alanındadır |
+| İzin | `app.modules.leave` | İzin talebi, bakiye, tür, politika ve durum geçişleri |
+| Self servis | `app.modules.self_service` | Kendi kapsamındaki çalışan/yönetici akışlarını orkestre eder; başka modül tablosu sahiplenmez |
+| Bildirimler | `app.modules.notifications` | Kullanıcı bildirim tercihi, niyeti ve teslimat durumu; genel event/worker/provider platformdadır |
+| Raporlama | `app.modules.reporting` | Tenant-safe dashboard, read model, rapor ve export sorguları |
+| HTTP bileşimi | `app.api` | App factory, middleware/router bileşimi ve geçiş süresindeki uyumlu route girişleri |
+
+### 4.2 Import yönü
+
+| Kaynak katman | İzin verilen hedef | Yasaklanan yön |
+|---|---|---|
+| `domain` | Standard library ve aynı modülün `domain` katmanı | FastAPI, Pydantic, SQLAlchemy, settings/provider, platform, application, infrastructure, presentation ve başka modüller |
+| `application` | Aynı modülün `domain/application` kodu ve gerektiğinde başka modülün açık application sözleşmesi | FastAPI, SQLAlchemy, global settings, concrete provider/platform adapter, infrastructure ve presentation |
+| `infrastructure` | Aynı modülün domain/application portları, SQLAlchemy ve platform adapterları | Presentation ve başka modülün infrastructure/ORM modeli |
+| `presentation` | Aynı modülün application sözleşmesi ve edge-facing platform sözleşmeleri | Infrastructure/ORM modeline doğrudan erişim |
+| `platform` | Platform içi bağımlılıklar | Herhangi bir ürün modülü |
+
+Ek kurallar:
 
 - Modül başka modülün tablosuna doğrudan yazmaz.
-- Modüller arası değişiklik domain event veya public service interface ile yapılır.
-- Raporlama read-only istisna olabilir ama field permission uygulanır.
-- Kod aşamasında import sınırları CI ile kontrol edilmelidir.
+- Modüller arası değişiklik yalnız açık application capability/port veya internal event ile yapılır;
+  çift yönlü modül bağımlılığı kurulmaz.
+- `app.platform` ve `app.modules` root paketleri import-free marker'dır; re-export ile katman
+  kuralını dolanmak yerine açık capability/application paket yolu kullanılır.
+- Raporlamanın ilerideki salt-okunur çapraz-modül sorgu istisnası tenant, scope ve field permission
+  zorunluluklarını kaldırmaz ve ayrıca belgelenmeden import kuralı gevşetilmez.
+- `backend/tests/test_import_boundaries.py`, hedef paketleri AST ile tarar; yasak yönleri, legacy'ye
+  geri bağımlılığı, sibling infrastructure erişimini ve modül/Python import döngülerini reddeder.
+  Negatif fixture'lar kontrolün hatalı örnekleri gerçekten yakaladığını da kanıtlar.
+- Statik import testi raw SQL'in semantiğini göremez; başka modül tablosuna doğrudan yazmama kuralı
+  kod incelemesi ve ilgili persistence testleriyle ayrıca korunur.
+
+### 4.3 Artımlı ve geri alınabilir geçiş
+
+`app.main`, `app.api`, `app.core`, `app.db`, `app.models`, `app.schemas` ve `app.services` mevcut
+davranış için geçici legacy/composition migration alanıdır. Yeni hedef paket bu alana import
+yapamaz; yön yalnız legacy -> hedef paket veya exact compatibility re-export olabilir.
+
+P0B'de `TenantContext` için canonical yol `app.platform.tenancy`, genel `ApiError` sözleşmesi ve
+handler için `app.platform.errors` olmuştur. `app.core.tenancy` ve `app.api.errors` eski importları
+aynı class/function nesnelerini re-export eder. Employee/leave route, schema, service ve SQLAlchemy
+modelleri yerinde kalır. Bu nedenle route/OpenAPI, tenant izolasyonu, migration ve veri sözleşmesi
+değişmez; geçiş compatibility importları geri çevrilerek DB veya API migration olmadan alınabilir.
 
 ## 5. İstek yaşam döngüsü
 

@@ -6,7 +6,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.dashboard import router as dashboard_router
 from app.api.employees import router as employees_router
-from app.api.errors import ApiError, api_error_handler, request_validation_error_handler
+from app.api.errors import request_validation_error_handler
 from app.api.health import router as health_router
 from app.api.landing import router as landing_router
 from app.api.leave_balances import router as leave_balances_router
@@ -17,6 +17,7 @@ from app.db.session import (
     DATABASE_RUNTIME_STATE_KEY,
     create_database_runtime,
 )
+from app.platform.errors import ApiError, api_error_handler
 
 
 @asynccontextmanager

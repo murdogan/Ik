@@ -3,8 +3,7 @@ from typing import Any
 from fastapi import Request, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from fastapi.responses import Response
 
 from app.core.error_messages import (
     EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
@@ -21,6 +20,8 @@ from app.core.error_messages import (
     LEAVE_REQUEST_VALIDATION_FAILED_MESSAGE,
     USER_NOT_FOUND_MESSAGE,
 )
+from app.platform.errors import ApiError, ApiErrorResponse, api_error_handler
+from app.platform.errors import ApiErrorBody as ApiErrorBody
 
 TENANT_ID_HEADER = "X-Tenant-Id"
 TENANT_SLUG_HEADER = "X-Tenant-Slug"
@@ -53,17 +54,6 @@ LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE = "leave_request_invalid_date_range"
 LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE = "leave_request_transition_conflict"
 USER_NOT_FOUND_ERROR_CODE = "user_not_found"
 USER_NOT_FOUND_ERROR_MESSAGE = USER_NOT_FOUND_MESSAGE
-
-
-class ApiErrorBody(BaseModel):
-    code: str
-    message: str
-    details: Any | None = None
-    correlation_id: str | None = None
-
-
-class ApiErrorResponse(BaseModel):
-    error: ApiErrorBody
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -120,38 +110,6 @@ LEAVE_REQUEST_VALIDATION_RESPONSES = {
         },
     }
 }
-
-
-class ApiError(Exception):
-    def __init__(
-        self,
-        *,
-        status_code: int,
-        code: str,
-        message: str,
-        details: Any | None = None,
-        correlation_id: str | None = None,
-    ) -> None:
-        self.status_code = status_code
-        self.code = code
-        self.message = message
-        self.details = details
-        self.correlation_id = correlation_id
-
-
-async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
-    correlation_id = exc.correlation_id or request.headers.get("X-Correlation-Id")
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": {
-                "code": exc.code,
-                "message": exc.message,
-                "details": exc.details,
-                "correlation_id": correlation_id,
-            }
-        },
-    )
 
 
 async def request_validation_error_handler(

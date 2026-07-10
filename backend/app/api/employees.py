@@ -13,9 +13,9 @@ from app.api.errors import (
     employee_number_conflict_error,
 )
 from app.api.openapi import EMPLOYEES_TAG
-from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.employee import EmployeeStatus
+from app.platform.tenancy import TenantContext
 from app.schemas.employee import (
     EMPLOYEE_LIST_DEFAULT_LIMIT,
     EMPLOYEE_LIST_MAX_LIMIT,

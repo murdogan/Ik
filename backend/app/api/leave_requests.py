@@ -15,9 +15,9 @@ from app.api.errors import (
 )
 from app.api.openapi import LEAVE_REQUESTS_TAG
 from app.core.error_messages import LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE
-from app.core.tenancy import TenantContext
 from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
+from app.platform.tenancy import TenantContext
 from app.schemas.date_fields import DateOnly
 from app.schemas.leave_request import (
     LEAVE_REQUEST_LIST_DEFAULT_LIMIT,

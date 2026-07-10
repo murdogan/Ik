@@ -1,7 +1,12 @@
 from uuid import UUID
 
 import pytest
-from app.core.tenancy import TenantContext
+from app.core.tenancy import TenantContext as LegacyTenantContext
+from app.platform.tenancy import TenantContext
+
+
+def test_legacy_tenant_context_import_reexports_canonical_type() -> None:
+    assert LegacyTenantContext is TenantContext
 
 
 def test_tenant_context_cache_prefix_is_tenant_scoped() -> None:

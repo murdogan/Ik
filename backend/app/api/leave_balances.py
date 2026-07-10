@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_tenant_context
 from app.api.errors import LEAVE_BALANCE_VALIDATION_RESPONSES, employee_not_found_error
 from app.api.openapi import LEAVE_BALANCES_TAG
-from app.core.tenancy import TenantContext
 from app.db.session import get_session
+from app.platform.tenancy import TenantContext
 from app.schemas.leave_balance_summary import LeaveBalanceSummaryRead
 from app.services.leave_balance_service import (
     LeaveBalanceEmployeeNotFoundError,

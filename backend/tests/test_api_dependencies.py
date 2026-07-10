@@ -5,15 +5,25 @@ import pytest
 from app.api.dependencies import get_tenant_context
 from app.api.errors import (
     ApiError,
+    ApiErrorBody,
+    ApiErrorResponse,
     api_error_handler,
     request_validation_error_handler,
 )
 from app.core.tenancy import TenantContext
+from app.platform import errors as platform_errors
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
 TENANT_ID = UUID("11111111-aaaa-4111-8111-111111111111")
+
+
+def test_legacy_api_error_imports_reexport_platform_contract() -> None:
+    assert ApiError is platform_errors.ApiError
+    assert ApiErrorBody is platform_errors.ApiErrorBody
+    assert ApiErrorResponse is platform_errors.ApiErrorResponse
+    assert api_error_handler is platform_errors.api_error_handler
 
 
 def _client() -> TestClient:
