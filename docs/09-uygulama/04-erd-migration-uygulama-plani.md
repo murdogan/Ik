@@ -277,17 +277,18 @@ Seed verisi gerçek kişisel veri içermemelidir.
 - Desteklenen keyed komutlar tenant-global receipt ile ilk başarılı snapshot'ı replay eder.
 - P0E receipt TTL/cleanup ve employee purge HTTP endpointi eklemez.
 
-## 10. Uygulamaya geçmeden önce açık kontroller
+## 10. Faz 0 karar ve uygulama durumu
 
-Kodlama başlamadan önce şu kararlar netleşmelidir:
+| Konu | Karar / mevcut durum | Uygulama zamanı |
+|---|---|---|
+| UUID | Public ID'ler uygulama tarafında `uuid4` ile üretilir; DB server default eklenmez | Uygulandı |
+| User email canonicalization | Mevcut `(tenant_id, email)` unique davranışı case-sensitive kalır; auth öncesi explicit `lower(btrim(email))` normalize kolon/index kullanılır, `citext` kullanılmaz | Phase 2 auth migration'ından önce |
+| RLS | Faz 0 composite FK + app guard katmanını kurar; PostgreSQL RLS ve transaction-local tenant context Faz 1'de ayrı expand migration'dır | Faz 1 |
+| Hassas alan encryption | Key/provider ve envelope encryption kararı olmadan TCKN, IBAN, ücret veya sağlık kolonları eklenmez | İlgili employee/security fazı öncesi Murat kararı |
+| Audit immutability | Audit aynı PostgreSQL DB'de append-only write modelidir; runtime role update/delete engeli ve recorder Faz 2'de birlikte uygulanır | Faz 2 |
 
-- PostgreSQL UUID üretimi uygulama tarafında mı DB tarafında mı yapılacak?
-- Email case-insensitive unique için `citext` extension kullanılacak mı?
-- RLS ilk migration ile mi, yoksa tenant guard testleri tamamlandıktan sonra ayrı migration ile mi açılacak?
-- Hassas alanlarda envelope encryption için kolon tipi ne olacak?
-- Audit tablosu append-only olacaksa DB trigger mı uygulama servisi mi kullanılacak?
-
-Bu kararlar verilmeden employee detay alanlarına geçilmemelidir. Özellikle TCKN, IBAN ve maaş gibi alanlar, encryption ve masking kararı netleşmeden migration'a eklenirse sonradan veri taşıma maliyeti doğar.
+Bu tablo tamamlanmış davranış ile hedef kararı ayırır. Özellikle TCKN, IBAN ve maaş gibi alanlar,
+encryption ve masking kararı netleşmeden migration'a eklenirse sonradan veri taşıma maliyeti doğar.
 
 ## 11. İlgili dokümanlar
 

@@ -13,7 +13,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-005 | Web | Next.js + TypeScript | Kabul |
 | ADR-006 | Mobil | Önce PWA/responsive, sonra Flutter opsiyon | Kabul |
 | ADR-007 | Dosya | S3 uyumlu object storage | Kabul |
-| ADR-008 | Async | Worker queue mimarisi | Kabul |
+| ADR-008 | Async | Dramatiq + Redis hedef adapter; provider-neutral port/fake | Kabul |
 | ADR-009 | Arama | MVP PostgreSQL FTS, V1 OpenSearch opsiyon | Kabul |
 | ADR-010 | AI | AI Gateway + provider soyutlama | Kabul |
 | ADR-011 | Deploy | Docker, ileride Kubernetes/Helm | Kabul |
@@ -90,6 +90,12 @@ Karar:
   upgrade sırasında genişletir.
 - Hızlı test hattı SQLite kullanır; persistence, migration ve PostgreSQL'e özgü iddialar
   gerçek PostgreSQL entegrasyon hattında kanıtlanır.
+- PostgreSQL testleri birbirinin retained verisine veya collection sırasına bağımlı olmamalıdır;
+  her `postgres` testi admin DSN üzerinden kendi disposable veritabanını oluşturur ve sonunda
+  düşürür.
+- Mevcut `users.email` unique sözleşmesi case-sensitive'dir. Auth uygulanmadan önce
+  `lower(btrim(email))` ile uygulama ve DB'nin aynı canonical değeri kullandığı explicit normalize
+  kolon/index migration'ı yapılacaktır; implicit karşılaştırma semantiği veren `citext` seçilmedi.
 
 Gerekçe:
 
@@ -166,14 +172,55 @@ Karar:
 
 ## 9. ADR-008 Async worker
 
+Bağlam:
+
+- Worker provider kurulmadan önce Python 3.13, Redis, retry/timeout/dead-letter, tenant concurrency,
+  async uyumu, gözlemlenebilirlik ve operasyonel sadelik birlikte değerlendirilmelidir.
+- Bu karar provider'ı domain/application koduna sızdırmamalı ve Faz 0'da broker/deploy kurmamalıdır.
+
+2026-07-10 spike özeti:
+
+| Aday | Güçlü taraf | Bu proje için sınır |
+|---|---|---|
+| Dramatiq 2.2 | Python `>=3.10`, Redis broker, AsyncIO middleware, retry/backoff, time limit, dead-letter, Prometheus ve Redis concurrent rate limiter | Tenant limiti adapter/middleware anahtarında açıkça `tenant_id` ile kurulmalı; time limit bloklayan system call'u zorla kesme garantisi değildir |
+| RQ 2.10 | Python 3.13 classifier, Redis/Valkey, düşük öğrenme/operasyon yükü, retry ve failed registry | Sync/fork ağırlıklı çalışma mevcut async SQLAlchemy akışına daha fazla köprü kodu getirir |
+| Celery 5.6 | En olgun routing/retry/time-limit/event ekosistemi ve Redis desteği | MVP için daha geniş config/operasyon yüzeyi; coroutine adaptasyonu daha törensel |
+| Taskiq 0.12 | Async-first, FastAPI uyumu, retry/timeout/Prometheus middleware | Core paket halen alpha classifier taşır ve Redis broker ayrı paket yaşam döngüsündedir |
+
 Karar:
 
-- Import/export, bildirim, rapor, bordro ve AI işleri background worker ile çalışır.
+- MVP provider hedefi **Dramatiq 2.2 + Redis**'tir. Provider dependency'si, Redis broker config'i,
+  worker process'i ve deploy tanımı Faz 0'da eklenmez; ilk gerçek adapter ihtiyaç duyulan vertical
+  phase'de aynı ADR'nin operasyon kontrolleriyle uygulanır.
+- Application kodu yalnız dar `JobQueue.enqueue(JobSpec)` portuna bağımlıdır. `JobSpec`, non-zero
+  `tenant_id`, `idempotency_key`, finite JSON payload, pozitif timeout ve bounded-attempt niyetini
+  zorunlu kılar. Queue provider idempotency'nin kayıt sistemi değildir; business/outbox kuralı
+  ayrıca authoritative olmalıdır.
+- `RecordingJobQueue` deterministik test fake'idir. Üretim davranışı veya in-process worker gibi
+  sunulmaz.
+- Import/export, bildirim ve rapor işleri background worker ile çalışacaktır. Bordro ve AI ürün
+  işleri MVP dışıdır; portta var olmaları veya Faz 0'da task tanımlanmaları gerekmez.
 
 Gerekçe:
 
 - Uzun işlem HTTP request içinde tutulmaz.
-- Retry ve izlenebilir status gerekir.
+- Retry, timeout, terminal failure/dead-letter, tenant concurrency ve izlenebilir status gerekir.
+- Dramatiq bu kontrollere Redis ile hazır primitive'ler verirken Celery'den daha küçük operasyon
+  yüzeyi ve RQ'dan daha doğrudan async actor yolu sunar.
+
+Kanıt kaynakları:
+
+- [Dramatiq 2.2 user guide](https://dramatiq.io/guide.html)
+- [Dramatiq API reference](https://dramatiq.io/reference.html)
+- [RQ 2.10 package metadata](https://pypi.org/project/rq/)
+- [Celery package metadata](https://pypi.org/project/celery/)
+- [Taskiq package metadata](https://pypi.org/project/taskiq/)
+
+Sonuç:
+
+- `app.platform.workers` provider-neutral contract ve fake içerir; runtime provider kurulumu yoktur.
+- Her gerçek adapter, tenant concurrency key'ini `tenant_id`'den üretmeli, retry/timeout/DLQ
+  mapping'ini contract testleriyle kanıtlamalı ve payload'da secret/PII taşımamalıdır.
 
 ## 10. ADR-009 Arama
 
@@ -247,6 +294,8 @@ Karar:
   orkestre eder; `SqlAlchemyUnitOfWork.execute` bu akışların tek transaction sahibidir.
 - `EmployeeService` ve `LeaveRequestService` gerekli yerde `flush()` eder, hiçbir migrated command
   path'inde `commit()` etmez. Commit veya hata halinde rollback UoW sınırındadır.
+- Lokal demo seed servisi de yalnız flush eder. Standalone `scripts/seed_demo_data.py` komutu
+  `session_factory.begin()` ile seed'in tek commit/rollback sınırını dışarıdan sahiplenir.
 - Read path'leri request-scoped `AsyncSession` ve optimize, SQLAlchemy-aware query/service kodunu
   doğrudan kullanır; read için UoW zorunlu değildir.
 - Beklenen domain/application hataları HTTP bilgisi taşımayan `ApplicationError` tipleridir.
@@ -268,6 +317,8 @@ Sonuç:
   arşivleme davranışı daha sonra P0E kapsamında ADR-015 ile bu sınır üzerinde uygulanmıştır.
 - P0C tenant-owned composite foreign key katmanını değiştirmemiştir; bu katman daha sonra P0D'de
   ADR-014 ile uygulanmış ve mevcut tenant-scoped servis kontrolleri korunmuştur.
+- AST architecture testi `app/services` altında `commit()` veya `rollback()` çağrısını reddeder;
+  transaction completion yalnız açık application/script sınırında kalır.
 
 ## 15. ADR-014 Tenant ilişkisel bütünlüğü
 

@@ -77,6 +77,24 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         await engine.dispose()
 
 
+async def test_demo_seed_service_flushes_without_completing_transaction() -> None:
+    session, engine = await _session_with_database()
+    try:
+        await seed_demo_data(session)
+
+        assert session.in_transaction() is True
+        await session.rollback()
+
+        async with AsyncSession(engine, expire_on_commit=False) as verification_session:
+            assert await _count(verification_session, Tenant) == 0
+            assert await _count(verification_session, User) == 0
+            assert await _count(verification_session, Employee) == 0
+            assert await _count(verification_session, LeaveRequest) == 0
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_demo_seed_rejects_conflicting_existing_tenant_slug() -> None:
     session, engine = await _session_with_database()
     try:

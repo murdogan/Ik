@@ -1,1 +1,5 @@
-"""Background-work contracts and adapters boundary; worker selection is outside P0B."""
+"""Provider-neutral background-work contracts and test adapters."""
+
+from app.platform.workers.contracts import JobQueue, JobSpec, QueuedJob
+
+__all__ = ["JobQueue", "JobSpec", "QueuedJob"]

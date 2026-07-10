@@ -2,9 +2,87 @@
 
 Date: 2026-07-10
 Branch: `codex/mvp-phase0-until-20260711-1100`
-Task: `P0F Pagination, search and dashboard query-performance baseline`
+Task: `P0G Phase 0 architecture gate, documentation sync and review checkpoint`
+Review checkpoint: `STOP — awaiting Murat review; Phase 1 has not started`
+Push state: `P0A–P0F are synchronized at 585fa0a; the supervisor must push the P0G commit`
 
 ## Scope
+
+### P0G architecture gate and review checkpoint
+
+- Re-ran the fast SQLite, real PostgreSQL 16.4, Ruff and local API smoke gates. Focused commands
+  separately cover Alembic round-trip/drift, OpenAPI, import boundaries, direct-DB tenant negative
+  writes, concurrency/idempotency and query-plan behavior.
+- Found and repaired a PostgreSQL test-order defect that a lucky collection order could hide. The
+  PostgreSQL API smoke leaves intentionally retained archive/idempotency rows; a later P0D fixture
+  could then be correctly refused by the `0011` downgrade preflight. Every `postgres` test now gets
+  its own uniquely named disposable database, so all migration tests are independent of collection
+  order and retained data from another test.
+- Closed the literal no-service-commit gate. `seed_demo_data` now flushes only; the standalone local
+  script owns the atomic transaction with `session_factory.begin()`. An AST architecture regression
+  rejects `commit()` or `rollback()` anywhere under `backend/app/services`.
+- Completed the Phase-0 worker spike without installing a provider: ADR-008 selects Dramatiq 2.2 +
+  Redis as the later runtime adapter and records the comparison. `app.platform.workers` contains
+  only a narrow tenant-aware job envelope/queue port and deterministic recording fake. No broker,
+  worker process, schedule, deployment or external integration was added.
+- Added the persisted Phase-0 OpenAPI contract manifest. It hashes every complete generated
+  operation, every component schema and top-level metadata, while existing tests/smoke continue to
+  lock readable metadata, the exact operation registry, documentation-table parity and runtime
+  endpoint execution.
+- No Phase-1 API, auth, RBAC, RLS, audit/outbox, new product module, payroll, SGK, banking, PDKS,
+  AI, external integration, deploy, staging or cron behavior was started.
+
+#### OpenAPI compatibility decision
+
+Generated OpenAPI was compared with the Phase-0 base commit `80b2768` and frozen at this review
+checkpoint:
+
+- generated operations remain **14 → 14**, with no added or removed path/method; the documentation
+  count is 15 only because runtime `/openapi.json` is included;
+- there are no component-schema, request-body or successful response-body schema changes;
+- intentional additive changes are optional `cursor` parameters plus `X-Next-Cursor` on the two
+  list operations, optional `X-Idempotency-Key` and documented 400/409 responses on five critical
+  POST operations, and documented 409 responses on employee PATCH/DELETE;
+- both existing `offset` parameters remain optional compatibility paths but are now marked
+  deprecated; list descriptions were updated to prefer keyset pagination;
+- the one intentional semantic change is employee DELETE becoming retention-safe archive while
+  preserving the path and `204` response; its summary/description now say archive. ADR-015,
+  README, endpoint draft and smoke all document and test it;
+- the Phase-1 `{data, meta}` envelope, auth-derived tenant/actor, RBAC and RLS remain absent.
+
+The checked manifest is `backend/tests/contracts/phase0_openapi_contract.json`. Future intentional
+contract work must update that manifest and its migration/deprecation note in the same review.
+
+#### Review-only plan deviations
+
+The enumerated Phase-0 architecture gate below is locally green. Two broader master-plan items are
+still not implemented and require Murat's explicit disposition before Phase 1:
+
+- global request/transaction correlation and PII-safe slow-query logging;
+- active CI workflow activation. The repository contains only
+  `docs/09-uygulama/templates/backend-ci.yml`, not `.github/workflows/*`.
+
+The user-email strategy is now decided but intentionally not migrated early: current
+`users(tenant_id, email)` remains case-sensitive; before auth, an explicit
+`lower(btrim(email))` normalized column/index will be introduced rather than `citext`.
+
+#### P0G verification matrix
+
+Final commands and results are recorded here after the complete P0G rerun:
+
+| Gate | Command | Result |
+|---|---|---|
+| Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
+| Fast SQLite | `uv run pytest -q` | Passed, 436 tests; 17 PostgreSQL tests deselected; one known Starlette warning |
+| PostgreSQL 16.4 | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed, 17 tests; 436 fast tests deselected; explicit reordered subset also passed 16/16 |
+| Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed, `BACKEND_SMOKE_OK`, all 15 documented endpoints executed |
+| OpenAPI + imports | `uv run pytest -q backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py backend/tests/test_import_boundaries.py` | Passed, 39 tests |
+| SQLite migrations | `uv run pytest -q backend/tests/test_migrations.py` | Passed, 22 tests |
+| PostgreSQL migration/runtime | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_baseline.py` | Passed, 5 tests: round-trip, drift, native constraints, runtime timeouts, API smoke |
+| Direct-DB tenant negatives | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed, 5 tests covering all current composite tenant relationships and expand-contract behavior |
+| PostgreSQL concurrency | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_command_transactions.py backend/tests/integration/test_postgresql_p0e_concurrency.py` | Passed, 6 tests: duplicate winner/mapping, lock mapping, one terminal decision, same-key replay, retention, downgrade refusal |
+| Query-plan baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p0f_performance.py` | Passed, 1 test with 10k employee/5k leave EXPLAIN assertions |
+| Git hygiene | `git diff --check` plus status/path/secret-pattern audits | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 19 P0G files; clean status verified after commit |
 
 ### P0F pagination, search and query-performance baseline
 
@@ -313,8 +391,9 @@ owned by the existing FastAPI database dependency.
 Read-only routes continue to call their SQLAlchemy-aware services with the request session directly.
 No generic repository has been inserted between query code and SQLAlchemy. No audit/outbox schema is
 introduced by P0C, but a future recorder can use the same command session before `execute` commits.
-The local demo seed remains a separate script command that already owns one transaction across all
-of its tenant/user/employee/leave seed stages; it is not a migrated API leaf service.
+The local demo seed remains a separate script command. Its service flushes only, while
+`scripts/seed_demo_data.py` owns one `session_factory.begin()` transaction across all tenant/user/
+employee/leave seed stages; it is not a migrated API leaf service.
 
 Service rollback regressions inspect flushed employee insert/update/archive and leave
 create/decision values, roll back, and then use a fresh session to prove that no mutation was
@@ -332,10 +411,12 @@ docker compose up -d --wait postgres
 IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
 ```
 
-The fixture creates a unique temporary database, runs migration and API scenarios there, and drops
-it after the test session; it does not downgrade or clear the database named by the administration
-URL. Runtime engine/sessionmaker creation belongs to FastAPI lifespan and shutdown disposes the
-engine. Pool and timeout overrides use these environment variables:
+The fixture creates a unique temporary database for every PostgreSQL test, runs that migration/API
+scenario there, and drops it after the test; it does not downgrade or clear the database named by
+the administration URL. Per-test isolation prevents retained archive/idempotency state from making
+destructive migration tests collection-order dependent. Runtime engine/sessionmaker creation
+belongs to FastAPI lifespan and shutdown disposes the engine. Pool and timeout overrides use these
+environment variables:
 
 - `IK_DATABASE_POOL_SIZE`
 - `IK_DATABASE_MAX_OVERFLOW`
@@ -497,7 +578,8 @@ Historical P0C local gate evidence:
   real `55P03` lock-conflict mapping. They were collected but could not be executed locally because
   this worktree has neither a running Docker daemon nor an `IK_TEST_DATABASE_URL` admin DSN; the
   configured PostgreSQL lane remains the required runtime evidence for those PostgreSQL-specific
-  claims.
+  claims. This sentence describes the historical P0C checkpoint; P0G has now executed both probes
+  successfully inside the 17-test PostgreSQL 16.4 lane.
 
 Historical P0B local gate evidence retained for continuity:
 

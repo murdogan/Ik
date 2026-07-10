@@ -299,21 +299,17 @@ DEMO_LEAVE_REQUESTS: tuple[DemoLeaveRequestFixture, ...] = (
 
 
 async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
-    try:
-        tenants = await _upsert_tenants(session)
-        await session.flush()
+    tenants = await _upsert_tenants(session)
+    await session.flush()
 
-        users = await _upsert_users(session, tenants)
-        await session.flush()
+    users = await _upsert_users(session, tenants)
+    await session.flush()
 
-        employees = await _upsert_employees(session, tenants)
-        await session.flush()
+    employees = await _upsert_employees(session, tenants)
+    await session.flush()
 
-        await _upsert_leave_requests(session, tenants, users, employees)
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
+    await _upsert_leave_requests(session, tenants, users, employees)
+    await session.flush()
 
     return DemoSeedResult(
         tenants=len(DEMO_TENANTS),

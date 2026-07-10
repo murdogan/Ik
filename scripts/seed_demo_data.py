@@ -90,7 +90,7 @@ async def _run_seed(database_url: str) -> DemoSeedResult:
     engine = create_async_engine(database_url, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        async with session_factory() as session:
+        async with session_factory.begin() as session:
             return await seed_demo_data(session)
     finally:
         await engine.dispose()

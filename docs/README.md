@@ -90,7 +90,8 @@ docs/
     ├── 07-demo-landing-satis-anlatisi-plani.md
     ├── 08-implementation-readiness-checklist.md
     ├── 10-sprint-0-implementation-report.md
-    └── 11-api-implementation-status.md
+    ├── 11-api-implementation-status.md
+    └── 12-phase-0-query-performance-baseline.md
 ```
 
 ## Doküman statüleri

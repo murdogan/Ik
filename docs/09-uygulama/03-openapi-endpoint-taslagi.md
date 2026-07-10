@@ -4,12 +4,17 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-10 / P0E concurrency, idempotency and archive hardening.
+Son güncelleme: 2026-07-10 / P0G Phase 0 architecture review checkpoint.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
 `docs/09-uygulama/11-api-implementation-status.md` içindeki completed surface tablosu ve kendi
 runtime/OpenAPI registry'si ile karşılaştırır.
+
+P0G'de generated sözleşme ayrıca
+`backend/tests/contracts/phase0_openapi_contract.json` manifestinde top-level, operation ve
+component-schema canonical hash'leriyle dondurulmuştur. Snapshot değişikliği intentional contract
+diff ve bu dokümandaki migration/deprecation notu olmadan kabul edilmez.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|

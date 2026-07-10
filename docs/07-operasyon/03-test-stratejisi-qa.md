@@ -24,16 +24,18 @@ bağlantısı gerektiren testler `postgres` marker'ıyla opt-in tutulur:
 uv run pytest -q
 ```
 
-Gerçek PostgreSQL 16 hattı lokal Docker'da ve aynı ortam sözleşmesiyle CI'da şöyle çalışır:
+Gerçek PostgreSQL 16 hattı lokal Docker'da şöyle çalışır:
 
 ```bash
 docker compose up -d --wait postgres
 IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
 ```
 
-`IK_TEST_DATABASE_URL` bu hat için zorunludur. Fixture verilen yönetim URL'si üzerinden her test
-oturumu için izole ve benzersiz bir geçici veritabanı oluşturur, Alembic ve API testlerini orada
-çalıştırır ve sonunda veritabanını siler. PostgreSQL hattı en az şunları kanıtlar:
+`IK_TEST_DATABASE_URL` bu hat için zorunludur. Fixture verilen yönetim URL'si üzerinden her
+PostgreSQL testi için izole ve benzersiz bir geçici veritabanı oluşturur, Alembic ve API testini
+orada çalıştırır ve sonunda veritabanını siler. Bu function-scope izolasyon, retained archive veya
+idempotency verisinin sonraki destructive migration testini collection sırasına bağlı biçimde
+bozmasını engeller. PostgreSQL hattı en az şunları kanıtlar:
 
 - Alembic `base → head → base` upgrade/downgrade ve model metadata drift kontrolü.
 - PostgreSQL UUID/timestamp tipleri ile index, unique, foreign-key ve check constraint davranışları.
@@ -49,6 +51,17 @@ oturumu için izole ve benzersiz bir geçici veritabanı oluşturur, Alembic ve 
 
 PostgreSQL'e özgü bir iddia SQLite sonucu ile geçmiş sayılmaz. FastAPI lifespan runtime engine
 ve sessionmaker'ın sahibidir; shutdown testi engine dispose davranışını da kapsar.
+
+Repo içinde PostgreSQL service'ini tarif eden
+`docs/09-uygulama/templates/backend-ci.yml` şablonu vardır; aktif `.github/workflows` dosyası
+yoktur. Bu nedenle P0G kanıtı lokal gerçek PostgreSQL çalıştırmasıdır, aktif PR CI lane'i gibi
+sunulmaz. Workflow aktivasyonu repo yönetimi/supervisor işidir.
+
+OpenAPI gate'i `backend/tests/contracts/phase0_openapi_contract.json` manifestinde top-level
+metadata, her operasyon ve her component schema için canonical SHA-256 snapshot tutar. Seçili
+metadata assertions, 14 generated path/method operasyonunun registry kontrolü, iki doküman
+tablosu ve 15 endpoint runtime smoke coverage bu snapshot'ı tamamlar. Contract değişikliği ancak
+intentional diff ve aynı commit'teki snapshot/doküman güncellemesiyle kabul edilir.
 
 P0F query-plan prosedürünü kanıt satırıyla tek başına çalıştırmak için:
 
@@ -169,8 +182,8 @@ V1 yerleşik bordro motorunda golden dataset zorunlu olur.
 
 | Paket | Tetik |
 |---|---|
-| PR hızlı paket | SQLite unit/API + contract + smoke |
-| PR PostgreSQL paket | Gerçek DB API + migration upgrade/downgrade/drift |
+| Hedef PR hızlı paket | SQLite unit/API + contract + smoke; aktif workflow henüz yok |
+| Hedef PR PostgreSQL paket | Gerçek DB API + migration upgrade/downgrade/drift; aktif workflow henüz yok |
 | Gece tam paket | E2E, security, performance subset |
 | Deploy sonrası smoke | Prod sentetik tenant |
 | Release regresyonu | Staging bake + kritik flows |

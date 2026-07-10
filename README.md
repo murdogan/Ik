@@ -81,8 +81,10 @@ IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run p
 ```
 
 `IK_TEST_DATABASE_URL` PostgreSQL hattı için zorunludur. Test fixture'ı bu URL'yi yalnızca
-yönetim bağlantısı olarak kullanır, benzersiz ve geçici bir test veritabanı oluşturur ve test
-oturumu sonunda siler; uygulama veya geliştirici veritabanında upgrade/downgrade çalıştırmaz.
+yönetim bağlantısı olarak kullanır, her PostgreSQL testi için benzersiz ve geçici bir test
+veritabanı oluşturur ve test sonunda siler; uygulama veya geliştirici veritabanında
+upgrade/downgrade çalıştırmaz. Test başına izolasyon, retained archive/idempotency verisinin
+migration testlerini collection sırasına bağımlı yapmasını engeller.
 Bu hat Alembic upgrade/downgrade ve drift kontrollerini, PostgreSQL'e özgü tip/kısıt
 davranışlarını, 10k employee query planlarını ve mevcut API sözleşmesini gerçek PostgreSQL
 üzerinde doğrular. P0F performans fixture'ını ve machine-readable EXPLAIN kanıtını tek başına
@@ -118,8 +120,20 @@ path'leri request-scoped session ve doğrudan SQLAlchemy-aware service/query kod
 SQLAlchemy metotlarını taklit eden generic repository eklenmemiştir. Flush sonrası zorlanmış hata
 ve fresh-session testleri employee/leave değişikliklerinin kısmi persist edilmediğini doğrular.
 Bu mimari değişiklik schema veya Alembic migration eklemez.
-Local demo seed ayrı bir script command'dır; tenant/user/employee/leave seed adımlarının tamamı
-için zaten tek dış transaction sahibidir ve migrated API leaf service commit'i değildir.
+Local demo seed ayrı bir script command'dır. `seed_demo_data` servisi yalnız flush eder;
+`scripts/seed_demo_data.py` içindeki `session_factory.begin()` tenant/user/employee/leave seed
+adımlarının tamamı için tek dış commit/rollback sahibidir. AST architecture gate'i
+`backend/app/services` altında transaction completion çağrılarını reddeder.
+
+Faz 0 worker spike'ı ADR-008'de Dramatiq 2.2 + Redis'i hedef adapter olarak seçer. Runtime provider
+ve broker kurulmamıştır. `app.platform.workers` yalnız non-zero tenant, idempotency key, JSON
+payload, timeout ve attempt sınırı isteyen dar `JobQueue`/`JobSpec` portu ile deterministik test
+fake'ini içerir.
+
+Phase 0 OpenAPI contract'ı
+`backend/tests/contracts/phase0_openapi_contract.json` içinde operation/component bazlı canonical
+hash manifestiyle sabitlenir. Contract testi, metadata testleri ve backend smoke registry birlikte
+14 generated operasyonu ve runtime `/openapi.json` dahil 15 documented endpointi korur.
 
 P0D ile mevcut tenant-owned parent tablolarından `employees` ve `users` için `(tenant_id, id)`
 candidate key'leri; `leave_requests` ve `leave_balance_summaries` içindeki dört employee/user
@@ -748,7 +762,8 @@ GitHub Actions workflow template'i: `docs/09-uygulama/templates/backend-ci.yml`
 
 Not: Bu template `.github/workflows/ci.yml` olarak taşındığında GitHub token'ında `workflow` scope gerekir. Mevcut ortamda bu scope olmadığı için workflow şimdilik template olarak tutulur.
 
-CI şunları çalıştırır:
+Template aktive edildiğinde şunları çalıştıracaktır; repoda aktif `.github/workflows` dosyası
+henüz yoktur:
 
 - `uv sync --all-groups`
 - `uv run ruff check backend`

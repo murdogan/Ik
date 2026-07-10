@@ -59,7 +59,7 @@ CONCRETE_PLATFORM_INTERNALS = {
     "app.platform.db",
     "app.platform.observability",
     "app.platform.storage",
-    "app.platform.workers",
+    "app.platform.workers.fake",
 }
 
 
@@ -326,6 +326,21 @@ def test_application_import_graph_is_acyclic() -> None:
     assert _application_cycle(APP_ROOT) is None
 
 
+def test_application_services_do_not_complete_transactions() -> None:
+    transaction_completion_calls: list[str] = []
+    for path in sorted((APP_ROOT / "services").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr in {"commit", "rollback"}:
+                transaction_completion_calls.append(
+                    f"{path.relative_to(APP_ROOT)}:{node.lineno}:{node.func.attr}"
+                )
+
+    assert transaction_completion_calls == []
+
+
 @pytest.mark.parametrize(
     ("relative_path", "source", "expected_violation"),
     [
@@ -473,6 +488,7 @@ def test_boundary_checker_allows_documented_dependency_direction(tmp_path: Path)
         from pydantic import BaseModel
 
         from app.modules.employees.domain.rules import EmployeeRule
+        from app.platform.workers import JobQueue
         """,
     )
     _write_module(

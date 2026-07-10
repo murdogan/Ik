@@ -27,7 +27,7 @@ def pytest_collection_modifyitems(config: pytest.Config) -> None:
         )
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def postgres_database_url() -> Iterator[URL]:
     admin_url = _postgres_admin_url(os.environ[TEST_DATABASE_URL_ENV])
     database_name = f"{_TEMP_DATABASE_PREFIX}{uuid4().hex}"

@@ -32,7 +32,7 @@ MVP'de mikroservis mimarisi tercih edilmez. Ürün alanı geniş olsa da ekip ve
 | API | FastAPI | Modüler monolit, iş kuralları, REST API |
 | DB | PostgreSQL | Operasyonel veri, RLS, transaction |
 | Cache/queue | Redis | Cache, rate limit, async broker |
-| Worker | Celery/RQ benzeri worker | Import/export, rapor, bildirim, AI, bordro işleri |
+| Worker | Dramatiq 2.2 + Redis hedef adapter | Import/export, rapor ve bildirim işleri; Faz 0'da yalnız provider-neutral port/fake |
 | Object storage | S3/MinIO | Belge, bordro PDF, export dosyaları |
 | Search | PostgreSQL FTS, V1 OpenSearch | Arama ve aday/doküman indeksleri |
 | AI gateway | Ayrı iç servis veya modül | Maskeleme, prompt, model çağrısı, AI audit |
@@ -119,6 +119,9 @@ uygulama komut sınırına genişletilir. Transitional `EmployeeCommandHandler` 
 oluşturmaz; ileride audit ve outbox yazımlarını aynı transaction'a ekleyebilecek bir sınır
 sağlar.
 
+P0G bu kuralı tüm `app/services` paketi için AST gate'iyle sabitler. Lokal demo seed servisi de
+flush-only'dir; yalnız standalone script `session_factory.begin()` transaction'ını tamamlar.
+
 ### 4.4 Komut transaction ve hata sınırı
 
 Employee create/update/archive ile leave request create/approve/reject/cancel akışlarında
@@ -180,7 +183,12 @@ Public purge endpoint'i yoktur. Root tenant cascade yalnız kısıtlı operatör
 retention/offboarding prosedüründe kullanılabilecek bir sahiplik mekanizmasıdır; normal employee
 silme yetkisi veya tenant izolasyonu bypass'ı değildir.
 
-## 5. İstek yaşam döngüsü
+## 5. Hedef istek yaşam döngüsü
+
+Aşağıdaki liste tamamlanmış Faz 0 runtime davranışı değil, Faz 1–2 ile tamamlanacak hedef akıştır.
+Bugün tenant header compatibility guard'ı, request-scoped DB session, application command/UoW ve
+typed error mapping vardır. Global request/trace middleware, authenticated actor, permission,
+transaction-local RLS context, field masking ve audit henüz uygulanmamıştır.
 
 1. Request edge katmanından gelir.
 2. Request ID ve trace ID atanır.
@@ -197,6 +205,11 @@ silme yetkisi veya tenant izolasyonu bypass'ı değildir.
 11. Standart response döner.
 
 ## 6. Async işleme
+
+Faz 0, `app.platform.workers` altında yalnız dar `JobQueue` portunu, tenant-aware `JobSpec`
+envelope'unu ve deterministik `RecordingJobQueue` fake'ini uygular. ADR-008 ile Dramatiq 2.2 +
+Redis hedef adapter seçilmiştir; provider dependency'si, broker bağlantısı, worker process'i,
+schedule veya deployment bu checkpoint'te yoktur.
 
 | Kuyruk | İşler |
 |---|---|
@@ -215,9 +228,19 @@ Async task kuralları:
 - Retry ve dead-letter mekanizması olmalıdır.
 - Hata kullanıcıya izlenebilir status ile dönmelidir.
 
+Provider adapter devreye alındığında `tenant_id` concurrency key'inin parçası olacak; retry,
+timeout ve terminal dead-letter/failed-state davranışı Redis-backed integration testleriyle
+kanıtlanacaktır. Queue receipt'i business idempotency/outbox kaydının yerine geçmez.
+
 ## 7. Veri katmanı
 
 PostgreSQL ana veri katmanıdır.
+
+User email mevcut şemada case-sensitive unique'tir. Auth phase'inden önce explicit
+`lower(btrim(email))` normalize kolon/index migration'ı yapılacak; `citext` kullanılmayacaktır.
+Employee directory araması bundan farklı bir sözleşmedir ve ADR-016'daki `ILIKE`/`pg_trgm`
+stratejisini kullanır. PII-safe slow-query instrumentation ve global request/transaction
+correlation henüz runtime'da yoktur ve Murat review checkpoint'inde açık plan sapmasıdır.
 
 Kullanım gerekçeleri:
 

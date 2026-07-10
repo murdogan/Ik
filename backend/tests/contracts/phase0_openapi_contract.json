@@ -1,0 +1,45 @@
+{
+  "checkpoint": "P0G Phase 0 review",
+  "comparison_base": "80b2768",
+  "contract": {
+    "components": {
+      "schemas": {
+        "ApiErrorBody": "1119ec1bcbddf9c38d73f6ac0a407db08423ef204a7843bebde4088e3884226b",
+        "ApiErrorResponse": "e384905dcc9466074b2f9ec03ae7368c50b56e3d98d634220c21b98a1bf9cc98",
+        "DashboardActivityItem": "c02d590f0249b2a1f2fa0c3f2bf9cf7e061cbd4d03f49b23e1ab7f6da5596d19",
+        "DashboardSummary": "be3ceab261dc4674793cdd36ec15cdb358d9c980db74251e0d42126c32a19302",
+        "DepartmentDistributionItem": "2ba70b2324b371249d66f7db03f635d6c8242da3fafec326785adb4b1def9b64",
+        "EmployeeCreate": "8e0d08ccfac9ef28978e3c9752285012a44e0caf8b429033c61e658234fb7519",
+        "EmployeeRead": "4934d8834bdc17fe34da9cbb311858314657649fda8be3b927d618df3cf27a51",
+        "EmployeeStatus": "60469bada9cb9f317ee136bad454b23977290722e06c8d0645f9434dda53085b",
+        "EmployeeUpdate": "33943ecedf91e933c58acd50e21de9bf49bc9393e99cf50a623233b73528fd00",
+        "HTTPValidationError": "7373c21f1389312367e27e440140ba11d587693c56d8aa27249b36d3f58c10c6",
+        "LeaveBalanceSummaryRead": "aac9bba9f44b694be858e7ff8c9c768d17edf04de8e3f2d9f545c57a82ae2b7d",
+        "LeaveRequestCreate": "fe54b7adbaf4bc0a0e6f28ebcf2a353bd81dc51b9ae38c7592e9e492effc4694",
+        "LeaveRequestDecision": "6df30dceb141f54a96e006eaccbbb4f85de165e863f809a9062d8c177ef4a653",
+        "LeaveRequestRead": "ee5d5e6d9200379faf4ae26302eeeee848bc04568f98a770a63309a0aeac0ef0",
+        "LeaveRequestStatus": "a5e811b3528d8f3e57b1745def7231e0aa386f30c13ab1274ca736e8763ddf4b",
+        "ValidationError": "ca285d0c0e64c42844efd2e860edb239e77cc49d87f065c5ccb7d2f55331b862"
+      }
+    },
+    "operation_count": 14,
+    "operations": {
+      "DELETE /api/v1/employees/{employee_id}": "5368ee9fe954d9b7933eec0ed6c088d813892e2de9dd7e5acc2d8b093282af15",
+      "GET /": "a271222fa48837374a6ac1ffe66d0e62a07eb173696975bc5ed34f67d4bd21d7",
+      "GET /api/v1/dashboard/summary": "725f48c94159a5ec85731976dc5ba9061aab4523376f4cdee4d63d71b79e15a3",
+      "GET /api/v1/employees": "0efefd4ba994a3fc0e6164e1cf3e95f6febf3e58fb2348ed31a82e0ff6e4cd93",
+      "GET /api/v1/employees/{employee_id}": "1913e92b479cc690e1a2ad525dfca69b4cdd3989ccf433e4e51ab61c64ec4648",
+      "GET /api/v1/employees/{employee_id}/leave-balances": "cece6534bc7ca53ebca7dab1804232392b9bf0efb5e4863809760a4076d145db",
+      "GET /api/v1/leave-requests": "5f223df2c5357c2e1e8bde7af9fc8c90ccb1e1b3aa9086515fe5c5f49eaf21b6",
+      "GET /health": "b20a8cee98ef397abc8e5bc09f197c6b969ec0b8487e3dc62a72de4e3ad1a4d9",
+      "PATCH /api/v1/employees/{employee_id}": "7a0f4e9d039d685e71c01c9f5d669988acc36eb5402d2c670e413a0d26e448da",
+      "POST /api/v1/employees": "86be65f20c91440f38627374b548cd60a173b4e4804634e6736ca225026c1a95",
+      "POST /api/v1/leave-requests": "121b0ca24a19002a79295a2f56accbe70811037d7450531052290e378c60670a",
+      "POST /api/v1/leave-requests/{leave_request_id}/approve": "31cbf8df61918ce5dfa090bda8a774947628781d751dd08928a0e8bac4ca152d",
+      "POST /api/v1/leave-requests/{leave_request_id}/cancel": "baeb41afd69acea0007f9338f4f9416c16492a7927c657feb4ae6f939438d6c6",
+      "POST /api/v1/leave-requests/{leave_request_id}/reject": "1ace4a71bfc1d79dc969b3d5db26aa2f24153bbfdbed43b055cd407df2228f9a"
+    },
+    "top_level_sha256": "7169d8311e273187eaf99d3a0a22072b887b9f0e6a06073bfd1e11de91b33de0"
+  },
+  "format_version": 1
+}
