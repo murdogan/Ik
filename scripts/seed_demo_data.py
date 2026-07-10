@@ -78,7 +78,7 @@ def _ensure_local_database_url(database_url: str) -> None:
     if url.drivername.startswith("sqlite"):
         return
 
-    host = url.host or ""
+    host = (url.host or "").lower()
     if host in LOCAL_DATABASE_HOSTS:
         return
 

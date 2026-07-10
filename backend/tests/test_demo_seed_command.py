@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import os
 import subprocess
 import sys
@@ -11,6 +12,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 ROOT = Path(__file__).resolve().parents[2]
 SEED_SCRIPT = ROOT / "scripts" / "seed_demo_data.py"
+_SEED_SCRIPT_SPEC = importlib.util.spec_from_file_location("seed_demo_data_script", SEED_SCRIPT)
+assert _SEED_SCRIPT_SPEC is not None
+assert _SEED_SCRIPT_SPEC.loader is not None
+_SEED_SCRIPT_MODULE = importlib.util.module_from_spec(_SEED_SCRIPT_SPEC)
+_SEED_SCRIPT_SPEC.loader.exec_module(_SEED_SCRIPT_MODULE)
+_ensure_local_database_url = _SEED_SCRIPT_MODULE._ensure_local_database_url
 
 
 def test_demo_seed_command_runs_twice_against_local_db(tmp_path: Path) -> None:
@@ -63,6 +70,10 @@ def test_demo_seed_command_refuses_non_local_database_url() -> None:
         "DEMO_SEED_REFUSED database_url_not_local "
         "host='db.example.com' allowed_hosts=127.0.0.1,::1,localhost"
     ) in result.stderr
+
+
+def test_demo_seed_local_database_url_guard_accepts_case_insensitive_localhost() -> None:
+    _ensure_local_database_url("postgresql+asyncpg://ik:ik@LOCALHOST:5432/ik")
 
 
 def _run_seed_command(database_url: str, *, environment: str) -> subprocess.CompletedProcess[str]:

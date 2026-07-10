@@ -2,18 +2,17 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4A6 API error consistency`
+Task: `W4B1 Demo seed command`
 
 ## Scope
 
-- Standardized employee, leave balance, and leave request endpoint public error messages behind
-  shared backend constants without changing the response envelope or generated endpoint surface.
-- Added API regressions for tenant-header error precedence over payload/query validation,
-  employee null-status lifecycle normalization, invalid leave request employee filter validation,
-  leave balance tenant-header precedence, and approve/reject/cancel transition conflict messages.
-- Kept the completed API surface explicit: 14 generated OpenAPI operations plus the runtime
-  `/openapi.json` schema endpoint.
-- Confirmed tenant isolation behavior and the existing success response shapes remain unchanged.
+- Reconfirmed the local demo seed command remains a script-only data utility, not an API surface.
+- Hardened the local database URL guard so local hostnames are matched case-insensitively before
+  the command opens a database connection.
+- Added a focused seed command regression for uppercase `LOCALHOST` allowlist handling, alongside
+  the existing idempotent command and tenant-scoped service coverage.
+- Kept the completed API surface explicit and unchanged: 14 generated OpenAPI operations plus the
+  runtime `/openapi.json` schema endpoint.
 - No new endpoint, response envelope, model, migration, permission, or tenant isolation change.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
@@ -81,7 +80,8 @@ Task: `W4A6 API error consistency`
 - Local demo seed remains a script command, not an API surface:
   `uv run python scripts/seed_demo_data.py`. It assumes the target local/dev schema already
   exists, then idempotently creates or resets demo tenants, users, employees, and leave requests.
-  The command refuses non-local database URL hosts before opening a connection.
+  The command refuses non-local database URL hosts before opening a connection; local hostnames are
+  matched case-insensitively.
 
 ## Smoke Coverage
 
@@ -111,12 +111,12 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W4A6 local gate run:
+W4B1 local gate run:
 
-- `uv run pytest backend/tests/test_employee_api.py backend/tests/test_leave_balance_api.py backend/tests/test_leave_request_api.py`:
-  passed, 89 tests passed.
+- `uv run pytest backend/tests/test_demo_seed_service.py backend/tests/test_demo_seed_command.py`:
+  passed, 6 tests passed.
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 304 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 305 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered, including documented endpoint table checks.
