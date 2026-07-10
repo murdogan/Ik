@@ -125,7 +125,8 @@ async def main() -> None:
         f"tenant_id={TENANT_ID} "
         f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
         "checked=health,landing,openapi,documented_endpoint_tables,tenant_headers,"
-        "dashboard,employees,leave_balances,leave_requests"
+        "dashboard_counts,employee_filters,employees,leave_balances,leave_filters,"
+        "leave_requests,workflow_transitions"
     )
 
 
@@ -371,6 +372,21 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         "employee list tenant scope",
     )
 
+    blank_filter_employees = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"department": "   ", "q": "   "},
+        ),
+        200,
+        "GET /api/v1/employees blank filters",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in blank_filter_employees],
+        ["WF-SMOKE-001", "WF-SMOKE-002"],
+        "employee blank filters are ignored",
+    )
+
     department_filtered = _expect_json(
         await client.get(
             "/api/v1/employees",
@@ -384,6 +400,20 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         [employee["employee_number"] for employee in department_filtered],
         ["WF-SMOKE-001"],
         "employee department filter",
+    )
+    partial_department_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"department": "peop"},
+        ),
+        200,
+        "GET /api/v1/employees?department=peop",
+    )
+    _assert_equal(
+        partial_department_filtered,
+        [],
+        "employee department filter requires exact match",
     )
     engineering_filtered = _expect_json(
         await client.get(
@@ -467,6 +497,35 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
     )
     _assert_equal(cross_tenant_search_filtered, [], "employee q filter tenant scope")
 
+    wildcard_search_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"q": "%"},
+        ),
+        200,
+        "GET /api/v1/employees?q=%25",
+    )
+    _assert_equal(
+        wildcard_search_filtered,
+        [],
+        "employee q filter treats SQL wildcard as literal text",
+    )
+    name_search_filtered = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"q": "Yilmaz"},
+        ),
+        200,
+        "GET /api/v1/employees?q=Yilmaz",
+    )
+    _assert_equal(
+        name_search_filtered,
+        [],
+        "employee q filter does not search names",
+    )
+
     detail = _expect_json(
         await client.get(f"/api/v1/employees/{employee_id}", headers=TENANT_HEADERS),
         200,
@@ -523,6 +582,17 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         "employee_validation_error",
         "GET /api/v1/employees?status=disabled",
     )
+    for params in ({"limit": 0}, {"limit": 201}, {"offset": -1}):
+        _expect_error_code(
+            await client.get(
+                "/api/v1/employees",
+                headers=TENANT_HEADERS,
+                params=params,
+            ),
+            422,
+            "employee_validation_error",
+            "GET /api/v1/employees invalid pagination",
+        )
     combined_filtered = _expect_json(
         await client.get(
             "/api/v1/employees",
@@ -806,55 +876,14 @@ async def _smoke_leave_request_endpoints(
         "cancelled leave decision note",
     )
 
-    _expect_error_code(
-        await client.post(
-            f"/api/v1/leave-requests/{approved_request['id']}/approve",
-            headers=TENANT_HEADERS,
-            json=decision_payload,
-        ),
-        409,
-        "leave_request_transition_conflict",
-        "POST decided /api/v1/leave-requests/{leave_request_id}/approve",
-    )
-    _expect_error_code(
-        await client.post(
-            f"/api/v1/leave-requests/{approved_request['id']}/reject",
-            headers=TENANT_HEADERS,
-            json=decision_payload,
-        ),
-        409,
-        "leave_request_transition_conflict",
-        "POST approved /api/v1/leave-requests/{leave_request_id}/reject",
-    )
-    _expect_error_code(
-        await client.post(
-            f"/api/v1/leave-requests/{approved_request['id']}/cancel",
-            headers=TENANT_HEADERS,
-            json=decision_payload,
-        ),
-        409,
-        "leave_request_transition_conflict",
-        "POST approved /api/v1/leave-requests/{leave_request_id}/cancel",
-    )
-    _expect_error_code(
-        await client.post(
-            f"/api/v1/leave-requests/{rejected_request['id']}/reject",
-            headers=TENANT_HEADERS,
-            json=decision_payload,
-        ),
-        409,
-        "leave_request_transition_conflict",
-        "POST rejected /api/v1/leave-requests/{leave_request_id}/reject",
-    )
-    _expect_error_code(
-        await client.post(
-            f"/api/v1/leave-requests/{cancelled_request['id']}/cancel",
-            headers=TENANT_HEADERS,
-            json=decision_payload,
-        ),
-        409,
-        "leave_request_transition_conflict",
-        "POST cancelled /api/v1/leave-requests/{leave_request_id}/cancel",
+    await _expect_leave_request_transition_conflicts(
+        client,
+        decision_payload=decision_payload,
+        request_ids_by_status={
+            LeaveRequestStatus.APPROVED.value: approved_request["id"],
+            LeaveRequestStatus.REJECTED.value: rejected_request["id"],
+            LeaveRequestStatus.CANCELLED.value: cancelled_request["id"],
+        },
     )
     _expect_error_code(
         await client.post(
@@ -918,6 +947,18 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(len(paginated), 2, "leave request pagination")
 
+    for params in ({"limit": 0}, {"limit": 201}, {"offset": -1}):
+        _expect_error_code(
+            await client.get(
+                "/api/v1/leave-requests",
+                headers=TENANT_HEADERS,
+                params=params,
+            ),
+            422,
+            "leave_request_validation_error",
+            "GET /api/v1/leave-requests invalid pagination",
+        )
+
     approved_filtered = _expect_json(
         await client.get(
             "/api/v1/leave-requests",
@@ -973,6 +1014,16 @@ async def _smoke_leave_request_endpoints(
         422,
         "leave_request_validation_error",
         "GET /api/v1/leave-requests?status=archived",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"employee_id": "not-a-uuid"},
+        ),
+        422,
+        "leave_request_validation_error",
+        "GET /api/v1/leave-requests?employee_id=not-a-uuid",
     )
 
     employee_filtered = _expect_json(
@@ -1147,6 +1198,16 @@ async def _smoke_leave_request_endpoints(
         "leave_request_invalid_date_range",
         "GET /api/v1/leave-requests invalid date range",
     )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"start_date": "2026-07-22T00:00:00"},
+        ),
+        422,
+        "leave_request_validation_error",
+        "GET /api/v1/leave-requests invalid date filter",
+    )
 
     return {
         "pending": pending_request["id"],
@@ -1155,6 +1216,30 @@ async def _smoke_leave_request_endpoints(
         "cancelled": cancelled_request["id"],
         "other_tenant": other_tenant_request["id"],
     }
+
+
+async def _expect_leave_request_transition_conflicts(
+    client: AsyncClient,
+    *,
+    decision_payload: dict[str, str],
+    request_ids_by_status: dict[str, str],
+) -> None:
+    for source_status, leave_request_id in request_ids_by_status.items():
+        for action in ("approve", "reject", "cancel"):
+            _expect_error_code(
+                await client.post(
+                    f"/api/v1/leave-requests/{leave_request_id}/{action}",
+                    headers=TENANT_HEADERS,
+                    json=decision_payload,
+                ),
+                409,
+                "leave_request_transition_conflict",
+                (
+                    "POST "
+                    f"{source_status} /api/v1/leave-requests/"
+                    f"{{leave_request_id}}/{action}"
+                ),
+            )
 
 
 async def _smoke_dashboard_endpoint(
@@ -1170,6 +1255,11 @@ async def _smoke_dashboard_endpoint(
     )
     _assert_equal(summary["active_employee_count"], 1, "dashboard active_employee_count")
     _assert_equal(summary["employee_count"], 2, "dashboard employee_count")
+    _assert_equal(
+        summary["employee_count"] - summary["active_employee_count"],
+        1,
+        "dashboard on-leave current employee count",
+    )
     _assert_equal(summary["pending_leave_count"], 1, "dashboard pending_leave_count")
     _assert_equal(summary["pending_leave_requests"], 1, "dashboard pending_leave_requests")
     _assert_equal(
@@ -1219,6 +1309,11 @@ async def _smoke_dashboard_endpoint(
         "other dashboard active_employee_count",
     )
     _assert_equal(other_summary["employee_count"], 1, "other dashboard employee_count")
+    _assert_equal(
+        other_summary["employee_count"] - other_summary["active_employee_count"],
+        0,
+        "other dashboard on-leave current employee count",
+    )
     _assert_equal(
         other_summary["pending_leave_count"],
         1,
