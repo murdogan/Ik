@@ -123,7 +123,8 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, `limit`/`offset` pagination,
   default `limit=50`, max `limit=200`, default `offset=0`, oluşturma/detay/güncelleme/silme
 - `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
-  `period_year` filtresi ve tenant-scoped çalışan kontrolü
+  `period_year` filtresi, tenant-scoped çalışan kontrolü ve mevcut leave requestlerden otomatik
+  bakiye üretmeme davranışı
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
   `limit`/`offset` pagination, default `limit=50`, max `limit=200`, default `offset=0`,
   oluşturma/onay/red/iptal
@@ -370,11 +371,13 @@ Response `200`:
 ]
 ```
 
-Bu endpoint W1C2/W2C2/W3C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak
+Bu endpoint W1C2/W2C2/W3C2/W4C2 kapsamında yalnız read-only manuel placeholder'dır. İzin hak
 edişi/accrual, resmi tatil hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon
 içermez. `external_integration_enabled` alanı bu placeholder yüzeyinde sabit `false` döner.
 W3C2 testleri persistence katmanının yalnız manuel summary kolonlarını taşıdığını ve response
 schema'sının manuel placeholder dışı calculation mode kabul etmediğini sabitler.
+W4C2 regresyonu, çalışanın mevcut leave request kayıtları olsa bile manuel summary satırı yoksa
+endpointin sentetik bakiye üretmeden `200 []` döndüğünü sabitler.
 Leave balance endpointinde generic request validation hataları `leave_balance_validation_error`
 kodu ve `Leave balance request validation failed` mesajıyla aynı error zarfını kullanır.
 Eksik tenant header, invalid path/query validation hatalarından önce `tenant_header_missing`

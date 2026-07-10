@@ -2,18 +2,14 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W4B3 API docs examples`
+Task: `W4C2 Leave balance placeholder model plan`
 
 ## Scope
 
-- Refreshed the OpenAPI endpoint draft and README local API section with concrete employee and
-  leave request/response examples.
-- Kept examples aligned with the current FastAPI behavior: tenant headers are required, list
-  endpoints return plain arrays, empty matches return `200 []`, and create/decision IDs are
-  server-generated or existing tenant-scoped path values.
-- Added representative normalized error envelope examples for employee not-found/conflict,
-  leave balance validation/not-found behavior, leave request date-filter validation, user
-  not-found, and decision transition conflicts.
+- Kept the existing `leave_balance_summaries` read model as the minimal domain placeholder.
+- Added W4C2 regression coverage proving leave balance reads use only stored manual summary rows:
+  existing leave requests do not synthesize accrual or balance records.
+- Updated README and OpenAPI endpoint draft notes to make the placeholder limitation explicit.
 - Kept the completed API surface explicit and unchanged: 14 generated OpenAPI operations plus the
   runtime `/openapi.json` schema endpoint.
 - No new endpoint, response envelope, model, migration, permission, or tenant isolation change.
@@ -68,6 +64,9 @@ Task: `W4B3 API docs examples`
   `leave_balance_summaries`. They return `calculation_mode: "manual_placeholder"` and
   `external_integration_enabled: false`; no accrual engine, holiday calendar calculation,
   payroll/bordro, SGK, bank, PDKS, AI, or external integration exists.
+- W4C2 locks the current limitation: leave balance reads do not derive balances from leave
+  requests. A tenant employee with leave request records but no manual balance summary rows gets
+  `200 []`.
 - OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
   `Leave Requests`. Current operations have explicit summaries, descriptions, response
   descriptions, and tenant-aware parameter/header descriptions.
@@ -113,21 +112,22 @@ The runtime scenarios currently verify:
 - Tenant header missing, invalid, repeated, and cross-tenant behavior.
 - Employee create/list/detail/update/delete, filters, pagination, lifecycle status handling, error
   envelopes, and tenant isolation.
-- Leave balance read-only summaries, `period_year` filtering, placeholder flags, and tenant
-  isolation.
+- Leave balance read-only summaries, `period_year` filtering, placeholder flags, tenant
+  isolation, and the absence of synthetic balances from leave request records.
 - Leave request create/list/approve/reject/cancel, filters, pagination, transition conflicts,
   error envelopes, cross-tenant user/request checks, date-window behavior, and tenant isolation.
 - Dashboard counts, department distribution, recent activity shape, and tenant isolation.
 
 ## Verification
 
-W4B3 local gate run:
+W4C2 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 305 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 323 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
-  endpoints covered, including documented endpoint table checks.
+  endpoints covered, including documented endpoint table checks and the W4C2 leave balance
+  non-synthesis check.
 
 ## Remaining Backend Backlog
 

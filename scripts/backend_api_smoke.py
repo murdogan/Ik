@@ -99,14 +99,15 @@ async def main() -> None:
             primary_employee_id, secondary_employee_id, other_employee_id = (
                 await _smoke_employee_endpoints(client)
             )
+            leave_request_ids = await _smoke_leave_request_endpoints(
+                client,
+                primary_employee_id,
+                secondary_employee_id,
+                other_employee_id,
+            )
             await _smoke_leave_balance_endpoint(
                 client,
                 session_factory,
-                primary_employee_id,
-                other_employee_id,
-            )
-            leave_request_ids = await _smoke_leave_request_endpoints(
-                client,
                 primary_employee_id,
                 secondary_employee_id,
                 other_employee_id,
@@ -705,6 +706,7 @@ async def _smoke_leave_balance_endpoint(
     client: AsyncClient,
     session_factory: async_sessionmaker[AsyncSession],
     employee_id: str,
+    secondary_employee_id: str,
     other_employee_id: str,
 ) -> None:
     period_year = date.today().year
@@ -761,6 +763,21 @@ async def _smoke_leave_balance_endpoint(
     )
     if "tenant_id" in balances[0]:
         raise AssertionError("leave balance summary leaked tenant_id")
+
+    synthetic_balances = _expect_json(
+        await client.get(
+            f"/api/v1/employees/{secondary_employee_id}/leave-balances",
+            headers=TENANT_HEADERS,
+            params={"period_year": period_year},
+        ),
+        200,
+        "GET /api/v1/employees/{employee_id}/leave-balances with only leave requests",
+    )
+    _assert_equal(
+        synthetic_balances,
+        [],
+        "leave balance does not synthesize rows from leave requests",
+    )
 
     _expect_error_code(
         await client.get(

@@ -7,7 +7,9 @@ from app.db.session import get_session
 from app.main import create_app
 from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_balance_summary import LeaveBalanceSummary
+from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
+from app.models.user import User, UserStatus
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -22,6 +24,8 @@ OTHER_TENANT_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 EMPTY_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 OTHER_EMPLOYEE_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+REQUESTING_USER_ID = UUID("77777777-7777-4777-8777-777777777777")
+OTHER_REQUESTING_USER_ID = UUID("88888888-8888-4888-8888-888888888888")
 ANNUAL_2026_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 SICK_2026_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 ANNUAL_2025_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
@@ -61,6 +65,20 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
                     data_region="tr-1",
                     locale="tr-TR",
                     timezone="Europe/Istanbul",
+                ),
+                User(
+                    id=REQUESTING_USER_ID,
+                    tenant_id=TENANT_ID,
+                    email="requester@wealthyfalcon.test",
+                    full_name="Requesting User",
+                    status=UserStatus.ACTIVE.value,
+                ),
+                User(
+                    id=OTHER_REQUESTING_USER_ID,
+                    tenant_id=OTHER_TENANT_ID,
+                    email="requester@other.test",
+                    full_name="Other Requesting User",
+                    status=UserStatus.ACTIVE.value,
                 ),
                 Employee(
                     id=EMPLOYEE_ID,
@@ -131,6 +149,16 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
                     opening_balance_days=99.0,
                     used_days=0.0,
                     planned_days=0.0,
+                ),
+                LeaveRequest(
+                    id=UUID("12121212-1212-4121-8121-121212121212"),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPTY_EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 7, 20),
+                    end_date=date(2026, 7, 22),
+                    status=LeaveRequestStatus.APPROVED.value,
+                    requested_by_user_id=REQUESTING_USER_ID,
                 ),
             ]
         )
@@ -226,7 +254,7 @@ async def test_list_employee_leave_balances_filters_by_period_year() -> None:
         await engine.dispose()
 
 
-async def test_list_employee_leave_balances_returns_empty_list_for_employee_without_rows() -> None:
+async def test_list_employee_leave_balances_does_not_synthesize_rows_from_leave_requests() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get(

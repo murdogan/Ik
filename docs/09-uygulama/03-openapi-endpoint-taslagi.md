@@ -94,7 +94,8 @@ Geçerli uygulama notları:
   `calculation_mode: "manual_placeholder"` ve sabit `external_integration_enabled: false` döner.
   `remaining_days`, `opening_balance_days - used_days - planned_days` olarak türetilir. Tenant
   içindeki çalışanın hiç bakiye özeti yoksa `200 []`, tenant scope dışı çalışan için
-  `employee_not_found` `404` döner.
+  `employee_not_found` `404` döner. W4C2 regresyonu, mevcut leave request kayıtlarının bu
+  placeholder yüzeyinde otomatik bakiye satırı üretmediğini sabitler.
 - Employee ve leave tarih alanları yalnız `YYYY-MM-DD` full-date değerlerini kabul eder;
   midnight datetime stringleri tarih olarak coerce edilmez. Employee create/update ve leave create
   date order kontrolleri servis katmanında da korunur; `employees` tablosunda date-order check
@@ -591,9 +592,10 @@ Query:
 
 - `period_year`: Opsiyonel dönem yılı. `1900..2200` aralığıyla sınırlıdır.
 
-Not: Bu endpoint W1C2/W2C2 için bilinçli olarak read-only ve manuel placeholder'dır. İzin hak edişi,
-resmi tatil/hafta sonu hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon çalıştırmaz.
-Çalışan tenant içinde varsa ama bakiye özeti yoksa `200 []` döner.
+Not: Bu endpoint W1C2/W2C2/W3C2/W4C2 için bilinçli olarak read-only ve manuel placeholder'dır.
+İzin hak edişi, resmi tatil/hafta sonu hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış
+entegrasyon çalıştırmaz. Mevcut leave request kayıtlarından otomatik/sentetik bakiye satırı
+üretilmez. Çalışan tenant içinde varsa ama bakiye özeti yoksa `200 []` döner.
 
 Request örneği:
 
