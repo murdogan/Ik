@@ -2,17 +2,16 @@
 
 Date: 2026-07-10
 Branch: `codex/continuous-24h-backend`
-Task: `W3C6 Implementation report refresh`
+Task: `W4A2 Employee pagination`
 
 ## Scope
 
-- Refreshed the implementation status report against the current FastAPI route surface.
+- Locked the employee list `limit`/`offset` pagination contract with explicit OpenAPI regression
+  coverage for the shared default and maximum bounds.
 - Kept the completed API surface explicit: 14 generated OpenAPI operations plus the runtime
   `/openapi.json` schema endpoint.
-- Added smoke coverage for the documented endpoint tables in this report and
-  `docs/09-uygulama/03-openapi-endpoint-taslagi.md`.
-- Clarified current behavior notes and the remaining backend backlog without expanding runtime
-  API behavior.
+- Clarified employee pagination bounds in the current behavior notes without changing the response
+  shape.
 - No production/staging deploy, cron, token, auth, credential, `.env`, UI, payroll/bordro, SGK,
   banks, PDKS, AI, or external integration changes.
 - No request/response payload shape, model, migration, permission, or tenant isolation change.
@@ -42,7 +41,8 @@ Task: `W3C6 Implementation report refresh`
 - Domain endpoints require exactly one canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
   remains optional but cannot be blank or repeated when sent.
 - Employee list supports `department`, `status`, `q`, `limit`, and `offset`. Filters are scoped to
-  the current tenant before pagination.
+  the current tenant before pagination. `limit` defaults to `50`, is capped at `200`, and `offset`
+  defaults to `0`.
 - Employee lifecycle validation is active: `terminated` requires `employment_end_date`; `active`
   and `on_leave` require `employment_end_date: null`. Violations return
   `employee_invalid_lifecycle`, and the database also has
@@ -99,10 +99,10 @@ The runtime scenarios currently verify:
 
 ## Verification
 
-W3C6 local gate run:
+W4A2 local gate run:
 
 - `uv run ruff check backend`: passed.
-- `uv run pytest`: passed, 292 tests passed, 1 existing Starlette `TestClient` deprecation
+- `uv run pytest`: passed, 295 tests passed, 1 existing Starlette `TestClient` deprecation
   warning.
 - `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, 15 documented
   endpoints covered, including documented endpoint table checks.

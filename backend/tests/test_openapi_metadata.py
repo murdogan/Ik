@@ -9,6 +9,7 @@ from app.api.openapi import (
     SYSTEM_TAG,
 )
 from app.main import create_app
+from app.schemas.employee import EMPLOYEE_LIST_DEFAULT_LIMIT, EMPLOYEE_LIST_MAX_LIMIT
 from fastapi.testclient import TestClient
 
 HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
@@ -211,7 +212,10 @@ def test_employee_list_openapi_documents_filter_query_params() -> None:
     assert "employment lifecycle status" in params["status"]["description"]
     assert params["q"]["in"] == "query"
     assert "within the tenant" in params["q"]["description"]
-    assert params["limit"]["schema"]["maximum"] == 200
+    assert params["limit"]["schema"]["default"] == EMPLOYEE_LIST_DEFAULT_LIMIT
+    assert params["limit"]["schema"]["maximum"] == EMPLOYEE_LIST_MAX_LIMIT
+    assert params["limit"]["schema"]["minimum"] == 1
+    assert params["offset"]["schema"]["default"] == 0
     assert params["offset"]["schema"]["minimum"] == 0
 
 

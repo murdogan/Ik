@@ -121,7 +121,7 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/dashboard/summary` active employee count, pending leave count, this-month
   starters, department distribution and recent activity
 - `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, `limit`/`offset` pagination,
-  oluşturma/detay/güncelleme/silme
+  default `limit=50`, max `limit=200`, default `offset=0`, oluşturma/detay/güncelleme/silme
 - `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
   `period_year` filtresi ve tenant-scoped çalışan kontrolü
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
