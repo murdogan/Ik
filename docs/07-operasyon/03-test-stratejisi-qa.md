@@ -43,9 +43,24 @@ oturumu için izole ve benzersiz bir geçici veritabanı oluşturur, Alembic ve 
 - Mevcut tenant-scoped API ve OpenAPI operasyon setinin PostgreSQL üzerindeki uyumluluğu.
 - Pool/bağlantı yaşam döngüsü ile `statement_timeout` ve PostgreSQL 16 uyumlu
   `idle_in_transaction_session_timeout` ayarları.
+- P0F disposable fixture'ında 10,000 employee + 5,000 leave seed'i sonrası selective search ve
+  deterministic employee/leave keyset sorgularının `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`
+  index/row-bound kanıtları.
 
 PostgreSQL'e özgü bir iddia SQLite sonucu ile geçmiş sayılmaz. FastAPI lifespan runtime engine
 ve sessionmaker'ın sahibidir; shutdown testi engine dispose davranışını da kapsar.
+
+P0F query-plan prosedürünü kanıt satırıyla tek başına çalıştırmak için:
+
+```bash
+IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres \
+  uv run pytest -q -m postgres \
+  backend/tests/integration/test_postgresql_p0f_performance.py -s
+```
+
+Test elapsed-time'ı donanıma bağlı olduğu için hard CI bütçesi yapmaz; query count, returned row
+bound, cursor `rows removed` sınırı ve kullanılan kritik index adları regression gate'tir. Yakalanan timing/buffer baseline'ı
+`docs/09-uygulama/12-phase-0-query-performance-baseline.md` içinde tutulur.
 
 ## 2. Kritik E2E akışları
 

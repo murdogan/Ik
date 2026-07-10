@@ -700,6 +700,44 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         "employee conflicting combined filters",
     )
 
+    employee_cursor_response = await client.get(
+        "/api/v1/employees",
+        headers=TENANT_HEADERS,
+        params={"limit": 1},
+    )
+    employee_cursor_page = _expect_json(
+        employee_cursor_response,
+        200,
+        "GET /api/v1/employees?limit=1 cursor first page",
+    )
+    employee_cursor = employee_cursor_response.headers.get("X-Next-Cursor")
+    if employee_cursor is None:
+        raise AssertionError("employee cursor first page did not expose X-Next-Cursor")
+    employee_next_page = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"limit": 1, "cursor": employee_cursor},
+        ),
+        200,
+        "GET /api/v1/employees?limit=1&cursor=<cursor>",
+    )
+    _assert_equal(
+        [employee["employee_number"] for employee in employee_cursor_page + employee_next_page],
+        ["WF-SMOKE-001", "WF-SMOKE-002"],
+        "employee deterministic cursor pagination",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            params={"cursor": employee_cursor, "offset": 1},
+        ),
+        422,
+        "employee_validation_error",
+        "GET /api/v1/employees cursor and offset conflict",
+    )
+
     delete_candidate = await _create_employee(
         client,
         {
@@ -1076,6 +1114,45 @@ async def _smoke_leave_request_endpoints(
         "GET /api/v1/leave-requests?limit=2&offset=1",
     )
     _assert_equal(len(paginated), 2, "leave request pagination")
+
+    leave_cursor_response = await client.get(
+        "/api/v1/leave-requests",
+        headers=TENANT_HEADERS,
+        params={"limit": 1},
+    )
+    leave_cursor_page = _expect_json(
+        leave_cursor_response,
+        200,
+        "GET /api/v1/leave-requests?limit=1 cursor first page",
+    )
+    leave_cursor = leave_cursor_response.headers.get("X-Next-Cursor")
+    if leave_cursor is None:
+        raise AssertionError("leave cursor first page did not expose X-Next-Cursor")
+    leave_next_page = _expect_json(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"limit": 1, "cursor": leave_cursor},
+        ),
+        200,
+        "GET /api/v1/leave-requests?limit=1&cursor=<cursor>",
+    )
+    _assert_equal(len(leave_cursor_page + leave_next_page), 2, "leave cursor page size")
+    _assert_equal(
+        len({item["id"] for item in leave_cursor_page + leave_next_page}),
+        2,
+        "leave cursor pages do not overlap",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/leave-requests",
+            headers=TENANT_HEADERS,
+            params={"cursor": leave_cursor, "offset": 1},
+        ),
+        422,
+        "leave_request_validation_error",
+        "GET /api/v1/leave-requests cursor and offset conflict",
+    )
 
     for params in ({"limit": 0}, {"limit": 201}, {"offset": -1}):
         _expect_error_code(

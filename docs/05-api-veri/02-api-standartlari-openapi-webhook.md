@@ -50,6 +50,13 @@ Liste response:
 }
 ```
 
+Faz-0 compatibility notu: mevcut employee ve leave-request endpointleri breaking response
+değişikliği yapmamak için plain JSON array döndürmeye devam eder. Bu iki yüksek büyüme listesinde
+ilk/uyumluluk isteği `limit` ve deprecated `offset` kabul eder; response'ta daha fazla kayıt varsa
+`X-Next-Cursor` header'ı döner. Sonraki istek `cursor=<header değeri>&limit=...` kullanır. Cursor ve
+positive `offset` birlikte geçersizdir. Gelecekteki `{data, meta.next_cursor}` zarfına geçiş ayrıca
+versionlanmış/duyurulmuş sözleşme değişikliği olacaktır.
+
 Hata response:
 
 ```json
@@ -90,6 +97,14 @@ Hata response:
 | Field selection | `fields=id,first_name,status` |
 | Expand | `expand=position,manager` |
 | Search | `q=` modül tanımlı arama |
+
+Faz-0 deterministic sıraları:
+
+- employee: `employee_number asc, id asc`;
+- leave request: `created_at desc, start_date asc, id asc`.
+
+Cursor endpoint türü ve bu tam ordering tuple'ını versioned opaque token içinde taşır; tenant
+scope taşımaz. Tenant predicate her zaman authenticated/request context'ten ayrıca uygulanır.
 
 ## 6. Idempotency
 

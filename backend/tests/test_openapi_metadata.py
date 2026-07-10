@@ -61,7 +61,7 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         ("/api/v1/employees", "get"): (
             EMPLOYEES_TAG,
             "List tenant employees",
-            "tenant isolation is applied before bounded limit/offset pagination",
+            "tenant isolation is applied before bounded keyset pagination",
         ),
         ("/api/v1/employees", "post"): (
             EMPLOYEES_TAG,
@@ -91,7 +91,7 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         ("/api/v1/leave-requests", "get"): (
             LEAVE_REQUESTS_TAG,
             "List tenant leave requests",
-            "tenant isolation is applied before bounded limit/offset pagination",
+            "tenant isolation is applied before bounded keyset pagination",
         ),
         ("/api/v1/leave-requests", "post"): (
             LEAVE_REQUESTS_TAG,
@@ -209,7 +209,7 @@ def test_employee_list_openapi_documents_filter_query_params() -> None:
     operation = response.json()["paths"]["/api/v1/employees"]["get"]
     params = {parameter["name"]: parameter for parameter in operation["parameters"]}
 
-    assert {"department", "status", "q", "limit", "offset"}.issubset(params)
+    assert {"department", "status", "q", "limit", "offset", "cursor"}.issubset(params)
     assert params["department"]["in"] == "query"
     assert "exact department value within the tenant" in params["department"]["description"]
     assert params["status"]["in"] == "query"
@@ -221,6 +221,10 @@ def test_employee_list_openapi_documents_filter_query_params() -> None:
     assert params["limit"]["schema"]["minimum"] == 1
     assert params["offset"]["schema"]["default"] == 0
     assert params["offset"]["schema"]["minimum"] == 0
+    assert params["offset"]["deprecated"] is True
+    assert "opaque keyset cursor" in params["cursor"]["description"]
+    next_cursor_header = operation["responses"]["200"]["headers"]["X-Next-Cursor"]
+    assert "next deterministic page" in next_cursor_header["description"]
 
 
 def test_leave_request_list_openapi_documents_filter_query_params() -> None:
@@ -232,9 +236,15 @@ def test_leave_request_list_openapi_documents_filter_query_params() -> None:
     operation = response.json()["paths"]["/api/v1/leave-requests"]["get"]
     params = {parameter["name"]: parameter for parameter in operation["parameters"]}
 
-    assert {"status", "employee_id", "start_date", "end_date", "limit", "offset"}.issubset(
-        params
-    )
+    assert {
+        "status",
+        "employee_id",
+        "start_date",
+        "end_date",
+        "limit",
+        "offset",
+        "cursor",
+    }.issubset(params)
     assert params["status"]["in"] == "query"
     assert "leave request workflow status" in params["status"]["description"]
     assert params["employee_id"]["in"] == "query"
@@ -248,6 +258,10 @@ def test_leave_request_list_openapi_documents_filter_query_params() -> None:
     assert params["limit"]["schema"]["minimum"] == 1
     assert params["offset"]["schema"]["default"] == 0
     assert params["offset"]["schema"]["minimum"] == 0
+    assert params["offset"]["deprecated"] is True
+    assert "opaque keyset cursor" in params["cursor"]["description"]
+    next_cursor_header = operation["responses"]["200"]["headers"]["X-Next-Cursor"]
+    assert "next deterministic page" in next_cursor_header["description"]
 
 
 def test_employee_and_leave_openapi_document_project_error_envelope_for_422() -> None:

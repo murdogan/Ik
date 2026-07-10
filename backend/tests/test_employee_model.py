@@ -19,6 +19,7 @@ def test_employee_table_has_documented_mvp_columns() -> None:
         "last_name",
         "email",
         "department",
+        "department_normalized",
         "position",
         "status",
         "employment_start_date",
@@ -47,6 +48,7 @@ def test_employee_required_columns_match_minimal_record() -> None:
     for name in [
         "email",
         "department",
+        "department_normalized",
         "position",
         "employment_end_date",
         "archived_at",
@@ -143,4 +145,23 @@ def test_employee_has_tenant_archive_index() -> None:
     assert indexes["ix_employees_tenant_archived_at"] == (
         "tenant_id",
         "archived_at",
+    )
+
+
+def test_employee_has_postgresql_search_indexes() -> None:
+    indexes = {index.name: index for index in Employee.__table__.indexes}
+
+    assert tuple(
+        column.name for column in indexes["ix_employees_employee_number_trgm"].columns
+    ) == ("employee_number",)
+    assert tuple(column.name for column in indexes["ix_employees_email_trgm"].columns) == (
+        "email",
+    )
+    assert tuple(
+        column.name
+        for column in indexes["ix_employees_tenant_department_normalized"].columns
+    ) == ("tenant_id", "department_normalized")
+    assert (
+        indexes["ix_employees_employee_number_trgm"].dialect_options["postgresql"]["using"]
+        == "gin"
     )

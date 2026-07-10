@@ -60,3 +60,25 @@ kısıtlı operatör retention/offboarding prosedürü içindir; normal employee
 SQLite yalnız hızlı migration/model uyumu sağlar. Duplicate winner, concurrent leave decision,
 same-key replay ve `RESTRICT` hard-delete reddi gerçek PostgreSQL bağımsız-session testleriyle
 kanıtlanır.
+
+## P0F query-performance baseline
+
+`0012_p0f_query_performance`, mevcut response sözleşmesini değiştirmeden ölçülen liste/search
+sorgularını destekler:
+
+- PostgreSQL'de `pg_trgm` extension'ını `IF NOT EXISTS` ile hazırlar. Non-archived employee
+  `employee_number` ve `email` alanlarına partial GIN trigram indexleri ekler. Migration downgrade'i
+  başka schema/uygulamalarca da kullanılabilecek extension'ı düşürmez.
+- `department_normalized`, `lower(ltrim(rtrim(department)))` stored generated kolonudur;
+  non-archived `(tenant_id, department_normalized)` partial indexi exact case-insensitive
+  department filtresini destekler.
+- `ix_leave_requests_tenant_created_cursor`, public listenin
+  `(tenant_id, created_at desc, start_date asc, id asc)` keyset sırasını karşılar.
+- SQLite migration yolu zincir/model/API smoke uyumluluğu içindir. `pg_trgm`, partial GIN ve
+  `EXPLAIN (ANALYZE, BUFFERS)` iddiaları yalnız
+  `backend/tests/integration/test_postgresql_p0f_performance.py` gerçek PostgreSQL testiyle
+  kanıtlanır.
+
+Extension oluşturma yetkisi managed PostgreSQL'de migration rolüne verilmiyorsa `pg_trgm`
+platform operatörü tarafından upgrade öncesi provision edilmelidir; index migration'ı extension
+yoksa fail ederek indexsiz aramaya sessizce geçmez.

@@ -17,13 +17,13 @@ runtime/OpenAPI registry'si ile karşılaştırır.
 | GET | `/` | Uygulandı | Wealthy Falcon HR landing HTML |
 | GET | `/openapi.json` | Uygulandı | FastAPI generated schema; smoke bu şemayla documented operation drift kontrolü yapar |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
-| GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; `department`, `status`, `q` filtreleri ve `limit`/`offset` pagination var |
+| GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |
 | GET | `/api/v1/employees/{employee_id}` | Uygulandı | Tenant scope dışı kayıt `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | Uygulandı | Partial update, tarih aralığı validasyonu |
 | DELETE | `/api/v1/employees/{employee_id}` | Uygulandı | Aynı path/`204` ile idempotent archive; history korunur |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | Uygulandı | Tenant-scoped, read-only manuel izin bakiyesi özeti; `period_year` filtresi var |
-| GET | `/api/v1/leave-requests` | Uygulandı | Tenant-scoped liste; `status`, `employee_id`, `start_date`, `end_date` filtreleri ve `limit`/`offset` pagination var |
+| GET | `/api/v1/leave-requests` | Uygulandı | Tenant-scoped liste; filtreler, mixed-order deterministic `cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/leave-requests` | Uygulandı | Pending talep; tenant guard ve opsiyonel tenant-global idempotency |
 | POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note, row-lock one-winner ve opsiyonel idempotency |
@@ -103,9 +103,10 @@ Geçerli uygulama notları:
   employee activity yüzeylerinden gizlenir. Aynı DELETE tekrar `204` döner; employee number
   rezerve, mevcut leave/balance geçmişi kalıcıdır. Employee child foreign key'leri
   `ON DELETE RESTRICT` kullanır.
-- Cursor pagination standardı, tüm response zarfı ve global correlation middleware henüz
-  TODO'dur. Idempotency'nin mevcut kapsamı yalnız yukarıda sayılan POST/decision komutlarıdır;
-  receipt TTL/cleanup işi ayrıca backlog'dur.
+- Employee/leave high-growth listelerinde additive cursor standardı uygulanmıştır. Tüm response
+  zarfı, global sort controls ve global correlation middleware henüz TODO'dur. Idempotency'nin
+  mevcut kapsamı yalnız yukarıda sayılan POST/decision komutlarıdır; receipt TTL/cleanup işi ayrıca
+  backlog'dur.
 - Dashboard summary tenant-scoped DB sorgularıyla `active_employee_count`,
   `pending_leave_count`, `employee_count`, `pending_leave_requests`,
   `new_starters_this_month`, `department_distribution` ve `recent_activity` döner.
@@ -118,16 +119,15 @@ Geçerli uygulama notları:
 - Employee list/detail/update normal yüzeyi yalnız `archived_at is null` kayıtları görür.
   Arşivlenmiş employee'nin eski leave request kayıtları tenant-scoped leave history listesinde
   tutulmaya devam eder; yeni leave request veya normal balance erişimi açılamaz.
-- Employee listesinde `limit`/`offset` pagination (`limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`)
-  uygulanmıştır.
+- Employee listesinde `limit` + `(employee_number asc, id asc)` cursor uygulanmıştır. Devam varsa
+  `X-Next-Cursor` döner; plain-array body ve deprecated `offset` compatibility yolu korunur.
 - Leave request listesinde W2A3 itibarıyla `status`, `employee_id` ve inclusive
   `start_date`/`end_date` tarih aralığı filtreleri testlerle sabitlenmiştir. Tarih aralığı, izin
   kaydının tarihleriyle overlap eden talepleri döndürür; tek taraflı tarih filtreleri de tenant
   scope içinde çalışır.
-- Leave request listesinde W4A4 itibarıyla `limit`/`offset` pagination sözleşmesi testlerle
-  sabitlenmiştir: `limit` varsayılan `50`, maksimum `200`; `offset` varsayılan `0`.
-  Pagination tenant scope ve filtrelerden sonra uygulanır. Sonuç sırası `created_at desc`,
-  `start_date asc`, `id asc` ile deterministiktir.
+- Leave request listesinde `limit` + full `(created_at desc, start_date asc, id asc)` cursor
+  sözleşmesi testlerle sabitlenmiştir. Deprecated `offset` compatibility yolu korunur. Pagination
+  tenant scope ve filtrelerden sonra uygulanır.
 - Leave balance summary endpointi `leave_balance_summaries` read modelini okur. Bu W1C2/W2C2
   placeholder'ı yalnız manuel/açılış özet değerlerini döner; hak ediş/accrual motoru, resmi tatil
   hesabı, payroll/bordro, SGK, banka, PDKS, AI veya dış entegrasyon içermez. Response içinde
@@ -174,8 +174,8 @@ X-Correlation-Id: req_wf_demo_001
 
 - Employee örnekleri mevcut `EmployeeRead`, `EmployeeCreate` ve `EmployeeUpdate` alanlarıyla
   sınırlıdır; hassas kimlik, ücret, belge veya bordro alanı yoktur.
-- Employee list ve leave request list örnekleri mevcut `limit`/`offset` pagination davranışını
-  gösterir; response body bugün plain JSON array'dir, pagination metadata dönmez.
+- Employee list ve leave request list response body bugün plain JSON array'dir. Devam metadata'sı
+  body yerine `X-Next-Cursor` response header'ındadır; `offset` örnekleri compatibility yoludur.
 - Leave request örnekleri mevcut `LeaveRequestRead`, `LeaveRequestCreate` ve
   `LeaveRequestDecision` alanlarını gösterir. Approval/reject/cancel işlemleri aynı decision body
   shape'ini kullanır.
@@ -362,9 +362,10 @@ Query:
 - `status`: `active`, `on_leave`, `terminated`.
 - `q`: `employee_number` ve `email` üzerinde case-insensitive contains araması.
 - `limit`: Dönen kayıt sayısı. Varsayılan `50`, maksimum `200`.
-- `offset`: Sıralı sonuçta atlanacak kayıt sayısı. Varsayılan `0`.
+- `cursor`: Önceki response'un `X-Next-Cursor` header'ından opaque keyset değeri.
+- `offset`: Deprecated compatibility yolu; cursor ile positive değer birlikte kullanılamaz.
 
-Not: Cursor-based pagination ve `sort` ayrı backlog'dur; mevcut uygulama basit `limit`/`offset` kullanır.
+Sıra `(employee_number asc, id asc)` ile deterministiktir. Global `sort` ayrı backlog'dur.
 
 Request örneği:
 
@@ -714,10 +715,12 @@ Query:
 - `start_date`: Inclusive tarih aralığı başlangıcı.
 - `end_date`: Inclusive tarih aralığı bitişi.
 - `limit`: Dönen kayıt sayısı. Varsayılan `50`, maksimum `200`.
-- `offset`: Sıralı sonuçta atlanacak kayıt sayısı. Varsayılan `0`.
+- `cursor`: Önceki response'un `X-Next-Cursor` header'ından opaque keyset değeri.
+- `offset`: Deprecated compatibility yolu; cursor ile positive değer birlikte kullanılamaz.
 
 Not: `start_date`/`end_date` filtresi, izin kaydı tarih aralığı sorgu aralığıyla overlap eden
 talepleri döndürür. `end_date < start_date` istekleri `422` döner.
+Sıra ve cursor tuple'ı `(created_at desc, start_date asc, id asc)` ile deterministiktir.
 
 Request örneği:
 

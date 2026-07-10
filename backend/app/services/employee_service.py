@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,8 +17,10 @@ from app.core.error_messages import (
 from app.models.employee import Employee, EmployeeStatus
 from app.platform.db import constraint_name_from_error
 from app.platform.errors.application import ApplicationError
+from app.platform.pagination import CursorPage
 from app.schemas.employee import (
     EmployeeCreate,
+    EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
     EmployeeUpdate,
@@ -56,35 +58,28 @@ class EmployeeService:
         filters: EmployeeListFilters | None = None,
         pagination: EmployeeListPagination | None = None,
     ) -> list[Employee]:
+        page = await self.list_employee_page(tenant_id, filters, pagination)
+        return page.items
+
+    async def list_employee_page(
+        self,
+        tenant_id: UUID,
+        filters: EmployeeListFilters | None = None,
+        pagination: EmployeeListPagination | None = None,
+    ) -> CursorPage[Employee]:
         filters = filters or EmployeeListFilters()
         pagination = pagination or EmployeeListPagination()
-        statement = (
-            select(Employee)
-            .where(Employee.tenant_id == tenant_id)
-            .where(Employee.archived_at.is_(None))
-        )
-
-        if filters.department is not None:
-            statement = statement.where(
-                func.lower(func.trim(Employee.department)) == filters.department.casefold()
-            )
-        if filters.status is not None:
-            statement = statement.where(Employee.status == _status_value(filters.status))
-        if filters.q is not None:
-            search_term = filters.q.casefold()
-            statement = statement.where(
-                or_(
-                    func.lower(Employee.employee_number).contains(search_term, autoescape=True),
-                    func.lower(Employee.email).contains(search_term, autoescape=True),
-                )
-            )
-
-        statement = (
-            statement.order_by(Employee.employee_number.asc())
-            .offset(pagination.offset)
-            .limit(pagination.limit)
-        )
-        return list(await self.session.scalars(statement))
+        statement = _employee_list_statement(tenant_id, filters, pagination)
+        rows = list(await self.session.scalars(statement))
+        items = rows[: pagination.limit]
+        next_cursor = None
+        if len(rows) > pagination.limit:
+            last_item = items[-1]
+            next_cursor = EmployeeListCursor(
+                employee_number=last_item.employee_number,
+                id=last_item.id,
+            ).to_token()
+        return CursorPage(items=items, next_cursor=next_cursor)
 
     async def get_employee(self, tenant_id: UUID, employee_id: UUID) -> Employee:
         employee = await self._get_employee_or_none(tenant_id, employee_id)
@@ -219,6 +214,61 @@ def _status_value(status: EmployeeStatus | str | None) -> str | None:
     if isinstance(status, EmployeeStatus):
         return status.value
     return status
+
+
+def _employee_list_statement(
+    tenant_id: UUID,
+    filters: EmployeeListFilters,
+    pagination: EmployeeListPagination,
+):
+    statement = (
+        select(Employee)
+        .where(Employee.tenant_id == tenant_id)
+        .where(Employee.archived_at.is_(None))
+    )
+
+    if filters.department is not None:
+        statement = statement.where(
+            Employee.department_normalized == filters.department.casefold()
+        )
+    if filters.status is not None:
+        statement = statement.where(Employee.status == _status_value(filters.status))
+    if filters.q is not None:
+        search_pattern = _escaped_contains_pattern(filters.q.casefold())
+        statement = statement.where(
+            or_(
+                Employee.employee_number.ilike(search_pattern, escape="\\"),
+                Employee.email.ilike(search_pattern, escape="\\"),
+            )
+        )
+
+    if pagination.cursor is not None:
+        statement = statement.where(_employee_cursor_predicate(pagination.cursor))
+    else:
+        statement = statement.offset(pagination.offset)
+
+    return statement.order_by(
+        Employee.employee_number.asc(),
+        Employee.id.asc(),
+    ).limit(pagination.limit + 1)
+
+
+def _employee_cursor_predicate(cursor: EmployeeListCursor):
+    return and_(
+        Employee.employee_number >= cursor.employee_number,
+        or_(
+            Employee.employee_number > cursor.employee_number,
+            and_(
+                Employee.employee_number == cursor.employee_number,
+                Employee.id > cursor.id,
+            ),
+        ),
+    )
+
+
+def _escaped_contains_pattern(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def _is_employee_number_unique_violation(exc: IntegrityError) -> bool:

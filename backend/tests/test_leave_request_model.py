@@ -129,3 +129,9 @@ def test_leave_request_has_tenant_scoped_query_indexes() -> None:
         "status",
         "created_at",
     )
+    assert indexes["ix_leave_requests_tenant_created_cursor"] == (
+        "tenant_id",
+        "created_at",
+        "start_date",
+        "id",
+    )

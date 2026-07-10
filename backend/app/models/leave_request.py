@@ -80,3 +80,12 @@ class LeaveRequest(Base, TimestampMixin):
         nullable=True,
     )
     decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+Index(
+    "ix_leave_requests_tenant_created_cursor",
+    LeaveRequest.tenant_id,
+    LeaveRequest.created_at.desc(),
+    LeaveRequest.start_date.asc(),
+    LeaveRequest.id.asc(),
+)

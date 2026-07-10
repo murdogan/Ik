@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee, EmployeeStatus
@@ -80,43 +80,20 @@ async def _query_dashboard_counts(
     tenant_id: UUID,
     today: date,
 ) -> _DashboardCounts:
-    return _DashboardCounts(
-        active_employee_count=await _query_active_employee_count(session, tenant_id),
-        employee_count=await _query_current_employee_count(session, tenant_id),
-        pending_leave_count=await _query_pending_leave_count(session, tenant_id),
-        new_starters_this_month=await _query_new_starters_this_month(
-            session=session,
-            tenant_id=tenant_id,
-            today=today,
-        ),
-    )
-
-
-async def _query_active_employee_count(session: AsyncSession, tenant_id: UUID) -> int:
-    return await _scalar_count(session, _active_employee_count_statement(tenant_id))
-
-
-async def _query_current_employee_count(session: AsyncSession, tenant_id: UUID) -> int:
-    return await _scalar_count(session, _current_employee_count_statement(tenant_id))
-
-
-async def _query_pending_leave_count(session: AsyncSession, tenant_id: UUID) -> int:
-    return await _scalar_count(session, _pending_leave_count_statement(tenant_id))
-
-
-async def _query_new_starters_this_month(
-    session: AsyncSession,
-    tenant_id: UUID,
-    today: date,
-) -> int:
     start_date, end_date = _month_window(today)
-    return await _scalar_count(
-        session,
-        _new_starters_count_statement(
+    result = await session.execute(
+        _dashboard_counts_statement(
             tenant_id=tenant_id,
             start_date=start_date,
             end_date=end_date,
-        ),
+        )
+    )
+    row = result.mappings().one()
+    return _DashboardCounts(
+        active_employee_count=int(row["active_employee_count"] or 0),
+        employee_count=int(row["employee_count"] or 0),
+        pending_leave_count=int(row["pending_leave_count"] or 0),
+        new_starters_this_month=int(row["new_starters_this_month"] or 0),
     )
 
 
@@ -205,11 +182,6 @@ async def _query_recent_leave_activity_rows(
     )
 
 
-async def _scalar_count(session: AsyncSession, statement) -> int:
-    value = await session.scalar(statement)
-    return int(value or 0)
-
-
 async def _mapped_rows(session: AsyncSession, statement):
     return (await session.execute(statement)).mappings().all()
 
@@ -247,40 +219,35 @@ def _latest_activity(
     return sorted(activity, key=_activity_timestamp, reverse=True)[:limit]
 
 
-def _active_employee_count_statement(tenant_id: UUID):
-    return (
-        select(func.count(Employee.id))
-        .where(Employee.tenant_id == tenant_id)
-        .where(Employee.archived_at.is_(None))
-        .where(Employee.status == EmployeeStatus.ACTIVE.value)
-    )
-
-
-def _current_employee_count_statement(tenant_id: UUID):
-    return (
-        select(func.count(Employee.id))
-        .where(Employee.tenant_id == tenant_id)
-        .where(Employee.archived_at.is_(None))
-        .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
-    )
-
-
-def _pending_leave_count_statement(tenant_id: UUID):
-    return (
-        select(func.count(LeaveRequest.id))
+def _dashboard_counts_statement(tenant_id: UUID, start_date: date, end_date: date):
+    current_employee = Employee.status.in_(CURRENT_EMPLOYEE_STATUSES)
+    pending_leave_count = (
+        select(func.count())
+        .select_from(LeaveRequest)
         .where(LeaveRequest.tenant_id == tenant_id)
         .where(LeaveRequest.status == LeaveRequestStatus.PENDING.value)
+        .scalar_subquery()
     )
-
-
-def _new_starters_count_statement(tenant_id: UUID, start_date: date, end_date: date):
     return (
-        select(func.count(Employee.id))
+        select(
+            func.count()
+            .filter(Employee.status == EmployeeStatus.ACTIVE.value)
+            .label("active_employee_count"),
+            func.count().filter(current_employee).label("employee_count"),
+            pending_leave_count.label("pending_leave_count"),
+            func.count()
+            .filter(
+                and_(
+                    current_employee,
+                    Employee.employment_start_date >= start_date,
+                    Employee.employment_start_date < end_date,
+                )
+            )
+            .label("new_starters_this_month"),
+        )
+        .select_from(Employee)
         .where(Employee.tenant_id == tenant_id)
         .where(Employee.archived_at.is_(None))
-        .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
-        .where(Employee.employment_start_date >= start_date)
-        .where(Employee.employment_start_date < end_date)
     )
 
 

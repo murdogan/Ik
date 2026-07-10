@@ -507,6 +507,83 @@ async def test_list_employees_paginates_current_tenant_records() -> None:
         await engine.dispose()
 
 
+async def test_list_employees_exposes_deterministic_cursor_while_preserving_array_body() -> None:
+    client, engine = await _client_with_database()
+    try:
+        first_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1},
+        )
+
+        assert first_response.status_code == 200
+        assert [employee["employee_number"] for employee in first_response.json()] == [
+            "WF-001"
+        ]
+        first_cursor = first_response.headers["X-Next-Cursor"]
+
+        second_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1, "cursor": first_cursor},
+        )
+
+        assert second_response.status_code == 200
+        assert [employee["employee_number"] for employee in second_response.json()] == [
+            "WF-010"
+        ]
+        second_cursor = second_response.headers["X-Next-Cursor"]
+
+        final_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1, "cursor": second_cursor},
+        )
+
+        assert final_response.status_code == 200
+        assert [employee["employee_number"] for employee in final_response.json()] == [
+            "WF-020"
+        ]
+        assert "X-Next-Cursor" not in final_response.headers
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_rejects_invalid_cursor_and_cursor_offset_mix() -> None:
+    client, engine = await _client_with_database()
+    try:
+        invalid_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"cursor": "not-a-cursor"},
+        )
+        first_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1},
+        )
+        mixed_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={
+                "cursor": first_response.headers["X-Next-Cursor"],
+                "offset": 1,
+            },
+        )
+
+        for response in (invalid_response, mixed_response):
+            _assert_error_response(
+                response,
+                status_code=422,
+                code="employee_validation_error",
+                message="Employee request validation failed",
+            )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employees_paginates_after_filters_within_current_tenant() -> None:
     client, engine = await _client_with_database()
     try:
@@ -518,6 +595,37 @@ async def test_list_employees_paginates_after_filters_within_current_tenant() ->
 
         assert response.status_code == 200
         assert [employee["employee_number"] for employee in response.json()] == ["WF-010"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_cursor_is_applied_after_tenant_filters() -> None:
+    client, engine = await _client_with_database()
+    try:
+        first_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"department": "people", "limit": 1},
+        )
+        first_cursor = first_response.headers["X-Next-Cursor"]
+        second_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={
+                "department": "people",
+                "limit": 1,
+                "cursor": first_cursor,
+            },
+        )
+
+        assert [employee["employee_number"] for employee in first_response.json()] == [
+            "WF-001"
+        ]
+        assert [employee["employee_number"] for employee in second_response.json()] == [
+            "WF-010"
+        ]
+        assert "X-Next-Cursor" not in second_response.headers
     finally:
         await client.aclose()
         await engine.dispose()

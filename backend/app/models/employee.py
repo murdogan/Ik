@@ -4,12 +4,14 @@ from uuid import UUID
 
 from sqlalchemy import (
     CheckConstraint,
+    Computed,
     DateTime,
     ForeignKey,
     Index,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -50,6 +52,26 @@ class Employee(Base, TimestampMixin):
         UniqueConstraint("tenant_id", "id", name="uq_employees_tenant_id_id"),
         Index("ix_employees_tenant_status", "tenant_id", "status"),
         Index("ix_employees_tenant_archived_at", "tenant_id", "archived_at"),
+        Index(
+            "ix_employees_tenant_department_normalized",
+            "tenant_id",
+            "department_normalized",
+            postgresql_where=text("archived_at IS NULL"),
+        ),
+        Index(
+            "ix_employees_employee_number_trgm",
+            "employee_number",
+            postgresql_using="gin",
+            postgresql_ops={"employee_number": "gin_trgm_ops"},
+            postgresql_where=text("archived_at IS NULL"),
+        ),
+        Index(
+            "ix_employees_email_trgm",
+            "email",
+            postgresql_using="gin",
+            postgresql_ops={"email": "gin_trgm_ops"},
+            postgresql_where=text("archived_at IS NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
@@ -64,6 +86,11 @@ class Employee(Base, TimestampMixin):
     last_name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     department: Mapped[str | None] = mapped_column(Text, nullable=True)
+    department_normalized: Mapped[str | None] = mapped_column(
+        Text,
+        Computed("lower(ltrim(rtrim(department)))", persisted=True),
+        nullable=True,
+    )
     position: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=EmployeeStatus.ACTIVE.value

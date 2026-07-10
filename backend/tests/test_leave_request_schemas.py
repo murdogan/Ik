@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
@@ -8,6 +8,7 @@ from app.schemas.leave_request import (
     LEAVE_REQUEST_LIST_MAX_LIMIT,
     LeaveRequestCreate,
     LeaveRequestDecision,
+    LeaveRequestListCursor,
     LeaveRequestListFilters,
     LeaveRequestListPagination,
     LeaveRequestRead,
@@ -192,6 +193,26 @@ def test_leave_request_list_pagination_has_bounded_defaults() -> None:
 def test_leave_request_list_pagination_rejects_unbounded_values(data: dict[str, int]) -> None:
     with pytest.raises(ValidationError):
         LeaveRequestListPagination(**data)
+
+
+def test_leave_request_cursor_requires_timezone_aware_created_at() -> None:
+    with pytest.raises(ValidationError):
+        LeaveRequestListCursor(
+            created_at=datetime(2026, 7, 10, 12, 0),
+            start_date=date(2026, 8, 1),
+            id=UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+        )
+
+
+def test_leave_request_list_pagination_rejects_cursor_with_positive_offset() -> None:
+    cursor = LeaveRequestListCursor(
+        created_at=datetime(2026, 7, 10, 12, 0, tzinfo=UTC),
+        start_date=date(2026, 8, 1),
+        id=UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+    )
+
+    with pytest.raises(ValidationError):
+        LeaveRequestListPagination(offset=1, cursor=cursor)
 
 
 def test_leave_request_read_exposes_workflow_fields_without_tenant_id() -> None:

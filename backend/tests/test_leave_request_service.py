@@ -11,6 +11,7 @@ from app.platform.db import SqlAlchemyUnitOfWork
 from app.schemas.leave_request import (
     LeaveRequestCreate,
     LeaveRequestDecision,
+    LeaveRequestListCursor,
     LeaveRequestListFilters,
     LeaveRequestListPagination,
 )
@@ -44,6 +45,8 @@ REJECTED_REQUEST_ID = UUID("eeeeeeee-5555-4eee-8eee-eeeeeeee5555")
 CANCELLED_REQUEST_ID = UUID("ffffffff-6666-4fff-8fff-ffffffff6666")
 ORDERED_FIRST_REQUEST_ID = UUID("abababab-7777-4aba-8aba-abababab7777")
 ORDERED_SECOND_REQUEST_ID = UUID("bcbcbcbc-8888-4bcb-8bcb-bcbcbcbc8888")
+DEFAULT_TIMESTAMP_FIRST_REQUEST_ID = UUID("cdcdcdcd-9999-4dcd-8dcd-cdcdcdcd9999")
+DEFAULT_TIMESTAMP_SECOND_REQUEST_ID = UUID("dededede-aaaa-4ede-8ede-dedededeaaaa")
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 
 
@@ -524,18 +527,88 @@ async def test_list_leave_requests_orders_created_at_ties_by_start_date_then_id(
         )
         await session.commit()
 
-        leave_requests = await LeaveRequestService(session).list_leave_requests(
+        service = LeaveRequestService(session)
+        first_page = await service.list_leave_request_page(
             TENANT_ID,
             filters=LeaveRequestListFilters(
                 status=LeaveRequestStatus.PENDING,
                 employee_id=EMPLOYEE_ID,
             ),
-            pagination=LeaveRequestListPagination(limit=2),
+            pagination=LeaveRequestListPagination(limit=1),
+        )
+        assert first_page.next_cursor is not None
+        second_page = await service.list_leave_request_page(
+            TENANT_ID,
+            filters=LeaveRequestListFilters(
+                status=LeaveRequestStatus.PENDING,
+                employee_id=EMPLOYEE_ID,
+            ),
+            pagination=LeaveRequestListPagination(
+                limit=1,
+                cursor=LeaveRequestListCursor.from_token(first_page.next_cursor),
+            ),
         )
 
-        assert [leave_request.id for leave_request in leave_requests] == [
-            ORDERED_FIRST_REQUEST_ID,
-            ORDERED_SECOND_REQUEST_ID,
+        assert [leave_request.id for leave_request in first_page.items] == [
+            ORDERED_FIRST_REQUEST_ID
+        ]
+        assert [leave_request.id for leave_request in second_page.items] == [
+            ORDERED_SECOND_REQUEST_ID
+        ]
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_leave_cursor_does_not_repeat_sqlite_server_default_timestamp_row() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        session.add_all(
+            [
+                LeaveRequest(
+                    id=DEFAULT_TIMESTAMP_FIRST_REQUEST_ID,
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 10, 1),
+                    end_date=date(2026, 10, 1),
+                    status=LeaveRequestStatus.CANCELLED.value,
+                    requested_by_user_id=REQUESTING_USER_ID,
+                ),
+                LeaveRequest(
+                    id=DEFAULT_TIMESTAMP_SECOND_REQUEST_ID,
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type="annual",
+                    start_date=date(2026, 10, 2),
+                    end_date=date(2026, 10, 2),
+                    status=LeaveRequestStatus.CANCELLED.value,
+                    requested_by_user_id=REQUESTING_USER_ID,
+                ),
+            ]
+        )
+        await session.commit()
+
+        service = LeaveRequestService(session)
+        filters = LeaveRequestListFilters(status=LeaveRequestStatus.CANCELLED)
+        first_page = await service.list_leave_request_page(
+            TENANT_ID,
+            filters=filters,
+            pagination=LeaveRequestListPagination(limit=1),
+        )
+        assert first_page.next_cursor is not None
+        second_page = await service.list_leave_request_page(
+            TENANT_ID,
+            filters=filters,
+            pagination=LeaveRequestListPagination(
+                limit=1,
+                cursor=LeaveRequestListCursor.from_token(first_page.next_cursor),
+            ),
+        )
+
+        assert [item.id for item in first_page.items + second_page.items] == [
+            DEFAULT_TIMESTAMP_FIRST_REQUEST_ID,
+            DEFAULT_TIMESTAMP_SECOND_REQUEST_ID,
         ]
     finally:
         await session.close()

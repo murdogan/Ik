@@ -8,6 +8,7 @@ from app.schemas.employee import (
     EMPLOYEE_LIST_DEFAULT_LIMIT,
     EMPLOYEE_LIST_MAX_LIMIT,
     EmployeeCreate,
+    EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
     EmployeeRead,
@@ -268,6 +269,16 @@ def test_employee_list_pagination_has_bounded_defaults() -> None:
 def test_employee_list_pagination_rejects_unbounded_values(data: dict[str, int]) -> None:
     with pytest.raises(ValidationError):
         EmployeeListPagination(**data)
+
+
+def test_employee_list_pagination_rejects_cursor_with_positive_offset() -> None:
+    cursor = EmployeeListCursor(
+        employee_number="WF-001",
+        id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    )
+
+    with pytest.raises(ValidationError):
+        EmployeeListPagination(offset=1, cursor=cursor)
 
 
 def test_employee_read_does_not_expose_tenant_id() -> None:

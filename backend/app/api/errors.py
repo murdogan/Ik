@@ -371,6 +371,14 @@ def employee_lifecycle_error(message: str) -> ApiError:
     )
 
 
+def employee_pagination_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=EMPLOYEE_VALIDATION_ERROR_CODE,
+        message=EMPLOYEE_VALIDATION_ERROR_MESSAGE,
+    )
+
+
 def leave_request_not_found_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -392,6 +400,14 @@ def leave_request_date_range_error(message: str) -> ApiError:
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE,
         message=message,
+    )
+
+
+def leave_request_pagination_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=LEAVE_REQUEST_VALIDATION_ERROR_CODE,
+        message=LEAVE_REQUEST_VALIDATION_ERROR_MESSAGE,
     )
 
 

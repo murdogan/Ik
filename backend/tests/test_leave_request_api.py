@@ -508,6 +508,73 @@ async def test_list_leave_requests_paginates_current_tenant_records() -> None:
         await engine.dispose()
 
 
+async def test_list_leave_requests_exposes_deterministic_cursor_with_array_body() -> None:
+    client, engine = await _client_with_database()
+    try:
+        seen_ids: list[str] = []
+        cursor: str | None = None
+
+        while True:
+            params = {"limit": 1}
+            if cursor is not None:
+                params["cursor"] = cursor
+            response = await client.get(
+                "/api/v1/leave-requests",
+                headers=_tenant_headers(),
+                params=params,
+            )
+
+            assert response.status_code == 200
+            assert len(response.json()) == 1
+            seen_ids.append(response.json()[0]["id"])
+            cursor = response.headers.get("X-Next-Cursor")
+            if cursor is None:
+                break
+
+        assert seen_ids == [
+            str(REJECTED_REQUEST_ID),
+            str(PENDING_REQUEST_ID),
+            str(APPROVED_REQUEST_ID),
+        ]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_leave_requests_rejects_invalid_cursor_and_cursor_offset_mix() -> None:
+    client, engine = await _client_with_database()
+    try:
+        invalid_response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"cursor": "not-a-cursor"},
+        )
+        first_response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={"limit": 1},
+        )
+        mixed_response = await client.get(
+            "/api/v1/leave-requests",
+            headers=_tenant_headers(),
+            params={
+                "cursor": first_response.headers["X-Next-Cursor"],
+                "offset": 1,
+            },
+        )
+
+        for response in (invalid_response, mixed_response):
+            _assert_error_response(
+                response,
+                status_code=422,
+                code="leave_request_validation_error",
+                message="Leave request validation failed",
+            )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_leave_requests_paginates_after_filters_within_current_tenant() -> None:
     client, engine = await _client_with_database()
     try:

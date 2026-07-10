@@ -12,7 +12,7 @@ from app.schemas.dashboard import DashboardSummary, DepartmentDistributionItem
 from app.services.dashboard_service import DashboardService
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import update
+from sqlalchemy import event, update
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -411,6 +411,61 @@ async def test_dashboard_recent_activity_limit_is_applied_after_source_merge() -
 
     await session.close()
     await engine.dispose()
+
+
+async def test_dashboard_default_summary_uses_four_select_statements() -> None:
+    session, engine = await _session_with_seed_data()
+    statements: list[str] = []
+
+    def capture_statement(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters,
+        _context,
+        _executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        await DashboardService(session=session, today=TODAY).get_summary(TENANT_ID)
+
+        assert len(statements) == 4
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+        await session.close()
+        await engine.dispose()
+
+
+async def test_dashboard_without_activity_uses_two_select_statements() -> None:
+    session, engine = await _session_with_seed_data()
+    statement_count = 0
+
+    def count_statements(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters,
+        _context,
+        _executemany: bool,
+    ) -> None:
+        nonlocal statement_count
+        statement_count += 1
+
+    event.listen(engine.sync_engine, "before_cursor_execute", count_statements)
+    try:
+        await DashboardService(
+            session=session,
+            today=TODAY,
+            recent_activity_limit=0,
+        ).get_summary(TENANT_ID)
+
+        assert statement_count == 2
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", count_statements)
+        await session.close()
+        await engine.dispose()
 
 
 async def test_dashboard_summary_returns_zero_state_for_empty_tenant() -> None:

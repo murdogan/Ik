@@ -21,6 +21,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-013 | Transaction/hata sınırı | Application command + Unit of Work, merkezi typed API mapping | Kabul |
 | ADR-014 | Tenant ilişkisel bütünlüğü | Composite tenant foreign key + expand-contract | Kabul |
 | ADR-015 | Concurrency/idempotency/arşiv | PostgreSQL receipt, tenant-scoped row lock, çalışan arşivi | Kabul |
+| ADR-016 | Phase-0 sorgu performansı | Ölçümlü keyset, PostgreSQL trigram/normalize indexleri, aggregate consolidation; cache yok | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -179,12 +180,16 @@ Gerekçe:
 Karar:
 
 - MVP: PostgreSQL FTS/trigram.
+- Employee dizini için case-insensitive literal substring sözleşmesi PostgreSQL `ILIKE` ve
+  `pg_trgm` GIN indexleriyle uygulanır; isimler ve hassas alanlar bu arama kapsamına eklenmez.
 - V1/V2: OpenSearch veya benzeri arama sistemi opsiyon.
 
 Gerekçe:
 
 - MVP'de ikinci sistem yükü azaltılır.
 - ATS/CV ve doküman araması büyüyünce ayrı search gerekir.
+- Kısa/düşük seçicilikli terimlerde PostgreSQL'in ölçerek sequential scan seçmesi hata sayılmaz;
+  breaking minimum arama uzunluğu ayrıca ürün sözleşmesi olmadan eklenmez.
 
 ## 11. ADR-010 AI Gateway
 
@@ -351,7 +356,59 @@ Sonuç:
 - Key'ler tenant'lar arasında çakışmaz; row lock ve archive sorguları tenant predicate'ini
   korur. Bu karar auth/RBAC veya RLS yerine geçmez.
 
-## 17. Ertelenen kararlar
+## 17. ADR-016 Phase-0 pagination ve query-performance baseline
+
+Bağlam:
+
+- Employee ve leave listeleri yalnız offset kullanıyor, derin sayfalarda maliyet büyüyordu.
+- Employee `q` sorgusu ordinary B-tree indexlerinin kullanamadığı case-normalized contains
+  predicate'leri üretiyordu; department normalizasyonu da her satırda hesaplanıyordu.
+- Dashboard varsayılan yanıtta dört ayrı count dahil toplam yedi sıralı SQL statement çalıştırıyordu.
+- Mevcut plain-array response sözleşmesini Faz 1 `{data, meta}` zarfına erken geçirmek uyumluluğu
+  bozardı.
+
+Karar:
+
+- Employee listesi `(employee_number asc, id asc)`, leave request listesi
+  `(created_at desc, start_date asc, id asc)` üzerinden versioned opaque keyset cursor kullanır.
+  Response body plain array kalır; devam değeri `X-Next-Cursor` header'ındadır. Bounded `offset`
+  deprecated compatibility path olarak korunur; positive offset ile cursor birlikte reddedilir.
+- Cursor tenant kimliği veya yetki taşımaz. Tenant filtresi her sorguda cursor'dan bağımsızdır.
+- `0012_p0f_query_performance`, PostgreSQL'de `pg_trgm` extension'ını hazırlar ve arşivli olmayan
+  employee number/email için partial GIN indexleri ekler. Downgrade ortak kullanılabilecek
+  extension'ı düşürmez.
+- Department için `lower(ltrim(rtrim(department)))` stored generated kolonu ve non-archived
+  kayıtlarla sınırlı `(tenant_id, department_normalized)` B-tree indexi kullanılır. Böylece exact
+  case-insensitive filtre satır başına expression çalıştırmaz ve geçmiş whitespace davranışı
+  korunur.
+- Leave keyset sırasını karşılayan
+  `(tenant_id, created_at desc, start_date asc, id asc)` indexi eklenir.
+- Dashboard active/current/new-starter sayıları ile pending-leave scalar subquery'si tek statement
+  olur. Query count varsayılan akışta 7'den 4'e, activity kapalıyken 5'ten 2'ye iner.
+- 10,000 employee + 5,000 leave fixture'ı `VACUUM (ANALYZE)` sonrası gerçek PostgreSQL 16'da
+  `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` ile kontrol edilir. Index adı/row bound/query count
+  ve cursor `rows removed` sınırı regression gate'tir; donanıma duyarlı elapsed time CI pass/fail
+  eşiği değildir.
+- Redis/cache eklenmez. Cache ancak tekrar ölçüm query/index iyileştirmelerinin yetmediğini
+  gösterirse ve tenant/role/scope invalidation sözleşmesi hazırsa yeniden değerlendirilir.
+
+Sonuç:
+
+- Büyüyen listeler stable ordering key'lerinde offset kaymasına bağlı duplicate/skip riskini
+  azaltan deterministic keyset devam yoluna sahiptir; mevcut offset kullanan istemciler çalışmaya
+  devam eder. Cursor bir snapshot garantisi vermez; cursor öncesine eklenen veya ordering key'i
+  değişen satırlar sonraki sayfalarda yeniden konumlanabilir.
+- Selective employee search planı trigram indexlerini, deep employee/leave cursor planları ilgili
+  B-tree indexlerini kullanır. Full-tenant dashboard aggregate'inde planner'ın sequential scan
+  seçmesine izin verilir.
+- OpenSearch, response envelope standardizasyonu, audit-derived dashboard activity ve cache
+  invalidation bu Phase-0 kararının kapsamı değildir.
+
+Kanıt ve tekrar prosedürü:
+
+- [Phase 0 Query Performance Baseline](../09-uygulama/12-phase-0-query-performance-baseline.md)
+
+## 18. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -361,7 +418,7 @@ Sonuç:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 18. İlgili dokümanlar
+## 19. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

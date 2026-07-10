@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -15,16 +16,19 @@ from app.api.errors import (
     EMPLOYEE_VALIDATION_RESPONSES,
     IDEMPOTENCY_KEY_INVALID_RESPONSES,
     IDEMPOTENT_EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
+    employee_pagination_validation_error,
 )
 from app.api.openapi import EMPLOYEES_TAG
 from app.db.session import get_session
 from app.models.employee import EmployeeStatus
 from app.platform.db import SqlAlchemyUnitOfWork
+from app.platform.pagination import MAX_CURSOR_LENGTH, NEXT_CURSOR_HEADER, InvalidCursorError
 from app.platform.tenancy import TenantContext
 from app.schemas.employee import (
     EMPLOYEE_LIST_DEFAULT_LIMIT,
     EMPLOYEE_LIST_MAX_LIMIT,
     EmployeeCreate,
+    EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
     EmployeeRead,
@@ -103,13 +107,32 @@ def get_employee_list_pagination(
         int,
         Query(
             ge=0,
+            deprecated=True,
             description=(
-                "Number of matching tenant employees to skip before returning results."
+                "Compatibility path: number of matching tenant employees to skip. Prefer the "
+                "cursor returned in X-Next-Cursor for growing lists."
             ),
         ),
     ] = 0,
+    cursor: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=MAX_CURSOR_LENGTH,
+            description=(
+                "Optional opaque keyset cursor returned in X-Next-Cursor. It takes precedence "
+                "over the offset compatibility path and must be used with offset=0."
+            ),
+        ),
+    ] = None,
 ) -> EmployeeListPagination:
-    return EmployeeListPagination(limit=limit, offset=offset)
+    try:
+        decoded_cursor = EmployeeListCursor.from_token(cursor) if cursor is not None else None
+    except (InvalidCursorError, ValidationError) as exc:
+        raise employee_pagination_validation_error() from exc
+    if decoded_cursor is not None and offset != 0:
+        raise employee_pagination_validation_error()
+    return EmployeeListPagination(limit=limit, offset=offset, cursor=decoded_cursor)
 
 
 @router.get(
@@ -119,17 +142,34 @@ def get_employee_list_pagination(
     description=(
         "Lists employee directory records for the current tenant from the tenant header context. "
         "Optional filters cover department, lifecycle status, and employee number or email "
-        "search; tenant isolation is applied before bounded limit/offset pagination."
+        "search; tenant isolation is applied before bounded keyset pagination. The bounded "
+        "limit/offset path remains available for compatibility."
     ),
     response_description="Employee list.",
+    responses={
+        status.HTTP_200_OK: {
+            "headers": {
+                NEXT_CURSOR_HEADER: {
+                    "description": (
+                        "Opaque cursor for the next deterministic page, when one exists."
+                    ),
+                    "schema": {"type": "string"},
+                }
+            }
+        }
+    },
 )
 async def list_employees(
+    response: Response,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
     filters: Annotated[EmployeeListFilters, Depends(get_employee_list_filters)],
     pagination: Annotated[EmployeeListPagination, Depends(get_employee_list_pagination)],
 ) -> list[EmployeeRead]:
-    return await service.list_employees(tenant_context.tenant_id, filters, pagination)
+    page = await service.list_employee_page(tenant_context.tenant_id, filters, pagination)
+    if page.next_cursor is not None:
+        response.headers[NEXT_CURSOR_HEADER] = page.next_cursor
+    return page.items
 
 
 @router.post(

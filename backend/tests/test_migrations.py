@@ -71,7 +71,7 @@ def _database_column_signatures(
         str(column["name"]): (
             bool(column["nullable"]),
             bool(column["primary_key"]),
-            column["default"] is not None,
+            column["default"] is not None or column.get("computed") is not None,
         )
         for column in columns
     }
@@ -297,8 +297,9 @@ def test_core_migration_chain_is_linear() -> None:
         "0010_contract_tenant_relational_integrity"
     )
     p0e_revision = script.get_revision("0011_p0e_concurrency_idempotency_archive")
+    p0f_revision = script.get_revision("0012_p0f_query_performance")
 
-    assert script.get_heads() == ["0011_p0e_concurrency_idempotency_archive"]
+    assert script.get_heads() == ["0012_p0f_query_performance"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -325,6 +326,8 @@ def test_core_migration_chain_is_linear() -> None:
     )
     assert p0e_revision is not None
     assert p0e_revision.down_revision == "0010_contract_tenant_relational_integrity"
+    assert p0f_revision is not None
+    assert p0f_revision.down_revision == "0011_p0e_concurrency_idempotency_archive"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -613,6 +616,19 @@ def test_p0e_concurrency_idempotency_archive_migration_exists() -> None:
     assert "uq_command_idempotency_tenant_key" in text
     assert "archived_at" in text
     assert 'ondelete="RESTRICT"' in text
+
+
+def test_p0f_query_performance_migration_exists() -> None:
+    migration = Path("backend/alembic/versions/0012_p0f_query_performance.py")
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "pg_trgm" in text
+    assert "ix_employees_employee_number_trgm" in text
+    assert "ix_employees_email_trgm" in text
+    assert "department_normalized" in text
+    assert "ix_employees_tenant_department_normalized" in text
+    assert "ix_leave_requests_tenant_created_cursor" in text
 
 
 def test_readme_documents_migration_commands() -> None:

@@ -13,6 +13,7 @@ from app.core.error_messages import (
     EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
 )
 from app.models.employee import EmployeeStatus
+from app.platform.pagination import decode_cursor, encode_cursor
 from app.schemas.date_fields import DateOnly
 
 EMAIL_PATTERN: Pattern[str] = compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -126,6 +127,20 @@ class EmployeeListFilters(BaseModel):
         return value or None
 
 
+class EmployeeListCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_number: str = Field(min_length=1, max_length=64)
+    id: UUID
+
+    @classmethod
+    def from_token(cls, token: str) -> "EmployeeListCursor":
+        return cls.model_validate(decode_cursor(token, expected_resource="employees"))
+
+    def to_token(self) -> str:
+        return encode_cursor("employees", self.model_dump(mode="json"))
+
+
 class EmployeeListPagination(BaseModel):
     limit: int = Field(
         default=EMPLOYEE_LIST_DEFAULT_LIMIT,
@@ -133,6 +148,13 @@ class EmployeeListPagination(BaseModel):
         le=EMPLOYEE_LIST_MAX_LIMIT,
     )
     offset: int = Field(default=0, ge=0)
+    cursor: EmployeeListCursor | None = None
+
+    @model_validator(mode="after")
+    def reject_cursor_with_positive_offset(self) -> Self:
+        if self.cursor is not None and self.offset > 0:
+            raise ValueError("Cursor pagination requires offset=0")
+        return self
 
 
 class EmployeeRead(BaseModel):

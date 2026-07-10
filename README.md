@@ -84,7 +84,19 @@ IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run p
 yönetim bağlantısı olarak kullanır, benzersiz ve geçici bir test veritabanı oluşturur ve test
 oturumu sonunda siler; uygulama veya geliştirici veritabanında upgrade/downgrade çalıştırmaz.
 Bu hat Alembic upgrade/downgrade ve drift kontrollerini, PostgreSQL'e özgü tip/kısıt
-davranışlarını ve mevcut API sözleşmesini gerçek PostgreSQL üzerinde doğrular.
+davranışlarını, 10k employee query planlarını ve mevcut API sözleşmesini gerçek PostgreSQL
+üzerinde doğrular. P0F performans fixture'ını ve machine-readable EXPLAIN kanıtını tek başına
+çalıştırmak için:
+
+```bash
+IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres \
+  uv run pytest -q -m postgres \
+  backend/tests/integration/test_postgresql_p0f_performance.py -s
+```
+
+Ayrıntılı veri profili, query-count sınırları ve yakalanan PostgreSQL 16.4 planları
+[`docs/09-uygulama/12-phase-0-query-performance-baseline.md`](docs/09-uygulama/12-phase-0-query-performance-baseline.md)
+içindedir.
 
 Uygulama veritabanı engine/sessionmaker yaşam döngüsünü FastAPI lifespan yönetir ve
 kapanışta engine'i dispose eder. Runtime ayarları `IK_DATABASE_POOL_SIZE`,
@@ -188,14 +200,15 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/openapi.json`
 - `/api/v1/dashboard/summary` active employee count, pending leave count, this-month
   starters, department distribution and recent activity
-- `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, `limit`/`offset` pagination,
-  default `limit=50`, max `limit=200`, default `offset=0`, oluşturma/detay/güncelleme/silme
+- `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, deterministic
+  `cursor`/`X-Next-Cursor` keyset pagination, geriye uyumlu deprecated `offset`, default
+  `limit=50`, max `limit=200`, oluşturma/detay/güncelleme/silme
 - `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
   `period_year` filtresi, tenant-scoped çalışan kontrolü ve mevcut leave requestlerden otomatik
   bakiye üretmeme davranışı
 - `/api/v1/leave-requests` liste + `status`/`employee_id`/`start_date`/`end_date` filtreleri,
-  `limit`/`offset` pagination, default `limit=50`, max `limit=200`, default `offset=0`,
-  oluşturma/onay/red/iptal
+  deterministic `cursor`/`X-Next-Cursor` keyset pagination, geriye uyumlu deprecated `offset`,
+  default `limit=50`, max `limit=200`, oluşturma/onay/red/iptal
 
 Smoke testi ayrıca generated OpenAPI operasyonlarını, güncel dokümanlardaki endpoint tablolarını
 ve runtime'da gerçekten çağrılan endpoint setini kendi coverage registry'siyle karşılaştırır;
@@ -246,8 +259,11 @@ Bu W4B3 örnekleri mevcut FastAPI davranışını gösterir: employee ve leave e
 doğrudan schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
 HTTP request bloklarında gösterilen tenant header'ları her domain endpoint için zorunludur.
 List endpointleri plain JSON array döner; eşleşen kayıt yoksa `200 []` yanıtı alınır ve pagination
-metadata dönmez. Create ve decision örneklerindeki yeni `id` değerleri temsili server-generated
-kayıtlardır; gerçek çağrıda aktif tenant içindeki mevcut kayıt id'leri kullanılmalıdır.
+body metadata dönmez. Employee ve leave-request listelerinde başka sayfa varsa response
+`X-Next-Cursor` header'ı taşır; devam isteği `cursor` query parametresiyle yapılır. Bounded
+`offset` yolu geriye uyumluluk için korunur ancak deprecated'dir. Create ve decision örneklerindeki
+yeni `id` değerleri temsili server-generated kayıtlardır; gerçek çağrıda aktif tenant içindeki
+mevcut kayıt id'leri kullanılmalıdır.
 
 Employee list örneği:
 
@@ -259,6 +275,10 @@ X-Correlation-Id: req_wf_demo_001
 ```
 
 Response `200`:
+
+```http
+X-Next-Cursor: <opaque-versioned-cursor>
+```
 
 ```json
 [

@@ -1,7 +1,8 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -16,12 +17,14 @@ from app.api.errors import (
     LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES,
     LEAVE_REQUEST_VALIDATION_RESPONSES,
     leave_request_date_range_error,
+    leave_request_pagination_validation_error,
 )
 from app.api.openapi import LEAVE_REQUESTS_TAG
 from app.core.error_messages import LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE
 from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
 from app.platform.db import SqlAlchemyUnitOfWork
+from app.platform.pagination import MAX_CURSOR_LENGTH, NEXT_CURSOR_HEADER, InvalidCursorError
 from app.platform.tenancy import TenantContext
 from app.schemas.date_fields import DateOnly
 from app.schemas.leave_request import (
@@ -29,6 +32,7 @@ from app.schemas.leave_request import (
     LEAVE_REQUEST_LIST_MAX_LIMIT,
     LeaveRequestCreate,
     LeaveRequestDecision,
+    LeaveRequestListCursor,
     LeaveRequestListFilters,
     LeaveRequestListPagination,
     LeaveRequestRead,
@@ -102,8 +106,7 @@ def get_leave_request_list_pagination(
             ge=1,
             le=LEAVE_REQUEST_LIST_MAX_LIMIT,
             description=(
-                "Maximum leave requests to return for this tenant. Bounded to protect large "
-                "lists."
+                "Maximum leave requests to return for this tenant. Bounded to protect large lists."
             ),
         ),
     ] = LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
@@ -111,13 +114,32 @@ def get_leave_request_list_pagination(
         int,
         Query(
             ge=0,
+            deprecated=True,
             description=(
-                "Number of matching tenant leave requests to skip before returning results."
+                "Compatibility path: number of matching tenant leave requests to skip. Prefer "
+                "the cursor returned in X-Next-Cursor for growing lists."
             ),
         ),
     ] = 0,
+    cursor: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=MAX_CURSOR_LENGTH,
+            description=(
+                "Optional opaque keyset cursor returned in X-Next-Cursor. It takes precedence "
+                "over the offset compatibility path and must be used with offset=0."
+            ),
+        ),
+    ] = None,
 ) -> LeaveRequestListPagination:
-    return LeaveRequestListPagination(limit=limit, offset=offset)
+    try:
+        decoded_cursor = LeaveRequestListCursor.from_token(cursor) if cursor is not None else None
+    except (InvalidCursorError, ValidationError) as exc:
+        raise leave_request_pagination_validation_error() from exc
+    if decoded_cursor is not None and offset != 0:
+        raise leave_request_pagination_validation_error()
+    return LeaveRequestListPagination(limit=limit, offset=offset, cursor=decoded_cursor)
 
 
 @router.get(
@@ -127,17 +149,38 @@ def get_leave_request_list_pagination(
     description=(
         "Lists leave request review records for the current tenant from the tenant header "
         "context. Optional filters cover workflow status, employee, and overlapping date "
-        "windows; tenant isolation is applied before bounded limit/offset pagination."
+        "windows; tenant isolation is applied before bounded keyset pagination. The bounded "
+        "limit/offset path remains available for compatibility."
     ),
     response_description="Leave request list.",
+    responses={
+        status.HTTP_200_OK: {
+            "headers": {
+                NEXT_CURSOR_HEADER: {
+                    "description": (
+                        "Opaque cursor for the next deterministic page, when one exists."
+                    ),
+                    "schema": {"type": "string"},
+                }
+            }
+        }
+    },
 )
 async def list_leave_requests(
+    response: Response,
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     service: Annotated[LeaveRequestService, Depends(get_leave_request_service)],
     filters: Annotated[LeaveRequestListFilters, Depends(get_leave_request_list_filters)],
     pagination: Annotated[LeaveRequestListPagination, Depends(get_leave_request_list_pagination)],
 ) -> list[LeaveRequestRead]:
-    return await service.list_leave_requests(tenant_context.tenant_id, filters, pagination)
+    page = await service.list_leave_request_page(
+        tenant_context.tenant_id,
+        filters,
+        pagination,
+    )
+    if page.next_cursor is not None:
+        response.headers[NEXT_CURSOR_HEADER] = page.next_cursor
+    return page.items
 
 
 @router.post(

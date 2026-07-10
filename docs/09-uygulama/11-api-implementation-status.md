@@ -2,9 +2,35 @@
 
 Date: 2026-07-10
 Branch: `codex/mvp-phase0-until-20260711-1100`
-Task: `P0E Concurrency, idempotency and destructive-delete hardening`
+Task: `P0F Pagination, search and dashboard query-performance baseline`
 
 ## Scope
+
+### P0F pagination, search and query-performance baseline
+
+- Added versioned opaque keyset cursors to employee and leave-request high-growth lists while
+  preserving their plain-array bodies and bounded `offset` compatibility path. A page that proves
+  more rows exist returns `X-Next-Cursor`; positive `offset` cannot be combined with `cursor`.
+- Employee ordering is `(employee_number asc, id asc)`. Leave ordering and cursor predicates use
+  the complete mixed tuple `(created_at desc, start_date asc, id asc)`. Cursor values never replace
+  the independent tenant predicate.
+- Preserved case-insensitive literal substring `q` behavior for employee number/email, including
+  literal SQL wildcards, while switching PostgreSQL to index-compatible `ILIKE`. Revision
+  `0012_p0f_query_performance` adds non-archived `pg_trgm` GIN indexes for both fields.
+- Replaced row-by-row `lower(trim(department))` filtering with stored generated
+  `department_normalized` and `(tenant_id, department_normalized)`. Added the leave keyset index
+  `(tenant_id, created_at desc, start_date asc, id asc)`.
+- Consolidated four sequential dashboard count queries into one conditional aggregate with a
+  tenant-scoped pending-leave scalar subquery. Measured query count is now 4 instead of 7 for the
+  default summary, and 2 instead of 5 when activity is disabled.
+- Added deterministic 10,000-employee + 5,000-leave PostgreSQL seed/`VACUUM (ANALYZE)` procedure
+  and `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` regressions. Selective search proves both trigram
+  indexes, employee cursor proves the tenant/employee-number unique index, and leave cursor proves
+  the new composite index. Full-tenant dashboard aggregates may correctly use a sequential scan.
+- Kept cache out of scope after measurement: no Redis/cache dependency, cache key, invalidation
+  behavior, deployment, auth, Phase-1 envelope, audit stream, or unrelated feature was added.
+- Reproduction and captured PostgreSQL 16.4 evidence are recorded in
+  `docs/09-uygulama/12-phase-0-query-performance-baseline.md`.
 
 ### P0E concurrency, idempotency and archive hardening
 
@@ -144,13 +170,13 @@ Task: `P0E Concurrency, idempotency and destructive-delete hardening`
 | GET | `/` | Implemented | Wealthy Falcon HR landing response, OpenAPI operation, and docs-table registry |
 | GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and docs-table registry |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
-| GET | `/api/v1/employees` | Implemented | Tenant list, filters, pagination, OpenAPI operation, and docs-table registry |
+| GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
 | GET | `/api/v1/employees/{employee_id}` | Implemented | Active detail lookup, archive hiding, tenant isolation, OpenAPI, and smoke |
 | PATCH | `/api/v1/employees/{employee_id}` | Implemented | Active partial update, lifecycle/archive rules, OpenAPI, and smoke |
 | DELETE | `/api/v1/employees/{employee_id}` | Implemented | Idempotent archive via `archived_at`, history retention, OpenAPI, and smoke |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Active-employee manual summaries, archive hiding, tenant isolation, OpenAPI, and smoke |
-| GET | `/api/v1/leave-requests` | Implemented | Tenant list, filters, pagination, OpenAPI operation, and docs-table registry |
+| GET | `/api/v1/leave-requests` | Implemented | Tenant filters, mixed-order cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/leave-requests` | Implemented | Active-employee pending create, tenant checks, optional idempotent replay, OpenAPI, and smoke |
 | POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
@@ -169,9 +195,10 @@ Task: `P0E Concurrency, idempotency and destructive-delete hardening`
   headers return `tenant_header_invalid` with
   `X-Tenant-Id header must be a single canonical hyphenated UUID`, before unrelated
   payload/query/path validation errors.
-- Employee list supports `department`, `status`, `q`, `limit`, and `offset`. Filters are scoped to
-  the current tenant before pagination. `limit` defaults to `50`, is capped at `200`, and `offset`
-  defaults to `0`.
+- Employee list supports `department`, `status`, `q`, `limit`, deterministic `cursor`, and the
+  deprecated `offset` compatibility path. Filters and archive visibility are tenant-scoped before
+  pagination. `limit` defaults to `50` and is capped at `200`; another page is exposed only through
+  `X-Next-Cursor` after a `limit + 1` probe.
 - Employee lifecycle validation is active: `terminated` requires `employment_end_date`; `active`
   and `on_leave` require `employment_end_date: null`. Violations return
   `employee_invalid_lifecycle`, and the database also has
@@ -182,15 +209,15 @@ Task: `P0E Concurrency, idempotency and destructive-delete hardening`
   exclude archived rows. The employee row, employee number, and existing leave/balance history are
   retained; historical leave list/activity remains available within its tenant.
 - Leave request list supports `status`, `employee_id`, inclusive overlapping `start_date` and
-  `end_date` filters, plus bounded `limit` and `offset` pagination. Filters remain scoped to the
-  current tenant before pagination. `limit` defaults to `50`, is capped at `200`, and `offset`
-  defaults to `0`. Ordering is deterministic by `created_at desc`, `start_date asc`, and `id asc`.
+  `end_date` filters, plus bounded `limit`, deterministic `cursor`, and deprecated `offset`
+  compatibility. Ordering/cursor fields are `created_at desc`, `start_date asc`, and `id asc`.
 - Leave request decision endpoints approve, reject, or cancel only pending requests and require the
   deciding user to belong to the same tenant. The tenant-scoped row is locked through the command
   transaction. Concurrent contradictory decisions have exactly one success; the loser receives
   the stable transition conflict. Equivalent keyed retries replay the first successful terminal
   response rather than re-running the transition.
-- Dashboard summary is DB-backed and tenant-scoped. It returns active employee count, workforce
+- Dashboard summary is DB-backed, tenant-scoped, and bounded to four SELECT statements with normal
+  recent activity (two without activity). It returns active employee count, workforce
   count, pending leave count, new starters this month, department distribution, recent activity,
   and compatibility fields currently used by the frontend-facing contract.
 - Leave balance summaries are read-only manual placeholders backed by
@@ -343,16 +370,37 @@ The runtime scenarios currently verify:
 - `/health`, `/`, and `/openapi.json`.
 - Tenant header missing, invalid, repeated, and cross-tenant behavior.
 - Employee create/idempotent replay/list/detail/update/archive/repeated archive, filters,
-  pagination, lifecycle status handling, error envelopes, history-preserving visibility, and
-  tenant isolation.
+  cursor plus offset-compatibility pagination, lifecycle status handling, error envelopes,
+  history-preserving visibility, and tenant isolation.
 - Leave balance read-only summaries, `period_year` filtering, placeholder flags, tenant
   isolation, and the absence of synthetic balances from leave request records.
-- Leave request create/list/approve/reject/cancel, keyed decision replay, filters, pagination,
-  transition conflicts, error envelopes, cross-tenant user/request checks, date-window behavior,
-  and tenant isolation.
+- Leave request create/list/approve/reject/cancel, keyed decision replay, filters, mixed-order
+  cursor plus offset-compatibility pagination, transition conflicts, error envelopes,
+  cross-tenant user/request checks, date-window behavior, and tenant isolation.
 - Dashboard counts, department distribution, recent activity shape, and tenant isolation.
 
 ## Verification
+
+P0F local gate evidence:
+
+- `uv run ruff check backend`: passed.
+- `uv run pytest -q`: passed, 420 fast tests passed and 17 PostgreSQL tests deselected; the one
+  existing Starlette `TestClient` deprecation warning remains.
+- `uv run python scripts/backend_api_smoke.py`: passed, `BACKEND_SMOKE_OK`, all 15 documented
+  endpoints covered, including employee/leave cursor traversal, no-overlap and cursor/offset
+  conflict checks.
+- PostgreSQL 16.4 user-space test cluster with
+  `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres`: passed, 17 integration tests passed and
+  420 fast tests deselected. This includes Alembic round-trip/drift plus the disposable 10,000
+  employee/5,000 leave `EXPLAIN (ANALYZE, BUFFERS)` regression.
+- Captured selective search used both employee trigram GIN indexes; employee and leave deep pages
+  used `uq_employees_tenant_employee_number` and
+  `ix_leave_requests_tenant_created_cursor`. Dashboard query-count tests enforce 4 default/2
+  without activity versus the pre-P0F 7/5 baseline.
+
+Required P0F completion gates are the four commands above. Timing/buffer evidence and the exact
+repeat procedure are in `12-phase-0-query-performance-baseline.md`; elapsed time is evidence rather
+than a hardware-sensitive pass/fail assertion.
 
 P0E regression coverage includes:
 
@@ -469,9 +517,9 @@ Historical P0B local gate evidence retained for continuity:
 
 - Auth/session/RBAC dependencies, permission enforcement, and current-user context.
 - Tenant current/settings/onboarding endpoints plus user/role management endpoints.
-- Standard `{ data, meta }` response envelope, global correlation middleware, and validation/error
-  normalization beyond the employee and leave endpoint families already covered.
-- Cursor pagination standardization, sort controls, and response metadata.
+- Phase-1 `{data, meta}` response envelope, global sort controls, global correlation middleware,
+  and validation/error normalization beyond the employee and leave endpoint families already
+  covered.
 - Idempotency receipt TTL/cleanup policy and expansion beyond the current employee-create and
   leave-create/decision command scope.
 - Authorized retention/offboarding orchestration around the tenant-root graph boundary; there is

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Self
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from app.core.error_messages import (
     LEAVE_REQUEST_FILTER_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE,
 )
 from app.models.leave_request import LeaveRequestStatus
+from app.platform.pagination import decode_cursor, encode_cursor
 from app.schemas.date_fields import DateOnly
 
 LEAVE_REQUEST_LIST_DEFAULT_LIMIT = 50
@@ -70,6 +72,28 @@ class LeaveRequestListFilters(BaseModel):
         return self
 
 
+class LeaveRequestListCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    created_at: datetime
+    start_date: DateOnly
+    id: UUID
+
+    @field_validator("created_at")
+    @classmethod
+    def require_timezone_aware_created_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Leave request cursor created_at must include a timezone")
+        return value
+
+    @classmethod
+    def from_token(cls, token: str) -> "LeaveRequestListCursor":
+        return cls.model_validate(decode_cursor(token, expected_resource="leave_requests"))
+
+    def to_token(self) -> str:
+        return encode_cursor("leave_requests", self.model_dump(mode="json"))
+
+
 class LeaveRequestListPagination(BaseModel):
     limit: int = Field(
         default=LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
@@ -77,6 +101,13 @@ class LeaveRequestListPagination(BaseModel):
         le=LEAVE_REQUEST_LIST_MAX_LIMIT,
     )
     offset: int = Field(default=0, ge=0)
+    cursor: LeaveRequestListCursor | None = None
+
+    @model_validator(mode="after")
+    def reject_cursor_with_positive_offset(self) -> Self:
+        if self.cursor is not None and self.offset > 0:
+            raise ValueError("Cursor pagination requires offset=0")
+        return self
 
 
 class LeaveRequestRead(BaseModel):

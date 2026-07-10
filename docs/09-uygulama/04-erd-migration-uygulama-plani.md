@@ -48,10 +48,26 @@ transaction'ı tenant + leave request ID ile `SELECT ... FOR UPDATE` kullanır; 
 `pending` state terminal karara geçebilir. Gerçek PostgreSQL concurrency testi eşzamanlı
 approve/reject işlemlerinden tam birinin başarılı olduğunu doğrular.
 
+### 1.3 Uygulanan P0F query-performance geçişi
+
+`0012_p0f_query_performance`, public response body'yi değiştirmeden measured query planlarını
+destekler:
+
+- PostgreSQL `pg_trgm` extension'ı ve non-archived employee number/email partial GIN indexleri;
+- `lower(ltrim(rtrim(department)))` stored generated `department_normalized` kolonu ile
+  non-archived `(tenant_id, department_normalized)` partial B-tree indexi;
+- leave keyset sırasını karşılayan
+  `(tenant_id, created_at desc, start_date asc, id asc)` B-tree indexi.
+
+Downgrade indexleri ve generated kolonu kaldırır ancak başka consumer'larca kullanılabilecek
+`pg_trgm` extension'ını kaldırmaz. PostgreSQL-specific index/plan iddiaları 10,000 employee fixture
+ve `EXPLAIN (ANALYZE, BUFFERS)` entegrasyon testiyle doğrulanır; SQLite yalnız zincir/model
+uyumluluğu içindir.
+
 ## 2. Migration sırası
 
 Bu tablo ilk ürün planındaki kavramsal uygulama sırasıdır; `Plan` değerleri yayınlanmış Alembic
-revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1/1.2 bölümleri,
+revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1/1.2/1.3 bölümleri,
 migration history'si ve Alembic head otoritatiftir.
 
 | Plan | Tablo/alan | Faz | Gerekçe |
