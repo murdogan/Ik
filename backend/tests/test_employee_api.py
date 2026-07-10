@@ -529,6 +529,22 @@ async def test_list_employees_filters_by_department_within_current_tenant() -> N
         await engine.dispose()
 
 
+async def test_list_employee_department_filter_requires_exact_match() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"department": "peop"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employees_filters_by_status_within_current_tenant() -> None:
     client, engine = await _client_with_database()
     try:
@@ -540,6 +556,26 @@ async def test_list_employees_filters_by_status_within_current_tenant() -> None:
 
         assert response.status_code == 200
         assert [employee["employee_number"] for employee in response.json()] == ["WF-010"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_rejects_invalid_status_filter() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"status": "inactive"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_validation_error",
+            message="Employee request validation failed",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -563,6 +599,22 @@ async def test_list_employees_searches_employee_number_and_email() -> None:
         assert [employee["employee_number"] for employee in number_response.json()] == ["WF-010"]
         assert email_response.status_code == 200
         assert [employee["employee_number"] for employee in email_response.json()] == ["WF-020"]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employee_query_treats_sql_wildcards_as_literal_text() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"q": "%"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == []
     finally:
         await client.aclose()
         await engine.dispose()
