@@ -1,5 +1,7 @@
 import importlib
 import pkgutil
+import subprocess
+import sys
 from pathlib import Path
 
 import app.models as model_package
@@ -20,6 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
+ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = Path("alembic.ini")
 
 
@@ -174,6 +177,64 @@ def _compare_type(context, _inspected_column, _metadata_column, _inspected_type,
     return None
 
 
+def _assert_database_matches_current_model_schema(database_path: Path) -> None:
+    model_tables = _current_model_tables()
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        inspector = inspect(engine)
+        migrated_tables = set(inspector.get_table_names())
+
+        assert set(Base.metadata.tables) == set(model_tables)
+        assert migrated_tables == set(model_tables) | {"alembic_version"}
+
+        for table in model_tables.values():
+            assert _database_column_signatures(
+                inspector.get_columns(table.name)
+            ) == _model_column_signatures(table)
+            assert _database_index_signatures(
+                inspector.get_indexes(table.name)
+            ) == _model_index_signatures(table)
+            assert _database_unique_constraint_signatures(
+                inspector.get_unique_constraints(table.name)
+            ) == _model_unique_constraint_signatures(table)
+            assert _database_foreign_key_signatures(
+                inspector.get_foreign_keys(table.name)
+            ) == _model_foreign_key_signatures(table)
+            assert _database_check_constraint_names(
+                inspector.get_check_constraints(table.name)
+            ) == _model_check_constraint_names(table)
+
+        with engine.connect() as connection:
+            current_revision = connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+
+        assert current_revision == _script_directory().get_current_head()
+    finally:
+        engine.dispose()
+
+
+def _run_alembic_upgrade_head_subprocess(
+    database_url: str,
+) -> subprocess.CompletedProcess[str]:
+    command = (
+        "from alembic import command\n"
+        "from alembic.config import Config\n"
+        "from sys import argv\n"
+        "config = Config('alembic.ini')\n"
+        "config.set_main_option('sqlalchemy.url', argv[1])\n"
+        "command.upgrade(config, 'head')\n"
+    )
+    return subprocess.run(
+        [sys.executable, "-c", command, database_url],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -216,49 +277,29 @@ def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> No
     database_path = tmp_path / "migration-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
-    model_tables = _current_model_tables()
 
     alembic_command.upgrade(config, "head")
 
-    engine = create_engine(f"sqlite:///{database_path}")
-    try:
-        inspector = inspect(engine)
-        migrated_tables = set(inspector.get_table_names())
+    _assert_database_matches_current_model_schema(database_path)
 
-        assert set(Base.metadata.tables) == set(model_tables)
-        assert migrated_tables == set(model_tables) | {"alembic_version"}
 
-        for table in model_tables.values():
-            assert _database_column_signatures(
-                inspector.get_columns(table.name)
-            ) == _model_column_signatures(table)
-            assert _database_index_signatures(
-                inspector.get_indexes(table.name)
-            ) == _model_index_signatures(table)
-            assert _database_unique_constraint_signatures(
-                inspector.get_unique_constraints(table.name)
-            ) == _model_unique_constraint_signatures(table)
-            assert _database_foreign_key_signatures(
-                inspector.get_foreign_keys(table.name)
-            ) == _model_foreign_key_signatures(table)
-            assert _database_check_constraint_names(
-                inspector.get_check_constraints(table.name)
-            ) == _model_check_constraint_names(table)
+def test_alembic_upgrade_head_subprocess_creates_current_model_schema(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-subprocess-smoke.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
 
-        with engine.connect() as connection:
-            current_revision = connection.execute(
-                text("select version_num from alembic_version")
-            ).scalar_one()
+    result = _run_alembic_upgrade_head_subprocess(database_url)
 
-        assert current_revision == _script_directory().get_current_head()
-    finally:
-        engine.dispose()
+    assert result.returncode == 0, result.stderr or result.stdout
+    _assert_database_matches_current_model_schema(database_path)
 
 
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
+    _current_model_tables()
 
     alembic_command.upgrade(config, "head")
 
