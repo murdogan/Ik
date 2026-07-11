@@ -255,15 +255,17 @@ WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
 
 ## 8. Seed planı
 
-Demo/development seed:
+Mevcut local/development seed deterministik ve idempotenttir:
 
-- 2 tenant: `demo`, `acme`.
-- Her tenant için 1 `tenant_admin`.
-- Her tenant için 1 `hr_specialist`.
-- Demo tenant için 20 employee.
-- 3 department, 5 position.
+- 2 tenant: `wealthy-falcon-demo`, `atlas-people-demo`.
+- 5 user, 8 employee ve 5 leave request.
+- Department ve position değerleri mevcut employee kolonlarında sentetik metin olarak tutulur;
+  ayrı role/department/position kayıtları henüz seed edilmez.
+- Tenant, user, employee ve leave request UUID'leri tekrar çalıştırmalarda sabittir.
 
-Seed verisi gerçek kişisel veri içermemelidir.
+Role atamaları ile ayrı organization/department/position tablolarını içeren daha geniş seed,
+ilgili ürün fazlarının şeması ve authorization sözleşmesi uygulanmadan eklenmez. Seed verisi gerçek
+kişisel veri içermemelidir.
 
 ## 9. Kabul kriterleri
 

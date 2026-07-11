@@ -121,6 +121,13 @@ Final commands and results are recorded here after the complete P0G rerun:
 | Query-plan baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p0f_performance.py` | Passed, 1 test with 10k employee/5k leave EXPLAIN assertions |
 | Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 22 P0G files; clean status verified after commit |
 
+The final continuation resumed from clean checkpoint `c9c99c9` and reproduced the matrix before
+this documentation-only sync: the fast lane passed 436 tests with 17 deselected; the complete
+PostgreSQL 17.10 lane passed 17 tests with 436 deselected; and the focused OpenAPI/import, SQLite
+migration, PostgreSQL baseline, tenant-integrity, concurrency and query-plan commands passed
+39, 22, 5, 5, 6 and 1 tests respectively. Ruff and `BACKEND_SMOKE_OK` also passed at the same
+checkpoint. No runtime, migration or OpenAPI artifact changed during the final documentation sync.
+
 The continuation explicitly reversed the PostgreSQL test-file order to verify that the function-scope
 database isolation does not depend on the normal collection order:
 

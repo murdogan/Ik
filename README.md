@@ -772,8 +772,9 @@ henüz yoktur:
 
 ## Durum
 
-P0A–P0G Faz 0 mimari kapısı yerelde yeşildir. Güncel uygulama yüzeyi, intentional
-OpenAPI farkları, PostgreSQL/SQLite kanıtları ve açık plan sapmaları
+P0A–P0G'nin numaralanmış Faz 0 mimari kapısı yerelde yeşildir; daha geniş master-plan sapmaları
+Murat review kararını bekler. Güncel uygulama yüzeyi, intentional OpenAPI farkları,
+PostgreSQL/SQLite kanıtları ve açık plan sapmaları
 [API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md) içinde kayıtlıdır.
 
 Queue `STOP — awaiting Murat review` checkpoint'indedir; Faz 1 başlatılmamıştır. Yerel P0G

@@ -42,6 +42,9 @@ bozmasını engeller. PostgreSQL hattı en az şunları kanıtlar:
 - Tenant relational-integrity preflight'ının orphan/cross-tenant tespiti, composite foreign
   key'lerin validation durumu, servis bypass eden doğrudan write negatifleri ve valid veri koruyan
   expand-contract upgrade/downgrade akışı.
+- Concurrent employee create için tek winner ve kararlı conflict mapping'i, gerçek DB lock hata
+  mapping'i, leave kararlarında tam bir terminal winner, aynı idempotency key ile tek resource
+  replay'i, employee archive/history `RESTRICT` davranışı ve unsafe downgrade reddi.
 - Mevcut tenant-scoped API ve OpenAPI operasyon setinin PostgreSQL üzerindeki uyumluluğu.
 - Pool/bağlantı yaşam döngüsü ile `statement_timeout` ve PostgreSQL 16 uyumlu
   `idle_in_transaction_session_timeout` ayarları.
