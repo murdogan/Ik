@@ -79,7 +79,20 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
     assert snapshot["checkpoint"] == "F1E Phase 1 security gate and review checkpoint"
     assert snapshot["comparison_base"] == "54a3678"
     assert snapshot["contract"]["operation_count"] == 24
-    assert snapshot["contract"] == build_openapi_contract_manifest(create_app().openapi())
+    current = build_openapi_contract_manifest(create_app().openapi())
+
+    # The snapshot remains a historical Phase-1 compatibility checkpoint. F2 adds operations,
+    # schemas, tags, and a bearer scheme; project only the frozen Phase-1 surface instead of
+    # manufacturing a broad duplicate snapshot before the planned F2F reconciliation.
+    assert {
+        operation: current["operations"].get(operation)
+        for operation in snapshot["contract"]["operations"]
+    } == snapshot["contract"]["operations"]
+    for group_name, components in snapshot["contract"]["components"].items():
+        assert {
+            component: current["components"].get(group_name, {}).get(component)
+            for component in components
+        } == components
 
 
 def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:

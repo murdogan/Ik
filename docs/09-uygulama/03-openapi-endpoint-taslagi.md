@@ -38,6 +38,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | GET | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; `{data,meta}`; beş typed/allowlisted current-tenant setting |
 | PATCH | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; `{data,meta}`; extra key reddi ve lifecycle read-only guard |
 | GET | `/api/v1/tenant/features` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; selector kabul etmeden injected current tenant effective flag catalogu |
+| POST | `/api/v1/auth/login` | F2A uygulandı | Kurum kodu discovery, generic credential hatası, Argon2id doğrulama ve kısa ömürlü bearer response |
+| POST | `/api/v1/auth/activate` | F2A uygulandı | Hashli/süreli aktivasyon credential'ı, atomik tek kullanım ve Argon2id parola kurulumu |
+| POST | `/api/v1/users/invitations` | F2A uygulandı | Bearer actor/tenant scope, invite capability ve header/payload tenant spoof reddi |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |
@@ -50,6 +53,11 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note, row-lock one-winner ve opsiyonel idempotency |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
+
+F2A historical F1E yüzeyine üç generated operation ekler. Lokal executable smoke, invite-capable
+fixture ile login → bearer davet → tek kullanımlık aktivasyon → yeniden login akışını çalıştırır;
+spoofed tenant header'larının bearer scope'unu değiştiremediğini doğrular ve credential/token
+değerlerini çıktıya yazmaz.
 
 Geçerli uygulama notları:
 

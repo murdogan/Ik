@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
+from uuid import uuid4
 
+from sqlalchemy import update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -17,7 +21,15 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.config import get_settings
-from app.services.demo_seed_service import DemoSeedConflictError, DemoSeedResult, seed_demo_data
+from app.models.auth import UserActivationToken
+from app.models.user import User, UserStatus
+from app.platform.identity import issue_activation_token
+from app.services.demo_seed_service import (
+    DEMO_USERS,
+    DemoSeedConflictError,
+    DemoSeedResult,
+    seed_demo_data,
+)
 
 LOCAL_DEMO_ENVIRONMENTS = {"local", "dev"}
 LOCAL_DATABASE_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
@@ -43,7 +55,14 @@ def main() -> int:
         return 2
 
     try:
-        result = asyncio.run(_run_seed(database_url))
+        result, activation_url = asyncio.run(
+            _run_seed(
+                database_url,
+                auth_demo=args.auth_demo,
+                frontend_base_url=settings.frontend_base_url,
+                activation_ttl_hours=settings.auth_activation_token_ttl_hours,
+            )
+        )
     except DemoSeedConflictError as exc:
         print(f"DEMO_SEED_CONFLICT {exc}", file=sys.stderr)
         return 1
@@ -52,6 +71,8 @@ def main() -> int:
         return 1
 
     print(_format_success(result))
+    if activation_url is not None:
+        print(f"DEMO_AUTH_ACTIVATION_URL {activation_url}")
     return 0
 
 
@@ -64,6 +85,14 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Optional local database URL override. Defaults to IK_DATABASE_URL/settings. "
             "The target schema must already be migrated."
+        ),
+    )
+    parser.add_argument(
+        "--auth-demo",
+        action="store_true",
+        help=(
+            "Reset the local Wealthy Falcon demo admin to invited and print one single-use "
+            "activation URL. Never enabled implicitly."
         ),
     )
     return parser.parse_args()
@@ -86,14 +115,67 @@ def _ensure_local_database_url(database_url: str) -> None:
     raise ValueError(f"database_url_not_local host={host!r} allowed_hosts={allowed_hosts}")
 
 
-async def _run_seed(database_url: str) -> DemoSeedResult:
+async def _run_seed(
+    database_url: str,
+    *,
+    auth_demo: bool = False,
+    frontend_base_url: str = "http://localhost:3000",
+    activation_ttl_hours: int = 48,
+) -> tuple[DemoSeedResult, str | None]:
     engine = create_async_engine(database_url, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with session_factory.begin() as session:
-            return await seed_demo_data(session)
+            result = await seed_demo_data(session)
+            activation_url = None
+            if auth_demo:
+                activation_url = await _reset_demo_admin_activation(
+                    session,
+                    frontend_base_url=frontend_base_url,
+                    activation_ttl_hours=activation_ttl_hours,
+                )
+            return result, activation_url
     finally:
         await engine.dispose()
+
+
+async def _reset_demo_admin_activation(
+    session,
+    *,
+    frontend_base_url: str,
+    activation_ttl_hours: int,
+) -> str:
+    demo_admin_id = next(fixture.id for fixture in DEMO_USERS if fixture.key == "wf_admin")
+    user = await session.get(User, demo_admin_id)
+    if user is None:  # pragma: no cover - seed invariant
+        raise DemoSeedConflictError("Wealthy Falcon demo admin was not seeded")
+
+    now = datetime.now(UTC)
+    token = issue_activation_token(user.tenant_id)
+    user.status = UserStatus.INVITED.value
+    user.password_hash = None
+    user.can_invite_users = True
+    await session.execute(
+        update(UserActivationToken)
+        .where(
+            UserActivationToken.tenant_id == user.tenant_id,
+            UserActivationToken.user_id == user.id,
+            UserActivationToken.consumed_at.is_(None),
+            UserActivationToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    session.add(
+        UserActivationToken(
+            id=uuid4(),
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            token_hash=token.token_hash,
+            expires_at=now + timedelta(hours=activation_ttl_hours),
+        )
+    )
+    safe_token = quote(token.raw_token, safe=".-_")
+    return f"{frontend_base_url.rstrip('/')}/activate#token={safe_token}"
 
 
 def _format_success(result: DemoSeedResult) -> str:

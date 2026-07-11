@@ -268,7 +268,16 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
             "correlation_id": "req_wf_demo_001",
         }
 
-    assert "securitySchemes" not in response.json().get("components", {})
+    # Phase 2 may advertise its real bearer credential without retrofitting caller credentials
+    # onto the frozen Phase-1 trusted-principal operations above.
+    assert response.json()["components"]["securitySchemes"]["BearerAuth"] == {
+        "type": "http",
+        "description": "Short-lived access credential returned by the login endpoint.",
+        "scheme": "bearer",
+    }
+    assert paths["/api/v1/users/invitations"]["post"]["security"] == [
+        {"BearerAuth": []}
+    ]
 
 
 def test_phase1_tenant_operations_document_lifecycle_and_resource_errors() -> None:

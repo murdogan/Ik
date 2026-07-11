@@ -2,6 +2,8 @@ from typing import Any
 
 SYSTEM_TAG = "System"
 PUBLIC_TAG = "Public"
+AUTHENTICATION_TAG = "Authentication"
+USER_ADMINISTRATION_TAG = "User Administration"
 PLATFORM_TENANTS_TAG = "Platform Tenants"
 TENANT_SETTINGS_TAG = "Tenant Settings"
 DASHBOARD_TAG = "Dashboard"
@@ -60,6 +62,20 @@ OPENAPI_TAGS = [
         "name": PUBLIC_TAG,
         "description": (
             "Browser-facing Wealthy Falcon HR pages served outside the tenant-scoped JSON API."
+        ),
+    },
+    {
+        "name": AUTHENTICATION_TAG,
+        "description": (
+            "Public tenant-aware login and one-time invitation activation. Credential failures "
+            "are generic and credential-bearing responses are non-cacheable."
+        ),
+    },
+    {
+        "name": USER_ADMINISTRATION_TAG,
+        "description": (
+            "Authenticated tenant user invitations. Tenant and actor scope come from a signed "
+            "credential and are never accepted from caller-supplied tenant fields."
         ),
     },
     {

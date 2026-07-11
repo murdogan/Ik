@@ -59,6 +59,7 @@ TENANT_OWNED_TABLES = frozenset(
         "command_idempotency",
         "tenant_settings",
         "tenant_feature_flags",
+        "user_activation_tokens",
     }
 )
 ROW_SECURITY_TABLES = TENANT_OWNED_TABLES | {"tenants"}
@@ -77,6 +78,7 @@ EXPECTED_APPLICATION_PRIVILEGES = {
     "command_idempotency": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "tenant_settings": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "tenant_feature_flags": frozenset({"SELECT"}),
+    "user_activation_tokens": frozenset({"SELECT", "INSERT", "UPDATE"}),
 }
 EXPECTED_PLATFORM_PRIVILEGES = {
     table_name: (
@@ -334,6 +336,17 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                 ("tenants", "locale", "UPDATE", TENANT_APPLICATION_ROLE),
                 ("tenants", "timezone", "UPDATE", TENANT_APPLICATION_ROLE),
                 ("tenants", "updated_at", "UPDATE", TENANT_APPLICATION_ROLE),
+                ("users", "email", "INSERT", TENANT_APPLICATION_ROLE),
+                ("users", "email", "UPDATE", TENANT_APPLICATION_ROLE),
+                ("users", "full_name", "INSERT", TENANT_APPLICATION_ROLE),
+                ("users", "full_name", "UPDATE", TENANT_APPLICATION_ROLE),
+                ("users", "id", "INSERT", TENANT_APPLICATION_ROLE),
+                ("users", "password_hash", "INSERT", TENANT_APPLICATION_ROLE),
+                ("users", "password_hash", "UPDATE", TENANT_APPLICATION_ROLE),
+                ("users", "status", "INSERT", TENANT_APPLICATION_ROLE),
+                ("users", "status", "UPDATE", TENANT_APPLICATION_ROLE),
+                ("users", "tenant_id", "INSERT", TENANT_APPLICATION_ROLE),
+                ("users", "updated_at", "UPDATE", TENANT_APPLICATION_ROLE),
             }
     finally:
         await engine.dispose()

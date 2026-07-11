@@ -24,6 +24,7 @@ from app.models import (  # noqa: F401
     TenantFeatureFlag,
     TenantSettings,
     User,
+    UserActivationToken,
 )
 from sqlalchemy import text
 from sqlalchemy.engine import URL
@@ -56,6 +57,9 @@ EXPECTED_UUID_COLUMNS = {
     ("tenant_feature_flags", "tenant_id"),
     ("users", "id"),
     ("users", "tenant_id"),
+    ("user_activation_tokens", "id"),
+    ("user_activation_tokens", "tenant_id"),
+    ("user_activation_tokens", "user_id"),
 }
 EXPECTED_TIMESTAMP_COLUMNS = {
     (table_name, column_name)
@@ -67,12 +71,16 @@ EXPECTED_TIMESTAMP_COLUMNS = {
         "tenant_settings",
         "tenant_feature_flags",
         "users",
+        "user_activation_tokens",
     }
     for column_name in {"created_at", "updated_at"}
 } | {
     ("command_idempotency", "created_at"),
     ("command_idempotency", "completed_at"),
     ("employees", "archived_at"),
+    ("user_activation_tokens", "expires_at"),
+    ("user_activation_tokens", "consumed_at"),
+    ("user_activation_tokens", "revoked_at"),
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     "ck_command_idempotency_completion",
@@ -93,6 +101,12 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_tenant_settings_time_format",
     "ck_tenant_settings_week_start_day",
     "ck_users_status",
+    "ck_users_email_normalized_not_empty",
+    "ck_user_activation_tokens_hash_length",
+    "ck_user_activation_tokens_expiry_order",
+    "ck_user_activation_tokens_consumed_order",
+    "ck_user_activation_tokens_revoked_order",
+    "ck_user_activation_tokens_terminal_state",
 }
 EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_command_idempotency_tenant_key",
@@ -101,6 +115,8 @@ EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_leave_balance_summaries_tenant_employee_type_period",
     "uq_users_tenant_id_id",
     "uq_users_tenant_email",
+    "uq_users_tenant_email_normalized",
+    "uq_user_activation_tokens_token_hash",
 }
 EXPECTED_FOREIGN_KEY_COUNTS = {
     "command_idempotency": 1,
@@ -110,6 +126,7 @@ EXPECTED_FOREIGN_KEY_COUNTS = {
     "tenant_settings": 1,
     "tenant_feature_flags": 1,
     "users": 1,
+    "user_activation_tokens": 2,
 }
 
 
@@ -310,7 +327,7 @@ def test_full_api_smoke_uses_alembic_migrated_postgresql(
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     assert result.returncode == 0, output
     assert "BACKEND_SMOKE_OK" in result.stdout
-    assert "documented_endpoints=25" in result.stdout
+    assert "documented_endpoints=28" in result.stdout
 
 
 def _alembic_config(database_url: URL) -> Config:

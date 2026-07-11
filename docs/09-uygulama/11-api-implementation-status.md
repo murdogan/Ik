@@ -549,6 +549,9 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact five-key typed settings view and tenant isolation |
 | PATCH | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact allowlist update and suspended/offboarding read-only guard |
 | GET | `/api/v1/tenant/features` | Implemented and verified | Current-principal-only ordered effective flags; no tenant selector or mutation |
+| POST | `/api/v1/auth/login` | Implemented for F2A | Tenant-slug discovery, generic credential errors, Argon2id verification and short-lived bearer response |
+| POST | `/api/v1/auth/activate` | Implemented for F2A | Hashed expiring invitation credential, atomic single-use consumption and Argon2id password setup |
+| POST | `/api/v1/users/invitations` | Implemented for F2A | Bearer-derived actor/tenant, invite capability check and header/payload tenant-spoof resistance |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -561,6 +564,11 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
+
+F2A adds three generated operations to the historical 24-operation F1E surface. The executable
+smoke now logs in an invite-capable local fixture, invites under bearer-derived tenant scope,
+activates exactly once, rejects reuse, and logs in the activated user without printing credentials
+or activation material.
 
 ## Current Behavior Notes
 

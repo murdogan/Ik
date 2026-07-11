@@ -9,6 +9,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,7 @@ from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequestStatus
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.identity import PasswordManager
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.engine import make_url
@@ -45,6 +47,9 @@ OTHER_TENANT_ID = UUID("44444444-dddd-4444-8444-444444444444")
 REQUESTING_USER_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 APPROVER_USER_ID = UUID("33333333-cccc-4333-8333-333333333333")
 OTHER_REQUESTING_USER_ID = UUID("55555555-eeee-4555-8555-555555555555")
+SMOKE_ADMIN_CREDENTIAL = "Backend smoke admin credential"
+SMOKE_ACTIVATED_CREDENTIAL = "Backend smoke activated user credential"
+SMOKE_INVITED_EMAIL = "invited.user@wealthyfalcon.test"
 TENANT_HEADERS = {
     "X-Tenant-Id": str(TENANT_ID),
     "X-Tenant-Slug": "wealthy-falcon",
@@ -130,6 +135,8 @@ HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
 DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/"),
     ("get", "/health"),
+    ("post", "/api/v1/auth/activate"),
+    ("post", "/api/v1/auth/login"),
     ("post", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants/{tenant_id}"),
@@ -152,6 +159,7 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("post", "/api/v1/leave-requests/{leave_request_id}/approve"),
     ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
     ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
+    ("post", "/api/v1/users/invitations"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -224,6 +232,7 @@ async def main(database_url: str | None = None) -> None:
             tenant_principal_scope = _install_test_principal_overrides(app)
             await _smoke_system_endpoints(client)
             _smoke_documented_endpoint_tables()
+            await _smoke_auth_endpoints(client)
             provisioned_tenant_id = await _smoke_platform_tenant_endpoints(client)
             tenant_principal_scope["tenant_id"] = provisioned_tenant_id
             await _smoke_current_tenant_endpoints(client, provisioned_tenant_id)
@@ -261,7 +270,7 @@ async def main(database_url: str | None = None) -> None:
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
-        "leave_balances,leave_filters,leave_requests,workflow_transitions"
+        "leave_balances,leave_filters,leave_requests,workflow_transitions,auth"
     )
 
 
@@ -308,6 +317,8 @@ async def _prepare_smoke_database(
                     email="requester@wealthyfalcon.test",
                     full_name="Requesting User",
                     status=UserStatus.ACTIVE.value,
+                    password_hash=PasswordManager().hash(SMOKE_ADMIN_CREDENTIAL),
+                    can_invite_users=True,
                 ),
                 User(
                     id=APPROVER_USER_ID,
@@ -514,6 +525,126 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
     )
     _expect_documented_openapi_operations(openapi)
     _expect_phase1_openapi_contracts(openapi)
+    _expect_f2a_openapi_contracts(openapi)
+
+
+async def _smoke_auth_endpoints(client: AsyncClient) -> None:
+    admin_login = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/login",
+            json={
+                "tenant_slug": "wealthy-falcon",
+                "email": "requester@wealthyfalcon.test",
+                "password": SMOKE_ADMIN_CREDENTIAL,
+            },
+        ),
+        200,
+        "POST /api/v1/auth/login for invitation admin",
+        {"access_token", "token_type", "expires_in", "user"},
+    )
+    _assert_equal(admin_login["token_type"], "bearer", "auth login token type")
+    _assert_equal(
+        admin_login["user"]["tenant_id"],
+        str(TENANT_ID),
+        "auth login tenant",
+    )
+    access_token = admin_login["access_token"]
+    if not isinstance(access_token, str) or not access_token:
+        raise AssertionError("auth login must return a non-empty access credential")
+
+    invitation = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/users/invitations",
+            headers={
+                **SPOOFED_IDENTITY_HEADERS,
+                "Authorization": f"Bearer {access_token}",
+            },
+            json={
+                "email": SMOKE_INVITED_EMAIL,
+                "full_name": "Invited Smoke User",
+            },
+        ),
+        201,
+        "POST /api/v1/users/invitations with spoofed tenant headers",
+        {"user", "activation_url", "expires_at"},
+    )
+    _assert_equal(
+        invitation["user"]["email"],
+        SMOKE_INVITED_EMAIL,
+        "invited user email",
+    )
+    _assert_equal(invitation["user"]["status"], "invited", "invited user status")
+
+    fragment = parse_qs(urlsplit(invitation["activation_url"]).fragment)
+    _assert_equal(set(fragment), {"token"}, "activation URL fragment fields")
+    activation_token = fragment["token"][0]
+    if not activation_token:
+        raise AssertionError("activation URL must contain a non-empty fragment credential")
+
+    activated = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/activate",
+            json={
+                "token": activation_token,
+                "password": SMOKE_ACTIVATED_CREDENTIAL,
+            },
+        ),
+        200,
+        "POST /api/v1/auth/activate",
+        {"user"},
+    )
+    _assert_equal(
+        activated["user"]["tenant_id"],
+        str(TENANT_ID),
+        "activation ignores spoofed invitation tenant headers",
+    )
+    _assert_equal(
+        activated["user"]["email"],
+        SMOKE_INVITED_EMAIL,
+        "activated user email",
+    )
+
+    _expect_phase1_error_code(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/activate",
+            json={
+                "token": activation_token,
+                "password": SMOKE_ACTIVATED_CREDENTIAL,
+            },
+        ),
+        400,
+        "activation_invalid",
+        "POST /api/v1/auth/activate rejects token reuse",
+    )
+
+    activated_login = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/login",
+            json={
+                "tenant_slug": "wealthy-falcon",
+                "email": SMOKE_INVITED_EMAIL,
+                "password": SMOKE_ACTIVATED_CREDENTIAL,
+            },
+        ),
+        200,
+        "POST /api/v1/auth/login for activated user",
+        {"access_token", "token_type", "expires_in", "user"},
+    )
+    _assert_equal(
+        activated_login["user"]["id"],
+        invitation["user"]["id"],
+        "activated login user",
+    )
 
 
 async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
@@ -921,8 +1052,6 @@ def _expect_phase1_openapi_contracts(openapi: dict[str, Any]) -> None:
     )
 
     schemas = openapi["components"]["schemas"]
-    if "securitySchemes" in openapi["components"]:
-        raise AssertionError("Phase 1 must not advertise a caller-facing security scheme")
     _assert_equal(
         schemas["FeatureFlagKey"].get("enum"),
         list(FEATURE_DEFAULTS),
@@ -973,6 +1102,51 @@ def _expect_phase1_openapi_contracts(openapi: dict[str, Any]) -> None:
         )
         if "X-Next-Cursor" not in operation["responses"]["200"].get("headers", {}):
             raise AssertionError(f"GET {path} does not document X-Next-Cursor")
+
+
+def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
+    paths = openapi["paths"]
+    security_schemes = openapi["components"].get("securitySchemes", {})
+    _assert_equal(set(security_schemes), {"BearerAuth"}, "F2A security schemes")
+    bearer = security_schemes["BearerAuth"]
+    _assert_equal(bearer.get("type"), "http", "F2A bearer type")
+    _assert_equal(bearer.get("scheme"), "bearer", "F2A bearer scheme")
+
+    login = paths["/api/v1/auth/login"]["post"]
+    activation = paths["/api/v1/auth/activate"]["post"]
+    invitation = paths["/api/v1/users/invitations"]["post"]
+    for operation, label in (
+        (login, "F2A login"),
+        (activation, "F2A activation"),
+    ):
+        if "security" in operation:
+            raise AssertionError(f"{label} must remain a public credential endpoint")
+    _assert_equal(
+        invitation.get("security"),
+        [{"BearerAuth": []}],
+        "F2A invitation bearer requirement",
+    )
+
+    for operation, success_status, label in (
+        (login, "200", "F2A login"),
+        (activation, "200", "F2A activation"),
+        (invitation, "201", "F2A invitation"),
+    ):
+        success_response = operation["responses"][success_status]
+        _assert_equal(
+            set(success_response.get("headers", {})),
+            set(CORRELATION_RESPONSE_HEADERS),
+            f"{label} documented correlation headers",
+        )
+        schema = _resolve_openapi_schema(
+            openapi,
+            success_response["content"]["application/json"]["schema"],
+        )
+        _assert_equal(
+            set(schema.get("properties", {})),
+            {"data", "meta"},
+            f"{label} success envelope",
+        )
 
 
 def _resolve_openapi_schema(

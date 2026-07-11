@@ -371,6 +371,7 @@ async def _upsert_users(session: AsyncSession, tenants: dict[str, Tenant]) -> di
             raise DemoSeedConflictError(
                 f"Demo user email {fixture.email!r} already exists with a different id"
             )
+        is_new_user = user is None
         if user is not None:
             _ensure_same_tenant(user.tenant_id, tenant.id, f"user {fixture.id}")
             if user_with_email is not None and user_with_email.id != user.id:
@@ -383,8 +384,11 @@ async def _upsert_users(session: AsyncSession, tenants: dict[str, Tenant]) -> di
 
         user.email = fixture.email
         user.full_name = fixture.full_name
-        user.status = fixture.status.value
-        user.password_hash = None
+        # Repeatable product-data seeding must not erase credentials or activation state created
+        # by the explicit local auth-demo flow.
+        if is_new_user:
+            user.status = fixture.status.value
+            user.password_hash = None
         users[fixture.key] = user
     return users
 

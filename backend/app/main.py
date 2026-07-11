@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
+from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.employees import router as employees_router
 from app.api.errors import (
@@ -18,6 +19,8 @@ from app.api.leave_requests import router as leave_requests_router
 from app.api.openapi import OPENAPI_TAGS
 from app.api.platform_tenants import router as platform_tenants_router
 from app.api.tenant import router as tenant_router
+from app.api.user_invitations import router as user_invitations_router
+from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, create_auth_runtime
 from app.core.config import APP_SETTINGS_STATE_KEY, Settings, get_settings
 from app.db.session import (
     DATABASE_RUNTIME_STATE_KEY,
@@ -54,12 +57,15 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
         openapi_tags=OPENAPI_TAGS,
     )
     setattr(app.state, APP_SETTINGS_STATE_KEY, settings)
+    setattr(app.state, AUTH_RUNTIME_STATE_KEY, create_auth_runtime(settings))
     app.add_middleware(CorrelationMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(ApplicationError, application_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     app.add_exception_handler(Exception, unexpected_error_handler)
     app.include_router(platform_tenants_router)
+    app.include_router(auth_router)
+    app.include_router(user_invitations_router)
     app.include_router(tenant_router)
     app.include_router(dashboard_router)
     app.include_router(employees_router)

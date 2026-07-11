@@ -880,6 +880,39 @@ Beklenen sonuç:
 - Backend API smoke testi `BACKEND_SMOKE_OK` çıktısı verir.
 - Opsiyonel HTTP landing/health smoke testi `SMOKE_OK` çıktısı verir.
 
+## F2A invitation → activation → login demo
+
+The local bootstrap creates no committed password or token. It resets only the synthetic demo
+admin and prints one short-lived activation URL to the current terminal:
+
+```bash
+docker compose up -d postgres
+uv run alembic upgrade head
+uv run python scripts/seed_demo_data.py --auth-demo
+```
+
+Start the API and web app in separate terminals:
+
+```bash
+uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8001
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Open the printed `DEMO_AUTH_ACTIVATION_URL`, choose a password of at least 12 characters, then log
+in at `http://localhost:3000/login` with organization code `wealthy-falcon-demo` and email
+`admin@wealthyfalcon.demo`.
+
+An API client can use that login response's short-lived `data.access_token` as
+`Authorization: Bearer <token>` when calling `POST /api/v1/users/invitations`; the response returns
+the new user's fragment-based activation URL once. Caller-supplied tenant headers and body fields
+do not select the invitation tenant.
+
+Local/dev uses a process-local random signing key. Staging/production deliberately refuses to
+start without `IK_AUTH_SIGNING_KEY` supplied out of band and an HTTPS `IK_FRONTEND_BASE_URL`; no
+secret or `.env` file is part of this repository flow. Set the non-secret `BACKEND_API_URL` during
+`next build` for staging because the Next.js rewrite destination is compiled into the build.
+
 ## Branch iş akışı
 
 `main` korumalıdır; değişiklikler kısa ömürlü branch üzerinde yapılır.

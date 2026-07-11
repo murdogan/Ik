@@ -34,6 +34,10 @@ from app.platform.idempotency import (
     IdempotencyKeyMismatchError,
     IdempotencyReplayUnavailableError,
 )
+from app.services.authentication_service import (
+    InvalidActivationError,
+    InvalidCredentialsError,
+)
 from app.services.employee_service import (
     EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
     DuplicateEmployeeNumberError,
@@ -56,6 +60,10 @@ from app.services.tenant_service import (
     TenantNotReadyError,
     TenantReadOnlyError,
 )
+from app.services.user_invitation_service import (
+    InvitationAccessDeniedError,
+    InvitationConflictError,
+)
 
 TENANT_ID_HEADER = "X-Tenant-Id"
 TENANT_SLUG_HEADER = "X-Tenant-Slug"
@@ -72,6 +80,8 @@ LEAVE_BALANCE_API_SEGMENT = "/leave-balances"
 LEAVE_REQUEST_API_PREFIX = "/api/v1/leave-requests"
 PLATFORM_TENANT_API_PREFIX = "/api/v1/platform/tenants"
 TENANT_API_PREFIX = "/api/v1/tenant"
+AUTH_API_PREFIX = "/api/v1/auth"
+USER_INVITATION_API_PREFIX = "/api/v1/users/invitations"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -115,6 +125,22 @@ TENANT_CLOSED_ERROR_CODE = "tenant_closed"
 TENANT_CLOSED_ERROR_MESSAGE = "Tenant is closed"
 TENANT_READ_ONLY_ERROR_CODE = "tenant_read_only"
 TENANT_READ_ONLY_ERROR_MESSAGE = "Tenant settings are read-only in the current lifecycle status"
+AUTH_VALIDATION_ERROR_CODE = "auth_validation_error"
+AUTH_VALIDATION_ERROR_MESSAGE = "Authentication request validation failed"
+INVALID_CREDENTIALS_ERROR_CODE = "invalid_credentials"
+INVALID_CREDENTIALS_ERROR_MESSAGE = (
+    "The email, password, or organization code is incorrect"
+)
+INVALID_ACTIVATION_ERROR_CODE = "activation_invalid"
+INVALID_ACTIVATION_ERROR_MESSAGE = (
+    "This activation link is invalid, expired, or has already been used"
+)
+AUTHENTICATION_REQUIRED_ERROR_CODE = "authentication_required"
+AUTHENTICATION_REQUIRED_ERROR_MESSAGE = "A valid access credential is required"
+INVITATION_ACCESS_DENIED_ERROR_CODE = "invitation_access_denied"
+INVITATION_ACCESS_DENIED_ERROR_MESSAGE = "You do not have permission to invite users"
+INVITATION_CONFLICT_ERROR_CODE = "invitation_conflict"
+INVITATION_CONFLICT_ERROR_MESSAGE = "This user cannot be invited"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -357,6 +383,34 @@ TENANT_UPDATE_CONFLICT_RESPONSES = _conflict_response(
     },
 )
 
+AUTH_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Credential-safe authentication validation error envelope.",
+    }
+}
+AUTHENTICATION_REQUIRED_RESPONSES = {
+    status.HTTP_401_UNAUTHORIZED: {
+        "model": ApiErrorResponse,
+        "description": "Missing, malformed, expired, or invalid access credential.",
+    }
+}
+INVITATION_AUTHORIZATION_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {
+        "model": ApiErrorResponse,
+        "description": "The authenticated actor cannot invite users.",
+    }
+}
+INVITATION_CONFLICT_RESPONSES = _conflict_response(
+    description="The target user is not in an invitable state.",
+    examples={
+        INVITATION_CONFLICT_ERROR_CODE: _error_example(
+            INVITATION_CONFLICT_ERROR_CODE,
+            INVITATION_CONFLICT_ERROR_MESSAGE,
+        )
+    },
+)
+
 
 EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Employee command conflict envelope.",
@@ -449,6 +503,14 @@ async def unexpected_error_handler(request: Request, _exc: Exception) -> Respons
 
 
 def application_error_to_api_error(exc: ApplicationError) -> ApiError:
+    if isinstance(exc, InvalidCredentialsError):
+        return invalid_credentials_error()
+    if isinstance(exc, InvalidActivationError):
+        return invalid_activation_error()
+    if isinstance(exc, InvitationAccessDeniedError):
+        return invitation_access_denied_error()
+    if isinstance(exc, InvitationConflictError):
+        return invitation_conflict_error()
     if isinstance(exc, TenantNotFoundError):
         return tenant_not_found_error()
     if isinstance(exc, DuplicateTenantSlugError):
@@ -594,6 +656,46 @@ def tenant_read_only_error() -> ApiError:
     )
 
 
+def invalid_credentials_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        code=INVALID_CREDENTIALS_ERROR_CODE,
+        message=INVALID_CREDENTIALS_ERROR_MESSAGE,
+    )
+
+
+def invalid_activation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=INVALID_ACTIVATION_ERROR_CODE,
+        message=INVALID_ACTIVATION_ERROR_MESSAGE,
+    )
+
+
+def authentication_required_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        code=AUTHENTICATION_REQUIRED_ERROR_CODE,
+        message=AUTHENTICATION_REQUIRED_ERROR_MESSAGE,
+    )
+
+
+def invitation_access_denied_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=INVITATION_ACCESS_DENIED_ERROR_CODE,
+        message=INVITATION_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def invitation_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=INVITATION_CONFLICT_ERROR_CODE,
+        message=INVITATION_CONFLICT_ERROR_MESSAGE,
+    )
+
+
 def platform_tenant_pagination_validation_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -719,6 +821,14 @@ def _domain_request_validation_error(
     exc: RequestValidationError,
 ) -> ApiError | None:
     path = request.url.path
+    if _matches_api_prefix(path, AUTH_API_PREFIX) or _matches_api_prefix(
+        path, USER_INVITATION_API_PREFIX
+    ):
+        return ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code=AUTH_VALIDATION_ERROR_CODE,
+            message=AUTH_VALIDATION_ERROR_MESSAGE,
+        )
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):
         return ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

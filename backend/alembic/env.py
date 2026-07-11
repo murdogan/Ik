@@ -13,6 +13,7 @@ from app.models import (  # noqa: F401
     Tenant,
     TenantSettings,
     User,
+    UserActivationToken,
 )
 from sqlalchemy import String, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config

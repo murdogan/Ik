@@ -4,9 +4,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import app.models  # noqa: F401
 from app.db.base import Base
+from app.platform.identity import hash_activation_token
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -58,6 +60,47 @@ def test_demo_seed_command_refuses_staging_environment() -> None:
     )
 
 
+def test_demo_seed_command_can_print_one_hashed_local_activation_path(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "demo-auth-command.sqlite3"
+    async_database_url = f"sqlite+aiosqlite:///{database_path}"
+    asyncio.run(_create_model_schema(async_database_url))
+
+    result = _run_seed_command(
+        async_database_url,
+        environment="local",
+        auth_demo=True,
+    )
+
+    assert result.returncode == 0
+    activation_line = next(
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("DEMO_AUTH_ACTIVATION_URL ")
+    )
+    activation_url = activation_line.removeprefix("DEMO_AUTH_ACTIVATION_URL ")
+    token = parse_qs(urlsplit(activation_url).fragment)["token"][0]
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.connect() as connection:
+            admin = connection.execute(
+                text(
+                    "select status, password_hash, can_invite_users from users "
+                    "where email = 'admin@wealthyfalcon.demo'"
+                )
+            ).one()
+            token_hash = connection.execute(
+                text("select token_hash from user_activation_tokens")
+            ).scalar_one()
+        assert admin == ("invited", None, True)
+        assert token_hash == hash_activation_token(token)
+        assert token not in token_hash
+    finally:
+        engine.dispose()
+
+
 def test_demo_seed_command_refuses_non_local_database_url() -> None:
     result = _run_seed_command(
         "postgresql+asyncpg://ik:ik@db.example.com:5432/ik",
@@ -76,17 +119,26 @@ def test_demo_seed_local_database_url_guard_accepts_case_insensitive_localhost()
     _ensure_local_database_url("postgresql+asyncpg://ik:ik@LOCALHOST:5432/ik")
 
 
-def _run_seed_command(database_url: str, *, environment: str) -> subprocess.CompletedProcess[str]:
+def _run_seed_command(
+    database_url: str,
+    *,
+    environment: str,
+    auth_demo: bool = False,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["IK_ENVIRONMENT"] = environment
 
+    arguments = [
+        sys.executable,
+        str(SEED_SCRIPT),
+        "--database-url",
+        database_url,
+    ]
+    if auth_demo:
+        arguments.append("--auth-demo")
+
     return subprocess.run(
-        [
-            sys.executable,
-            str(SEED_SCRIPT),
-            "--database-url",
-            database_url,
-        ],
+        arguments,
         cwd=ROOT,
         env=env,
         check=False,

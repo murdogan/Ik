@@ -387,8 +387,9 @@ def test_core_migration_chain_is_linear() -> None:
     tenant_settings_revision = script.get_revision("0013_tenant_settings")
     f1c_rls_revision = script.get_revision("0014_f1c_postgresql_rls")
     f1d_feature_revision = script.get_revision("0015_f1d_feature_flags")
+    f2a_identity_revision = script.get_revision("0016_f2a_identity_activation")
 
-    assert script.get_heads() == ["0015_f1d_feature_flags"]
+    assert script.get_heads() == ["0016_f2a_identity_activation"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -423,6 +424,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert f1c_rls_revision.down_revision == "0013_tenant_settings"
     assert f1d_feature_revision is not None
     assert f1d_feature_revision.down_revision == "0014_f1c_postgresql_rls"
+    assert f2a_identity_revision is not None
+    assert f2a_identity_revision.down_revision == "0015_f1d_feature_flags"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
