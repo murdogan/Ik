@@ -4,6 +4,7 @@ Date: 2026-07-11
 Branch: `codex/mvp-phase0-until-20260711-1100`
 Task: `P0G Phase 0 architecture gate, documentation sync and review checkpoint`
 Review checkpoint: `STOP — awaiting Murat review; Phase 1 has not started`
+Review decision: `Pending Murat disposition of the recorded plan deviations`
 Push state: `P0A–P0F are synchronized at 585fa0a; the supervisor must push the local P0G work`
 
 ## Scope
@@ -55,6 +56,28 @@ checkpoint:
 The checked manifest is `backend/tests/contracts/phase0_openapi_contract.json`. Future intentional
 contract work must update that manifest and its migration/deprecation note in the same review.
 
+The historical comparison was reproduced from detached `80b2768` and current worktrees by
+generating normalized schemas with the same environment:
+
+```bash
+repo_root="$(pwd)"
+base_dir="$(mktemp -d)"
+git worktree add --detach "$base_dir" 80b2768
+(cd "$base_dir" && PYTHONPATH=backend "$repo_root/.venv/bin/python" -c \
+  'import json; from app.main import app; print(json.dumps(app.openapi(), sort_keys=True))') \
+  > /tmp/phase0-base-openapi.json
+PYTHONPATH=backend "$repo_root/.venv/bin/python" -c \
+  'import json; from app.main import app; print(json.dumps(app.openapi(), sort_keys=True))' \
+  > /tmp/phase0-head-openapi.json
+git diff --no-index --stat -- /tmp/phase0-base-openapi.json /tmp/phase0-head-openapi.json
+git worktree remove "$base_dir"
+```
+
+The expected non-zero diff was reviewed operation/component-wise. Result: 14 → 14 operations,
+exactly nine changed operation documents, no component/request/success-body schema change, and only
+the intentional differences enumerated above. The manifest test separately proves current
+generated OpenAPI equals the reviewed P0G snapshot.
+
 #### Review-only plan deviations
 
 The enumerated Phase-0 architecture gate below is locally green. The following broader master-plan
@@ -70,8 +93,9 @@ Phase 1:
 - migration of one real product module into the target modular-monolith packages. The boundary
   skeleton and enforcement gate are active, while employee and leave code remain in the documented
   legacy compatibility area;
-- a combined domain-write plus audit/outbox rollback proof. Current fresh-session tests prove
-  domain write rollback, but no audit/outbox recorder is implemented in Phase 0;
+- the common mutation audit-event expectation and a combined domain-write plus audit/outbox
+  rollback proof. Current fresh-session tests prove domain write rollback, but no audit/outbox
+  recorder or mutation audit-event suite is implemented in Phase 0;
 - an explicit connection-leak stress/regression gate. Lifespan engine disposal and rollback after
   errors are covered, but leak behavior is not separately load-tested.
 
@@ -95,7 +119,7 @@ Final commands and results are recorded here after the complete P0G rerun:
 | Direct-DB tenant negatives | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed, 5 tests covering all current composite tenant relationships and expand-contract behavior |
 | PostgreSQL concurrency | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_command_transactions.py backend/tests/integration/test_postgresql_p0e_concurrency.py` | Passed, 6 tests: duplicate winner/mapping, lock mapping, one terminal decision, same-key replay, retention, downgrade refusal |
 | Query-plan baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p0f_performance.py` | Passed, 1 test with 10k employee/5k leave EXPLAIN assertions |
-| Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 20 P0G files; clean status verified after commit |
+| Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 22 P0G files; clean status verified after commit |
 
 The continuation explicitly reversed the PostgreSQL test-file order to verify that the function-scope
 database isolation does not depend on the normal collection order:

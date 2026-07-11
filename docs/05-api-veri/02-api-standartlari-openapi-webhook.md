@@ -2,6 +2,11 @@
 
 Bu doküman, IK Platform HTTP API'lerinin URL, response, hata, pagination, idempotency, async job ve webhook standartlarını tanımlar.
 
+Bu belge hedef standardı da içerir; Faz 0'da uygulanmış güncel yüzey
+[API Implementation Status Report](../09-uygulama/11-api-implementation-status.md) ile sınırlıdır.
+Aşağıdaki payroll, PDKS ve AI referansları ileri-faz capability kataloğudur; bu alanlar MVP
+dışıdır ve Faz 0 runtime davranışı, endpoint'i veya background task'ı değildir.
+
 ## 1. Temel API ilkeleri
 
 | İlke | Karar |
@@ -144,6 +149,9 @@ offboarding kontrolleri olan kısıtlı tenant-root operasyonuna aittir; normal 
 yetkisi değildir.
 
 ## 7. Async operation standardı
+
+Bu bölüm hedef sözleşmeyi tanımlar. Faz 0 yalnız provider-neutral worker portu/fake'i
+içerir; `operations` endpoint'i, broker ve aşağıdaki işler henüz uygulanmamıştır.
 
 Uzun işlemler `202 Accepted` döner:
 

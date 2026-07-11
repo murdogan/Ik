@@ -220,6 +220,10 @@ schedule veya deployment bu checkpoint'te yoktur.
 | `ai` | CV parse, RAG index, özetleme, öneriler |
 | `integrations` | Webhook, PDKS, ERP, takvim, e-imza |
 
+Bu tablo ileri fazlar için hedef capability kataloğudur; Faz 0 runtime queue veya task
+envanteri değildir. Payroll, PDKS ve AI MVP dışıdır ve bu checkpoint'te bunlara ait task,
+adapter, broker ya da entegrasyon uygulanmamıştır.
+
 Async task kuralları:
 
 - Task payload büyük veri taşımaz; ID taşır.

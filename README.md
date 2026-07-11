@@ -772,6 +772,12 @@ henüz yoktur:
 
 ## Durum
 
-Plan dokümantasyon seti tamamlanmıştır. Mevcut repoda daha önce eklenmiş küçük bir Sprint-0 backend scaffold'u vardır; fakat bundan sonraki kod genişletmeleri kullanıcıdan açık “koda geç” onayı alınmadan yapılmamalıdır.
+P0A–P0G Faz 0 mimari kapısı yerelde yeşildir. Güncel uygulama yüzeyi, intentional
+OpenAPI farkları, PostgreSQL/SQLite kanıtları ve açık plan sapmaları
+[API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md) içinde kayıtlıdır.
 
-Plan tamamlık kapısı: [Implementation Readiness Checklist](docs/09-uygulama/08-implementation-readiness-checklist.md).
+Queue `STOP — awaiting Murat review` checkpoint'indedir; Faz 1 başlatılmamıştır. Yerel P0G
+commit'lerinin review branch'ine push edilmesi supervisor sorumluluğundadır. Yürütme otoritesi
+[MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;
+[Implementation Readiness Checklist](docs/09-uygulama/08-implementation-readiness-checklist.md)
+ise uygulama öncesi tarihsel planlama kapısı olarak korunur.

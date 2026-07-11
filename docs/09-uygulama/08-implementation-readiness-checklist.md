@@ -1,5 +1,12 @@
 # Implementation Readiness Checklist
 
+> **Arşiv notu — 2026-07-11:** Bu belge uygulama öncesi planlama kapısını tarihsel olarak
+> korur; artık aktif yürütme otoritesi değildir. Kodlama yetkisi
+> [MVP First Release Master Development Plan](../../.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)
+> ile verilmiş, P0A–P0G'nin enumerated Faz 0 kapısı yerelde yeşil olmuştur. Güncel durum ve
+> açık review sapmaları [API Implementation Status Report](11-api-implementation-status.md)
+> içindedir. Aktif checkpoint `STOP — awaiting Murat review`; Faz 1 başlatılmamıştır.
+
 Bu doküman, planın gerçekten tamam sayılması için son kontrol listesidir. Kodlamaya tekrar geçmeden önce bu listedeki maddeler ya tamamlanmalı ya da bilinçli istisna olarak işaretlenmelidir.
 
 ## 1. Plan tamam tanımı
