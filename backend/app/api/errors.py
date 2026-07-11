@@ -218,6 +218,22 @@ def _error_example(code: str, message: str) -> dict[str, Any]:
     }
 
 
+UNEXPECTED_ERROR_RESPONSES = {
+    status.HTTP_500_INTERNAL_SERVER_ERROR: {
+        "model": ApiErrorResponse,
+        "description": "Unexpected application failure with safe correlation metadata.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    APPLICATION_COMMAND_FAILED_ERROR_CODE,
+                    APPLICATION_COMMAND_FAILED_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+
+
 PLATFORM_AUTHORIZATION_RESPONSES = {
     status.HTTP_403_FORBIDDEN: {
         "model": ApiErrorResponse,
@@ -426,6 +442,12 @@ async def application_error_handler(request: Request, exc: ApplicationError) -> 
     return await api_error_handler(request, application_error_to_api_error(exc))
 
 
+async def unexpected_error_handler(request: Request, _exc: Exception) -> Response:
+    """Return a metadata-safe envelope without exposing unexpected exception details."""
+
+    return await api_error_handler(request, application_command_failed_error())
+
+
 def application_error_to_api_error(exc: ApplicationError) -> ApiError:
     if isinstance(exc, TenantNotFoundError):
         return tenant_not_found_error()
@@ -465,6 +487,10 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         if exc.constraint_name == EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT:
             return employee_number_conflict_error()
         return data_integrity_conflict_error()
+    return application_command_failed_error()
+
+
+def application_command_failed_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         code=APPLICATION_COMMAND_FAILED_ERROR_CODE,
@@ -565,6 +591,14 @@ def tenant_read_only_error() -> ApiError:
         status_code=status.HTTP_423_LOCKED,
         code=TENANT_READ_ONLY_ERROR_CODE,
         message=TENANT_READ_ONLY_ERROR_MESSAGE,
+    )
+
+
+def platform_tenant_pagination_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=PLATFORM_TENANT_VALIDATION_ERROR_CODE,
+        message=PLATFORM_TENANT_VALIDATION_ERROR_MESSAGE,
     )
 
 

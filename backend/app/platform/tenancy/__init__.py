@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TenantContext:
     tenant_id: UUID
     slug: str

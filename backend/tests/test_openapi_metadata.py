@@ -16,6 +16,7 @@ from app.schemas.leave_request import (
     LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
     LEAVE_REQUEST_LIST_MAX_LIMIT,
 )
+from app.schemas.tenant import TENANT_LIST_DEFAULT_LIMIT, TENANT_LIST_MAX_LIMIT
 from fastapi.testclient import TestClient
 
 HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
@@ -311,6 +312,85 @@ def test_platform_tenant_response_schemas_cannot_reference_hr_schemas() -> None:
             for reference in references
             if reference.startswith(("Employee", "User", "Leave"))
         }
+
+
+def test_phase1_operations_use_standard_envelopes_and_correlation_headers() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi = response.json()
+    schemas = openapi["components"]["schemas"]
+    success_statuses = {
+        ("/api/v1/platform/tenants", "post"): "201",
+        ("/api/v1/platform/tenants", "get"): "200",
+        ("/api/v1/platform/tenants/{tenant_id}", "get"): "200",
+        ("/api/v1/platform/tenants/{tenant_id}", "patch"): "200",
+        ("/api/v1/tenant", "get"): "200",
+        ("/api/v1/tenant/settings", "get"): "200",
+        ("/api/v1/tenant/settings", "patch"): "200",
+    }
+    for (path, method), status_code in success_statuses.items():
+        success = openapi["paths"][path][method]["responses"][status_code]
+        assert set(success["headers"]) == {
+            "X-Correlation-Id",
+            "X-Request-Id",
+            "X-Trace-Id",
+        }
+        references = _transitive_schema_references(success, schemas)
+        assert references & {"PageMeta", "ResponseMeta"}
+        assert any(
+            reference.startswith(("DataEnvelope", "ListEnvelope"))
+            for reference in references
+        )
+
+    for path, method in PLATFORM_TENANT_OPERATIONS | TENANT_PRINCIPAL_OPERATIONS:
+        responses = openapi["paths"][path][method]["responses"]
+        assert "500" in responses
+        for documented in responses.values():
+            assert set(documented["headers"]) == {
+                "X-Correlation-Id",
+                "X-Request-Id",
+                "X-Trace-Id",
+            }
+
+
+def test_platform_tenant_list_documents_cursor_only_bounded_page_contract() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    operation = response.json()["paths"]["/api/v1/platform/tenants"]["get"]
+    params = {parameter["name"]: parameter for parameter in operation["parameters"]}
+    assert set(params) == {"cursor", "limit"}
+    limit_schema = params["limit"]["schema"]
+    assert limit_schema["default"] == TENANT_LIST_DEFAULT_LIMIT
+    assert limit_schema["maximum"] == TENANT_LIST_MAX_LIMIT
+    assert limit_schema["minimum"] == 1
+    assert limit_schema["type"] == "integer"
+    assert "opaque" in params["cursor"]["description"].lower()
+    assert "created_at" in operation["description"]
+    assert "offset" not in operation["description"].lower()
+
+
+def test_phase0_list_response_and_offset_deprecation_contracts_remain_explicit() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    for path in ("/api/v1/employees", "/api/v1/leave-requests"):
+        operation = paths[path]["get"]
+        schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+        parameters = {item["name"]: item for item in operation["parameters"]}
+        assert schema["type"] == "array"
+        assert "data" not in schema
+        assert parameters["offset"]["deprecated"] is True
+        assert "compatibility" in parameters["offset"]["description"].lower()
+        assert "X-Next-Cursor" in operation["responses"]["200"]["headers"]
 
 
 def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:

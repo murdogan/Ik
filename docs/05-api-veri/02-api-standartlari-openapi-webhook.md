@@ -2,10 +2,10 @@
 
 Bu doküman, IK Platform HTTP API'lerinin URL, response, hata, pagination, idempotency, async job ve webhook standartlarını tanımlar.
 
-Bu belge hedef standardı da içerir; F1A dahil güncel yüzey
+Bu belge hedef standardı da içerir; F1B dahil güncel yüzey
 [API Implementation Status Report](../09-uygulama/11-api-implementation-status.md) ile sınırlıdır.
 Aşağıdaki payroll, PDKS ve AI referansları ileri-faz capability kataloğudur; bu alanlar MVP
-dışıdır ve F1A runtime davranışı, endpoint'i veya background task'ı değildir.
+dışıdır ve F1B runtime davranışı, endpoint'i veya background task'ı değildir.
 
 ## 1. Temel API ilkeleri
 
@@ -18,7 +18,7 @@ dışıdır ve F1A runtime davranışı, endpoint'i veya background task'ı değ
 | Idempotency | Desteklenen kritik POST endpointlerinde opsiyonel `X-Idempotency-Key` |
 | Pagination | Büyük listelerde cursor-based pagination |
 | Async jobs | Import, export, payroll, AI ve rapor işlemleri async |
-| Correlation | Her response `correlation_id`/`trace_id` taşır |
+| Correlation | Her HTTP response güvenli `X-Request-Id`, `X-Trace-Id` ve deprecated `X-Correlation-Id` alias'ını taşır |
 
 ## 2. URL ve naming standardı
 
@@ -38,6 +38,8 @@ Başarılı tekil response:
     "id": "..."
   },
   "meta": {
+    "request_id": "req_...",
+    "trace_id": "0123456789abcdef0123456789abcdef",
     "correlation_id": "req_..."
   }
 }
@@ -49,29 +51,36 @@ Liste response:
 {
   "data": [],
   "meta": {
-    "next_cursor": null,
-    "correlation_id": "req_..."
+    "request_id": "req_...",
+    "trace_id": "0123456789abcdef0123456789abcdef",
+    "correlation_id": "req_...",
+    "limit": 50,
+    "next_cursor": null
   }
 }
 ```
 
-Faz-0 compatibility notu: mevcut employee ve leave-request endpointleri breaking response
-değişikliği yapmamak için plain JSON array döndürmeye devam eder. Bu iki yüksek büyüme listesinde
+Faz-0 compatibility notu: mevcut employee ve leave-request listeleri breaking response
+değişikliği yapmamak için açık bir compatibility adapter üzerinden plain JSON array döndürmeye
+devam eder. Bu iki yüksek büyüme listesinde
 ilk/uyumluluk isteği `limit` ve deprecated `offset` kabul eder; response'ta daha fazla kayıt varsa
 `X-Next-Cursor` header'ı döner. Sonraki istek `cursor=<header değeri>&limit=...` kullanır. Cursor ve
-positive `offset` birlikte geçersizdir. Gelecekteki `{data, meta.next_cursor}` zarfına geçiş ayrıca
-versionlanmış/duyurulmuş sözleşme değişikliği olacaktır.
+positive `offset` birlikte geçersizdir. Bu listeleri `{data, meta.next_cursor}` zarfına geçirmek
+ayrıca versionlanmış/duyurulmuş sözleşme değişikliği olacaktır. Diğer mevcut Faz-0 success
+object/list shape'leri de sessizce değiştirilmez.
 
-F1A compatibility notu: yeni yedi tenant operation'ı da mevcut uygulama standardıyla doğrudan
-typed object/list döner; `{data, meta}` zarfı eklemez. Bunlar:
+F1B contract kararı: F1A'da eklenen aşağıdaki yedi tenant/platform success operation'ı yeni Faz-1
+standardına açık ve testli bir contract migration ile `{data, meta}` zarfına geçirilmiştir:
 
 - `POST/GET /api/v1/platform/tenants`
 - `GET/PATCH /api/v1/platform/tenants/{tenant_id}`
 - `GET /api/v1/tenant`
 - `GET/PATCH /api/v1/tenant/settings`
 
-Zarf, immutable genel request context ve global correlation middleware Faz 1.2'de intentional
-contract migration olarak ele alınacaktır. F1A `/api/v1/tenant/features` eklemez.
+Tekil operation'larda `meta` tam olarak `request_id`, `trace_id`, `correlation_id`; platform
+listesinde bunlara ek olarak `limit` ve `next_cursor` taşır. `correlation_id`, geçiş süresince
+`request_id` ile aynı değerdeki deprecated body alias'ıdır. F1A/F1B
+`/api/v1/tenant/features` eklemez.
 
 Hata response:
 
@@ -85,6 +94,39 @@ Hata response:
   }
 }
 ```
+
+Yeni Faz-1 hata yanıtlarında `error.correlation_id`, doğrulanmış/üretilmiş `request_id` alias'ıdır.
+Faz-0 employee/leave hata body uyumluluğu explicit adapter ile korunur: yalnız geçerli ve seçilen
+request ID ile aynı legacy correlation inputu body'ye yansır; diğer durumda eski `null` davranışı
+korunur. Her iki durumda güvenli canonical request/trace değerleri response header'larındadır.
+
+### 3.1 Request context ve correlation standardı
+
+Her HTTP isteği middleware tarafından oluşturulan `frozen=True, slots=True` bir `RequestContext`
+ile başlar. Context route/service kodu tarafından mutate edilemez; trusted dependency tenant,
+actor/session, authentication strength veya support-session placeholder'ı ekleyecekse aynı
+request/trace değerlerini koruyan yeni bir instance türetir. F1B yalnız bu typed taşıma sınırını
+kurar; auth/session doğrulaması, RBAC kararı ve audit persistence Faz 2 işidir.
+
+Giriş ve çıkış kuralları:
+
+- `X-Request-Id` en fazla 128 karakterlik, log-safe opaque ASCII token'dır. Alfanümerik karakterle
+  başlar/biter; içte yalnız alfanümerik, `.`, `_` ve `-` kabul edilir. JWT biçimli çok noktalı
+  değerler kabul edilmez.
+- `X-Trace-Id` tam 32 karakter lowercase hexadecimal ve sıfırdan farklıdır.
+- `X-Correlation-Id`, `X-Request-Id` için deprecated giriş/çıkış alias'ıdır. İki header birlikte
+  gönderilirse yalnız tekil, geçerli ve birbirine eşit olduklarında korunur.
+- Eksik değer server tarafından üretilir. Invalid, duplicate, birbiriyle çelişen, PII biçimli
+  (örneğin e-posta) veya JWT biçimli inputlar hata detayı yapılmadan yeniden üretilir; ham input
+  response body/header'a yansıtılmaz ve completion log'una yazılmaz.
+- Middleware upstream'in aynı adlı response header'larını kaldırıp tam bir canonical set ekler:
+  `X-Request-Id`, `X-Trace-Id`, `X-Correlation-Id`. Alias değeri request ID'ye eşittir.
+
+Public error metadata allowlist'i yalnız `request_id` ve `trace_id` kaynağıdır. Structured
+completion log allowlist'i request/trace, authentication strength ve varsa opaque tenant/support
+session ID'si ile HTTP method/status bilgisini taşıyabilir; actor ID, end-user session ID,
+support-operator actor ID, tenant slug, PII, secret veya raw authorization/token/header materyali
+log metadata'sına girmez.
 
 ## 4. Hata kodları
 
@@ -125,6 +167,15 @@ Faz-0 deterministic sıraları:
 
 Cursor endpoint türü ve bu tam ordering tuple'ını versioned opaque token içinde taşır; tenant
 scope taşımaz. Tenant predicate her zaman authenticated/request context'ten ayrıca uygulanır.
+
+F1B platform tenant listesi yeni liste standardını uygular:
+
+- yalnız `limit` (`1..200`, default `50`) ve opaque `cursor` kabul eder; `offset` bu yeni
+  endpointte kabul edilmez;
+- sıra ve keyset tuple'ı `(created_at asc, id asc)` olarak deterministiktir;
+- devam değeri body'deki `meta.next_cursor` alanındadır; `meta.limit` uygulanan page limitidir;
+- invalid/repeated cursor veya limit ve legacy `offset` kullanımı
+  `422 platform_tenant_validation_error` döner.
 
 ## 6. Idempotency
 
@@ -207,8 +258,9 @@ Kullanım alanları:
 - CI'da OpenAPI lint çalıştırılır.
 - Breaking change PR'da görünür olmalıdır.
 - Public API dokümanı internal endpointleri içermez.
-- F1A additive schema ayrı `f1a_openapi_contract.json` snapshot'ında tutulur; historical Phase-0
-  manifesti overwrite edilmez.
+- Historical F1A additive schema ayrı `f1a_openapi_contract.json` snapshot'ında, Faz-0 schema ise
+  kendi immutable manifestinde tutulur. F1B intentional envelope/header/pagination diff'ini contract
+  testleriyle açıkça doğrular; historical Faz-0 manifesti overwrite edilmez.
 
 F1A platform/tenant güvenlik standardı:
 
@@ -218,9 +270,10 @@ F1A platform/tenant güvenlik standardı:
 - `X-Tenant-Id`, `X-User-Id` veya caller'ın path/query/body/header içinde verdiği başka kimlik
   authorization değildir ve principal üretemez. Tenant current/settings scope'u injected
   principal'ın tenant ID'sinden türetilir.
-- Platform tenant listesi bounded `limit`/`offset` kabul eder. Response yalnız
+- Platform tenant listesi bounded `limit`/opaque `cursor` kabul eder. Response `data` içinde yalnız
   `id`, `slug`, `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone`, lifecycle-derived
-  `health`, `created_at`, `updated_at` alanlarını taşır; HR count veya employee/leave payload yoktur.
+  `health`, `created_at`, `updated_at` alanlarını; `meta` içinde safe correlation, limit ve
+  continuation alanlarını taşır. HR count veya employee/leave payload yoktur.
 - Create/PATCH plan inputu yalnız `core|professional|enterprise` kabul eder. Existing `premium`
   satırlar response'ta read-only compatibility için tanınır; migration rewrite veya yeni
   `premium` write yoktur.
@@ -230,8 +283,10 @@ F1A platform/tenant güvenlik standardı:
 - `provisioning` tenant erişimi `423`, `closed` erişimi `410`; `suspended` ve `offboarding` GET
   açıktır ama settings PATCH `423` döner.
 
-F1A generated OpenAPI/contract gate'i 21 operation'lık additive snapshot'ı, exact tag/metadata
-assertion'larını ve runtime'da çağrılan 22 documented endpoint'i doğrular.
+Generated OpenAPI 21 operation'lık yüzeyi korur. F1B success schema/header assertion'ları yedi
+tenant/platform operation'ının `{data, meta}` modelini, platform listenin cursor-only query
+parametrelerini ve Faz-0 employee/leave listelerinin plain-array + deprecated-offset compatibility
+kararını görünür kılar. Runtime registry `/openapi.json` dahil 22 documented endpoint'tir.
 
 ## 9. Webhook mimarisi
 

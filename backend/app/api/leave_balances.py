@@ -4,11 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_tenant_context
+from app.api.dependencies import get_phase0_tenant_request_context
 from app.api.errors import LEAVE_BALANCE_VALIDATION_RESPONSES, employee_not_found_error
 from app.api.openapi import LEAVE_BALANCES_TAG
 from app.db.session import get_session
-from app.platform.tenancy import TenantContext
+from app.platform.request_context import RequestContext
 from app.schemas.leave_balance_summary import LeaveBalanceSummaryRead
 from app.services.leave_balance_service import (
     LeaveBalanceEmployeeNotFoundError,
@@ -41,7 +41,10 @@ def get_leave_balance_service(
 )
 async def list_employee_leave_balances(
     employee_id: UUID,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     service: Annotated[LeaveBalanceService, Depends(get_leave_balance_service)],
     period_year: Annotated[
         int | None,
@@ -54,7 +57,7 @@ async def list_employee_leave_balances(
 ) -> list[LeaveBalanceSummaryRead]:
     try:
         return await service.list_employee_balance_summaries(
-            tenant_context.tenant_id,
+            request_context.require_tenant().tenant_id,
             employee_id,
             period_year,
         )

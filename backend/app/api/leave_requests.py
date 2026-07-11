@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.compatibility import phase0_plain_cursor_list
 from app.api.dependencies import (
     get_command_idempotency_service,
     get_idempotency_key,
-    get_tenant_context,
+    get_phase0_tenant_request_context,
     get_unit_of_work,
 )
 from app.api.errors import (
@@ -25,7 +26,7 @@ from app.db.session import get_session
 from app.models.leave_request import LeaveRequestStatus
 from app.platform.db import SqlAlchemyUnitOfWork
 from app.platform.pagination import MAX_CURSOR_LENGTH, NEXT_CURSOR_HEADER, InvalidCursorError
-from app.platform.tenancy import TenantContext
+from app.platform.request_context import RequestContext
 from app.schemas.date_fields import DateOnly
 from app.schemas.leave_request import (
     LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
@@ -168,19 +169,20 @@ def get_leave_request_list_pagination(
 )
 async def list_leave_requests(
     response: Response,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     service: Annotated[LeaveRequestService, Depends(get_leave_request_service)],
     filters: Annotated[LeaveRequestListFilters, Depends(get_leave_request_list_filters)],
     pagination: Annotated[LeaveRequestListPagination, Depends(get_leave_request_list_pagination)],
 ) -> list[LeaveRequestRead]:
     page = await service.list_leave_request_page(
-        tenant_context.tenant_id,
+        request_context.require_tenant().tenant_id,
         filters,
         pagination,
     )
-    if page.next_cursor is not None:
-        response.headers[NEXT_CURSOR_HEADER] = page.next_cursor
-    return page.items
+    return phase0_plain_cursor_list(response, page)
 
 
 @router.post(
@@ -202,7 +204,10 @@ async def list_leave_requests(
 )
 async def create_leave_request(
     payload: LeaveRequestCreate,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
@@ -210,7 +215,7 @@ async def create_leave_request(
     idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
     return await command_handler.create_leave_request(
-        tenant_context.tenant_id,
+        request_context.require_tenant().tenant_id,
         payload,
         idempotency_key,
     )
@@ -235,7 +240,10 @@ async def create_leave_request(
 async def approve_leave_request(
     leave_request_id: UUID,
     payload: LeaveRequestDecision,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
@@ -243,7 +251,7 @@ async def approve_leave_request(
     idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
     return await command_handler.approve_leave_request(
-        tenant_context.tenant_id,
+        request_context.require_tenant().tenant_id,
         leave_request_id,
         payload,
         idempotency_key,
@@ -269,7 +277,10 @@ async def approve_leave_request(
 async def reject_leave_request(
     leave_request_id: UUID,
     payload: LeaveRequestDecision,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
@@ -277,7 +288,7 @@ async def reject_leave_request(
     idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
     return await command_handler.reject_leave_request(
-        tenant_context.tenant_id,
+        request_context.require_tenant().tenant_id,
         leave_request_id,
         payload,
         idempotency_key,
@@ -303,7 +314,10 @@ async def reject_leave_request(
 async def cancel_leave_request(
     leave_request_id: UUID,
     payload: LeaveRequestDecision,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,
         Depends(get_leave_request_command_handler),
@@ -311,7 +325,7 @@ async def cancel_leave_request(
     idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> LeaveRequestRead:
     return await command_handler.cancel_leave_request(
-        tenant_context.tenant_id,
+        request_context.require_tenant().tenant_id,
         leave_request_id,
         payload,
         idempotency_key,

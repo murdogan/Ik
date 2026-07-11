@@ -55,6 +55,14 @@ Default dependency principal üretmez ve `403` ile fail closed olur; test depend
 bu production kuralını değiştirmez. `X-Tenant-Id`, başka bir header, path, query veya body değeri
 bu principal'ların yerine geçemez.
 
+F1B'de her HTTP isteği immutable `RequestContext` ile başlar. Context request/trace kimlikleri ile
+optional tenant, actor/session, authentication-strength ve support-session placeholder'larını
+taşıyabilir. Tenant-principal dependency yalnız trusted principal'dan immutable `TenantContext`
+türetir; caller correlation veya tenant header'ı principal üretmez. Legacy employee/leave
+`X-Tenant-Id` seçimi ayrı Faz-0 compatibility dependency'sidir ve yeni protected endpointler için
+authorization kaynağı olarak kullanılamaz. F1B actor/session alanlarının varlığı auth veya RBAC'ın
+uygulandığı anlamına gelmez.
+
 Kurallar:
 
 - Body içindeki `tenant_id` authorization için asla güvenilir kaynak değildir.
@@ -66,14 +74,14 @@ Kurallar:
 
 | Katman | Kontrol |
 |---|---|
-| Auth/context | F1A trusted injected principal; Faz 2'de JWT/session claim |
-| Middleware | Tenant context zorunlu |
+| Auth/context | Immutable `RequestContext` + F1A trusted injected principal; Faz 2'de JWT/session claim |
+| Middleware | Safe request/trace context zorunlu; tenant scope protected dependency'den gelir |
 | Repository | Her sorguda tenant filtresi |
 | DB | Tenant-owned ilişkilerde composite foreign key; Faz 1'de RLS |
 | Cache | `tenant:{tenant_id}` prefix |
 | Object storage | Tenant prefix ve metadata |
 | Search/vector | Tenant filter ve ACL hash |
-| Logs | Tenant tag var, PII yok |
+| Logs | Allowlisted opaque request/trace ve optional tenant/support-session tag'i; actor/session/raw auth/PII yok |
 | Tests | Cross-tenant negatif testler |
 
 ## 6. İlişkisel tenant bütünlüğü
@@ -115,6 +123,9 @@ Kritik noktalar:
 
 - Uygulama DB rolünde `BYPASSRLS` olmamalıdır.
 - Background job da tenant context set etmelidir.
+- Mevcut worker fake/transport sınırı tenant-required serialized context allowlist'ini doğrular;
+  extra metadata, tenant slug veya raw auth materyali taşımaz. Gerçek worker'ın DB transaction'ında
+  `SET LOCAL` uygulaması RLS rollout'u ile ayrıca tamamlanacaktır.
 - Faz 1 RLS rollout'u başladığında policy'siz tenant tablosu CI'da fail etmelidir.
 
 ## 8. Cache, dosya ve arama izolasyonu
@@ -194,6 +205,8 @@ Kural: Müşteri bazlı fork yapılmaz; özelleştirme feature flag ve ayarlarla
 - Tenant A document URL'i Tenant B'de çalışmaz.
 - Cache key cross-tenant çakışmaz.
 - Background job tenant context olmadan fail eder.
+- Worker context tenant/job eşleşmesi, safe request/trace formatı ve fixed-key allowlist dışındaki
+  metadata reddi test edilir.
 - Export sadece tenant kapsamındaki satırları içerir.
 - Search/vector sonuçları tenant dışına çıkmaz.
 

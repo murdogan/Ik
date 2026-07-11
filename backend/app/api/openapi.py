@@ -1,3 +1,5 @@
+from typing import Any
+
 SYSTEM_TAG = "System"
 PUBLIC_TAG = "Public"
 PLATFORM_TENANTS_TAG = "Platform Tenants"
@@ -6,6 +8,38 @@ DASHBOARD_TAG = "Dashboard"
 EMPLOYEES_TAG = "Employees"
 LEAVE_BALANCES_TAG = "Leave Balances"
 LEAVE_REQUESTS_TAG = "Leave Requests"
+
+CORRELATION_RESPONSE_HEADERS = {
+    "X-Request-Id": {
+        "description": "Validated or server-generated opaque request identifier.",
+        "schema": {"type": "string"},
+    },
+    "X-Trace-Id": {
+        "description": "Validated or server-generated 32-character lowercase trace identifier.",
+        "schema": {"type": "string", "minLength": 32, "maxLength": 32},
+    },
+    "X-Correlation-Id": {
+        "description": "Deprecated compatibility alias of X-Request-Id.",
+        "schema": {"type": "string", "deprecated": True},
+    },
+}
+
+
+def with_correlation_response_headers(
+    responses: dict[int | str, dict[str, Any]],
+) -> dict[int | str, dict[str, Any]]:
+    """Document the global safe headers without mutating shared response fixtures."""
+
+    return {
+        status_code: {
+            **metadata,
+            "headers": {
+                **metadata.get("headers", {}),
+                **CORRELATION_RESPONSE_HEADERS,
+            },
+        }
+        for status_code, metadata in responses.items()
+    }
 
 OPENAPI_TAGS = [
     {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -130,6 +131,28 @@ DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
 }
 DOCUMENTED_SMOKE_ENDPOINTS = DOCUMENTED_OPENAPI_OPERATIONS | DOCUMENTED_RUNTIME_ENDPOINTS
+PHASE1_SUCCESS_RESPONSES = {
+    ("post", "/api/v1/platform/tenants"): "201",
+    ("get", "/api/v1/platform/tenants"): "200",
+    ("get", "/api/v1/platform/tenants/{tenant_id}"): "200",
+    ("patch", "/api/v1/platform/tenants/{tenant_id}"): "200",
+    ("get", "/api/v1/tenant"): "200",
+    ("get", "/api/v1/tenant/settings"): "200",
+    ("patch", "/api/v1/tenant/settings"): "200",
+}
+PHASE0_CURSOR_LIST_PATHS = {
+    "/api/v1/employees",
+    "/api/v1/leave-requests",
+}
+RESPONSE_META_FIELDS = {"request_id", "trace_id", "correlation_id"}
+PAGE_META_FIELDS = RESPONSE_META_FIELDS | {"limit", "next_cursor"}
+CORRELATION_RESPONSE_HEADERS = (
+    "X-Request-Id",
+    "X-Trace-Id",
+    "X-Correlation-Id",
+)
+REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?")
+TRACE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 DOCUMENTED_ENDPOINT_TABLES = {
     API_IMPLEMENTATION_STATUS_DOC: "## Completed API Surface",
     OPENAPI_ENDPOINT_DRAFT_DOC: "## 0. Güncel uygulama yüzeyi",
@@ -160,6 +183,7 @@ async def main(database_url: str | None = None) -> None:
             transport=ASGITransport(app=app),
             base_url="http://backend-smoke.local",
         ) as client:
+            await _smoke_correlation_middleware(client)
             await _smoke_principal_default_denials(client)
             tenant_principal_scope = _install_test_principal_overrides(app)
             await _smoke_system_endpoints(client)
@@ -196,9 +220,10 @@ async def main(database_url: str | None = None) -> None:
         f"tenant_id={TENANT_ID} "
         f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
         "checked=health,landing,openapi,documented_endpoint_tables,principal_default_denial,"
-        "platform_tenants,tenant_settings,tenant_headers,documented_endpoint_runtime_coverage,"
-        "dashboard_counts,employee_filters,employees,leave_balances,leave_filters,"
-        "leave_requests,workflow_transitions"
+        "correlation_middleware,phase1_envelopes,platform_cursor_pagination,platform_tenants,"
+        "tenant_settings,tenant_headers,phase0_contract_compatibility,"
+        "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
+        "leave_balances,leave_filters,leave_requests,workflow_transitions"
     )
 
 
@@ -263,8 +288,92 @@ async def _prepare_smoke_database(
         await session.commit()
 
 
+async def _smoke_correlation_middleware(client: AsyncClient) -> None:
+    generated_response = await client.get("/health")
+    _expect_json(generated_response, 200, "GET /health generated correlation IDs")
+    generated_request_id, generated_trace_id = _correlation_ids(generated_response)
+
+    explicit_request_id = "req_backend_smoke_f1b_001"
+    explicit_trace_id = "0123456789abcdef0123456789abcdef"
+    explicit_response = await client.get(
+        "/health",
+        headers={
+            "X-Request-Id": explicit_request_id,
+            "X-Trace-Id": explicit_trace_id,
+        },
+    )
+    _expect_json(explicit_response, 200, "GET /health explicit correlation IDs")
+    _assert_equal(
+        explicit_response.headers["X-Request-Id"],
+        explicit_request_id,
+        "explicit request ID propagation",
+    )
+    _assert_equal(
+        explicit_response.headers["X-Trace-Id"],
+        explicit_trace_id,
+        "explicit trace ID propagation",
+    )
+
+    pii_request_id = "ada.smoke@wealthyfalcon.test"
+    unsafe_correlation_id = "Bearer:smoke-placeholder-not-a-credential"
+    malformed_trace_id = "0123456789ABCDEF0123456789ABCDEF"
+    auth_placeholder = "Bearer smoke-placeholder-not-a-credential"
+    replaced_response = await client.get(
+        "/health",
+        headers={
+            "Authorization": auth_placeholder,
+            "X-Request-Id": pii_request_id,
+            "X-Correlation-Id": unsafe_correlation_id,
+            "X-Trace-Id": malformed_trace_id,
+        },
+    )
+    _expect_json(replaced_response, 200, "GET /health unsafe correlation IDs")
+    replaced_request_id, replaced_trace_id = _correlation_ids(replaced_response)
+    if replaced_request_id in {pii_request_id, unsafe_correlation_id}:
+        raise AssertionError("unsafe or PII request metadata was reflected")
+    if replaced_trace_id == malformed_trace_id:
+        raise AssertionError("malformed trace metadata was reflected")
+    _assert_not_reflected(
+        replaced_response,
+        {pii_request_id, unsafe_correlation_id, malformed_trace_id, auth_placeholder},
+        "unsafe correlation request",
+    )
+
+    duplicate_request_ids = ("req_duplicate_one", "req_duplicate_two")
+    duplicate_trace_ids = (
+        "11111111111111111111111111111111",
+        "22222222222222222222222222222222",
+    )
+    duplicate_response = await client.get(
+        "/health",
+        headers=[
+            ("X-Request-Id", duplicate_request_ids[0]),
+            ("X-Request-Id", duplicate_request_ids[1]),
+            ("X-Correlation-Id", "corr_duplicate_one"),
+            ("X-Correlation-Id", "corr_duplicate_two"),
+            ("X-Trace-Id", duplicate_trace_ids[0]),
+            ("X-Trace-Id", duplicate_trace_ids[1]),
+        ],
+    )
+    _expect_json(duplicate_response, 200, "GET /health duplicate correlation IDs")
+    duplicate_request_id, duplicate_trace_id = _correlation_ids(duplicate_response)
+    if duplicate_request_id in {
+        *duplicate_request_ids,
+        "corr_duplicate_one",
+        "corr_duplicate_two",
+    }:
+        raise AssertionError("ambiguous duplicate request metadata was reflected")
+    if duplicate_trace_id in duplicate_trace_ids:
+        raise AssertionError("ambiguous duplicate trace metadata was reflected")
+
+    if generated_request_id in {replaced_request_id, duplicate_request_id}:
+        raise AssertionError("generated request IDs were unexpectedly reused")
+    if generated_trace_id in {replaced_trace_id, duplicate_trace_id}:
+        raise AssertionError("generated trace IDs were unexpectedly reused")
+
+
 async def _smoke_principal_default_denials(client: AsyncClient) -> None:
-    _expect_error_code(
+    _expect_phase1_error_code(
         await client.get(
             "/api/v1/platform/tenants",
             headers=SPOOFED_IDENTITY_HEADERS,
@@ -273,7 +382,7 @@ async def _smoke_principal_default_denials(client: AsyncClient) -> None:
         "platform_access_denied",
         "GET /api/v1/platform/tenants without injected platform principal",
     )
-    _expect_error_code(
+    _expect_phase1_error_code(
         await client.get(
             "/api/v1/tenant",
             headers=SPOOFED_IDENTITY_HEADERS,
@@ -319,10 +428,11 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
         "GET /openapi.json",
     )
     _expect_documented_openapi_operations(openapi)
+    _expect_f1b_openapi_contracts(openapi)
 
 
 async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
-    created = _expect_json(
+    created = _expect_phase1_data(
         await _request_documented(
             client,
             "post",
@@ -344,8 +454,8 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
         ),
         201,
         "POST /api/v1/platform/tenants",
+        PLATFORM_TENANT_FIELDS,
     )
-    _assert_exact_fields(created, PLATFORM_TENANT_FIELDS, "provisioned platform tenant")
     provisioned_tenant_id = UUID(created["id"])
     if provisioned_tenant_id in {TENANT_ID, OTHER_TENANT_ID}:
         raise AssertionError("platform provisioning did not generate a new tenant ID")
@@ -354,16 +464,52 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
     _assert_equal(created["plan_code"], "professional", "provisioned tenant plan")
     _assert_equal(created["data_region"], "eu-1", "provisioned tenant region")
 
-    listed = _expect_json(
-        await _request_documented(
-            client,
-            "get",
+    first_page_response = await _request_documented(
+        client,
+        "get",
+        "/api/v1/platform/tenants",
+        headers={
+            **SPOOFED_IDENTITY_HEADERS,
+            "X-Request-Id": "req_platform_smoke_page_001",
+            "X-Trace-Id": "abcdef0123456789abcdef0123456789",
+        },
+        params={"limit": 2},
+    )
+    first_page, next_cursor = _expect_phase1_list(
+        first_page_response,
+        200,
+        "GET /api/v1/platform/tenants first cursor page",
+        expected_limit=2,
+    )
+    if next_cursor is None:
+        raise AssertionError("platform tenant first page did not expose a continuation cursor")
+    _assert_equal(
+        first_page_response.headers["X-Request-Id"],
+        "req_platform_smoke_page_001",
+        "platform list explicit request ID",
+    )
+    _assert_equal(
+        first_page_response.headers["X-Trace-Id"],
+        "abcdef0123456789abcdef0123456789",
+        "platform list explicit trace ID",
+    )
+
+    second_page, terminal_cursor = _expect_phase1_list(
+        await client.get(
             "/api/v1/platform/tenants",
             headers=SPOOFED_IDENTITY_HEADERS,
+            params={"limit": 2, "cursor": next_cursor},
         ),
         200,
-        "GET /api/v1/platform/tenants",
+        "GET /api/v1/platform/tenants second cursor page",
+        expected_limit=2,
     )
+    _assert_equal(terminal_cursor, None, "platform tenant terminal cursor")
+    first_page_ids = [tenant["id"] for tenant in first_page]
+    second_page_ids = [tenant["id"] for tenant in second_page]
+    if set(first_page_ids) & set(second_page_ids):
+        raise AssertionError("platform tenant cursor pages overlap")
+    listed = first_page + second_page
     _assert_equal(len(listed), 3, "platform tenant list count")
     for index, tenant in enumerate(listed):
         _assert_exact_fields(
@@ -377,7 +523,40 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
     )
     _assert_equal(listed_created, created, "platform tenant list provisioned item")
 
-    detail = _expect_json(
+    repeated_first_page, _ = _expect_phase1_list(
+        await client.get(
+            "/api/v1/platform/tenants",
+            headers=SPOOFED_IDENTITY_HEADERS,
+            params={"limit": 2},
+        ),
+        200,
+        "GET /api/v1/platform/tenants repeated first page",
+        expected_limit=2,
+    )
+    _assert_equal(
+        [tenant["id"] for tenant in repeated_first_page],
+        first_page_ids,
+        "platform tenant deterministic first page",
+    )
+
+    for query in (
+        {"limit": 0},
+        {"limit": 201},
+        {"offset": 1},
+        {"cursor": "not-a-platform-tenant-cursor"},
+    ):
+        _expect_phase1_error_code(
+            await client.get(
+                "/api/v1/platform/tenants",
+                headers=SPOOFED_IDENTITY_HEADERS,
+                params=query,
+            ),
+            422,
+            "platform_tenant_validation_error",
+            f"GET /api/v1/platform/tenants invalid pagination {query}",
+        )
+
+    detail = _expect_phase1_data(
         await _request_documented(
             client,
             "get",
@@ -387,11 +566,11 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
         ),
         200,
         "GET /api/v1/platform/tenants/{tenant_id}",
+        PLATFORM_TENANT_FIELDS,
     )
-    _assert_exact_fields(detail, PLATFORM_TENANT_FIELDS, "platform tenant detail")
     _assert_equal(detail, created, "platform tenant detail payload")
 
-    updated = _expect_json(
+    updated = _expect_phase1_data(
         await _request_documented(
             client,
             "patch",
@@ -405,8 +584,8 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
         ),
         200,
         "PATCH /api/v1/platform/tenants/{tenant_id}",
+        PLATFORM_TENANT_FIELDS,
     )
-    _assert_exact_fields(updated, PLATFORM_TENANT_FIELDS, "updated platform tenant")
     _assert_equal(updated["id"], created["id"], "updated platform tenant id")
     _assert_equal(updated["slug"], created["slug"], "updated platform tenant slug")
     _assert_equal(updated["status"], TenantStatus.ACTIVE.value, "updated tenant status")
@@ -420,7 +599,7 @@ async def _smoke_current_tenant_endpoints(
     client: AsyncClient,
     provisioned_tenant_id: UUID,
 ) -> None:
-    current = _expect_json(
+    current = _expect_phase1_data(
         await _request_documented(
             client,
             "get",
@@ -429,14 +608,14 @@ async def _smoke_current_tenant_endpoints(
         ),
         200,
         "GET /api/v1/tenant",
+        CURRENT_TENANT_FIELDS,
     )
-    _assert_exact_fields(current, CURRENT_TENANT_FIELDS, "current tenant")
     _assert_equal(current["id"], str(provisioned_tenant_id), "injected current tenant id")
     _assert_equal(current["slug"], "smoke-provisioned-falcon", "current tenant slug")
     _assert_equal(current["status"], TenantStatus.ACTIVE.value, "current tenant status")
     _assert_equal(current["plan_code"], "professional", "current tenant plan")
 
-    settings = _expect_json(
+    settings = _expect_phase1_data(
         await _request_documented(
             client,
             "get",
@@ -445,8 +624,8 @@ async def _smoke_current_tenant_endpoints(
         ),
         200,
         "GET /api/v1/tenant/settings",
+        TENANT_SETTINGS_FIELDS,
     )
-    _assert_exact_fields(settings, TENANT_SETTINGS_FIELDS, "current tenant settings")
     _assert_equal(
         settings,
         {
@@ -459,7 +638,7 @@ async def _smoke_current_tenant_endpoints(
         "provisioned typed tenant settings",
     )
 
-    updated_settings = _expect_json(
+    updated_settings = _expect_phase1_data(
         await _request_documented(
             client,
             "patch",
@@ -475,11 +654,7 @@ async def _smoke_current_tenant_endpoints(
         ),
         200,
         "PATCH /api/v1/tenant/settings",
-    )
-    _assert_exact_fields(
-        updated_settings,
         TENANT_SETTINGS_FIELDS,
-        "updated current tenant settings",
     )
     _assert_equal(
         updated_settings,
@@ -492,13 +667,14 @@ async def _smoke_current_tenant_endpoints(
         },
         "updated typed tenant settings",
     )
-    persisted_settings = _expect_json(
+    persisted_settings = _expect_phase1_data(
         await client.get(
             "/api/v1/tenant/settings",
             headers=SPOOFED_IDENTITY_HEADERS,
         ),
         200,
         "GET /api/v1/tenant/settings after patch",
+        TENANT_SETTINGS_FIELDS,
     )
     _assert_equal(
         persisted_settings,
@@ -530,6 +706,106 @@ def _expect_documented_openapi_operations(openapi: dict[str, Any]) -> None:
             "OpenAPI has operations missing from backend smoke documentation: "
             f"{_format_operations(undocumented_operations)}"
         )
+
+
+def _expect_f1b_openapi_contracts(openapi: dict[str, Any]) -> None:
+    paths = openapi["paths"]
+    for (method, path), status_code in PHASE1_SUCCESS_RESPONSES.items():
+        success_response = paths[path][method]["responses"][status_code]
+        _assert_equal(
+            set(success_response.get("headers", {})),
+            set(CORRELATION_RESPONSE_HEADERS),
+            f"{method.upper()} {path} documented correlation headers",
+        )
+        schema = _resolve_openapi_schema(
+            openapi,
+            success_response["content"]["application/json"]["schema"],
+        )
+        _assert_equal(
+            set(schema.get("properties", {})),
+            {"data", "meta"},
+            f"{method.upper()} {path} success envelope",
+        )
+
+    platform_list = paths["/api/v1/platform/tenants"]["get"]
+    platform_parameters = {
+        parameter["name"]: parameter for parameter in platform_list["parameters"]
+    }
+    _assert_equal(
+        set(platform_parameters),
+        {"cursor", "limit"},
+        "platform tenant cursor-only query parameters",
+    )
+    limit_schema = platform_parameters["limit"]["schema"]
+    _assert_equal(limit_schema.get("default"), 50, "platform tenant default limit")
+    _assert_equal(limit_schema.get("minimum"), 1, "platform tenant minimum limit")
+    _assert_equal(limit_schema.get("maximum"), 200, "platform tenant maximum limit")
+    _assert_contains(
+        platform_parameters["cursor"].get("description", "").lower(),
+        "opaque",
+        "platform tenant cursor description",
+    )
+    platform_list_schema = _resolve_openapi_schema(
+        openapi,
+        platform_list["responses"]["200"]["content"]["application/json"]["schema"],
+    )
+    _assert_equal(
+        platform_list_schema["properties"]["data"].get("type"),
+        "array",
+        "platform tenant list data type",
+    )
+    platform_page_meta = _resolve_openapi_schema(
+        openapi,
+        platform_list_schema["properties"]["meta"],
+    )
+    _assert_equal(
+        set(platform_page_meta.get("properties", {})),
+        PAGE_META_FIELDS,
+        "platform tenant page metadata fields",
+    )
+    _assert_equal(
+        platform_page_meta["properties"]["limit"].get("maximum"),
+        200,
+        "platform tenant page metadata maximum limit",
+    )
+
+    for path in PHASE0_CURSOR_LIST_PATHS:
+        operation = paths[path]["get"]
+        response_schema = _resolve_openapi_schema(
+            openapi,
+            operation["responses"]["200"]["content"]["application/json"]["schema"],
+        )
+        _assert_equal(
+            response_schema.get("type"),
+            "array",
+            f"GET {path} Phase 0 plain-array response",
+        )
+        parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
+        _assert_equal(
+            parameters["offset"].get("deprecated"),
+            True,
+            f"GET {path} deprecated offset parameter",
+        )
+        _assert_contains(
+            parameters["offset"].get("description", "").lower(),
+            "compatibility",
+            f"GET {path} offset compatibility note",
+        )
+        if "X-Next-Cursor" not in operation["responses"]["200"].get("headers", {}):
+            raise AssertionError(f"GET {path} does not document X-Next-Cursor")
+
+
+def _resolve_openapi_schema(
+    openapi: dict[str, Any],
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    reference = schema.get("$ref")
+    if reference is None:
+        return schema
+    prefix = "#/components/schemas/"
+    if not isinstance(reference, str) or not reference.startswith(prefix):
+        raise AssertionError(f"unsupported OpenAPI schema reference: {reference!r}")
+    return openapi["components"]["schemas"][reference.removeprefix(prefix)]
 
 
 def _smoke_documented_endpoint_tables() -> None:
@@ -711,7 +987,7 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
     )
     other_employee_id = other_tenant_employee["id"]
 
-    employees = _expect_json(
+    employees = _expect_phase0_list(
         await _request_documented(
             client,
             "get",
@@ -999,7 +1275,7 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
         headers=TENANT_HEADERS,
         params={"limit": 1},
     )
-    employee_cursor_page = _expect_json(
+    employee_cursor_page = _expect_phase0_list(
         employee_cursor_response,
         200,
         "GET /api/v1/employees?limit=1 cursor first page",
@@ -1007,7 +1283,7 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
     employee_cursor = employee_cursor_response.headers.get("X-Next-Cursor")
     if employee_cursor is None:
         raise AssertionError("employee cursor first page did not expose X-Next-Cursor")
-    employee_next_page = _expect_json(
+    employee_next_page = _expect_phase0_list(
         await client.get(
             "/api/v1/employees",
             headers=TENANT_HEADERS,
@@ -1151,7 +1427,7 @@ async def _smoke_leave_balance_endpoint(
         )
         await session.commit()
 
-    balances = _expect_json(
+    balances = _expect_phase0_list(
         await _request_documented(
             client,
             "get",
@@ -1366,7 +1642,7 @@ async def _smoke_leave_request_endpoints(
         "POST /api/v1/leave-requests/{leave_request_id}/approve cross-tenant user",
     )
 
-    leave_requests = _expect_json(
+    leave_requests = _expect_phase0_list(
         await _request_documented(
             client,
             "get",
@@ -1414,7 +1690,7 @@ async def _smoke_leave_request_endpoints(
         headers=TENANT_HEADERS,
         params={"limit": 1},
     )
-    leave_cursor_page = _expect_json(
+    leave_cursor_page = _expect_phase0_list(
         leave_cursor_response,
         200,
         "GET /api/v1/leave-requests?limit=1 cursor first page",
@@ -1422,7 +1698,7 @@ async def _smoke_leave_request_endpoints(
     leave_cursor = leave_cursor_response.headers.get("X-Next-Cursor")
     if leave_cursor is None:
         raise AssertionError("leave cursor first page did not expose X-Next-Cursor")
-    leave_next_page = _expect_json(
+    leave_next_page = _expect_phase0_list(
         await client.get(
             "/api/v1/leave-requests",
             headers=TENANT_HEADERS,
@@ -1915,16 +2191,156 @@ def _expect_json(response: Response, status_code: int, label: str) -> Any:
     return response.json()
 
 
+def _expect_phase0_list(
+    response: Response,
+    status_code: int,
+    label: str,
+) -> list[Any]:
+    body = _expect_json(response, status_code, label)
+    if not isinstance(body, list):
+        raise AssertionError(
+            f"{label} must preserve the Phase 0 plain-array body, "
+            f"got {type(body).__name__}"
+        )
+    return body
+
+
+def _expect_phase1_data(
+    response: Response,
+    status_code: int,
+    label: str,
+    expected_fields: set[str],
+) -> dict[str, Any]:
+    body = _expect_json(response, status_code, label)
+    _assert_exact_fields(body, {"data", "meta"}, f"{label} envelope")
+    data = body["data"]
+    _assert_exact_fields(data, expected_fields, f"{label} data")
+    _expect_phase1_response_meta(body["meta"], response, label)
+    return data
+
+
+def _expect_phase1_list(
+    response: Response,
+    status_code: int,
+    label: str,
+    *,
+    expected_limit: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    body = _expect_json(response, status_code, label)
+    _assert_exact_fields(body, {"data", "meta"}, f"{label} envelope")
+    data = body["data"]
+    if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+        raise AssertionError(f"{label} data must be a list of objects")
+    meta = body["meta"]
+    _assert_exact_fields(meta, PAGE_META_FIELDS, f"{label} meta")
+    _expect_phase1_response_meta(meta, response, label, exact_fields=False)
+    _assert_equal(meta["limit"], expected_limit, f"{label} meta limit")
+    next_cursor = meta["next_cursor"]
+    if next_cursor is not None and (not isinstance(next_cursor, str) or not next_cursor):
+        raise AssertionError(f"{label} next_cursor must be null or a non-empty string")
+    return data, next_cursor
+
+
+def _expect_phase1_response_meta(
+    meta: object,
+    response: Response,
+    label: str,
+    *,
+    exact_fields: bool = True,
+) -> None:
+    if not isinstance(meta, dict):
+        raise AssertionError(f"{label} meta must be an object")
+    if exact_fields:
+        _assert_equal(set(meta), RESPONSE_META_FIELDS, f"{label} meta fields")
+    _assert_equal(
+        meta.get("request_id"),
+        response.headers["X-Request-Id"],
+        f"{label} meta request_id",
+    )
+    _assert_equal(
+        meta.get("trace_id"),
+        response.headers["X-Trace-Id"],
+        f"{label} meta trace_id",
+    )
+    _assert_equal(
+        meta.get("correlation_id"),
+        meta.get("request_id"),
+        f"{label} meta correlation alias",
+    )
+
+
 def _expect_error_code(response: Response, status_code: int, code: str, label: str) -> None:
     body = _expect_json(response, status_code, label)
     _assert_equal(body["error"]["code"], code, f"{label} error code")
 
 
+def _expect_phase1_error_code(
+    response: Response,
+    status_code: int,
+    code: str,
+    label: str,
+) -> None:
+    body = _expect_json(response, status_code, label)
+    _assert_exact_fields(body, {"error"}, f"{label} error envelope")
+    error = body["error"]
+    _assert_exact_fields(
+        error,
+        {"code", "message", "details", "correlation_id"},
+        f"{label} error",
+    )
+    _assert_equal(error["code"], code, f"{label} error code")
+    _assert_equal(
+        error["correlation_id"],
+        response.headers["X-Request-Id"],
+        f"{label} safe error correlation ID",
+    )
+
+
 def _expect_status(response: Response, status_code: int, label: str) -> None:
+    _expect_correlation_headers(response, label)
     if response.status_code != status_code:
         raise AssertionError(
             f"{label} expected {status_code}, got {response.status_code}: {response.text}"
         )
+
+
+def _expect_correlation_headers(response: Response, label: str) -> None:
+    values = {
+        header_name: response.headers.get_list(header_name)
+        for header_name in CORRELATION_RESPONSE_HEADERS
+    }
+    for header_name, header_values in values.items():
+        if len(header_values) != 1:
+            raise AssertionError(
+                f"{label} expected exactly one safe {header_name} response header, "
+                f"got {header_values!r}"
+            )
+    request_id = values["X-Request-Id"][0]
+    trace_id = values["X-Trace-Id"][0]
+    correlation_id = values["X-Correlation-Id"][0]
+    if REQUEST_ID_PATTERN.fullmatch(request_id) is None:
+        raise AssertionError(f"{label} returned an unsafe request ID")
+    if TRACE_ID_PATTERN.fullmatch(trace_id) is None or trace_id == "0" * 32:
+        raise AssertionError(f"{label} returned an unsafe trace ID")
+    _assert_equal(correlation_id, request_id, f"{label} correlation alias")
+
+
+def _correlation_ids(response: Response) -> tuple[str, str]:
+    _expect_correlation_headers(response, "correlation response")
+    return response.headers["X-Request-Id"], response.headers["X-Trace-Id"]
+
+
+def _assert_not_reflected(
+    response: Response,
+    unsafe_values: set[str],
+    label: str,
+) -> None:
+    response_surface = "\n".join(
+        [response.text, *(f"{name}: {value}" for name, value in response.headers.multi_items())]
+    )
+    reflected = sorted(value for value in unsafe_values if value in response_surface)
+    if reflected:
+        raise AssertionError(f"{label} reflected unsafe request metadata: {reflected!r}")
 
 
 def _assert_equal(actual: Any, expected: Any, label: str = "value") -> None:

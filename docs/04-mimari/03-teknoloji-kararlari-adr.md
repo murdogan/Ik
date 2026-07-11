@@ -23,6 +23,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-015 | Concurrency/idempotency/arşiv | PostgreSQL receipt, tenant-scoped row lock, çalışan arşivi | Kabul |
 | ADR-016 | Phase-0 sorgu performansı | Ölçümlü keyset, PostgreSQL trigram/normalize indexleri, aggregate consolidation; cache yok | Kabul |
 | ADR-017 | Tenant lifecycle ve provisioning yüzeyi | Typed tenant/settings modeli, injected principal ile default-deny platform/tenant API, lifecycle-derived health | Kabul |
+| ADR-018 | Request context ve API contract standardı | Immutable context, güvenli correlation middleware, yeni Faz-1 `{data, meta}` ve explicit Faz-0 adapter'ları | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -472,8 +473,9 @@ Bağlam:
   `tenant_id`/user ID değerini yetki kanıtı saymak, geçici bile olsa güvenli bir temel değildir.
 - Serbest biçimli JSON ayarları şema dışı anahtar, tip ve doğrulama davranışını kalıcılaştırır.
   Tenant ayarlarının ilk allowlist'i ürün sözleşmesi ve ilişkisel şema ile aynı olmalıdır.
-- Faz 1.2 request context ve standart `{data, meta}` zarfı henüz yoktur. Mevcut doğrudan response
-  uyumluluğunu F1A içinde kırmak bu dikey kesitin kapsamını aşar.
+- F1A checkpoint'inde request context ve standart `{data, meta}` zarfı yoktu. Mevcut response
+  uyumluluğunu o dikey kesitte kırmama kararı historical'dır; ADR-018 F1B migration sınırını
+  sonradan açıkça tanımlar.
 
 Karar:
 
@@ -488,9 +490,9 @@ Karar:
   Production/default dependency her iki yüzeyde de fail-closed davranır. Testler Phase 2 auth
   gelene kadar dependency override kullanabilir. Header, query, path veya body içindeki user/tenant
   ID hiçbir zaman bu principal'ları oluşturmaz veya authorization sağlamaz.
-- F1A success response'ları mevcut API uyumluluğu için doğrudan typed object/list döner. Standart
-  `{data, meta}` zarfı, immutable genel `RequestContext` ve correlation middleware Faz 1.2'de
-  versionlanmış/duyurulmuş compatibility planıyla ele alınır.
+- F1A checkpoint'inde success response'ları doğrudan typed object/list dönmüştür. ADR-018, tam bu
+  yedi operation'ı F1B'de intentional `{data,meta}` migration'a alır; Faz-0 employee/leave
+  uyumluluğunu ise explicit adapter'larla korur.
 - Canonical create/PATCH plan kodları `core`, `professional`, `enterprise`; data region değerleri
   `tr-1`, `eu-1`; locale değerleri `tr-TR`, `en-US` olarak allowlist edilir. Pre-F1A `premium`
   plan satırları list/detail/current response'larında read-only compatibility olarak tanınır,
@@ -567,12 +569,81 @@ Sonuç:
   tasarlanmıştır. Bu davranış ve PostgreSQL'e özgü iddialar gate tamamlanmadan kabul edilmiş
   sayılmaz; gerçek PostgreSQL lane'inde doğrulanır.
 - F1A auth/session/RBAC, audit persistence/event recorder, PostgreSQL RLS, feature flags,
-  legal entity, support/break-glass erişimi veya başka Phase 1.2+/ürün modülü eklemez. Bu ADR,
+  legal entity, support/break-glass erişimi veya daha sonraki ürün modülü eklemez. Bu ADR,
   Phase 2 kimlik doğrulamasının yerine geçmez; yalnız güvenli injection seam ve fail-closed
   başlangıç davranışını tanımlar.
 - F1A lifecycle/settings, generated OpenAPI, SQLite ve PostgreSQL 17.10 gate'leri tamamlanmıştır.
 
-## 19. Ertelenen kararlar
+## 19. ADR-018 Immutable RequestContext, correlation ve API contract standardı
+
+Bağlam:
+
+- HTTP request/trace kimlikleri merkezi bir doğrulama/üretim sınırına sahip değildi; caller'ın ham
+  correlation header'ı bazı hata body'lerinde doğrudan kullanılabiliyordu.
+- Tenant, gelecekteki actor/session ve support-session metadata'sını application katmanlarına
+  taşımak için tek bir immutable request modeli yoktu.
+- F1A'nın yedi yeni platform/tenant operation'ı geçici olarak direct typed object/list dönüyordu;
+  platform listesi offset kabul ediyordu. Buna karşılık Faz-0 employee/leave client'larının
+  plain-array ve `X-Next-Cursor` sözleşmesini sessizce kırmak kabul edilemezdi.
+- Provider-neutral worker fake'i tenant-aware idi fakat HTTP request context'inden türetilmiş sabit,
+  JSON-safe bir propagation allowlist'i doğrulamıyordu.
+
+Karar:
+
+- Canonical `RequestContext`, `frozen=True` ve `slots=True` dataclass'tır. `request_id`, `trace_id`,
+  optional immutable `TenantContext`, actor/session UUID placeholder'ları, typed authentication
+  strength ve optional immutable support-session metadata'sı taşır. Alan assignment'ı mümkün
+  değildir; trusted enrichment aynı correlation kimliklerini koruyan yeni bir instance üretir.
+- F1B authentication yapmaz. Authentication strength başlangıçta `unauthenticated` değeridir;
+  actor/session/support alanları Faz 2 adapter'ları için typed placeholder'dır ve tek başına
+  authorization, RBAC veya audit kaydı sağlamaz.
+- Global ASGI middleware her HTTP isteğinde context'i request state'e bağlar. `X-Request-Id`, en
+  fazla 128 karakterlik safe opaque token; `X-Trace-Id`, sıfır olmayan 32 lowercase hex token'dır.
+  `X-Correlation-Id`, request ID'nin deprecated compatibility alias'ıdır. Request/correlation
+  birlikteyse ancak tekil, geçerli ve eşit olduklarında korunur.
+- Eksik, invalid, duplicate, çelişkili, e-posta/PII syntax'ı veya JWT biçimi taşıyan ID inputları
+  canonical server ID'siyle değiştirilir. Ham değer response'a yansıtılmaz veya structured
+  completion log'una yazılmaz. Response'taki olası upstream correlation header'ları kaldırılır ve
+  tam olarak birer canonical `X-Request-Id`, `X-Trace-Id`, `X-Correlation-Id` eklenir.
+- Public error correlation kaynağı context'tir. Structured log allowlist'i request/trace,
+  authentication strength, optional tenant/support-session ID ve HTTP method/status ile sınırlıdır;
+  actor ID, end-user session ID, support operator actor ID, tenant slug, PII, secret ve raw auth
+  materyali metadata'ya eklenmez.
+- F1A ile eklenen yedi platform/tenant success operation'ı intentional F1B contract migration ile
+  `{data, meta}` döner. Tekil meta `request_id`, `trace_id`, deprecated body alias'ı
+  `correlation_id`; liste meta'sı ayrıca `limit`, `next_cursor` taşır. Body ve response header
+  correlation değerleri aynı context'ten üretilir.
+- Yeni platform tenant listesi yalnız `limit` (`1..200`, default `50`) ve opaque `cursor` kabul
+  eder; deterministic keyset sırası `(created_at asc, id asc)`'dir. Offset bu yeni endpointte
+  reddedilir ve continuation `meta.next_cursor` içindedir.
+- Faz-0 employee ve leave-request listeleri explicit `phase0_plain_cursor_list` adapter'ı üzerinden
+  plain array + `X-Next-Cursor` döndürmeye devam eder. Bounded `offset` yalnız bu compatibility
+  yolunda deprecated olarak kalır. Faz-0 error body correlation davranışı da ayrı compatibility
+  seçimiyle korunur; bu sözleşmeler version/deprecation kararı olmadan zarf içine alınmaz.
+- Tenant-scoped background work yalnız fixed JSON allowlist ile serialize edilir:
+  `request_id`, `trace_id`, `tenant_id`, optional actor/session UUID'leri, authentication strength
+  ve optional support-session/operator UUID'leri. Tenantless context fail closed olur; job tenant
+  ID'si context tenant ID'siyle, legacy `correlation_id` ise request ID ile eşleşmek zorundadır.
+  Extra/free-text key, tenant slug, token veya credential kabul edilmez.
+- Generated OpenAPI yeni success envelope modellerini, üç safe response header'ını, platform
+  listenin cursor-only query'sini ve Faz-0 listelerinin explicit deprecated compatibility
+  sözleşmesini gösterir. Smoke aynı header/body correlation'ını, deterministic cursor traversal'ı,
+  unsafe inputun yansıtılmamasını ve documented endpoint registry'sini kontrol eder.
+- Bu karar schema veya Alembic migration eklemez.
+
+Sonuç:
+
+- Route/service kodu request context'i mutate edemez; tenant veya ilerideki identity enrichment
+  açık ve test edilebilir bir replacement sınırından geçer.
+- Correlation metadata observability için kullanılabilirken caller-controlled PII, JWT, secret veya
+  raw authorization materyali error/log/response yüzeyine taşınmaz.
+- Yeni Faz-1 endpointleri bounded ve deterministik contract standardına geçer; mevcut employee ve
+  leave istemcileri sessiz bir breaking response değişikliğine uğramaz.
+- F1B auth/session doğrulaması, RBAC/permission enforcement, audit persistence, PostgreSQL RLS,
+  broker/worker runtime veya yeni ürün modülü başlatmaz. Bunlar kendi faz ve ADR/gate'lerinde ele
+  alınır.
+
+## 20. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -582,7 +653,7 @@ Sonuç:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 20. İlgili dokümanlar
+## 21. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

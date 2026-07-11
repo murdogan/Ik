@@ -18,7 +18,12 @@ from app.api.errors import (
 )
 from app.db.session import get_session
 from app.platform.db import SqlAlchemyUnitOfWork
+from app.platform.observability.correlation import (
+    get_or_create_request_context,
+    replace_request_context,
+)
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
+from app.platform.request_context import RequestContext
 from app.platform.tenancy import TenantContext
 from app.services.command_idempotency import CommandIdempotencyService
 from app.services.tenant_commands import TenantCommandHandler
@@ -51,6 +56,38 @@ def require_tenant_principal(
     if not isinstance(principal, TenantPrincipal):
         raise tenant_access_denied_error()
     return principal
+
+
+def get_request_context(request: Request) -> RequestContext:
+    """Return the middleware-created immutable context for centralized dependencies."""
+
+    return get_or_create_request_context(request)
+
+
+def get_platform_request_context(
+    request: Request,
+    context: Annotated[RequestContext, Depends(get_request_context)],
+    _principal: Annotated[PlatformPrincipal, Depends(require_platform_principal)],
+) -> RequestContext:
+    """Authorize a platform request without trusting caller identity metadata."""
+
+    return replace_request_context(request, context)
+
+
+def get_tenant_principal_request_context(
+    request: Request,
+    context: Annotated[RequestContext, Depends(get_request_context)],
+    principal: Annotated[TenantPrincipal, Depends(require_tenant_principal)],
+) -> RequestContext:
+    """Enrich context solely from the trusted Phase-1 tenant-principal seam."""
+
+    enriched = context.derive(
+        tenant=TenantContext(
+            tenant_id=principal.tenant_id,
+            slug=str(principal.tenant_id),
+        )
+    )
+    return replace_request_context(request, enriched)
 
 
 def get_unit_of_work(
@@ -103,7 +140,7 @@ def get_idempotency_key(
     return value
 
 
-def get_tenant_context(
+def get_phase0_tenant_context(
     request: Request,
     x_tenant_id: Annotated[
         str,
@@ -142,6 +179,25 @@ def get_tenant_context(
             tenant_id,
         ),
     )
+
+
+# Historical import retained for Phase-0 tests and adapters. New protected routes must use a
+# trusted-principal RequestContext dependency instead.
+get_tenant_context = get_phase0_tenant_context
+
+
+def get_phase0_tenant_request_context(
+    request: Request,
+    context: Annotated[RequestContext, Depends(get_request_context)],
+    tenant: Annotated[TenantContext, Depends(get_phase0_tenant_context)],
+) -> RequestContext:
+    """Explicitly adapt legacy tenant headers to immutable Phase-0 route context.
+
+    The header remains a compatibility scope selector only. It does not create a trusted
+    principal and must not be reused by new protected endpoints.
+    """
+
+    return replace_request_context(request, context.derive(tenant=tenant))
 
 
 def _single_header_value(

@@ -2,14 +2,57 @@
 
 Date: 2026-07-11
 Branch: `codex/mvp-phase1-until-20260712-0900`
-Task: `F1A Tenant lifecycle, typed settings and platform provisioning vertical slice`
-Review checkpoint: `F1A implementation and required local verification complete`
+Task: `F1B Immutable RequestContext, correlation middleware and API contract standards`
+Review checkpoint: `F1B required local gates passed; commit SHA recorded in repository history`
 Review decision: `Ready for supervisor review; no push, merge or deploy performed`
 Push state: `Local work only; no push, merge or deploy`
 
 ## Scope
 
-### F1A tenant lifecycle, typed settings and platform provisioning
+### F1B immutable request context, correlation and API contract standards
+
+- Adds a canonical `frozen=True, slots=True` `RequestContext` carrying validated request/trace IDs,
+  optional immutable tenant, actor/session placeholders, typed authentication strength and optional
+  support-session metadata. Route/service code cannot mutate it; trusted dependencies derive a new
+  instance while request and trace IDs remain invariant.
+- The global HTTP middleware accepts or generates a safe opaque `X-Request-Id` (maximum 128) and a
+  non-zero lowercase 32-hex `X-Trace-Id`. `X-Correlation-Id` is a deprecated alias of request ID.
+  Missing IDs are generated; invalid, repeated, conflicting, e-mail/PII-shaped and JWT-shaped input
+  is replaced and never reflected into response/error/log metadata.
+- Every HTTP response carries exactly one canonical `X-Request-Id`, `X-Trace-Id` and deprecated
+  `X-Correlation-Id`. Safe completion logs contain only allowlisted request/trace, authentication
+  strength, optional tenant/support-session IDs and method/status; actor ID, end-user session ID,
+  support-operator actor ID, tenant slug, PII, secrets and raw authorization material are excluded.
+- The seven F1A platform/tenant success operations intentionally migrate to `{data,meta}`. Single
+  response metadata is exactly `request_id`, `trace_id`, `correlation_id`; platform-list metadata
+  also carries bounded `limit` and nullable `next_cursor`. Both aliases equal request ID.
+- `GET /api/v1/platform/tenants` is now cursor-only: `limit` defaults to `50`, is bounded `1..200`,
+  and the opaque keyset cursor follows deterministic `(created_at asc, id asc)` ordering. `offset`,
+  malformed/repeated cursor, and repeated limit are rejected with the platform validation contract.
+- Existing Phase-0 employee and leave-request lists remain plain arrays through the explicit
+  compatibility adapter, return continuation in `X-Next-Cursor`, and retain bounded deprecated
+  `offset`. Other Phase-0 response shapes are not silently enveloped. Their error-body correlation
+  compatibility is also explicit while safe canonical response headers are universal.
+- Tenant-required worker propagation uses a fixed JSON-safe allowlist and validates request/trace,
+  tenant/job equality, UUID placeholders and authentication strength. Extra/free-text metadata,
+  tenant slug and raw auth material cannot enter the serialized context.
+- Generated OpenAPI documents the seven envelopes, correlation response headers, cursor-only
+  platform list and Phase-0 compatibility/deprecation behavior. Smoke covers header propagation,
+  unsafe-input non-reflection, envelope/meta equality, deterministic platform cursor traversal and
+  unchanged employee/leave list bodies. No schema or Alembic migration is added.
+- F1B does not implement authentication/session verification, RBAC/permission enforcement, audit
+  persistence, PostgreSQL RLS, a real worker/broker, feature flags or a new product module.
+
+#### F1B OpenAPI compatibility decision
+
+- The operation registry remains 21 generated operations plus runtime `/openapi.json`; F1B changes
+  contracts on the seven F1A success operations rather than adding a new endpoint.
+- That change is intentional: new Phase-1 operations adopt `{data,meta}`, while historical Phase-0
+  employee/leave success schemas stay unchanged. Tests separately assert both sides of the boundary.
+- Platform list query parameters are exactly `limit` and `cursor`; page continuation is
+  `meta.next_cursor`. All seven operations document the three safe correlation response headers.
+
+### Historical F1A tenant lifecycle, typed settings and platform provisioning
 
 - Adds exactly seven visible operations:
   `POST/GET /api/v1/platform/tenants`,
@@ -36,8 +79,9 @@ Push state: `Local work only; no push, merge or deploy`
 - Platform list/detail expose exactly tenant metadata, plan, region, locale/timezone, timestamps and
   lifecycle-derived health (`provisioning|healthy|restricted|offboarding|closed`). They do not join,
   count or return employee, user, leave, document or other HR data.
-- F1A success responses remain direct typed object/list for compatibility. General immutable
-  request context, `{data, meta}` envelope and correlation middleware remain Phase 1.2 work.
+- At the F1A checkpoint, success responses were direct typed object/list. F1B supersedes that
+  temporary decision for exactly these seven operations with the explicit migration above; this
+  historical statement must not be read as current runtime behavior.
 - F1A does not implement auth/session/RBAC, audit persistence/recorder, PostgreSQL RLS, feature
   flags, support access, legal entity, payroll, SGK, banking, PDKS, AI or external integrations.
 - Migration `0013_tenant_settings` is additive and backfills default settings for existing tenants.
@@ -46,16 +90,16 @@ Push state: `Local work only; no push, merge or deploy`
   round-trip/refusal, native constraint, schema-drift and tenant-root FK evidence passed. No commit
   SHA is recorded until the verified worktree is committed.
 
-#### F1A OpenAPI compatibility decision
+#### Historical F1A OpenAPI compatibility decision
 
 - The contract delta is additive: Phase-0's 14 generated operations remain, and F1A adds seven for
   21 generated operations plus runtime `/openapi.json` in the 22-row documented table.
 - Platform read fields are exactly `id`, `slug`, `name`, `status`, `plan_code`, `data_region`,
   `locale`, `timezone`, `health`, `created_at`, `updated_at`. Tenant current and settings field sets
   are the narrower exact shapes recorded in the endpoint draft.
-- These operations intentionally do not adopt the Phase 1.2 envelope early. Generated schema,
-  separate `backend/tests/contracts/f1a_openapi_contract.json` snapshot and smoke/documentation
-  parity passed; the historical Phase-0 manifest is preserved.
+- These operations did not adopt the envelope at the F1A checkpoint. F1B now owns the intentional
+  envelope/header/pagination diff; the historical F1A and Phase-0 evidence remains preserved rather
+  than silently rewritten.
 
 ### Historical P0G architecture gate and review checkpoint
 
@@ -377,13 +421,13 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/health` | Implemented | Health response, OpenAPI operation, and docs-table registry |
 | GET | `/` | Implemented | Wealthy Falcon HR landing response, OpenAPI operation, and docs-table registry |
 | GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and docs-table registry |
-| POST | `/api/v1/platform/tenants` | Implemented and verified | Default-deny injected platform principal, server-owned provisioning status/ID, atomic typed settings |
-| GET | `/api/v1/platform/tenants` | Implemented and verified | Bounded metadata-only list, lifecycle-derived health, no HR counts/payload |
-| GET | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | Platform-safe metadata/plan/region/health detail only |
-| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | Typed metadata, plan and explicit lifecycle transition guards |
-| GET | `/api/v1/tenant` | Implemented and verified | Injected tenant-principal current metadata and lifecycle access guard |
-| GET | `/api/v1/tenant/settings` | Implemented and verified | Exact five-key typed settings view and tenant isolation |
-| PATCH | `/api/v1/tenant/settings` | Implemented and verified | Exact allowlist partial update and suspended/offboarding read-only guard |
+| POST | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, default-deny platform principal, server-owned status/ID, atomic typed settings |
+| GET | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, bounded deterministic cursor page, lifecycle health, no HR payload |
+| GET | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}` with platform-safe metadata/plan/region/health detail only |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}`, typed metadata/plan and explicit lifecycle transition guards |
+| GET | `/api/v1/tenant` | Implemented and verified | `{data,meta}`, injected tenant-principal metadata and lifecycle access guard |
+| GET | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact five-key typed settings view and tenant isolation |
+| PATCH | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact allowlist update and suspended/offboarding read-only guard |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -399,6 +443,13 @@ the expected local commits ahead of the review-branch remote after the final com
 
 ## Current Behavior Notes
 
+- Every HTTP request has an immutable request context. Request and trace IDs are validated/generated
+  once and emitted as `X-Request-Id`, `X-Trace-Id`, plus deprecated request-ID alias
+  `X-Correlation-Id`; response body meta on new Phase-1 operations comes from that same context.
+  Duplicate/conflicting/unsafe inputs are regenerated and not reflected or logged.
+- Request-context error metadata is limited to request/trace. Completion-log metadata excludes
+  actor/session/support-operator IDs, tenant slug, raw auth, tokens, secrets and PII. Authentication
+  strength and identity/support fields remain typed placeholders, not an auth/RBAC implementation.
 - F1A platform and tenant dependencies deny by default: absent injected context returns
   `403 platform_access_denied` or `403 tenant_access_denied`. Tests inject principals by dependency
   override; no HTTP header/body/path/query field constructs platform authority or chooses the
@@ -411,10 +462,11 @@ the expected local commits ahead of the review-branch remote after the final com
   slug/id/extra/null/empty changes are rejected. Same-state is a no-op. Invalid transitions,
   post-provisioning region relocation, closed metadata mutation, and offboarding non-closure
   mutation return `409 tenant_lifecycle_conflict`.
-- Platform responses have an exact safe schema: `id`, `slug`, `name`, `status`, `plan_code`,
+- Platform response `data` has an exact safe schema: `id`, `slug`, `name`, `status`, `plan_code`,
   `data_region`, `locale`, `timezone`, `health`, `created_at`, `updated_at`. The bounded list uses
-  `limit` default `50`/max `200` and `offset` default `0`, ordered by `created_at asc, id asc`.
-  Health is a pure lifecycle mapping; platform services do not query employee or leave data.
+  `limit` default `50`, range `1..200`, and opaque cursor ordered by `created_at asc, id asc`;
+  continuation is `meta.next_cursor`, and offset is rejected. Health is a pure lifecycle mapping;
+  platform services do not query employee or leave data.
 - `plan_code` response parsing recognizes pre-F1A `premium` rows solely for read compatibility.
   Create/PATCH catalogs remain canonical and cannot write `premium`; `0013` does not reinterpret
   stored legacy plan values.
@@ -427,8 +479,9 @@ the expected local commits ahead of the review-branch remote after the final com
   closed returns `410 tenant_closed`; suspended/offboarding GETs remain available while settings
   PATCH returns `423 tenant_read_only`. Trial/active are read-write. Platform health maps these
   states to `provisioning`, `healthy`, `restricted`, `offboarding`, `closed`.
-- New F1A success responses are direct typed object/list. Phase 1.2 owns the future `{data, meta}`
-  envelope, immutable general request context and correlation middleware compatibility plan.
+- The seven F1A success operations now use the F1B `{data,meta}` contract. Existing Phase-0
+  employee/leave response bodies remain direct schema/list; employee and leave-request lists use
+  the explicit plain-array + `X-Next-Cursor` adapter and retain deprecated offset compatibility.
 - Domain endpoints require exactly one canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
   remains optional but cannot be blank or repeated when sent.
 - Employee create, leave request create, and leave approve/reject/cancel accept an optional
@@ -473,8 +526,8 @@ the expected local commits ahead of the review-branch remote after the final com
   requests. A tenant employee with leave request records but no manual balance summary rows gets
   `200 []`.
 - OpenAPI uses readable tags: `System`, `Public`, `Platform Tenants`, `Tenant Settings`, `Dashboard`,
-  `Employees`, `Leave Balances`, and `Leave Requests`. F1A adds only the two tenant tag groups and
-  seven operations; generated contract verification passed.
+  `Employees`, `Leave Balances`, and `Leave Requests`. F1B adds no operation; it documents the
+  seven envelopes, safe response headers, platform cursor contract and explicit Phase-0 adapters.
 - Historical W4C6 was a report and smoke-governance refresh only. At that checkpoint the
   implementation report, endpoint draft and smoke agreed on 15 documented endpoints. F1A's current
   target is 21 generated operations plus runtime `/openapi.json`; this does not rewrite that
@@ -610,11 +663,11 @@ SQLite. The PostgreSQL baseline invokes the same script with `--database-url` ag
 test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
 services.
 
-F1A documentation expects the registry to contain 22 rows: 21 generated operations plus runtime
-`/openapi.json`. Smoke must execute all seven new platform/tenant operations with dependency
-overrides, prove default principal denial separately, and inspect platform responses for the exact
-metadata allowlist/no HR fields. The updated run passed with `BACKEND_SMOKE_OK`; historical Phase-0
-smoke evidence below remains unchanged.
+Current documentation expects the registry to contain 22 rows: 21 generated operations plus runtime
+`/openapi.json`. Smoke executes all seven platform/tenant operations with dependency overrides,
+proves default principal denial separately, inspects the exact metadata allowlist/no-HR boundary,
+and verifies F1B response correlation, `{data,meta}`, unsafe-ID non-reflection and deterministic
+platform cursor traversal. Historical Phase-0 smoke evidence below remains unchanged.
 
 The script now verifies the documented API surface in four directions:
 
@@ -646,7 +699,24 @@ current tenant/settings GET/PATCH, typed extra-key rejection, region immutabilit
 suspended/offboarding/closed behavior, cross-tenant principal isolation, and the absence of
 employee/leave data from platform output.
 
+F1B scenarios additionally verify frozen/slotted and derived request contexts, safe error/log
+allowlists, canonical/malformed/duplicate/conflicting correlation inputs, worker serialization,
+seven Phase-1 envelopes, cursor-only platform pagination, and unchanged Phase-0 employee/leave
+plain-array contracts.
+
 ## Verification
+
+### F1B required gates — passed
+
+| Gate | Command | Result |
+|---|---|---|
+| Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
+| Fast suite | `uv run pytest -q` | Passed, 598 tests; 22 PostgreSQL tests deselected; one known Starlette warning |
+| Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed, `BACKEND_SMOKE_OK`; all 22 documented endpoints plus correlation, envelope, cursor and compatibility checks |
+
+F1B adds no database schema or migration and makes no new PostgreSQL-specific catalog/index claim.
+The existing opt-in PostgreSQL baseline continues to invoke this same expanded smoke against an
+Alembic-migrated disposable database when that lane is run.
 
 ### F1A required gates — passed
 
@@ -799,13 +869,13 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Post-F1A Backend Backlog
+## Post-F1B Backend Backlog
 
 - Auth/session/RBAC dependencies, permission enforcement, and current-user context.
-- Phase 1.2 immutable general `RequestContext`, `{data, meta}` response envelope compatibility,
-  global sort controls, global correlation middleware,
-  and validation/error normalization beyond the employee and leave endpoint families already
-  covered.
+- Global sort controls and validation/error normalization beyond the endpoint families already
+  covered. Immutable `RequestContext`, global correlation middleware and the new Phase-1
+  `{data,meta}` standard are implemented; remaining Phase-0 envelope migrations require an explicit
+  version/deprecation decision.
 - PostgreSQL RLS helpers/catalog policies, transaction-local tenant context and no-`BYPASSRLS`
   runtime-role evidence in a separate Phase 1 slice.
 - Internal feature flag model/rollout surface; F1A intentionally has no

@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.compatibility import phase0_plain_cursor_list
 from app.api.dependencies import (
     get_command_idempotency_service,
     get_idempotency_key,
-    get_tenant_context,
+    get_phase0_tenant_request_context,
     get_unit_of_work,
 )
 from app.api.errors import (
@@ -23,7 +24,7 @@ from app.db.session import get_session
 from app.models.employee import EmployeeStatus
 from app.platform.db import SqlAlchemyUnitOfWork
 from app.platform.pagination import MAX_CURSOR_LENGTH, NEXT_CURSOR_HEADER, InvalidCursorError
-from app.platform.tenancy import TenantContext
+from app.platform.request_context import RequestContext
 from app.schemas.employee import (
     EMPLOYEE_LIST_DEFAULT_LIMIT,
     EMPLOYEE_LIST_MAX_LIMIT,
@@ -161,15 +162,20 @@ def get_employee_list_pagination(
 )
 async def list_employees(
     response: Response,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
     filters: Annotated[EmployeeListFilters, Depends(get_employee_list_filters)],
     pagination: Annotated[EmployeeListPagination, Depends(get_employee_list_pagination)],
 ) -> list[EmployeeRead]:
-    page = await service.list_employee_page(tenant_context.tenant_id, filters, pagination)
-    if page.next_cursor is not None:
-        response.headers[NEXT_CURSOR_HEADER] = page.next_cursor
-    return page.items
+    page = await service.list_employee_page(
+        request_context.require_tenant().tenant_id,
+        filters,
+        pagination,
+    )
+    return phase0_plain_cursor_list(response, page)
 
 
 @router.post(
@@ -191,7 +197,10 @@ async def list_employees(
 )
 async def create_employee(
     payload: EmployeeCreate,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     command_handler: Annotated[
         EmployeeCommandHandler,
         Depends(get_employee_command_handler),
@@ -199,7 +208,7 @@ async def create_employee(
     idempotency_key: Annotated[str | None, Depends(get_idempotency_key)],
 ) -> EmployeeRead:
     return await command_handler.create_employee(
-        tenant_context.tenant_id,
+        request_context.require_tenant().tenant_id,
         payload,
         idempotency_key,
     )
@@ -217,10 +226,16 @@ async def create_employee(
 )
 async def get_employee(
     employee_id: UUID,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> EmployeeRead:
-    return await service.get_employee(tenant_context.tenant_id, employee_id)
+    return await service.get_employee(
+        request_context.require_tenant().tenant_id,
+        employee_id,
+    )
 
 
 @router.patch(
@@ -237,14 +252,17 @@ async def get_employee(
 async def update_employee(
     employee_id: UUID,
     payload: EmployeeUpdate,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     command_handler: Annotated[
         EmployeeCommandHandler,
         Depends(get_employee_command_handler),
     ],
 ) -> EmployeeRead:
     return await command_handler.update_employee(
-        tenant_context.tenant_id,
+        request_context.require_tenant().tenant_id,
         employee_id,
         payload,
     )
@@ -265,11 +283,17 @@ async def update_employee(
 )
 async def delete_employee(
     employee_id: UUID,
-    tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_phase0_tenant_request_context),
+    ],
     command_handler: Annotated[
         EmployeeCommandHandler,
         Depends(get_employee_command_handler),
     ],
 ) -> Response:
-    await command_handler.delete_employee(tenant_context.tenant_id, employee_id)
+    await command_handler.delete_employee(
+        request_context.require_tenant().tenant_id,
+        employee_id,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

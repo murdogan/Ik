@@ -4,10 +4,14 @@ from collections.abc import Mapping
 from uuid import UUID
 
 import pytest
+from app.platform.request_context import AuthenticationStrength, RequestContext
+from app.platform.tenancy import TenantContext
 from app.platform.workers import JobQueue, JobSpec
 from app.platform.workers.fake import RecordingJobQueue
 
 TENANT_ID = UUID("10000000-0000-4000-8000-000000000001")
+OTHER_TENANT_ID = UUID("10000000-0000-4000-8000-000000000002")
+TRACE_ID = "0123456789abcdef0123456789abcdef"
 
 
 async def test_recording_job_queue_preserves_tenant_and_operational_controls() -> None:
@@ -58,6 +62,76 @@ async def test_recording_job_queue_supports_injected_deterministic_ids() -> None
     queued = await queue.enqueue(_valid_job())
 
     assert queued.id == "provider-job-001"
+
+
+async def test_recording_job_queue_receives_immutable_serialized_safe_context() -> None:
+    request_context = RequestContext(
+        request_id="request-001",
+        trace_id=TRACE_ID,
+        tenant=TenantContext(tenant_id=TENANT_ID, slug="never-transported"),
+        authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
+    ).serialize_for_worker()
+    job = JobSpec(
+        task_name="employees.export",
+        tenant_id=TENANT_ID,
+        idempotency_key="export-request-001",
+        payload={},
+        timeout_seconds=120,
+        max_attempts=3,
+        correlation_id="request-001",
+        request_context=request_context,
+    )
+    request_context["request_id"] = "mutated-after-construction"
+    queue = RecordingJobQueue()
+
+    await queue.enqueue(job)
+
+    assert queue.jobs[0].request_context_for_transport() == {
+        "request_id": "request-001",
+        "trace_id": TRACE_ID,
+        "tenant_id": str(TENANT_ID),
+        "actor_id": None,
+        "session_id": None,
+        "authentication_strength": "single_factor",
+        "support_session_id": None,
+        "support_operator_actor_id": None,
+    }
+    assert "never-transported" not in repr(queue.jobs[0].request_context)
+    assert isinstance(queue.jobs[0].request_context, Mapping)
+    with pytest.raises(TypeError):
+        queue.jobs[0].request_context["request_id"] = "mutated"  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda context: context.update({"authorization": "Bearer secret"}), "allowlist"),
+        (lambda context: context.update({"tenant_id": str(OTHER_TENANT_ID)}), "tenant_id"),
+        (lambda context: context.update({"authentication_strength": "raw-token"}), "strength"),
+        (lambda context: context.update({"trace_id": "not-a-trace"}), "correlation"),
+    ],
+)
+def test_job_spec_rejects_unsafe_or_cross_tenant_serialized_context(
+    mutate,
+    message: str,
+) -> None:
+    context = RequestContext(
+        request_id="request-001",
+        trace_id=TRACE_ID,
+        tenant=TenantContext(tenant_id=TENANT_ID, slug="worker-test"),
+    ).serialize_for_worker()
+    mutate(context)
+
+    with pytest.raises(ValueError, match=message):
+        JobSpec(
+            task_name="employees.export",
+            tenant_id=TENANT_ID,
+            idempotency_key="export-request-001",
+            payload={},
+            timeout_seconds=120,
+            max_attempts=3,
+            request_context=context,
+        )
 
 
 @pytest.mark.parametrize(

@@ -122,6 +122,15 @@ sağlar.
 P0G bu kuralı tüm `app/services` paketi için AST gate'iyle sabitler. Lokal demo seed servisi de
 flush-only'dir; yalnız standalone script `session_factory.begin()` transaction'ını tamamlar.
 
+F1B, cross-cutting request sınırını `app.platform.request_context` ve
+`app.platform.observability.correlation` altında kurar. `RequestContext` frozen/slotted'tır;
+request/trace kimlikleri ile optional tenant, actor/session, authentication-strength ve
+support-session placeholder'larını taşır. Trusted dependency enrichment alanları yerinde
+değiştirmez, correlation kimliklerini koruyan yeni context üretip request state'e bağlar. Genel
+success envelope'ları `app.platform.responses` sahipliğindedir; eski employee/leave plain-list
+sözleşmesi yalnız `app.api.compatibility` içindeki açık Faz-0 adapter'ıyla korunur. Bu kesit schema
+ve migration eklemez; auth/RBAC/audit persistence başlatmaz.
+
 ### 4.4 Komut transaction ve hata sınırı
 
 Employee create/update/archive ile leave request create/approve/reject/cancel akışlarında
@@ -185,13 +194,14 @@ silme yetkisi veya tenant izolasyonu bypass'ı değildir.
 
 ## 5. Hedef istek yaşam döngüsü
 
-Aşağıdaki liste tamamlanmış Faz 0 runtime davranışı değil, Faz 1–2 ile tamamlanacak hedef akıştır.
-Bugün tenant header compatibility guard'ı, request-scoped DB session, application command/UoW ve
-typed error mapping vardır. Global request/trace middleware, authenticated actor, permission,
-transaction-local RLS context, field masking ve audit henüz uygulanmamıştır.
+Aşağıdaki listenin correlation/request-context bölümü F1B'de, tenant header compatibility guard'ı,
+request-scoped DB session, application command/UoW ve typed error mapping ise önceki kesitlerde
+uygulanmıştır. Authenticated actor/session, permission, transaction-local RLS context, field masking
+ve audit persistence henüz uygulanmamıştır; tam akış Faz 1–2 boyunca tamamlanacaktır.
 
 1. Request edge katmanından gelir.
-2. Request ID ve trace ID atanır.
+2. Middleware safe request ID ve trace ID'yi doğrular veya üretir, immutable `RequestContext`'e
+   bağlar ve canonical response header'larında taşır.
 3. JWT/session doğrulanır.
 4. Tenant context çözülür.
 5. Rate limit uygulanır.
@@ -210,6 +220,12 @@ Faz 0, `app.platform.workers` altında yalnız dar `JobQueue` portunu, tenant-aw
 envelope'unu ve deterministik `RecordingJobQueue` fake'ini uygular. ADR-008 ile Dramatiq 2.2 +
 Redis hedef adapter seçilmiştir; provider dependency'si, broker bağlantısı, worker process'i,
 schedule veya deployment bu checkpoint'te yoktur.
+
+F1B ile `JobSpec`, optional serialized request context'i yalnız sabit JSON-safe allowlist olarak
+alabilir: request/trace, zorunlu ve job ile aynı tenant ID, optional actor/session UUID'leri,
+authentication strength ve optional support-session/operator UUID'leri. Extra/free-text alan,
+tenant slug, PII, raw auth veya token kabul edilmez. Tenantless `RequestContext` worker payload'ına
+serialize edilemez; legacy job `correlation_id` verilirse context `request_id` ile aynı olmalıdır.
 
 | Kuyruk | İşler |
 |---|---|
@@ -243,8 +259,9 @@ PostgreSQL ana veri katmanıdır.
 User email mevcut şemada case-sensitive unique'tir. Auth phase'inden önce explicit
 `lower(btrim(email))` normalize kolon/index migration'ı yapılacak; `citext` kullanılmayacaktır.
 Employee directory araması bundan farklı bir sözleşmedir ve ADR-016'daki `ILIKE`/`pg_trgm`
-stratejisini kullanır. PII-safe slow-query instrumentation ve global request/transaction
-correlation henüz runtime'da yoktur ve Murat review checkpoint'inde açık plan sapmasıdır.
+stratejisini kullanır. F1B HTTP completion log'u allowlisted request/trace, optional tenant/support
+session ID, authentication strength ve method/status taşır; actor/session, raw auth ve PII taşımaz.
+PII-safe slow-query instrumentation ve DB transaction correlation ise henüz runtime'da yoktur.
 
 Kullanım gerekçeleri:
 

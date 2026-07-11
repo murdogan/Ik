@@ -8,18 +8,28 @@ from typing import Any
 from app.main import create_app
 
 HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
-SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1a_openapi_contract.json"
+F1A_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1a_openapi_contract.json"
+F1B_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1b_openapi_contract.json"
 PHASE0_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "phase0_openapi_contract.json"
+F1B_APPROVED_OPERATION_MIGRATIONS = {
+    "GET /api/v1/platform/tenants",
+    "GET /api/v1/platform/tenants/{tenant_id}",
+    "GET /api/v1/tenant",
+    "GET /api/v1/tenant/settings",
+    "PATCH /api/v1/platform/tenants/{tenant_id}",
+    "PATCH /api/v1/tenant/settings",
+    "POST /api/v1/platform/tenants",
+}
 
 
-def test_f1a_openapi_contract_matches_review_snapshot() -> None:
-    snapshot = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+def test_f1b_openapi_contract_matches_review_snapshot() -> None:
+    snapshot = json.loads(F1B_SNAPSHOT_PATH.read_text(encoding="utf-8"))
 
     assert snapshot["format_version"] == 1
     assert snapshot["contract"] == build_openapi_contract_manifest(create_app().openapi())
 
 
-def test_f1a_contract_preserves_every_phase0_operation_and_component() -> None:
+def test_f1b_contract_preserves_every_phase0_operation_and_component() -> None:
     phase0 = json.loads(PHASE0_SNAPSHOT_PATH.read_text(encoding="utf-8"))["contract"]
     current = build_openapi_contract_manifest(create_app().openapi())
 
@@ -32,6 +42,24 @@ def test_f1a_contract_preserves_every_phase0_operation_and_component() -> None:
             component: current["components"].get(group_name, {}).get(component)
             for component in components
         } == components
+
+
+def test_f1b_delta_from_historical_f1a_is_the_approved_contract_migration() -> None:
+    f1a = json.loads(F1A_SNAPSHOT_PATH.read_text(encoding="utf-8"))["contract"]
+    current = build_openapi_contract_manifest(create_app().openapi())
+
+    assert set(current["operations"]) == set(f1a["operations"])
+    assert {
+        operation
+        for operation, digest in current["operations"].items()
+        if digest != f1a["operations"][operation]
+    } == F1B_APPROVED_OPERATION_MIGRATIONS
+
+    for group_name, historical_components in f1a["components"].items():
+        assert {
+            component: current["components"].get(group_name, {}).get(component)
+            for component in historical_components
+        } == historical_components
 
 
 def build_openapi_contract_manifest(openapi: dict[str, Any]) -> dict[str, Any]:

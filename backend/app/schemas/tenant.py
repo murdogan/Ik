@@ -25,6 +25,7 @@ from app.modules.core.domain.tenant import (
     TenantTimeFormat,
     TenantWeekStartDay,
 )
+from app.platform.pagination import decode_cursor, encode_cursor
 
 TENANT_LIST_DEFAULT_LIMIT = 50
 TENANT_LIST_MAX_LIMIT = 200
@@ -121,6 +122,40 @@ class TenantPlatformRead(BaseModel):
     health: TenantHealth
     created_at: datetime
     updated_at: datetime
+
+
+class TenantListCursor(BaseModel):
+    """Opaque platform-tenant continuation key for the stable creation order."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    created_at: datetime
+    id: UUID
+
+    @field_validator("created_at")
+    @classmethod
+    def require_timezone_aware_created_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Tenant cursor created_at must include a timezone")
+        return value
+
+    @classmethod
+    def from_token(cls, token: str) -> TenantListCursor:
+        return cls.model_validate(decode_cursor(token, expected_resource="platform_tenants"))
+
+    def to_token(self) -> str:
+        return encode_cursor("platform_tenants", self.model_dump(mode="json"))
+
+
+class TenantListPagination(BaseModel):
+    """Cursor-only pagination for the new Phase-1 platform list contract."""
+
+    limit: int = Field(
+        default=TENANT_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=TENANT_LIST_MAX_LIMIT,
+    )
+    cursor: TenantListCursor | None = None
 
 
 class TenantRead(BaseModel):

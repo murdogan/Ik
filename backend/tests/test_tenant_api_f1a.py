@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -54,6 +54,7 @@ SETTINGS_FIELDS = {
     "date_format",
     "time_format",
 }
+META_FIELDS = {"request_id", "trace_id", "correlation_id"}
 SPOOFED_IDENTITY_HEADERS = {
     "X-User-Id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     "X-Tenant-Id": str(OTHER_TENANT_ID),
@@ -187,8 +188,34 @@ def _assert_error_code(response: Any, status_code: int, code: str | None = None)
     assert response.status_code == status_code
     body = response.json()
     assert set(body) == {"error"}
+    assert body["error"]["correlation_id"] == response.headers["X-Request-Id"]
+    assert response.headers["X-Correlation-Id"] == response.headers["X-Request-Id"]
+    assert len(response.headers["X-Trace-Id"]) == 32
     if code is not None:
         assert body["error"]["code"] == code
+
+
+def _phase1_data(response: Any, expected_fields: set[str]) -> dict[str, Any]:
+    body = response.json()
+    assert set(body) == {"data", "meta"}
+    assert set(body["data"]) == expected_fields
+    assert set(body["meta"]) == META_FIELDS
+    assert body["meta"]["request_id"] == response.headers["X-Request-Id"]
+    assert body["meta"]["correlation_id"] == body["meta"]["request_id"]
+    assert body["meta"]["trace_id"] == response.headers["X-Trace-Id"]
+    return body["data"]
+
+
+def _phase1_list(response: Any, *, expected_limit: int) -> tuple[list[dict[str, Any]], Any]:
+    body = response.json()
+    assert set(body) == {"data", "meta"}
+    assert isinstance(body["data"], list)
+    assert set(body["meta"]) == META_FIELDS | {"limit", "next_cursor"}
+    assert body["meta"]["request_id"] == response.headers["X-Request-Id"]
+    assert body["meta"]["correlation_id"] == body["meta"]["request_id"]
+    assert body["meta"]["trace_id"] == response.headers["X-Trace-Id"]
+    assert body["meta"]["limit"] == expected_limit
+    return body["data"], body["meta"]["next_cursor"]
 
 
 async def test_platform_default_denial_happens_before_database_lookup() -> None:
@@ -285,8 +312,7 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
         )
 
         assert create_response.status_code == 201
-        created = create_response.json()
-        assert set(created) == PLATFORM_FIELDS
+        created = _phase1_data(create_response, PLATFORM_FIELDS)
         assert UUID(created["id"]).version == 4
         assert created["status"] == "provisioning"
         assert created["health"] == "provisioning"
@@ -295,19 +321,20 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
 
         list_response = await harness.client.get("/api/v1/platform/tenants")
         assert list_response.status_code == 200
-        listed = list_response.json()
-        assert isinstance(listed, list)
+        listed, next_cursor = _phase1_list(list_response, expected_limit=50)
         assert len(listed) == 3
+        assert next_cursor is None
         assert all(set(item) == PLATFORM_FIELDS for item in listed)
 
         detail_response = await harness.client.get(
             f"/api/v1/platform/tenants/{created['id']}"
         )
         assert detail_response.status_code == 200
-        assert detail_response.json() == created
+        detailed = _phase1_data(detail_response, PLATFORM_FIELDS)
+        assert detailed == created
 
         serialized_platform_responses = json.dumps(
-            [created, listed, detail_response.json()]
+            [created, listed, detailed]
         )
         for forbidden_value in (
             "WF-001",
@@ -326,6 +353,79 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
         assert settings.week_start_day == "sunday"
         assert settings.date_format == "MM/DD/YYYY"
         assert settings.time_format == "12h"
+
+
+async def test_platform_tenant_list_uses_bounded_deterministic_cursor_envelope() -> None:
+    async with _tenant_api() as harness:
+        _authorize_platform(harness.app)
+        expected_ids = {str(TENANT_ID), str(OTHER_TENANT_ID)}
+        for number in range(2):
+            response = await harness.client.post(
+                "/api/v1/platform/tenants",
+                json={
+                    "slug": f"cursor-falcon-{number}",
+                    "name": f"Cursor Falcon {number}",
+                },
+            )
+            assert response.status_code == 201
+            expected_ids.add(_phase1_data(response, PLATFORM_FIELDS)["id"])
+
+        fixed_created_at = datetime(2026, 7, 11, 8, 30, tzinfo=UTC)
+        async with harness.session_factory() as session:
+            tenants = list(await session.scalars(select(Tenant)))
+            for tenant in tenants:
+                tenant.created_at = fixed_created_at
+            await session.commit()
+
+        first_response = await harness.client.get(
+            "/api/v1/platform/tenants",
+            params={"limit": 2},
+            headers={
+                "X-Request-Id": "req_platform_page_001",
+                "X-Trace-Id": "0123456789abcdef0123456789abcdef",
+            },
+        )
+        assert first_response.status_code == 200
+        first, cursor = _phase1_list(first_response, expected_limit=2)
+        assert cursor is not None
+        assert first_response.json()["meta"]["request_id"] == "req_platform_page_001"
+        assert first_response.json()["meta"]["trace_id"] == (
+            "0123456789abcdef0123456789abcdef"
+        )
+
+        second_response = await harness.client.get(
+            "/api/v1/platform/tenants",
+            params={"limit": 2, "cursor": cursor},
+        )
+        assert second_response.status_code == 200
+        second, terminal_cursor = _phase1_list(second_response, expected_limit=2)
+
+    first_ids = [tenant["id"] for tenant in first]
+    second_ids = [tenant["id"] for tenant in second]
+    assert set(first_ids).isdisjoint(second_ids)
+    assert set(first_ids + second_ids) == expected_ids
+    assert first_ids + second_ids == sorted(expected_ids)
+    assert terminal_cursor is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"limit": 0},
+        {"limit": 201},
+        {"cursor": "not-a-platform-tenant-cursor"},
+        {"offset": 1},
+    ],
+)
+async def test_platform_tenant_list_rejects_unbounded_or_offset_pagination(
+    query: dict[str, Any],
+) -> None:
+    async with _tenant_api() as harness:
+        _authorize_platform(harness.app)
+
+        response = await harness.client.get("/api/v1/platform/tenants", params=query)
+
+    _assert_error_code(response, 422, "platform_tenant_validation_error")
 
 
 async def test_platform_reads_legacy_premium_plan_but_new_writes_reject_it() -> None:
@@ -350,7 +450,7 @@ async def test_platform_reads_legacy_premium_plan_but_new_writes_reject_it() -> 
         )
 
     assert detail_response.status_code == 200
-    assert detail_response.json()["plan_code"] == "premium"
+    assert _phase1_data(detail_response, PLATFORM_FIELDS)["plan_code"] == "premium"
     assert create_response.status_code == 422
 
 
@@ -426,8 +526,7 @@ async def test_platform_patch_updates_only_allowlisted_metadata() -> None:
         )
 
         assert response.status_code == 200
-        body = response.json()
-        assert set(body) == PLATFORM_FIELDS
+        body = _phase1_data(response, PLATFORM_FIELDS)
         assert body["name"] == "Wealthy Falcon Enterprise"
         assert body["plan_code"] == "enterprise"
         assert body["data_region"] == "tr-1"
@@ -445,12 +544,13 @@ async def test_platform_patch_updates_only_allowlisted_metadata() -> None:
             json={"slug": "region-change", "name": "Region Change"},
         )
         assert create_response.status_code == 201
+        created = _phase1_data(create_response, PLATFORM_FIELDS)
         region_response = await harness.client.patch(
-            f"/api/v1/platform/tenants/{create_response.json()['id']}",
+            f"/api/v1/platform/tenants/{created['id']}",
             json={"data_region": "eu-1"},
         )
         assert region_response.status_code == 200
-        assert region_response.json()["data_region"] == "eu-1"
+        assert _phase1_data(region_response, PLATFORM_FIELDS)["data_region"] == "eu-1"
 
         forbidden_response = await harness.client.patch(
             f"/api/v1/platform/tenants/{TENANT_ID}",
@@ -517,7 +617,7 @@ async def test_tenant_lifecycle_transition_graph_is_explicit() -> None:
 
                 if target in allowed_targets:
                     assert response.status_code == 200, (source, target, response.text)
-                    assert response.json()["status"] == target
+                    assert _phase1_data(response, PLATFORM_FIELDS)["status"] == target
                 else:
                     _assert_error_code(response, 409, "tenant_lifecycle_conflict")
 
@@ -543,7 +643,7 @@ async def test_platform_health_is_derived_from_lifecycle_status(
         response = await harness.client.get(f"/api/v1/platform/tenants/{TENANT_ID}")
 
     assert response.status_code == 200
-    assert response.json()["health"] == expected_health
+    assert _phase1_data(response, PLATFORM_FIELDS)["health"] == expected_health
 
 
 async def test_tenant_self_endpoints_deny_spoofed_headers_without_trusted_principal() -> None:
@@ -575,15 +675,13 @@ async def test_tenant_principal_not_spoofed_header_drives_current_tenant_and_set
         )
 
     assert current_response.status_code == 200
-    current = current_response.json()
-    assert set(current) == TENANT_FIELDS
+    current = _phase1_data(current_response, TENANT_FIELDS)
     assert current["id"] == str(TENANT_ID)
     assert current["slug"] == "wealthy-falcon"
     assert current["plan_code"] == "core"
 
     assert settings_response.status_code == 200
-    settings = settings_response.json()
-    assert set(settings) == SETTINGS_FIELDS
+    settings = _phase1_data(settings_response, SETTINGS_FIELDS)
     assert settings == {
         "locale": "tr-TR",
         "timezone": "Europe/Istanbul",
@@ -610,7 +708,7 @@ async def test_tenant_settings_patch_is_typed_partial_and_tenant_isolated() -> N
         )
 
         assert response.status_code == 200
-        assert response.json() == {
+        assert _phase1_data(response, SETTINGS_FIELDS) == {
             "locale": "en-US",
             "timezone": "Europe/London",
             "week_start_day": "sunday",

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +20,10 @@ from app.modules.core.domain.tenant import (
 )
 from app.platform.db import constraint_name_from_error
 from app.platform.errors.application import ApplicationError
+from app.platform.pagination import CursorPage
 from app.schemas.tenant import (
+    TenantListCursor,
+    TenantListPagination,
     TenantPlatformCreate,
     TenantPlatformUpdate,
     TenantSettingsUpdate,
@@ -68,14 +72,27 @@ class TenantService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_tenants(self, *, limit: int, offset: int) -> list[Tenant]:
-        statement = (
-            select(Tenant)
-            .order_by(Tenant.created_at.asc(), Tenant.id.asc())
-            .offset(offset)
-            .limit(limit)
+    async def list_tenant_page(
+        self,
+        pagination: TenantListPagination | None = None,
+    ) -> CursorPage[Tenant]:
+        pagination = pagination or TenantListPagination()
+        statement = _tenant_list_statement(
+            pagination,
+            dialect_name=self.session.get_bind().dialect.name,
         )
-        return list(await self.session.scalars(statement))
+        rows = list(await self.session.scalars(statement))
+        items = rows[: pagination.limit]
+        next_cursor = None
+        if len(rows) > pagination.limit:
+            last_item = items[-1]
+            created_at = last_item.created_at
+            if not isinstance(created_at, datetime):  # pragma: no cover - ORM contract guard
+                raise RuntimeError("Tenant created_at must be a datetime")
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            next_cursor = TenantListCursor(created_at=created_at, id=last_item.id).to_token()
+        return CursorPage(items=items, next_cursor=next_cursor)
 
     async def get_tenant(self, tenant_id: UUID) -> Tenant:
         tenant = await self.session.get(Tenant, tenant_id)
@@ -274,3 +291,31 @@ def _is_tenant_slug_unique_violation(exc: IntegrityError) -> bool:
     if constraint_name_from_error(exc) in TENANT_SLUG_UNIQUE_CONSTRAINTS:
         return True
     return _SQLITE_TENANT_SLUG_UNIQUE_SIGNATURE in str(exc.orig)
+
+
+def _tenant_list_statement(
+    pagination: TenantListPagination,
+    *,
+    dialect_name: str,
+):
+    is_sqlite = dialect_name == "sqlite"
+    created_at_key = func.julianday(Tenant.created_at) if is_sqlite else Tenant.created_at
+    statement = select(Tenant)
+    if pagination.cursor is not None:
+        cursor_created_at_key = (
+            func.julianday(pagination.cursor.created_at)
+            if is_sqlite
+            else pagination.cursor.created_at
+        )
+        statement = statement.where(
+            or_(
+                created_at_key > cursor_created_at_key,
+                and_(
+                    created_at_key == cursor_created_at_key,
+                    Tenant.id > pagination.cursor.id,
+                ),
+            )
+        )
+    return statement.order_by(created_at_key.asc(), Tenant.id.asc()).limit(
+        pagination.limit + 1
+    )
