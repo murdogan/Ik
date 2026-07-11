@@ -171,6 +171,9 @@ V1 yerleşik bordro motorunda golden dataset zorunlu olur.
 - Tenant-owned foreign key'ler için yanlış `(tenant_id, foreign_id)` kombinasyonu her ilişki ve
   named constraint bazında gerçek PostgreSQL'de reddedilir.
 - Cache key tenant prefix içerir.
+- Worker fake her job'da non-zero tenant ister; optional request-derived context sağlandığında A/B
+  tenant uyuşmazlığı enqueue öncesi reddedilir. Gerçek provider için authenticated transport ve
+  transaction-local DB tenant binding ayrıca zorunludur.
 - Object storage pre-signed URL tenant kontrolü ister.
 - Search/vector sonuçları tenant dışına çıkmaz.
 

@@ -243,6 +243,10 @@ alabilir: request/trace, zorunlu ve job ile aynı tenant ID, optional actor/sess
 authentication strength ve optional support-session/operator UUID'leri. Extra/free-text alan,
 tenant slug, PII, raw auth veya token kabul edilmez. Tenantless `RequestContext` worker payload'ına
 serialize edilemez; legacy job `correlation_id` verilirse context `request_id` ile aynı olmalıdır.
+F1E, mandatory `JobSpec.tenant_id` ile optional request-derived context ayrımını korur: system/outbox
+job'u tenant ID'siz kurulamaz, request-scoped job'da context A ile job B uyuşmazlığı fake enqueue
+öncesinde reddedilir. Gerçek provider transport authority'sini doğrulayıp aynı tenant'ı DB
+transaction'ına bind etmeden HR sorgusu çalıştıramaz.
 
 | Kuyruk | İşler |
 |---|---|
@@ -320,7 +324,8 @@ Her connector için ortak alanlar:
 - Her endpoint permission dependency ile korunmalıdır.
 - Hassas alanlar field policy ile maskelenmelidir.
 - Export ve belge download auditlenmelidir.
-- Background job tenant context olmadan çalışmamalıdır.
+- Background job non-zero tenant scope olmadan çalışmamalıdır; request-derived provenance varsa
+  aynı tenant ile eşleşmelidir.
 - Object storage pre-signed URL tenant ve ACL kontrolünden sonra üretilmelidir.
 
 ## 10. Ölçekleme stratejisi

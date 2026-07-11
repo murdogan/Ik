@@ -3,9 +3,9 @@
 Date: 2026-07-11
 Branch: `codex/mvp-phase1-until-20260712-0900`
 Task: `F1E Phase 1 security gate, OpenAPI evidence and review checkpoint`
-Review checkpoint: `STOP — awaiting Murat review`
-Review decision: `Phase 1 gate passed; Phase 2 authentication/RBAC/audit persistence not started`
-Push state: `F1D base 54a3678 is pushed; the final F1E commit is intentionally left unpushed for the supervisor; no merge or deploy`
+Review checkpoint: `STOP — supervisor F1E push pending; awaiting Murat review`
+Review decision: `Local F1E technical gates passed; supervisor push acceptance pending; Phase 2 authentication/RBAC/audit persistence not started`
+Push state: `F1D base 54a3678 is pushed; F1E HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
@@ -21,8 +21,10 @@ Push state: `F1D base 54a3678 is pushed; the final F1E commit is intentionally l
   authentication begins only in Phase 2.
 - One authorization matrix proves every Phase 1 operation denies absent or spoofed caller context;
   authorized dependency overrides execute the same operations in API tests and the 25-endpoint
-  smoke. Tenant A/B API, service, cache-helper and worker-fake isolation remains covered, while the
-  PostgreSQL lane proves catalog, repository, raw-SQL, relationship and platform-to-HR negatives.
+  smoke. Tenant A/B API, service and cache-helper isolation remains covered. Every worker job has a
+  non-zero tenant; optional request-derived context must match it, so an A-context/B-job envelope is
+  rejected before the recording fake can enqueue. The PostgreSQL lane proves catalog, repository,
+  raw-SQL, relationship and platform-to-HR negatives.
 - Platform response and OpenAPI assertions exclude document, employee, user and leave payload
   schemas/fields. `limits.active_employees` remains nullable configured tenant metadata and is not
   an employee record, usage value or count.
@@ -143,8 +145,10 @@ Push state: `F1D base 54a3678 is pushed; the final F1E commit is intentionally l
   compatibility adapter, return continuation in `X-Next-Cursor`, and retain bounded deprecated
   `offset`. Other Phase-0 response shapes are not silently enveloped. Their error-body correlation
   compatibility is also explicit while safe canonical response headers are universal.
-- Tenant-required worker propagation uses a fixed JSON-safe allowlist and validates request/trace,
-  tenant/job equality, UUID placeholders and authentication strength. Extra/free-text metadata,
+- F1B introduced optional request-derived worker propagation with a fixed JSON-safe allowlist and
+  validates request/trace, tenant/job equality, UUID placeholders and authentication strength.
+  Every job tenant remains mandatory; F1E makes both A→B and B→A mismatch evidence explicit without
+  claiming that the recording fake is a broker or authorization adapter. Extra/free-text metadata,
   tenant slug and raw auth material cannot enter the serialized context.
 - Generated OpenAPI documents the seven envelopes, correlation response headers, cursor-only
   platform list and Phase-0 compatibility/deprecation behavior. Smoke covers header propagation,
@@ -696,8 +700,8 @@ the expected local commits ahead of the review-branch remote after the final com
 
 ## Current Tenant Relational Integrity and Retention
 
-Current model metadata and the Alembic head represent these tenant-owned relationships; F1D final
-gate status is tracked separately below:
+Current model metadata and the Alembic head represent these tenant-owned relationships; current
+F1E Phase 1 gate status is tracked separately below:
 
 | Child columns | Parent candidate key | Delete/null behavior |
 |---|---|---|
@@ -858,26 +862,39 @@ the full required command results are recorded below.
 
 ## Verification
 
-### F1E Phase 1 closure gates — passed
+### F1E Phase 1 closure gates — local technical gates passed; supervisor push pending
 
 | Gate | Command | Current evidence state |
 |---|---|---|
 | Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
-| Fast suite | `uv run pytest -q` | Passed: 753 passed, 30 deselected, 1 warning |
+| Fast suite | `uv run pytest -q` | Passed: 754 passed, 30 deselected, 1 warning |
 | OpenAPI contract/security metadata | `uv run pytest -q backend/tests/test_openapi_metadata.py backend/tests/test_openapi_contract.py` | Passed: 26 tests, 1 warning; exact F1E snapshot and F1D-to-F1E principal-metadata-only diff |
-| Focused Phase 1 security | `uv run pytest -q backend/tests/test_tenant_api_f1a.py backend/tests/test_tenant_api_f1d.py backend/tests/test_platform_tenant_queries.py backend/tests/test_tenancy.py backend/tests/test_worker_queue.py backend/tests/test_request_context.py backend/tests/test_correlation_middleware.py backend/tests/test_platform_events.py` | Passed: 238 tests; all ten operation denials, A/B API/cache/worker boundaries, no-HR platform fields and redacted correlation/event fixtures |
+| Focused Phase 1 security | `uv run pytest -q backend/tests/test_tenant_api_f1a.py backend/tests/test_tenant_api_f1d.py backend/tests/test_platform_tenant_queries.py backend/tests/test_tenancy.py backend/tests/test_worker_queue.py backend/tests/test_request_context.py backend/tests/test_correlation_middleware.py backend/tests/test_platform_events.py` | Passed: 239 tests; all ten operation denials, A/B API/cache/worker boundaries, no-HR platform fields and redacted correlation/event fixtures |
+| Service-layer tenant isolation | `uv run pytest -q backend/tests/test_employee_service.py backend/tests/test_leave_request_service.py` | Passed: 44 tests; employee/leave list, get, mutation and relationship guards remain tenant-scoped without relying on API routing |
 | Migration suite | `uv run pytest -q backend/tests/test_migrations.py` | Passed: 36 tests; upgrade/downgrade guards, offline security DDL and portable drift/round-trip coverage |
 | Alembic head | `uv run alembic heads` | Passed: sole head `0015_f1d_feature_flags` |
-| PostgreSQL full lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed on PostgreSQL 17.10: 30 passed, 753 deselected, 1 warning |
+| PostgreSQL full lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed on PostgreSQL 17.10: 30 passed, 754 deselected, 1 warning |
 | PostgreSQL migration/runtime baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_baseline.py` | Passed: 8 tests; real `base → head → base → head`, downgrade refusal, native catalog, zero autogenerate drift and migrated API smoke |
 | PostgreSQL RLS/direct-DB attacks | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_f1c_rls.py backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed: 12 tests; catalog/FORCE/role checks, raw A/B denial, repository and pool binding, platform-HR denial and every composite relationship negative |
 | Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 25 documented endpoints executed and Phase 1 principal metadata checked |
-| Git hygiene | `git diff --check`; restricted-path/secret-pattern scan from `54a3678`; `git status --short --branch`; upstream count | Passed: no whitespace, forbidden path or credential-pattern match across the 18 F1E files; expected pre-commit changes only and upstream `0 0`. Final clean/ahead state is verified after the F1E commit in the handoff. |
+| Git hygiene | Exact commands below from `54a3678`; final `git status --short --branch` and upstream count in handoff | Passed: no whitespace, forbidden path or credential-pattern match across the F1E files; only task-scoped code/test/docs changes. Final clean/ahead state is verified after the F1E HEAD commit in the handoff. |
+
+The F1E hygiene audit is reproducible after the checkpoint commit with:
+
+```bash
+git diff --check 54a3678...HEAD
+test -z "$(git diff --name-only 54a3678...HEAD | \
+  rg -i '(^|/)(\.env($|\.)|.*secret.*|.*credential.*|.*token.*|.*staging.*|.*cron.*|.*deploy.*|.*auth.*)')"
+test -z "$(git diff --format= --unified=0 54a3678...HEAD | \
+  rg -i '^\+[^+].*(api[_-]?key|client[_-]?secret|access[_-]?token|private[_-]?key|password)\s*[:=]\s*[^[:space:]]+')"
+git status --short --branch
+git rev-list --left-right --count '@{upstream}...HEAD'
+```
 
 The F1A-F1D implementation base was already pushed on the review branch before this closure block.
-Per task authority, the final F1E commit is intentionally not pushed by Codex; the supervisor owns
-that push. The queue remains at `STOP — awaiting Murat review`, and no Phase 2 authentication,
-session, RBAC, permission enforcement or audit persistence work has started.
+Per task authority, F1E HEAD is intentionally not pushed by Codex; the supervisor owns that push.
+The queue remains at `STOP — supervisor F1E push pending; awaiting Murat review`, and no Phase 2
+authentication, session, RBAC, permission enforcement or audit persistence work has started.
 
 ### F1D required gates — passed
 

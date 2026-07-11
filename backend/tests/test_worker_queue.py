@@ -40,6 +40,7 @@ async def test_recording_job_queue_preserves_tenant_and_operational_controls() -
     assert isinstance(queue, RecordingJobQueue)
     assert queue.jobs == (job,)
     assert queue.jobs[0].tenant_id == TENANT_ID
+    assert queue.jobs[0].request_context_for_transport() is None
     assert queue.jobs[0].payload == {
         "employee": {"id": "20000000-0000-4000-8000-000000000001"},
         "fields": ("id",),
@@ -134,6 +135,23 @@ def test_job_spec_rejects_unsafe_or_cross_tenant_serialized_context(
         )
 
 
+def test_recording_job_queue_rejects_tenant_a_context_for_tenant_b_before_enqueue() -> None:
+    queue = RecordingJobQueue()
+
+    with pytest.raises(ValueError, match="request_context tenant_id must match"):
+        JobSpec(
+            task_name="employees.export",
+            tenant_id=OTHER_TENANT_ID,
+            idempotency_key="export-request-001",
+            payload={},
+            timeout_seconds=120,
+            max_attempts=3,
+            request_context=_worker_request_context(),
+        )
+
+    assert queue.jobs == ()
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -180,3 +198,11 @@ def _valid_job() -> JobSpec:
         max_attempts=3,
         queue="exports",
     )
+
+
+def _worker_request_context() -> dict[str, object]:
+    return RequestContext(
+        request_id="request-001",
+        trace_id=TRACE_ID,
+        tenant=TenantContext(tenant_id=TENANT_ID, slug="worker-test"),
+    ).serialize_for_worker()

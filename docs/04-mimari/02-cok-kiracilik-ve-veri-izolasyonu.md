@@ -158,9 +158,11 @@ Kritik noktalar:
 - Lokal seed/migration gibi tenant'lar arası bootstrap işlemleri HTTP platform session'ını yeniden
   kullanmaz; ayrı ve açık operator/test-admin bağlantısıdır.
 - Background job DB adapter'ı da tenant context'i transaction-locally set etmelidir.
-- Mevcut worker fake/transport sınırı tenant-required serialized context allowlist'ini doğrular;
-  extra metadata, tenant slug veya raw auth materyali taşımaz. Gerçek worker'ın DB transaction'ında
-  aynı binder kullanılmadan HR sorgusu çalıştırmasına izin verilmez.
+- Mevcut worker fake/transport sınırı her job için non-zero `tenant_id` ister. Request-derived
+  serialized context optional system/outbox ayrımını korur; sağlandığında allowlist dışı alanı ve
+  job tenant'ıyla A/B uyuşmazlığını enqueue öncesinde reddeder. Extra metadata, tenant slug veya raw
+  auth materyali taşımaz. Gerçek worker authenticated transport ve aynı tenant DB binder'ı olmadan
+  HR sorgusu çalıştıramaz.
 - PostgreSQL catalog testi non-null `tenant_id` taşıyan tabloları bağımsız keşfeder; migration'ın
   frozen inventory'si, forced flags ve app policy coverage farklıysa CI fail eder.
 
@@ -248,7 +250,8 @@ Kural: Müşteri bazlı fork yapılmaz; özelleştirme feature flag ve ayarlarla
   korunur.
 - Tenant A document URL'i Tenant B'de çalışmaz.
 - Cache key cross-tenant çakışmaz.
-- Background job tenant context olmadan fail eder.
+- Background job `JobSpec` non-zero tenant ID olmadan fail eder; request-derived context
+  sağlanırsa aynı tenant'ı taşımak zorundadır.
 - Worker context tenant/job eşleşmesi, safe request/trace formatı ve fixed-key allowlist dışındaki
   metadata reddi test edilir.
 - Export sadece tenant kapsamındaki satırları içerir.

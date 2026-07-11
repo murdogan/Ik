@@ -146,7 +146,11 @@ payload, timeout ve attempt sınırı isteyen dar `JobQueue`/`JobSpec` portu ile
 fake'ini içerir. F1B optional worker request context'ini fixed JSON-safe allowlist ile doğrular:
 safe request/trace, job ile aynı tenant, optional actor/session ve support UUID placeholder'ları ile
 authentication strength. Extra/free-text metadata, tenant slug, PII ve raw auth materyali kabul
-edilmez; tenantless request context serialize edilemez.
+edilmez; tenantless request context serialize edilemez. F1E worker-fake gate'inde `tenant_id` her
+job için zorunlu kalır; request kaynaklı context sağlanırsa job tenant'ıyla exact eşleşir ve A
+context'iyle B job'u enqueue edilmeden reddedilir. `request_context=None` yalnız zaten açıkça
+tenant-scoped system/outbox işi anlamındadır; gerçek provider ayrıca authenticated transport ve
+transaction-local DB tenant binding uygulamadan HR verisi çalıştıramaz.
 
 Historical Phase 0 OpenAPI contract'ı
 `backend/tests/contracts/phase0_openapi_contract.json` içinde operation/component bazlı canonical
@@ -905,13 +909,15 @@ henüz yoktur:
 ## Durum
 
 P0A–P0G ile Faz 0 ve F1A–F1D base review branch kapıları tamamlanmıştır; F1E yerel Faz 1 kapanış
-gate'i yeşildir. Güncel uygulama yüzeyi, intentional OpenAPI farkları, PostgreSQL/SQLite kanıtları
+teknik gate'leri yeşildir, supervisor push kabulü bekler. Güncel uygulama yüzeyi, intentional
+OpenAPI farkları, PostgreSQL/SQLite kanıtları
 ve açık plan sapmaları
 [API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md) içinde kayıtlıdır.
 
-Queue `STOP — awaiting Murat review; Phase 1 gate complete` checkpoint'indedir. Faz 2
+Queue `STOP — supervisor F1E push pending; awaiting Murat review` checkpoint'indedir. Yerel Phase 1
+teknik gate'leri geçmiştir; Faz 2
 authentication/session/RBAC/audit persistence başlatılmamıştır. F1D base commit'i `54a3678` review
-branch'inde pushed durumdadır; F1E commit'inin review branch'ine push edilmesi supervisor
+branch'inde pushed durumdadır; F1E HEAD'inin review branch'ine push edilmesi supervisor
 sorumluluğundadır ve remote sync doğrulanmadan F1E push gate'i tamam sayılmaz. Yürütme otoritesi
 [MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;
 [Implementation Readiness Checklist](docs/09-uygulama/08-implementation-readiness-checklist.md)

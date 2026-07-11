@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-11 / F1E Faz 1 security/product gate, permission metadata ve review checkpoint.
+Son güncelleme: 2026-07-11 / F1E Faz 1 security/product gate, principal metadata ve review checkpoint.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -60,7 +60,7 @@ Geçerli uygulama notları:
 - Historical F1D üç additive operation ekler: platform tenant feature `GET/PATCH` ve current tenant
   feature `GET`. F1E operation sayısını değiştirmez: final registry 24 generated operation ve
   runtime `/openapi.json` dahil 25 endpoint'tir. Historical Phase-0/F1A/F1B/F1D snapshotları
-  overwrite edilmez; F1E exact permission-metadata diff'i ve 25-endpoint runtime smoke kanıtı ayrı
+  overwrite edilmez; F1E exact principal-metadata diff'i ve 25-endpoint runtime smoke kanıtı ayrı
   snapshot'ta tutulur.
 - Exact on Faz 1 operation'ının altı platform route'u `x-required-principal: platform`, dört current
   tenant route'u `x-required-principal: tenant` taşır. Bu vendor extension uygulanmış injected
