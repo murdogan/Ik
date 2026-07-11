@@ -1,18 +1,20 @@
 # API Implementation Status Report
 
-Date: 2026-07-10
+Date: 2026-07-11
 Branch: `codex/mvp-phase0-until-20260711-1100`
 Task: `P0G Phase 0 architecture gate, documentation sync and review checkpoint`
 Review checkpoint: `STOP — awaiting Murat review; Phase 1 has not started`
-Push state: `P0A–P0F are synchronized at 585fa0a; the supervisor must push the P0G commit`
+Push state: `P0A–P0F are synchronized at 585fa0a; the supervisor must push the local P0G work`
 
 ## Scope
 
 ### P0G architecture gate and review checkpoint
 
-- Re-ran the fast SQLite, real PostgreSQL 16.4, Ruff and local API smoke gates. Focused commands
-  separately cover Alembic round-trip/drift, OpenAPI, import boundaries, direct-DB tenant negative
-  writes, concurrency/idempotency and query-plan behavior.
+- Re-ran the fast SQLite, real PostgreSQL 16.4 checkpoint, Ruff and local API smoke gates. The
+  2026-07-11 continuation also re-ran the complete and focused PostgreSQL lanes on 17.10, satisfying
+  the project's PostgreSQL 16+ contract. Focused commands separately cover Alembic round-trip/drift,
+  OpenAPI, import boundaries, direct-DB tenant negative writes, concurrency/idempotency and
+  query-plan behavior.
 - Found and repaired a PostgreSQL test-order defect that a lucky collection order could hide. The
   PostgreSQL API smoke leaves intentionally retained archive/idempotency rows; a later P0D fixture
   could then be correctly refused by the `0011` downgrade preflight. Every `postgres` test now gets
@@ -74,7 +76,7 @@ Final commands and results are recorded here after the complete P0G rerun:
 |---|---|---|
 | Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
 | Fast SQLite | `uv run pytest -q` | Passed, 436 tests; 17 PostgreSQL tests deselected; one known Starlette warning |
-| PostgreSQL 16.4 | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed, 17 tests; 436 fast tests deselected; explicit reordered subset also passed 16/16 |
+| PostgreSQL 16+ | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed at the 16.4 checkpoint and again on 17.10 during continuation: 17 tests; 436 fast tests deselected |
 | Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed, `BACKEND_SMOKE_OK`, all 15 documented endpoints executed |
 | OpenAPI + imports | `uv run pytest -q backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py backend/tests/test_import_boundaries.py` | Passed, 39 tests |
 | SQLite migrations | `uv run pytest -q backend/tests/test_migrations.py` | Passed, 22 tests |
@@ -82,7 +84,40 @@ Final commands and results are recorded here after the complete P0G rerun:
 | Direct-DB tenant negatives | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed, 5 tests covering all current composite tenant relationships and expand-contract behavior |
 | PostgreSQL concurrency | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_command_transactions.py backend/tests/integration/test_postgresql_p0e_concurrency.py` | Passed, 6 tests: duplicate winner/mapping, lock mapping, one terminal decision, same-key replay, retention, downgrade refusal |
 | Query-plan baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p0f_performance.py` | Passed, 1 test with 10k employee/5k leave EXPLAIN assertions |
-| Git hygiene | `git diff --check` plus status/path/secret-pattern audits | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 19 P0G files; clean status verified after commit |
+| Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 19 P0G files; clean status verified after commit |
+
+The continuation explicitly reversed the PostgreSQL test-file order to verify that the function-scope
+database isolation does not depend on the normal collection order:
+
+```bash
+IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres \
+  backend/tests/integration/test_postgresql_tenant_relational_integrity.py \
+  backend/tests/integration/test_postgresql_p0f_performance.py \
+  backend/tests/integration/test_postgresql_p0e_concurrency.py \
+  backend/tests/integration/test_postgresql_command_transactions.py \
+  backend/tests/integration/test_postgresql_baseline.py
+```
+
+Result: passed, 17 tests on PostgreSQL 17.10. The normal full lane and the four focused PostgreSQL
+commands in the matrix also passed in the same continuation environment.
+
+The P0G hygiene audit is reproducible from the synchronized P0F commit through local P0G `HEAD`:
+
+```bash
+git diff --check 585fa0a..HEAD
+test -z "$(git status --porcelain)"
+if git diff --name-only 585fa0a..HEAD | \
+  rg -i '(^|/)(\.env($|\.)|.*secret.*|.*credential.*|.*token.*|.*staging.*|.*cron.*|.*deploy.*|.*auth.*)'; then
+  exit 1
+fi
+if git diff --format= --unified=0 585fa0a..HEAD | \
+  rg -i '^\+.*(api[_-]?key|client[_-]?secret|access[_-]?token|private[_-]?key|password\s*[:=])'; then
+  exit 1
+fi
+```
+
+Result: all commands exited zero with no prohibited match; `git status --short --branch` showed only
+the expected local commits ahead of the review-branch remote after the final commit.
 
 ### P0F pagination, search and query-performance baseline
 
