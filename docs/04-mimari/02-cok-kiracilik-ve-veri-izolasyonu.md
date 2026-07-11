@@ -7,7 +7,7 @@ Bu doküman, IK Platform'un çok kiracılı SaaS modelini, tenant çözümleme y
 Varsayılan model:
 
 > Shared application + shared PostgreSQL schema + `tenant_id` + composite tenant foreign key +
-> uygulama seviyesi tenant guard + Faz 1 PostgreSQL RLS.
+> uygulama seviyesi tenant guard; PostgreSQL RLS daha sonraki ayrı Faz 1 kesitinde.
 
 Enterprise için dedicated DB veya dedicated deployment opsiyonu açık bırakılır; ancak ilk ürün shared modelle ilerler.
 
@@ -30,13 +30,16 @@ Temel tenant alanları:
 | `slug` | Subdomain veya kısa kod |
 | `name` | Kurum adı |
 | `status` | provisioning, trial, active, suspended, offboarding, closed |
-| `plan_code` | Core, Professional, Enterprise |
-| `data_region` | Veri bölgesi |
+| `plan_code` | Canonical write: `core`, `professional`, `enterprise`; legacy `premium` read-only compatibility |
+| `data_region` | `tr-1` veya `eu-1`; yalnız provisioning sırasında değişebilir |
 | `db_target` | pool veya dedicated bağlantı referansı |
 | `timezone` | Tenant saat dilimi |
 | `locale` | Varsayılan dil/yerel ayar |
 
-Tenant ayarları `tenant_settings`, modül aç/kapa kararları `tenant_feature_flags` ile tutulmalıdır.
+F1A'da `locale` yalnız `tr-TR|en-US`, `timezone` ise geçerli bir IANA timezone adıdır.
+`tenant_settings` arbitrary JSON değildir: tenant başına tek satırda fixed
+`week_start_day`, `date_format` ve `time_format` kolonlarını taşır. Feature flag tablosu veya
+`/api/v1/tenant/features` endpoint'i F1A kapsamına dahil değildir.
 
 ## 4. Tenant çözümleme
 
@@ -45,6 +48,12 @@ Tenant şu kaynaklardan çözülür:
 1. Kimlikli isteklerde JWT/session içindeki `tenant_id`.
 2. Login öncesi ve public sayfalarda subdomain/custom domain.
 3. Internal servis çağrılarında imzalı servis token + tenant context.
+
+F1A geçiş kuralı: auth/session henüz Faz 2'de olduğu için platform route'ları yalnız injected
+`PlatformPrincipal`, tenant route'ları yalnız injected ve immutable `TenantPrincipal` kabul eder.
+Default dependency principal üretmez ve `403` ile fail closed olur; test dependency override'ı
+bu production kuralını değiştirmez. `X-Tenant-Id`, başka bir header, path, query veya body değeri
+bu principal'ların yerine geçemez.
 
 Kurallar:
 
@@ -57,7 +66,7 @@ Kurallar:
 
 | Katman | Kontrol |
 |---|---|
-| Auth | JWT/session içinde tenant claim |
+| Auth/context | F1A trusted injected principal; Faz 2'de JWT/session claim |
 | Middleware | Tenant context zorunlu |
 | Repository | Her sorguda tenant filtresi |
 | DB | Tenant-owned ilişkilerde composite foreign key; Faz 1'de RLS |
@@ -88,7 +97,8 @@ alternatifi değildir.
 
 ## 7. PostgreSQL RLS yaklaşımı
 
-RLS Faz 1'de uygulanırsa her tenant tablosunda şu prensip uygulanır:
+RLS F1A'ya dahil değildir. Daha sonraki ayrı Faz 1 rollout'unda uygulanırsa her tenant tablosunda
+şu prensip uygulanır:
 
 ```sql
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
@@ -120,14 +130,30 @@ Kritik noktalar:
 
 ## 9. Tenant yaşam döngüsü
 
-| Aşama | Sistem davranışı |
-|---|---|
-| Provisioning | Tenant, ilk admin, varsayılan roller, ayarlar seed edilir |
-| Trial | Limitli kullanım, demo/pilot veri importu |
-| Active | Sözleşme ve ödeme aktif, prod kullanım |
-| Suspended | Login ve scheduled job policy'ye göre kapatılır |
-| Offboarding | Veri export, bekleme süresi, imha planı |
-| Closed | Veri imha ve kapanış audit kaydı |
+Same-state PATCH idempotent no-op'tur. İzin verilen farklı-state geçişleri:
+
+- `provisioning → trial|active|closed`
+- `trial → active|suspended|offboarding`
+- `active → suspended|offboarding`
+- `suspended → trial|active|offboarding`
+- `offboarding → closed`
+- `closed` terminaldir.
+
+Listelenmeyen transition `409` ile reddedilir. Tenant access mode ve platform health yalnız
+lifecycle'dan türetilir:
+
+| Aşama | Tenant API davranışı | Platform health |
+|---|---|---|
+| `provisioning` | `/tenant` ve settings GET/PATCH `423`; yalnız platform provisioning yüzeyi | `provisioning` |
+| `trial` | Read/write | `healthy` |
+| `active` | Read/write | `healthy` |
+| `suspended` | GET açık, settings PATCH `423` | `restricted` |
+| `offboarding` | GET açık, settings PATCH `423`; export/retention orkestrasyonu F1A dışı | `offboarding` |
+| `closed` | `/tenant` ve settings GET/PATCH `410` | `closed` |
+
+Platform metadata list/detail yalnız tenant metadata, plan, region ve bu lifecycle-derived health'i
+döndürür; employee/leave tablosuna join/count yapmaz ve müşteri HR verisi içermez. Tenant silme,
+audit persistence, support/break-glass, legal entity ve feature rollout bu kesitte yoktur.
 
 ## 10. Enterprise dedicated opsiyon
 
@@ -155,6 +181,12 @@ Kural: Müşteri bazlı fork yapılmaz; özelleştirme feature flag ve ayarlarla
 ## 12. Test gereksinimleri
 
 - Tenant A kullanıcısı Tenant B employee kaydını göremez.
+- Injected Tenant A principal'ı Tenant B'nin current/settings kaydını göremez veya değiştiremez;
+  request header/body/path bu scope'u override edemez.
+- Platform endpointleri principal injection yokken `403` döner ve tenant metadata response'unda
+  employee/leave count veya payload alanı bulunmaz.
+- Tenant settings downgrade custom typed değerleri sessizce atmaz; default dışı satır sayısı ile
+  fail eder ve revision/table'ı korur.
 - Uygulama servisleri bypass edilse bile PostgreSQL doğrudan write ile Tenant A child kaydı Tenant B
   employee/user kaydına bağlanamaz.
 - Preflight orphan ile cross-tenant satırları ayrı raporlar; valid veri upgrade/downgrade boyunca

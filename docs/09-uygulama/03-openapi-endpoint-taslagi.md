@@ -4,23 +4,33 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-11 / P0G Phase 0 architecture review checkpoint.
+Son güncelleme: 2026-07-11 / F1A tenant lifecycle, typed settings ve platform provisioning.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
 `docs/09-uygulama/11-api-implementation-status.md` içindeki completed surface tablosu ve kendi
 runtime/OpenAPI registry'si ile karşılaştırır.
 
-P0G'de generated sözleşme ayrıca
+P0G'de generated Phase-0 sözleşmesi ayrıca
 `backend/tests/contracts/phase0_openapi_contract.json` manifestinde top-level, operation ve
 component-schema canonical hash'leriyle dondurulmuştur. Snapshot değişikliği intentional contract
-diff ve bu dokümandaki migration/deprecation notu olmadan kabul edilmez.
+diff ve bu dokümandaki migration/deprecation notu olmadan kabul edilmez. F1A'nın yedi additive
+operation'ı ayrı `backend/tests/contracts/f1a_openapi_contract.json` snapshot'ında tutulur;
+historical Phase-0 manifesti değiştirilmez. Generated OpenAPI/manifest, metadata ve runtime smoke
+gate'leri geçmiştir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
 | GET | `/health` | Uygulandı | Public servis durumu |
 | GET | `/` | Uygulandı | Wealthy Falcon HR landing HTML |
 | GET | `/openapi.json` | Uygulandı | FastAPI generated schema; smoke bu şemayla documented operation drift kontrolü yapar |
+| POST | `/api/v1/platform/tenants` | Uygulandı ve doğrulandı | Injected platform principal ile provisioning; status/id caller tarafından verilemez |
+| GET | `/api/v1/platform/tenants` | Uygulandı ve doğrulandı | Bounded `limit`/`offset`; yalnız platform metadata/plan/region/lifecycle health |
+| GET | `/api/v1/platform/tenants/{tenant_id}` | Uygulandı ve doğrulandı | Yalnız tenant metadata/plan/region/lifecycle health; HR veri/count yok |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Uygulandı ve doğrulandı | Typed metadata/plan/status update ve lifecycle guard |
+| GET | `/api/v1/tenant` | Uygulandı ve doğrulandı | Injected tenant principal scope'undaki current tenant; header/body authorization değil |
+| GET | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | Beş typed/allowlisted current-tenant setting |
+| PATCH | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | Extra key reddi ve lifecycle read-only guard |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |
@@ -36,8 +46,36 @@ diff ve bu dokümandaki migration/deprecation notu olmadan kabul edilmez.
 
 Geçerli uygulama notları:
 
-- OpenAPI dokümanı W4C5 itibarıyla güncel okunabilir tag kataloğu kullanır:
-  `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
+- F1A tam olarak yedi operation ekler: platform tenant `POST/GET`, platform tenant detail
+  `GET/PATCH`, current tenant `GET` ve tenant settings `GET/PATCH`. `/api/v1/tenant/features`
+  eklenmez. Böylece current documented registry 21 generated operation ve runtime
+  `/openapi.json` dahil 22 endpoint'tir; additive F1A snapshot, metadata testleri ve runtime smoke
+  bu registry'yi doğrular.
+- Platform route'ları injected immutable `PlatformPrincipal`, tenant route'ları injected immutable
+  `TenantPrincipal` ister. Default dependencies principal üretmez ve `403` döner; yalnız testler
+  Phase 2 authentication gelene kadar dependency override kullanır. Caller-supplied
+  `X-Tenant-Id`, user/tenant ID header'ı, query, path veya body değeri authorization değildir.
+- F1A yeni success response'ları mevcut compatibility gereği doğrudan typed object/list döner.
+  `{data, meta}`, genel immutable `RequestContext` ve correlation middleware Faz 1.2 işidir.
+- Create/PATCH plan allowlist'i `core|professional|enterprise`, region `tr-1|eu-1`, locale
+  `tr-TR|en-US`; timezone geçerli IANA adıdır. Pre-F1A `premium` plan response'ta read-only
+  compatibility'dir, write inputu değildir ve migration'da dönüştürülmez. Region yalnız
+  `provisioning` sırasında değişebilir. Tenant settings
+  request/response key'leri yalnız `locale`, `timezone`, `week_start_day`, `date_format`,
+  `time_format` alanlarıdır; extra ve null PATCH alanları reddedilir.
+- Lifecycle access/health: `provisioning → platform_only/provisioning`, `trial|active →
+  read_write/healthy`, `suspended → read_only/restricted`, `offboarding →
+  read_only/offboarding`, `closed → denied/closed`. Provisioning `/tenant` ve settings GET/PATCH
+  `423`, closed aynı tenant operasyonlarında `410`; suspended/offboarding GET açıktır fakat
+  settings PATCH `423` döner.
+  Platform `health` yalnız bu status'tan türetilir; employee/leave join, count veya payload yoktur.
+- F1A auth/session/RBAC, audit persistence, PostgreSQL RLS, feature flag, legal entity, support
+  access veya başka ürün modülü eklemez.
+
+- OpenAPI dokümanı okunabilir tag kataloğu kullanır: `System`, `Public`, `Platform Tenants`,
+  `Tenant Settings`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
+  İlk altı ürün/system tag'i W4C5'te sabitlenmiş; F1A `Platform Tenants` ve `Tenant Settings`
+  gruplarını additive olarak eklemiştir.
   Mevcut operasyonların her biri açık, tenant-aware `summary` ve `description` metadata'sı taşır;
   tag açıklamaları, route açıklamaları ve filtre/header açıklamaları docs okunabilirliği için
   netleştirilmiştir. Operation summary metinleri tenant kapsamını, public/system ayrımını ve
@@ -46,9 +84,9 @@ Geçerli uygulama notları:
   generated OpenAPI operasyon seti, documented smoke registry, güncel endpoint tabloları ve
   runtime smoke senaryolarında gerçekten çağrılan endpoint setini path ve HTTP method seviyesinde
   doğrular.
-- W4C6 yalnız uygulama raporu ve smoke governance yenilemesidir. Bu tabloda yer alan 15 endpoint
-  mevcut tamamlanmış yüzeyi temsil eder; yeni API operasyonu, response shape, model, migration
-  veya tenant isolation davranışı eklenmemiştir.
+- Historical W4C6 yalnız uygulama raporu ve smoke governance yenilemesiydi. O checkpoint'teki
+  15 endpoint Phase-0 yüzeyini temsil eder; F1A current tabloya yedi additive operation ekler ve
+  güncel snapshot/metadata/runtime smoke gate'leri bu additive sözleşmeyi doğrular.
 - P0C endpoint setini veya success response shape'ini değiştirmez. Employee ve leave write
   operasyonları transitional application command handler üzerinden
   `SqlAlchemyUnitOfWork.execute` ile tek transaction'da çalışır; business servisleri flush eder
@@ -71,8 +109,9 @@ Geçerli uygulama notları:
   `400 idempotency_key_invalid` döner.
 - Response'lar şu an doğrudan schema/list döner. Bölüm 1'deki `{ data, meta }` zarfı hedef
   standarttır, mevcut scaffold davranışı değildir.
-- Auth/session/RBAC dependency henüz uygulanmadı; tenant header geçici backend foundation
-  mekanizmasıdır.
+- Auth/session/RBAC henüz uygulanmadı. F1A platform/tenant route'ları fail-closed injected principal
+  seam'ini kullanır; tenant header yalnız legacy employee/leave backend foundation compatibility
+  mekanizmasıdır ve yeni platform/current-tenant route'larını authorize etmez.
 - Tenant header dependency hataları, API edge'de merkezi olarak map edilen typed
   `ApplicationError` hataları ve employee, leave balance, leave request endpointlerindeki otomatik
   request validation `422` hataları Bölüm 1'deki error zarfını döner. Diğer endpointlerdeki
@@ -84,8 +123,11 @@ Geçerli uygulama notları:
   validation hatalarından önce aynı zarfla döndüğünü, null employee status lifecycle mesajını,
   invalid leave request `employee_id` filtre mesajını ve approve/reject/cancel transition conflict
   mesajını sabitler. Global FastAPI validation davranışı bu kapsamda değiştirilmemiştir.
-- Şu an kullanılan error code değerleri: `tenant_header_missing`, `tenant_header_invalid`,
-  `tenant_slug_header_invalid`, `employee_not_found`, `employee_number_conflict`,
+- Şu an kullanılan error code değerleri: `platform_access_denied`, `tenant_access_denied`,
+  `platform_tenant_validation_error`, `tenant_settings_validation_error`, `tenant_not_found`,
+  `tenant_slug_conflict`, `tenant_lifecycle_conflict`, `tenant_not_ready`, `tenant_read_only`,
+  `tenant_closed`, `tenant_header_missing`, `tenant_header_invalid`, `tenant_slug_header_invalid`,
+  `employee_not_found`, `employee_number_conflict`,
   `employee_invalid_date_range`, `employee_invalid_lifecycle`, `employee_validation_error`,
   `leave_balance_validation_error`, `leave_request_not_found`,
   `leave_request_invalid_date_range`, `leave_request_transition_conflict`,
@@ -214,7 +256,10 @@ Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, canonical hyphenated UUID olmayan değe
 - Base path: `/api/v1`
 - Response zarfı: `{ data, meta }`
 - Error zarfı: `{ error: { code, message, details, correlation_id } }`
-- Protected endpointlerde tenant context zorunlu.
+- F1A ve mevcut compatibility success response'ları henüz doğrudan object/list; zarf Faz 1.2
+  intentional migration hedefidir.
+- Protected platform endpointlerde injected platform principal, tenant endpointlerde injected
+  tenant principal zorunlu; caller header/body kimliği authorization değildir.
 - Büyük listelerde pagination zorunlu.
 - Desteklenen kritik POST işlemlerinde opsiyonel `X-Idempotency-Key` kullanılır.
 
@@ -315,33 +360,160 @@ Yetki: authenticated.
 
 Response kullanıcı, roller, permission özeti ve tenant bilgisini döner.
 
-## 5. Tenant endpointleri
+## 5. Platform ve tenant endpointleri — F1A
 
-### `GET /api/v1/tenant/current`
+F1A auth/session/RBAC uygulamaz. Platform operasyonları yalnız trusted boundary'den injected
+`PlatformPrincipal`, tenant operasyonları yalnız injected `TenantPrincipal` ile çalışır. Default
+dependency context yokken `403` döner; caller-supplied header/path/query/body kimliği authorization
+değildir. Aşağıdaki success body'leri Faz 1.2 zarf geçişine kadar doğrudan object/list'tir.
 
-Yetki: authenticated.
+### `POST /api/v1/platform/tenants`
 
-Response:
+Amaç: platform provisioning ile tenant ve typed default settings satırını atomik oluşturmak.
+
+Request:
 
 ```json
 {
-  "data": {
-    "id": "uuid",
-    "slug": "acme",
-    "name": "Acme A.Ş.",
-    "status": "active",
-    "plan_code": "core",
-    "locale": "tr-TR",
-    "timezone": "Europe/Istanbul"
+  "slug": "acme-tr",
+  "name": "Acme A.Ş.",
+  "plan_code": "professional",
+  "data_region": "tr-1",
+  "locale": "tr-TR",
+  "timezone": "Europe/Istanbul",
+  "settings": {
+    "week_start_day": "monday",
+    "date_format": "DD.MM.YYYY",
+    "time_format": "24h"
   }
 }
 ```
 
+`plan_code`, `data_region`, `locale`, `timezone` ve nested settings gönderilmezse sırasıyla
+`core`, `tr-1`, `tr-TR`, `Europe/Istanbul`, `monday`, `DD.MM.YYYY`, `24h` kullanılır. `id` ve
+`status` request alanı değildir; extra key'ler reddedilir ve server status'u `provisioning` yapar.
+`premium` yalnız mevcut legacy row response uyumluluğudur; create/PATCH plan değeri olamaz.
+Duplicate slug `409 tenant_slug_conflict`; typed request ihlali
+`422 platform_tenant_validation_error` döner.
+
+Response `201` doğrudan body:
+
+```json
+{
+  "id": "d1000000-0000-4000-8000-000000000001",
+  "slug": "acme-tr",
+  "name": "Acme A.Ş.",
+  "status": "provisioning",
+  "plan_code": "professional",
+  "data_region": "tr-1",
+  "locale": "tr-TR",
+  "timezone": "Europe/Istanbul",
+  "health": "provisioning",
+  "created_at": "2026-07-11T12:00:00Z",
+  "updated_at": "2026-07-11T12:00:00Z"
+}
+```
+
+### `GET /api/v1/platform/tenants`
+
+Query: `limit` default `50`, minimum `1`, maximum `200`; `offset` default `0`, minimum `0`.
+Deterministic sıra `created_at asc, id asc` ve response doğrudan array'dir. Her item yalnız
+`TenantPlatformRead` alanlarını taşır: `id`, `slug`, `name`, `status`, `plan_code`, `data_region`,
+`locale`, `timezone`, `health`, `created_at`, `updated_at`. Employee/leave count, kayıt, belge,
+payload veya başka HR alanı yoktur.
+
+### `GET /api/v1/platform/tenants/{tenant_id}`
+
+Response `200`, create örneğiyle aynı doğrudan `TenantPlatformRead` shape'idir. `health` persisted
+bir operasyon metriği değil, lifecycle'dan deterministik türetilir. Bulunmayan tenant `404`;
+platform principal yokluğu `403 platform_access_denied` döner.
+
+### `PATCH /api/v1/platform/tenants/{tenant_id}`
+
+Partial request allowlist'i yalnız `name`, `status`, `plan_code`, `data_region`, `locale`,
+`timezone` alanlarıdır. `slug`, `id`, empty body, explicit `null` ve extra alan reddedilir.
+
+```json
+{
+  "status": "active",
+  "plan_code": "enterprise",
+  "timezone": "Europe/Istanbul"
+}
+```
+
+Response `200` doğrudan `TenantPlatformRead` döner. `data_region` yalnız mevcut status
+`provisioning` iken değişebilir. Closed tenant metadata'sı immutable; offboarding tenant yalnız
+`closed` durumuna geçebilir. Same-state update no-op kabul edilir. İzin verilen farklı-state graph:
+
+- `provisioning → trial|active|closed`
+- `trial → active|suspended|offboarding`
+- `active → suspended|offboarding`
+- `suspended → trial|active|offboarding`
+- `offboarding → closed`
+- `closed` terminal.
+
+Listelenmeyen transition veya lifecycle'a aykırı metadata değişikliği
+`409 tenant_lifecycle_conflict` döner.
+
+### `GET /api/v1/tenant`
+
+Tenant ID request'ten değil injected `TenantPrincipal` scope'undan alınır. Response `200` doğrudan:
+
+```json
+{
+  "id": "d1000000-0000-4000-8000-000000000001",
+  "slug": "acme-tr",
+  "name": "Acme A.Ş.",
+  "status": "active",
+  "plan_code": "enterprise",
+  "locale": "tr-TR",
+  "timezone": "Europe/Istanbul"
+}
+```
+
+`provisioning` `423 tenant_not_ready`, `closed` `410 tenant_closed` döner. `trial`, `active`,
+`suspended` ve `offboarding` read erişimine açıktır. Platform-only `data_region`, health ve
+timestamp alanları tenant response'unda yoktur.
+
+### `GET /api/v1/tenant/settings`
+
+Response `200` yalnız beş typed key taşır:
+
+```json
+{
+  "locale": "tr-TR",
+  "timezone": "Europe/Istanbul",
+  "week_start_day": "monday",
+  "date_format": "DD.MM.YYYY",
+  "time_format": "24h"
+}
+```
+
+Lifecycle read kuralları `GET /api/v1/tenant` ile aynıdır.
+
 ### `PATCH /api/v1/tenant/settings`
 
-Yetki: `tenant:update`.
+Partial request ve response allowlist'i tam olarak `locale`, `timezone`, `week_start_day`,
+`date_format`, `time_format` alanlarıdır. Empty body, explicit `null`, arbitrary key ve logo/config/
+feature payload'u reddedilir.
 
-Kapsam: logo, timezone, locale, temel tenant ayarları.
+```json
+{
+  "locale": "en-US",
+  "timezone": "Europe/London",
+  "week_start_day": "sunday",
+  "date_format": "MM/DD/YYYY",
+  "time_format": "12h"
+}
+```
+
+Canonical değerler: locale `tr-TR|en-US`; timezone recognized IANA adı; week start
+`monday|sunday`; date format `DD.MM.YYYY|MM/DD/YYYY|YYYY-MM-DD`; time format `24h|12h`.
+`trial|active` write erişimine açıktır. `provisioning` `423 tenant_not_ready`, suspended/offboarding
+`423 tenant_read_only`, `closed` `410 tenant_closed` döner. Scope injected principal'dan gelir;
+başka tenant ID'si request içinde verilemez.
+Request validation kodu `tenant_settings_validation_error`; principal yokluğu
+`tenant_access_denied`'dır.
 
 ## 6. User ve RBAC endpointleri
 

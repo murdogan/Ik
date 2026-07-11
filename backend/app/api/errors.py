@@ -48,6 +48,14 @@ from app.services.leave_request_service import (
     LeaveRequestTransitionError,
     LeaveRequestUserNotFoundError,
 )
+from app.services.tenant_service import (
+    DuplicateTenantSlugError,
+    TenantClosedError,
+    TenantLifecycleConflictError,
+    TenantNotFoundError,
+    TenantNotReadyError,
+    TenantReadOnlyError,
+)
 
 TENANT_ID_HEADER = "X-Tenant-Id"
 TENANT_SLUG_HEADER = "X-Tenant-Slug"
@@ -62,6 +70,8 @@ TENANT_SLUG_HEADER_INVALID_MESSAGE = (
 EMPLOYEE_API_PREFIX = "/api/v1/employees"
 LEAVE_BALANCE_API_SEGMENT = "/leave-balances"
 LEAVE_REQUEST_API_PREFIX = "/api/v1/leave-requests"
+PLATFORM_TENANT_API_PREFIX = "/api/v1/platform/tenants"
+TENANT_API_PREFIX = "/api/v1/tenant"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -86,6 +96,25 @@ CONCURRENT_WRITE_CONFLICT_ERROR_CODE = "concurrent_write_conflict"
 IDEMPOTENCY_KEY_INVALID_ERROR_CODE = "idempotency_key_invalid"
 IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE = "idempotency_key_mismatch"
 APPLICATION_COMMAND_FAILED_ERROR_CODE = "application_command_failed"
+PLATFORM_ACCESS_DENIED_ERROR_CODE = "platform_access_denied"
+PLATFORM_ACCESS_DENIED_ERROR_MESSAGE = "Platform tenant access requires a trusted principal"
+TENANT_ACCESS_DENIED_ERROR_CODE = "tenant_access_denied"
+TENANT_ACCESS_DENIED_ERROR_MESSAGE = "Tenant access requires a trusted principal"
+PLATFORM_TENANT_VALIDATION_ERROR_CODE = "platform_tenant_validation_error"
+PLATFORM_TENANT_VALIDATION_ERROR_MESSAGE = "Platform tenant request validation failed"
+TENANT_SETTINGS_VALIDATION_ERROR_CODE = "tenant_settings_validation_error"
+TENANT_SETTINGS_VALIDATION_ERROR_MESSAGE = "Tenant settings request validation failed"
+TENANT_NOT_FOUND_ERROR_CODE = "tenant_not_found"
+TENANT_NOT_FOUND_ERROR_MESSAGE = "Tenant was not found"
+TENANT_SLUG_CONFLICT_ERROR_CODE = "tenant_slug_conflict"
+TENANT_SLUG_CONFLICT_ERROR_MESSAGE = "Tenant slug is already in use"
+TENANT_LIFECYCLE_CONFLICT_ERROR_CODE = "tenant_lifecycle_conflict"
+TENANT_NOT_READY_ERROR_CODE = "tenant_not_ready"
+TENANT_NOT_READY_ERROR_MESSAGE = "Tenant provisioning is not complete"
+TENANT_CLOSED_ERROR_CODE = "tenant_closed"
+TENANT_CLOSED_ERROR_MESSAGE = "Tenant is closed"
+TENANT_READ_ONLY_ERROR_CODE = "tenant_read_only"
+TENANT_READ_ONLY_ERROR_MESSAGE = "Tenant settings are read-only in the current lifecycle status"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -189,6 +218,130 @@ def _error_example(code: str, message: str) -> dict[str, Any]:
     }
 
 
+PLATFORM_AUTHORIZATION_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {
+        "model": ApiErrorResponse,
+        "description": "Platform principal authorization denial envelope.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    PLATFORM_ACCESS_DENIED_ERROR_CODE,
+                    PLATFORM_ACCESS_DENIED_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+TENANT_AUTHORIZATION_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {
+        "model": ApiErrorResponse,
+        "description": "Tenant principal authorization denial envelope.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    TENANT_ACCESS_DENIED_ERROR_CODE,
+                    TENANT_ACCESS_DENIED_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+PLATFORM_TENANT_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Platform tenant request validation error envelope.",
+    }
+}
+TENANT_SETTINGS_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Tenant settings request validation error envelope.",
+    }
+}
+TENANT_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "Tenant not-found error envelope.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    TENANT_NOT_FOUND_ERROR_CODE,
+                    TENANT_NOT_FOUND_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+TENANT_CLOSED_RESPONSES = {
+    status.HTTP_410_GONE: {
+        "model": ApiErrorResponse,
+        "description": "Closed tenant error envelope.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    TENANT_CLOSED_ERROR_CODE,
+                    TENANT_CLOSED_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+TENANT_NOT_READY_RESPONSES = {
+    status.HTTP_423_LOCKED: {
+        "model": ApiErrorResponse,
+        "description": "Tenant lifecycle access lock envelope.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    TENANT_NOT_READY_ERROR_CODE: _error_example(
+                        TENANT_NOT_READY_ERROR_CODE,
+                        TENANT_NOT_READY_ERROR_MESSAGE,
+                    )
+                }
+            }
+        },
+    }
+}
+TENANT_SETTINGS_WRITE_LOCKED_RESPONSES = {
+    status.HTTP_423_LOCKED: {
+        "model": ApiErrorResponse,
+        "description": "Tenant settings lifecycle lock envelope.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    TENANT_NOT_READY_ERROR_CODE: _error_example(
+                        TENANT_NOT_READY_ERROR_CODE,
+                        TENANT_NOT_READY_ERROR_MESSAGE,
+                    ),
+                    TENANT_READ_ONLY_ERROR_CODE: _error_example(
+                        TENANT_READ_ONLY_ERROR_CODE,
+                        TENANT_READ_ONLY_ERROR_MESSAGE,
+                    ),
+                }
+            }
+        },
+    }
+}
+TENANT_CREATE_CONFLICT_RESPONSES = _conflict_response(
+    description="Tenant provisioning conflict envelope.",
+    examples={
+        TENANT_SLUG_CONFLICT_ERROR_CODE: _error_example(
+            TENANT_SLUG_CONFLICT_ERROR_CODE,
+            TENANT_SLUG_CONFLICT_ERROR_MESSAGE,
+        )
+    },
+)
+TENANT_UPDATE_CONFLICT_RESPONSES = _conflict_response(
+    description="Tenant lifecycle update conflict envelope.",
+    examples={
+        TENANT_LIFECYCLE_CONFLICT_ERROR_CODE: _error_example(
+            TENANT_LIFECYCLE_CONFLICT_ERROR_CODE,
+            "Tenant lifecycle transition is not allowed",
+        )
+    },
+)
+
+
 EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Employee command conflict envelope.",
     examples={
@@ -274,6 +427,18 @@ async def application_error_handler(request: Request, exc: ApplicationError) -> 
 
 
 def application_error_to_api_error(exc: ApplicationError) -> ApiError:
+    if isinstance(exc, TenantNotFoundError):
+        return tenant_not_found_error()
+    if isinstance(exc, DuplicateTenantSlugError):
+        return tenant_slug_conflict_error()
+    if isinstance(exc, TenantLifecycleConflictError):
+        return tenant_lifecycle_conflict_error(str(exc))
+    if isinstance(exc, TenantNotReadyError):
+        return tenant_not_ready_error()
+    if isinstance(exc, TenantClosedError):
+        return tenant_closed_error()
+    if isinstance(exc, TenantReadOnlyError):
+        return tenant_read_only_error()
     if isinstance(exc, (EmployeeNotFoundError, LeaveRequestEmployeeNotFoundError)):
         return employee_not_found_error()
     if isinstance(exc, DuplicateEmployeeNumberError):
@@ -336,6 +501,70 @@ def idempotency_key_invalid_error() -> ApiError:
         status_code=status.HTTP_400_BAD_REQUEST,
         code=IDEMPOTENCY_KEY_INVALID_ERROR_CODE,
         message=IDEMPOTENCY_KEY_INVALID_MESSAGE,
+    )
+
+
+def platform_access_denied_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=PLATFORM_ACCESS_DENIED_ERROR_CODE,
+        message=PLATFORM_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def tenant_access_denied_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=TENANT_ACCESS_DENIED_ERROR_CODE,
+        message=TENANT_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def tenant_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=TENANT_NOT_FOUND_ERROR_CODE,
+        message=TENANT_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def tenant_slug_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=TENANT_SLUG_CONFLICT_ERROR_CODE,
+        message=TENANT_SLUG_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def tenant_lifecycle_conflict_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=TENANT_LIFECYCLE_CONFLICT_ERROR_CODE,
+        message=message or "Tenant lifecycle transition is not allowed",
+    )
+
+
+def tenant_not_ready_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_423_LOCKED,
+        code=TENANT_NOT_READY_ERROR_CODE,
+        message=TENANT_NOT_READY_ERROR_MESSAGE,
+    )
+
+
+def tenant_closed_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_410_GONE,
+        code=TENANT_CLOSED_ERROR_CODE,
+        message=TENANT_CLOSED_ERROR_MESSAGE,
+    )
+
+
+def tenant_read_only_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_423_LOCKED,
+        code=TENANT_READ_ONLY_ERROR_CODE,
+        message=TENANT_READ_ONLY_ERROR_MESSAGE,
     )
 
 
@@ -456,6 +685,18 @@ def _domain_request_validation_error(
     exc: RequestValidationError,
 ) -> ApiError | None:
     path = request.url.path
+    if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):
+        return ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code=PLATFORM_TENANT_VALIDATION_ERROR_CODE,
+            message=PLATFORM_TENANT_VALIDATION_ERROR_MESSAGE,
+        )
+    if _matches_api_prefix(path, TENANT_API_PREFIX):
+        return ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code=TENANT_SETTINGS_VALIDATION_ERROR_CODE,
+            message=TENANT_SETTINGS_VALIDATION_ERROR_MESSAGE,
+        )
     if _is_leave_balance_api_path(path):
         return _leave_balance_request_validation_error()
     if _matches_api_prefix(path, EMPLOYEE_API_PREFIX):

@@ -21,6 +21,7 @@ OPENAPI_ENDPOINT_DRAFT_DOC = (
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.api.dependencies import get_platform_principal, get_tenant_principal
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import DATABASE_RUNTIME_STATE_KEY
@@ -28,8 +29,9 @@ from app.main import create_app
 from app.models.employee import EmployeeStatus
 from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequestStatus
-from app.models.tenant import Tenant, TenantStatus
+from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.principals import PlatformPrincipal, TenantPrincipal
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
@@ -51,10 +53,66 @@ OTHER_TENANT_HEADERS = {
     "X-Tenant-Id": str(OTHER_TENANT_ID),
     "X-Tenant-Slug": "other-falcon",
 }
+SPOOFED_IDENTITY_HEADERS = {
+    "X-Tenant-Id": str(OTHER_TENANT_ID),
+    "X-Tenant-Slug": "other-falcon",
+    "X-User-Id": str(OTHER_REQUESTING_USER_ID),
+}
+PLATFORM_TENANT_FIELDS = {
+    "id",
+    "slug",
+    "name",
+    "status",
+    "plan_code",
+    "data_region",
+    "locale",
+    "timezone",
+    "health",
+    "created_at",
+    "updated_at",
+}
+CURRENT_TENANT_FIELDS = {
+    "id",
+    "slug",
+    "name",
+    "status",
+    "plan_code",
+    "locale",
+    "timezone",
+}
+TENANT_SETTINGS_FIELDS = {
+    "locale",
+    "timezone",
+    "week_start_day",
+    "date_format",
+    "time_format",
+}
+FORBIDDEN_HR_FIELDS = {
+    "employee_count",
+    "employee_id",
+    "employees",
+    "first_name",
+    "last_name",
+    "department",
+    "position",
+    "email",
+    "leave_count",
+    "leave_requests",
+    "requested_by_user_id",
+    "user_id",
+    "users",
+}
 HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
 DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/"),
     ("get", "/health"),
+    ("post", "/api/v1/platform/tenants"),
+    ("get", "/api/v1/platform/tenants"),
+    ("get", "/api/v1/platform/tenants/{tenant_id}"),
+    ("patch", "/api/v1/platform/tenants/{tenant_id}"),
+    ("get", "/api/v1/tenant"),
+    ("get", "/api/v1/tenant/settings"),
+    ("patch", "/api/v1/tenant/settings"),
     ("get", "/api/v1/dashboard/summary"),
     ("get", "/api/v1/employees"),
     ("post", "/api/v1/employees"),
@@ -102,8 +160,13 @@ async def main(database_url: str | None = None) -> None:
             transport=ASGITransport(app=app),
             base_url="http://backend-smoke.local",
         ) as client:
+            await _smoke_principal_default_denials(client)
+            tenant_principal_scope = _install_test_principal_overrides(app)
             await _smoke_system_endpoints(client)
             _smoke_documented_endpoint_tables()
+            provisioned_tenant_id = await _smoke_platform_tenant_endpoints(client)
+            tenant_principal_scope["tenant_id"] = provisioned_tenant_id
+            await _smoke_current_tenant_endpoints(client, provisioned_tenant_id)
             await _smoke_tenant_header_errors(client)
             primary_employee_id, secondary_employee_id, other_employee_id = (
                 await _smoke_employee_endpoints(client)
@@ -132,9 +195,10 @@ async def main(database_url: str | None = None) -> None:
         "BACKEND_SMOKE_OK "
         f"tenant_id={TENANT_ID} "
         f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
-        "checked=health,landing,openapi,documented_endpoint_tables,tenant_headers,"
-        "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,"
-        "employees,leave_balances,leave_filters,leave_requests,workflow_transitions"
+        "checked=health,landing,openapi,documented_endpoint_tables,principal_default_denial,"
+        "platform_tenants,tenant_settings,tenant_headers,documented_endpoint_runtime_coverage,"
+        "dashboard_counts,employee_filters,employees,leave_balances,leave_filters,"
+        "leave_requests,workflow_transitions"
     )
 
 
@@ -171,6 +235,8 @@ async def _prepare_smoke_database(
                     locale="tr-TR",
                     timezone="Europe/Istanbul",
                 ),
+                TenantSettings(tenant_id=TENANT_ID),
+                TenantSettings(tenant_id=OTHER_TENANT_ID),
                 User(
                     id=REQUESTING_USER_ID,
                     tenant_id=TENANT_ID,
@@ -196,6 +262,44 @@ async def _prepare_smoke_database(
         )
         await session.commit()
 
+
+async def _smoke_principal_default_denials(client: AsyncClient) -> None:
+    _expect_error_code(
+        await client.get(
+            "/api/v1/platform/tenants",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        403,
+        "platform_access_denied",
+        "GET /api/v1/platform/tenants without injected platform principal",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/tenant",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        403,
+        "tenant_access_denied",
+        "GET /api/v1/tenant without injected tenant principal",
+    )
+
+
+def _install_test_principal_overrides(app: Any) -> dict[str, UUID]:
+    tenant_scope = {"tenant_id": TENANT_ID}
+
+    def tenant_principal() -> TenantPrincipal:
+        return TenantPrincipal(
+            tenant_id=tenant_scope["tenant_id"],
+            source="backend-api-smoke",
+        )
+
+    app.dependency_overrides[get_platform_principal] = lambda: PlatformPrincipal(
+        source="backend-api-smoke"
+    )
+    app.dependency_overrides[get_tenant_principal] = tenant_principal
+    return tenant_scope
+
+
 async def _smoke_system_endpoints(client: AsyncClient) -> None:
     health = _expect_json(
         await _request_documented(client, "get", "/health"),
@@ -215,6 +319,196 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
         "GET /openapi.json",
     )
     _expect_documented_openapi_operations(openapi)
+
+
+async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
+    created = _expect_json(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/platform/tenants",
+            headers=SPOOFED_IDENTITY_HEADERS,
+            json={
+                "slug": "smoke-provisioned-falcon",
+                "name": "Smoke Provisioned Falcon",
+                "plan_code": "professional",
+                "data_region": "eu-1",
+                "locale": "en-US",
+                "timezone": "Europe/London",
+                "settings": {
+                    "week_start_day": "sunday",
+                    "date_format": "MM/DD/YYYY",
+                    "time_format": "12h",
+                },
+            },
+        ),
+        201,
+        "POST /api/v1/platform/tenants",
+    )
+    _assert_exact_fields(created, PLATFORM_TENANT_FIELDS, "provisioned platform tenant")
+    provisioned_tenant_id = UUID(created["id"])
+    if provisioned_tenant_id in {TENANT_ID, OTHER_TENANT_ID}:
+        raise AssertionError("platform provisioning did not generate a new tenant ID")
+    _assert_equal(created["status"], "provisioning", "provisioned tenant status")
+    _assert_equal(created["health"], "provisioning", "provisioned tenant health")
+    _assert_equal(created["plan_code"], "professional", "provisioned tenant plan")
+    _assert_equal(created["data_region"], "eu-1", "provisioned tenant region")
+
+    listed = _expect_json(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/platform/tenants",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        200,
+        "GET /api/v1/platform/tenants",
+    )
+    _assert_equal(len(listed), 3, "platform tenant list count")
+    for index, tenant in enumerate(listed):
+        _assert_exact_fields(
+            tenant,
+            PLATFORM_TENANT_FIELDS,
+            f"platform tenant list item {index}",
+        )
+    listed_created = next(
+        (tenant for tenant in listed if tenant["id"] == created["id"]),
+        None,
+    )
+    _assert_equal(listed_created, created, "platform tenant list provisioned item")
+
+    detail = _expect_json(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/platform/tenants/{created['id']}",
+            documented_path="/api/v1/platform/tenants/{tenant_id}",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        200,
+        "GET /api/v1/platform/tenants/{tenant_id}",
+    )
+    _assert_exact_fields(detail, PLATFORM_TENANT_FIELDS, "platform tenant detail")
+    _assert_equal(detail, created, "platform tenant detail payload")
+
+    updated = _expect_json(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/platform/tenants/{created['id']}",
+            documented_path="/api/v1/platform/tenants/{tenant_id}",
+            headers=SPOOFED_IDENTITY_HEADERS,
+            json={
+                "name": "Smoke Active Falcon",
+                "status": TenantStatus.ACTIVE.value,
+            },
+        ),
+        200,
+        "PATCH /api/v1/platform/tenants/{tenant_id}",
+    )
+    _assert_exact_fields(updated, PLATFORM_TENANT_FIELDS, "updated platform tenant")
+    _assert_equal(updated["id"], created["id"], "updated platform tenant id")
+    _assert_equal(updated["slug"], created["slug"], "updated platform tenant slug")
+    _assert_equal(updated["status"], TenantStatus.ACTIVE.value, "updated tenant status")
+    _assert_equal(updated["health"], "healthy", "updated tenant health")
+    _assert_equal(updated["name"], "Smoke Active Falcon", "updated tenant name")
+    _assert_no_hr_fields([created, listed, detail, updated], "platform tenant responses")
+    return provisioned_tenant_id
+
+
+async def _smoke_current_tenant_endpoints(
+    client: AsyncClient,
+    provisioned_tenant_id: UUID,
+) -> None:
+    current = _expect_json(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/tenant",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        200,
+        "GET /api/v1/tenant",
+    )
+    _assert_exact_fields(current, CURRENT_TENANT_FIELDS, "current tenant")
+    _assert_equal(current["id"], str(provisioned_tenant_id), "injected current tenant id")
+    _assert_equal(current["slug"], "smoke-provisioned-falcon", "current tenant slug")
+    _assert_equal(current["status"], TenantStatus.ACTIVE.value, "current tenant status")
+    _assert_equal(current["plan_code"], "professional", "current tenant plan")
+
+    settings = _expect_json(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/tenant/settings",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        200,
+        "GET /api/v1/tenant/settings",
+    )
+    _assert_exact_fields(settings, TENANT_SETTINGS_FIELDS, "current tenant settings")
+    _assert_equal(
+        settings,
+        {
+            "locale": "en-US",
+            "timezone": "Europe/London",
+            "week_start_day": "sunday",
+            "date_format": "MM/DD/YYYY",
+            "time_format": "12h",
+        },
+        "provisioned typed tenant settings",
+    )
+
+    updated_settings = _expect_json(
+        await _request_documented(
+            client,
+            "patch",
+            "/api/v1/tenant/settings",
+            headers=SPOOFED_IDENTITY_HEADERS,
+            json={
+                "locale": "tr-TR",
+                "timezone": "Europe/Istanbul",
+                "week_start_day": "monday",
+                "date_format": "YYYY-MM-DD",
+                "time_format": "24h",
+            },
+        ),
+        200,
+        "PATCH /api/v1/tenant/settings",
+    )
+    _assert_exact_fields(
+        updated_settings,
+        TENANT_SETTINGS_FIELDS,
+        "updated current tenant settings",
+    )
+    _assert_equal(
+        updated_settings,
+        {
+            "locale": "tr-TR",
+            "timezone": "Europe/Istanbul",
+            "week_start_day": "monday",
+            "date_format": "YYYY-MM-DD",
+            "time_format": "24h",
+        },
+        "updated typed tenant settings",
+    )
+    persisted_settings = _expect_json(
+        await client.get(
+            "/api/v1/tenant/settings",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        200,
+        "GET /api/v1/tenant/settings after patch",
+    )
+    _assert_equal(
+        persisted_settings,
+        updated_settings,
+        "persisted typed tenant settings",
+    )
+    _assert_no_hr_fields(
+        [current, settings, updated_settings],
+        "current tenant and settings responses",
+    )
 
 
 def _expect_documented_openapi_operations(openapi: dict[str, Any]) -> None:
@@ -1641,6 +1935,28 @@ def _assert_equal(actual: Any, expected: Any, label: str = "value") -> None:
 def _assert_contains(value: str, expected: str, label: str) -> None:
     if expected not in value:
         raise AssertionError(f"{label} expected to contain {expected!r}")
+
+
+def _assert_exact_fields(
+    payload: object,
+    expected_fields: set[str],
+    label: str,
+) -> None:
+    if not isinstance(payload, dict):
+        raise AssertionError(f"{label} expected an object, got {type(payload).__name__}")
+    _assert_equal(set(payload), expected_fields, f"{label} fields")
+
+
+def _assert_no_hr_fields(payload: object, label: str) -> None:
+    if isinstance(payload, dict):
+        forbidden = set(payload) & FORBIDDEN_HR_FIELDS
+        if forbidden:
+            raise AssertionError(f"{label} leaked HR fields: {sorted(forbidden)}")
+        for value in payload.values():
+            _assert_no_hr_fields(value, label)
+    elif isinstance(payload, list):
+        for value in payload:
+            _assert_no_hr_fields(value, label)
 
 
 def _format_operations(operations: list[tuple[str, str]]) -> list[str]:

@@ -21,6 +21,7 @@ from app.models import (  # noqa: F401
     LeaveBalanceSummary,
     LeaveRequest,
     Tenant,
+    TenantSettings,
     User,
 )
 from sqlalchemy import text
@@ -50,6 +51,7 @@ EXPECTED_UUID_COLUMNS = {
     ("leave_requests", "requested_by_user_id"),
     ("leave_requests", "tenant_id"),
     ("tenants", "id"),
+    ("tenant_settings", "tenant_id"),
     ("users", "id"),
     ("users", "tenant_id"),
 }
@@ -60,6 +62,7 @@ EXPECTED_TIMESTAMP_COLUMNS = {
         "leave_balance_summaries",
         "leave_requests",
         "tenants",
+        "tenant_settings",
         "users",
     }
     for column_name in {"created_at", "updated_at"}
@@ -80,6 +83,9 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_leave_requests_date_order",
     "ck_leave_requests_status",
     "ck_tenants_status",
+    "ck_tenant_settings_date_format",
+    "ck_tenant_settings_time_format",
+    "ck_tenant_settings_week_start_day",
     "ck_users_status",
 }
 EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
@@ -95,6 +101,7 @@ EXPECTED_FOREIGN_KEY_COUNTS = {
     "employees": 1,
     "leave_balance_summaries": 2,
     "leave_requests": 4,
+    "tenant_settings": 1,
     "users": 1,
 }
 
@@ -121,6 +128,59 @@ def test_alembic_round_trip_reaches_current_head(postgres_database_url: URL) -> 
 
     alembic_command.upgrade(config, "head")
     assert asyncio.run(_current_revision(postgres_database_url)) == expected_head
+
+
+def test_tenant_settings_migration_backfills_and_round_trips_postgresql(
+    postgres_database_url: URL,
+) -> None:
+    config = _alembic_config(postgres_database_url)
+    tenant_id = uuid4()
+
+    alembic_command.upgrade(config, "0012_p0f_query_performance")
+    asyncio.run(_insert_pre_settings_tenant(postgres_database_url, tenant_id))
+    alembic_command.upgrade(config, "head")
+    assert asyncio.run(_tenant_settings_values(postgres_database_url, tenant_id)) == (
+        "monday",
+        "DD.MM.YYYY",
+        "24h",
+    )
+
+    alembic_command.downgrade(config, "0012_p0f_query_performance")
+    assert asyncio.run(_tenant_exists(postgres_database_url, tenant_id)) is True
+    alembic_command.upgrade(config, "head")
+    assert asyncio.run(_tenant_settings_values(postgres_database_url, tenant_id)) == (
+        "monday",
+        "DD.MM.YYYY",
+        "24h",
+    )
+
+
+def test_tenant_settings_downgrade_refuses_custom_postgresql_values(
+    postgres_database_url: URL,
+) -> None:
+    config = _alembic_config(postgres_database_url)
+    tenant_id = uuid4()
+    alembic_command.upgrade(config, "head")
+    asyncio.run(
+        _insert_tenant_with_settings(
+            postgres_database_url,
+            tenant_id,
+            week_start_day="sunday",
+        )
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="F1A downgrade preflight failed.*custom_tenant_settings=1",
+    ):
+        alembic_command.downgrade(config, "0012_p0f_query_performance")
+
+    assert asyncio.run(_current_revision(postgres_database_url)) == "0013_tenant_settings"
+    assert asyncio.run(_tenant_settings_values(postgres_database_url, tenant_id)) == (
+        "sunday",
+        "DD.MM.YYYY",
+        "24h",
+    )
 
 
 def test_live_postgresql_schema_has_no_autogenerate_drift(
@@ -177,7 +237,7 @@ def test_full_api_smoke_uses_alembic_migrated_postgresql(
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     assert result.returncode == 0, output
     assert "BACKEND_SMOKE_OK" in result.stdout
-    assert "documented_endpoints=15" in result.stdout
+    assert "documented_endpoints=22" in result.stdout
 
 
 def _alembic_config(database_url: URL) -> Config:
@@ -201,6 +261,91 @@ async def _current_revision(database_url: URL) -> str | None:
                 lambda sync_connection: MigrationContext.configure(
                     sync_connection
                 ).get_current_revision()
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _insert_pre_settings_tenant(database_url: URL, tenant_id) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone"
+                    ") values ("
+                    ":id, :slug, 'F1A migration tenant', 'active', 'core', 'tr-1', "
+                    "'tr-TR', 'Europe/Istanbul'"
+                    ")"
+                ),
+                {"id": tenant_id, "slug": f"f1a-backfill-{tenant_id.hex}"},
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _insert_tenant_with_settings(
+    database_url: URL,
+    tenant_id,
+    *,
+    week_start_day: str,
+) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone"
+                    ") values ("
+                    ":id, :slug, 'F1A guarded tenant', 'active', 'core', 'tr-1', "
+                    "'tr-TR', 'Europe/Istanbul'"
+                    ")"
+                ),
+                {"id": tenant_id, "slug": f"f1a-guard-{tenant_id.hex}"},
+            )
+            await connection.execute(
+                text(
+                    "insert into tenant_settings ("
+                    "tenant_id, week_start_day, date_format, time_format"
+                    ") values ("
+                    ":tenant_id, :week_start_day, 'DD.MM.YYYY', '24h'"
+                    ")"
+                ),
+                {"tenant_id": tenant_id, "week_start_day": week_start_day},
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _tenant_settings_values(database_url: URL, tenant_id) -> tuple[str, str, str]:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        "select week_start_day, date_format, time_format "
+                        "from tenant_settings where tenant_id = :tenant_id"
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+            ).one()
+            return str(row[0]), str(row[1]), str(row[2])
+    finally:
+        await engine.dispose()
+
+
+async def _tenant_exists(database_url: URL, tenant_id) -> bool:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            return bool(
+                await connection.scalar(
+                    text("select exists(select 1 from tenants where id = :tenant_id)"),
+                    {"tenant_id": tenant_id},
+                )
             )
     finally:
         await engine.dispose()
@@ -327,6 +472,7 @@ async def _typed_columns(
 async def _assert_constraints_reject_invalid_rows(database_url: URL) -> None:
     engine = create_async_engine(database_url, poolclass=NullPool)
     unique_slug = f"p0a-{uuid4().hex}"
+    valid_tenant_id = uuid4()
     try:
         await _expect_constraint_error(
             engine,
@@ -354,6 +500,18 @@ async def _assert_constraints_reject_invalid_rows(database_url: URL) -> None:
             },
             "users_tenant_id_fkey",
         )
+        await _expect_constraint_error(
+            engine,
+            """
+            insert into tenant_settings (
+                tenant_id, week_start_day, date_format, time_format
+            ) values (
+                :tenant_id, 'monday', 'DD.MM.YYYY', '24h'
+            )
+            """,
+            {"tenant_id": uuid4()},
+            "fk_tenant_settings_tenant_id_tenants",
+        )
 
         async with engine.begin() as connection:
             await connection.execute(
@@ -367,7 +525,45 @@ async def _assert_constraints_reject_invalid_rows(database_url: URL) -> None:
                     )
                     """
                 ),
-                {"id": uuid4(), "slug": unique_slug},
+                {"id": valid_tenant_id, "slug": unique_slug},
+            )
+
+        for week_start_day, date_format, time_format, constraint_name in (
+            (
+                "friday",
+                "DD.MM.YYYY",
+                "24h",
+                "ck_tenant_settings_week_start_day",
+            ),
+            (
+                "monday",
+                "DD/MM/YYYY",
+                "24h",
+                "ck_tenant_settings_date_format",
+            ),
+            (
+                "monday",
+                "DD.MM.YYYY",
+                "military",
+                "ck_tenant_settings_time_format",
+            ),
+        ):
+            await _expect_constraint_error(
+                engine,
+                """
+                insert into tenant_settings (
+                    tenant_id, week_start_day, date_format, time_format
+                ) values (
+                    :tenant_id, :week_start_day, :date_format, :time_format
+                )
+                """,
+                {
+                    "tenant_id": valid_tenant_id,
+                    "week_start_day": week_start_day,
+                    "date_format": date_format,
+                    "time_format": time_format,
+                },
+                constraint_name,
             )
 
         await _expect_constraint_error(

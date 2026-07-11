@@ -22,6 +22,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-014 | Tenant ilişkisel bütünlüğü | Composite tenant foreign key + expand-contract | Kabul |
 | ADR-015 | Concurrency/idempotency/arşiv | PostgreSQL receipt, tenant-scoped row lock, çalışan arşivi | Kabul |
 | ADR-016 | Phase-0 sorgu performansı | Ölçümlü keyset, PostgreSQL trigram/normalize indexleri, aggregate consolidation; cache yok | Kabul |
+| ADR-017 | Tenant lifecycle ve provisioning yüzeyi | Typed tenant/settings modeli, injected principal ile default-deny platform/tenant API, lifecycle-derived health | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -461,7 +462,117 @@ Kanıt ve tekrar prosedürü:
 
 - [Phase 0 Query Performance Baseline](../09-uygulama/12-phase-0-query-performance-baseline.md)
 
-## 18. Ertelenen kararlar
+## 18. ADR-017 Tenant lifecycle, typed settings ve platform provisioning
+
+Bağlam:
+
+- Faz 1'in ilk dikey kesiti tenant provisioning, metadata ve tenant ayarlarını görünür bir API
+  yüzeyiyle sunmalıdır; platform operatörüne employee, leave veya başka müşteri iş verisi açmamalıdır.
+- Authentication/session/RBAC Faz 2 işidir. Bu nedenle bir header veya request body'sindeki
+  `tenant_id`/user ID değerini yetki kanıtı saymak, geçici bile olsa güvenli bir temel değildir.
+- Serbest biçimli JSON ayarları şema dışı anahtar, tip ve doğrulama davranışını kalıcılaştırır.
+  Tenant ayarlarının ilk allowlist'i ürün sözleşmesi ve ilişkisel şema ile aynı olmalıdır.
+- Faz 1.2 request context ve standart `{data, meta}` zarfı henüz yoktur. Mevcut doğrudan response
+  uyumluluğunu F1A içinde kırmak bu dikey kesitin kapsamını aşar.
+
+Karar:
+
+- F1A yalnız şu yedi operation'ı ekler:
+  `POST/GET /api/v1/platform/tenants`,
+  `GET/PATCH /api/v1/platform/tenants/{tenant_id}`,
+  `GET /api/v1/tenant` ve
+  `GET/PATCH /api/v1/tenant/settings`.
+  `/api/v1/tenant/features` veya başka feature-flag endpoint'i bu kesitte yoktur.
+- Platform route'ları yalnız trusted upstream adapter tarafından enjekte edilen immutable
+  `PlatformPrincipal`; tenant route'ları yalnız immutable `TenantPrincipal` ile çalışır.
+  Production/default dependency her iki yüzeyde de fail-closed davranır. Testler Phase 2 auth
+  gelene kadar dependency override kullanabilir. Header, query, path veya body içindeki user/tenant
+  ID hiçbir zaman bu principal'ları oluşturmaz veya authorization sağlamaz.
+- F1A success response'ları mevcut API uyumluluğu için doğrudan typed object/list döner. Standart
+  `{data, meta}` zarfı, immutable genel `RequestContext` ve correlation middleware Faz 1.2'de
+  versionlanmış/duyurulmuş compatibility planıyla ele alınır.
+- Canonical create/PATCH plan kodları `core`, `professional`, `enterprise`; data region değerleri
+  `tr-1`, `eu-1`; locale değerleri `tr-TR`, `en-US` olarak allowlist edilir. Pre-F1A `premium`
+  plan satırları list/detail/current response'larında read-only compatibility olarak tanınır,
+  ancak create/PATCH `premium` kabul etmez ve migration bunları sessizce yeniden yazmaz. Timezone
+  geçerli bir IANA timezone adı olmalıdır. `data_region` yalnız tenant `provisioning` durumundayken
+  değiştirilebilir; sonrasında lifecycle veya plan değişikliği region relocation anlamına gelmez.
+- `tenant_settings` bir arbitrary JSON blob değildir. `tenant_id` aynı zamanda primary key ve
+  `tenants.id` için `ON DELETE CASCADE` foreign key'dir. Fixed kolonlar yalnız
+  `week_start_day` (`monday|sunday`),
+  `date_format` (`DD.MM.YYYY|MM/DD/YYYY|YYYY-MM-DD`) ve
+  `time_format` (`24h|12h`) değerlerini taşır; `locale` ve `timezone` tenant'ın typed temel
+  kolonlarında canonical tutulur. Tenant settings API'sinin allowlist'i tam olarak
+  `locale`, `timezone`, `week_start_day`, `date_format`, `time_format` anahtarlarıdır;
+  `extra="forbid"` semantiğiyle key/value ekleme kabul edilmez.
+- Tenant provisioning tenant satırı ile default settings satırını tek transaction'da oluşturur.
+  Mevcut tenant'lara migration sırasında sırasıyla `monday`, `DD.MM.YYYY`, `24h` defaultlarıyla
+  bir settings satırı backfill edilir. `0013` downgrade custom settings'i sessizce kaybetmez:
+  default dışı satır sayısını `custom_tenant_settings` olarak raporlayıp export/default restoration
+  yapılana kadar fail eder; yalnız tüm satırlar default iken tablo kaldırılabilir.
+- Lifecycle aynı-state idempotent no-op dahil aşağıdaki directed graph'tır. Listelenmeyen her
+  transition reddedilir:
+
+```mermaid
+stateDiagram-v2
+  [*] --> provisioning
+  provisioning --> trial
+  provisioning --> active
+  provisioning --> closed
+  trial --> active
+  trial --> suspended
+  trial --> offboarding
+  active --> suspended
+  active --> offboarding
+  suspended --> trial
+  suspended --> active
+  suspended --> offboarding
+  offboarding --> closed
+  closed --> [*]
+```
+
+Lifecycle erişim ve platform health matrisi:
+
+| Tenant status | F1A current/settings yüzeyi | Platform `health` | Kural |
+|---|---|---|---|
+| `provisioning` | `platform_only` | `provisioning` | `/tenant` ve settings erişimi kapalıdır; provisioning platformdan tamamlanır |
+| `trial` | `read_write` | `healthy` | Current/settings GET ve settings PATCH açıktır |
+| `active` | `read_write` | `healthy` | Current/settings GET ve settings PATCH açıktır |
+| `suspended` | `read_only` | `restricted` | Current/settings GET açıktır; settings PATCH reddedilir |
+| `offboarding` | `read_only` | `offboarding` | Current/settings GET açıktır; settings PATCH reddedilir; export/retention orkestrasyonu F1A dışıdır |
+| `closed` | `denied` | `closed` | Current/settings erişimi reddedilir; platform lifecycle metadata'sı görülebilir |
+
+Phase-0 employee/leave/dashboard route'larının caller-header compatibility davranışı F1A içinde
+genişletilmez veya lifecycle authorization gibi sunulmaz. Bu header principal üretmez. Phase 2
+authenticated request context'i devreye alırken lifecycle policy protected business route'larına
+merkezi olarak compose edilir; F1A testi yalnız yeni injected-principal current/settings yüzeyini
+ve pure domain policy'yi sabitler.
+
+- Platform list/detail response'u yalnız tenant kimliği, slug/name, lifecycle, plan, region,
+  locale/timezone, timestamps ve lifecycle'dan deterministik türetilen `health` metadata'sını
+  taşır. Health sorgusu employee/leave tablolarını saymaz veya join etmez; HR count, record,
+  payload, document, leave ya da sensitive customer data platform response'una eklenemez.
+
+Sonuç:
+
+- Yeni/update tenant status, plan, locale ve region inputları API/domain'de typed allowlist ile
+  sınırlıdır; mevcut legacy tenant satırları yeniden yorumlanmaz. İlişkisel şemada mevcut status
+  check'i korunur, yeni settings değerleri named check constraint'lerle sınırlanır; IANA timezone
+  doğrulaması application boundary'sindedir.
+- Settings PATCH partial update'tir fakat yalnız sabit allowlist'i kabul eder. Tenant principal'ın
+  tenant scope'u dependency'den gelir ve path/body ile değiştirilemez; cross-tenant negatif test bu
+  kuralı sabitler.
+- `0013_tenant_settings` SQLite ve PostgreSQL için data-preserving upgrade/downgrade/upgrade
+  round-trip, existing-tenant backfill ve custom-settings downgrade refusal sağlamak üzere
+  tasarlanmıştır. Bu davranış ve PostgreSQL'e özgü iddialar gate tamamlanmadan kabul edilmiş
+  sayılmaz; gerçek PostgreSQL lane'inde doğrulanır.
+- F1A auth/session/RBAC, audit persistence/event recorder, PostgreSQL RLS, feature flags,
+  legal entity, support/break-glass erişimi veya başka Phase 1.2+/ürün modülü eklemez. Bu ADR,
+  Phase 2 kimlik doğrulamasının yerine geçmez; yalnız güvenli injection seam ve fail-closed
+  başlangıç davranışını tanımlar.
+- F1A lifecycle/settings, generated OpenAPI, SQLite ve PostgreSQL 17.10 gate'leri tamamlanmıştır.
+
+## 19. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -471,8 +582,11 @@ Kanıt ve tekrar prosedürü:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 19. İlgili dokümanlar
+## 20. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)
 - [AI Özellikleri ve Governance Modülü](../03-moduller/12-ai-ozellikleri-ve-governance.md)
+- [OpenAPI Endpoint Taslağı](../09-uygulama/03-openapi-endpoint-taslagi.md)
+- [ERD ve Migration Uygulama Planı](../09-uygulama/04-erd-migration-uygulama-plani.md)
+- [API Implementation Status](../09-uygulama/11-api-implementation-status.md)

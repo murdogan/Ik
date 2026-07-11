@@ -5,8 +5,10 @@ from app.api.openapi import (
     LEAVE_BALANCES_TAG,
     LEAVE_REQUESTS_TAG,
     OPENAPI_TAGS,
+    PLATFORM_TENANTS_TAG,
     PUBLIC_TAG,
     SYSTEM_TAG,
+    TENANT_SETTINGS_TAG,
 )
 from app.main import create_app
 from app.schemas.employee import EMPLOYEE_LIST_DEFAULT_LIMIT, EMPLOYEE_LIST_MAX_LIMIT
@@ -17,6 +19,17 @@ from app.schemas.leave_request import (
 from fastapi.testclient import TestClient
 
 HTTP_METHODS = {"delete", "get", "patch", "post", "put"}
+PLATFORM_TENANT_OPERATIONS = {
+    ("/api/v1/platform/tenants", "post"),
+    ("/api/v1/platform/tenants", "get"),
+    ("/api/v1/platform/tenants/{tenant_id}", "get"),
+    ("/api/v1/platform/tenants/{tenant_id}", "patch"),
+}
+TENANT_PRINCIPAL_OPERATIONS = {
+    ("/api/v1/tenant", "get"),
+    ("/api/v1/tenant/settings", "get"),
+    ("/api/v1/tenant/settings", "patch"),
+}
 
 
 def test_openapi_uses_readable_tag_catalog() -> None:
@@ -29,6 +42,10 @@ def test_openapi_uses_readable_tag_catalog() -> None:
     descriptions = {tag["name"]: tag["description"] for tag in response.json()["tags"]}
     assert "service health, version, and environment readiness" in descriptions[SYSTEM_TAG]
     assert "outside the tenant-scoped JSON API" in descriptions[PUBLIC_TAG]
+    assert "Default-deny platform provisioning" in descriptions[PLATFORM_TENANTS_TAG]
+    assert "never HR data" in descriptions[PLATFORM_TENANTS_TAG]
+    assert "fixed, typed settings allowlist" in descriptions[TENANT_SETTINGS_TAG]
+    assert "lifecycle-aware read and write behavior" in descriptions[TENANT_SETTINGS_TAG]
     assert "department distribution, new starters" in descriptions[DASHBOARD_TAG]
     assert "employee master data" in descriptions[EMPLOYEES_TAG]
     assert "no accrual engine" in descriptions[LEAVE_BALANCES_TAG]
@@ -52,6 +69,41 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
             PUBLIC_TAG,
             "Serve public landing page",
             "outside the tenant-scoped JSON API surface",
+        ),
+        ("/api/v1/platform/tenants", "post"): (
+            PLATFORM_TENANTS_TAG,
+            "Provision platform tenant",
+            "server generates the tenant ID",
+        ),
+        ("/api/v1/platform/tenants", "get"): (
+            PLATFORM_TENANTS_TAG,
+            "List platform tenant metadata",
+            "do not join or expose employees, users, leave records",
+        ),
+        ("/api/v1/platform/tenants/{tenant_id}", "get"): (
+            PLATFORM_TENANTS_TAG,
+            "Read platform tenant metadata",
+            "path UUID selects a resource only",
+        ),
+        ("/api/v1/platform/tenants/{tenant_id}", "patch"): (
+            PLATFORM_TENANTS_TAG,
+            "Update platform tenant lifecycle",
+            "Closed is terminal, offboarding is closure-only",
+        ),
+        ("/api/v1/tenant", "get"): (
+            TENANT_SETTINGS_TAG,
+            "Read current tenant metadata",
+            "user IDs, and tenant IDs do not select or authorize this resource",
+        ),
+        ("/api/v1/tenant/settings", "get"): (
+            TENANT_SETTINGS_TAG,
+            "Read typed tenant settings",
+            "fixed locale, IANA timezone, week-start, date-format, and time-format settings",
+        ),
+        ("/api/v1/tenant/settings", "patch"): (
+            TENANT_SETTINGS_TAG,
+            "Update typed tenant settings",
+            "Arbitrary keys, null values, nested settings bags",
         ),
         ("/api/v1/dashboard/summary", "get"): (
             DASHBOARD_TAG,
@@ -140,6 +192,125 @@ def test_current_operations_use_tag_catalog_and_doc_metadata() -> None:
             assert operation["description"].strip()
             for response_metadata in operation["responses"].values():
                 assert response_metadata["description"].strip()
+
+
+def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    expected_denials = {
+        **{
+            operation: (
+                "Platform principal authorization denial envelope.",
+                "platform_access_denied",
+                "Platform tenant access requires a trusted principal",
+            )
+            for operation in PLATFORM_TENANT_OPERATIONS
+        },
+        **{
+            operation: (
+                "Tenant principal authorization denial envelope.",
+                "tenant_access_denied",
+                "Tenant access requires a trusted principal",
+            )
+            for operation in TENANT_PRINCIPAL_OPERATIONS
+        },
+    }
+
+    for (path, method), (description, code, message) in expected_denials.items():
+        operation = paths[path][method]
+        denial = operation["responses"]["403"]
+        media_type = denial["content"]["application/json"]
+
+        assert "security" not in operation
+        assert denial["description"] == description
+        assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
+        assert media_type["example"]["error"] == {
+            "code": code,
+            "message": message,
+            "correlation_id": "req_wf_demo_001",
+        }
+
+
+def test_phase1_tenant_operations_document_lifecycle_and_resource_errors() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    expected_error_codes = {
+        ("/api/v1/platform/tenants", "post"): {
+            "409": {"tenant_slug_conflict"},
+        },
+        ("/api/v1/platform/tenants/{tenant_id}", "get"): {
+            "404": {"tenant_not_found"},
+        },
+        ("/api/v1/platform/tenants/{tenant_id}", "patch"): {
+            "404": {"tenant_not_found"},
+            "409": {"tenant_lifecycle_conflict"},
+        },
+        ("/api/v1/tenant", "get"): {
+            "404": {"tenant_not_found"},
+            "410": {"tenant_closed"},
+            "423": {"tenant_not_ready"},
+        },
+        ("/api/v1/tenant/settings", "get"): {
+            "404": {"tenant_not_found"},
+            "410": {"tenant_closed"},
+            "423": {"tenant_not_ready"},
+        },
+        ("/api/v1/tenant/settings", "patch"): {
+            "404": {"tenant_not_found"},
+            "410": {"tenant_closed"},
+            "423": {"tenant_not_ready", "tenant_read_only"},
+        },
+    }
+
+    for (path, method), responses in expected_error_codes.items():
+        operation_responses = paths[path][method]["responses"]
+        for status_code, error_codes in responses.items():
+            documented = operation_responses[status_code]
+            media_type = documented["content"]["application/json"]
+
+            assert documented["description"].strip()
+            assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
+            assert _documented_error_codes(media_type) == error_codes
+
+
+def test_platform_tenant_operations_do_not_accept_caller_identity_headers() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    for path, method in PLATFORM_TENANT_OPERATIONS:
+        parameters = paths[path][method].get("parameters", [])
+        assert [parameter for parameter in parameters if parameter["in"] == "header"] == []
+
+
+def test_platform_tenant_response_schemas_cannot_reference_hr_schemas() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi = response.json()
+    schemas = openapi["components"]["schemas"]
+    for path, method in PLATFORM_TENANT_OPERATIONS:
+        references = _transitive_schema_references(
+            openapi["paths"][path][method]["responses"],
+            schemas,
+        )
+        assert not {
+            reference
+            for reference in references
+            if reference.startswith(("Employee", "User", "Leave"))
+        }
 
 
 def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:
@@ -376,3 +547,50 @@ def test_critical_post_commands_document_optional_tenant_scoped_idempotency_key(
         for parameter in paths["/api/v1/employees/{employee_id}"]["patch"]["parameters"]
     }
     assert "X-Idempotency-Key" not in patch_headers
+
+
+def _transitive_schema_references(
+    value: object,
+    schemas: dict[str, object],
+) -> set[str]:
+    references = _schema_references(value)
+    pending = list(references)
+    while pending:
+        reference = pending.pop()
+        component = schemas.get(reference)
+        if component is None:
+            continue
+        discovered = _schema_references(component) - references
+        references.update(discovered)
+        pending.extend(discovered)
+    return references
+
+
+def _schema_references(value: object) -> set[str]:
+    if isinstance(value, dict):
+        references = {
+            candidate.rsplit("/", maxsplit=1)[-1]
+            for key, candidate in value.items()
+            if key == "$ref" and isinstance(candidate, str)
+        }
+        for nested in value.values():
+            references.update(_schema_references(nested))
+        return references
+    if isinstance(value, list):
+        return {
+            reference
+            for nested in value
+            for reference in _schema_references(nested)
+        }
+    return set()
+
+
+def _documented_error_codes(media_type: dict[str, object]) -> set[str]:
+    if "example" in media_type:
+        examples = [media_type["example"]]
+    else:
+        examples = [
+            example["value"]
+            for example in media_type["examples"].values()
+        ]
+    return {example["error"]["code"] for example in examples}

@@ -2,10 +2,10 @@
 
 Bu doküman, IK Platform HTTP API'lerinin URL, response, hata, pagination, idempotency, async job ve webhook standartlarını tanımlar.
 
-Bu belge hedef standardı da içerir; Faz 0'da uygulanmış güncel yüzey
+Bu belge hedef standardı da içerir; F1A dahil güncel yüzey
 [API Implementation Status Report](../09-uygulama/11-api-implementation-status.md) ile sınırlıdır.
 Aşağıdaki payroll, PDKS ve AI referansları ileri-faz capability kataloğudur; bu alanlar MVP
-dışıdır ve Faz 0 runtime davranışı, endpoint'i veya background task'ı değildir.
+dışıdır ve F1A runtime davranışı, endpoint'i veya background task'ı değildir.
 
 ## 1. Temel API ilkeleri
 
@@ -13,8 +13,8 @@ dışıdır ve Faz 0 runtime davranışı, endpoint'i veya background task'ı de
 |---|---|
 | REST first | `/api/v1` resource-oriented endpointler |
 | OpenAPI | Tüm endpointler schema ve örnekle belgelenir |
-| Tenant-aware | Tenant token/session/host üzerinden çözülür |
-| Permission-first | Protected endpoint permission dependency ister |
+| Tenant-aware | F1A trusted injected tenant principal; Faz 2'de token/session/host eşleşmesi |
+| Permission-first | Protected endpoint default-deny principal/permission dependency ister |
 | Idempotency | Desteklenen kritik POST endpointlerinde opsiyonel `X-Idempotency-Key` |
 | Pagination | Büyük listelerde cursor-based pagination |
 | Async jobs | Import, export, payroll, AI ve rapor işlemleri async |
@@ -62,6 +62,17 @@ ilk/uyumluluk isteği `limit` ve deprecated `offset` kabul eder; response'ta dah
 positive `offset` birlikte geçersizdir. Gelecekteki `{data, meta.next_cursor}` zarfına geçiş ayrıca
 versionlanmış/duyurulmuş sözleşme değişikliği olacaktır.
 
+F1A compatibility notu: yeni yedi tenant operation'ı da mevcut uygulama standardıyla doğrudan
+typed object/list döner; `{data, meta}` zarfı eklemez. Bunlar:
+
+- `POST/GET /api/v1/platform/tenants`
+- `GET/PATCH /api/v1/platform/tenants/{tenant_id}`
+- `GET /api/v1/tenant`
+- `GET/PATCH /api/v1/tenant/settings`
+
+Zarf, immutable genel request context ve global correlation middleware Faz 1.2'de intentional
+contract migration olarak ele alınacaktır. F1A `/api/v1/tenant/features` eklemez.
+
 Hata response:
 
 ```json
@@ -83,12 +94,16 @@ Hata response:
 | 400 | `idempotency_key_invalid` | Opsiyonel key boş, whitespace içeriyor, çok uzun veya tekrarlı |
 | 401 | `AUTH_401_UNAUTHENTICATED` | Login/token yok |
 | 403 | `AUTH_403_PERMISSION_DENIED` | Yetki yok |
+| 403 | `platform_access_denied` / `tenant_access_denied` | F1A trusted injected principal yok |
 | 403 | `CORE_403_TENANT_MISMATCH` | Tenant uyuşmazlığı |
 | 404 | `SYS_404_NOT_FOUND` | Kaynak yok veya scope dışı |
+| 410 | `tenant_closed` | Closed tenant'ın tenant yüzeyi artık kullanılabilir değil |
 | 409 | `SYS_409_CONFLICT` | Çakışma |
+| 409 | `tenant_slug_conflict` / `tenant_lifecycle_conflict` | Duplicate slug veya izin verilmeyen tenant değişikliği |
 | 409 | `idempotency_key_mismatch` | Aynı tenant key'i farklı komut, hedef veya semantic body ile kullanıldı |
 | 422 | `VAL_422_VALIDATION` | Validasyon/iş kuralı |
 | 423 | `{MOD}_423_LOCKED` | Kilitli dönem |
+| 423 | `tenant_not_ready` / `tenant_read_only` | Provisioning current/settings yüzeyi veya suspended/offboarding settings PATCH kapalı |
 | 429 | `SYS_429_RATE_LIMITED` | Limit aşıldı |
 | 500 | `SYS_500_INTERNAL` | Beklenmeyen hata |
 
@@ -192,6 +207,31 @@ Kullanım alanları:
 - CI'da OpenAPI lint çalıştırılır.
 - Breaking change PR'da görünür olmalıdır.
 - Public API dokümanı internal endpointleri içermez.
+- F1A additive schema ayrı `f1a_openapi_contract.json` snapshot'ında tutulur; historical Phase-0
+  manifesti overwrite edilmez.
+
+F1A platform/tenant güvenlik standardı:
+
+- Platform operation'ları yalnız trusted adapter'ın enjekte ettiği `PlatformPrincipal`; tenant
+  operation'ları yalnız enjekte edilen immutable `TenantPrincipal` ile çalışır. Default dependency
+  context yokken `403` döner. Test override'ı Phase 2 auth gelene kadarki test seam'idir.
+- `X-Tenant-Id`, `X-User-Id` veya caller'ın path/query/body/header içinde verdiği başka kimlik
+  authorization değildir ve principal üretemez. Tenant current/settings scope'u injected
+  principal'ın tenant ID'sinden türetilir.
+- Platform tenant listesi bounded `limit`/`offset` kabul eder. Response yalnız
+  `id`, `slug`, `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone`, lifecycle-derived
+  `health`, `created_at`, `updated_at` alanlarını taşır; HR count veya employee/leave payload yoktur.
+- Create/PATCH plan inputu yalnız `core|professional|enterprise` kabul eder. Existing `premium`
+  satırlar response'ta read-only compatibility için tanınır; migration rewrite veya yeni
+  `premium` write yoktur.
+- Tenant current response'u yalnız `id`, `slug`, `name`, `status`, `plan_code`, `locale`, `timezone`;
+  settings response'u yalnız `locale`, `timezone`, `week_start_day`, `date_format`, `time_format`
+  alanlarını taşır. Extra request key'leri validation'da reddedilir.
+- `provisioning` tenant erişimi `423`, `closed` erişimi `410`; `suspended` ve `offboarding` GET
+  açıktır ama settings PATCH `423` döner.
+
+F1A generated OpenAPI/contract gate'i 21 operation'lık additive snapshot'ı, exact tag/metadata
+assertion'larını ve runtime'da çağrılan 22 documented endpoint'i doğrular.
 
 ## 9. Webhook mimarisi
 

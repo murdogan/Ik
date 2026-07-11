@@ -1,5 +1,7 @@
 SYSTEM_TAG = "System"
 PUBLIC_TAG = "Public"
+PLATFORM_TENANTS_TAG = "Platform Tenants"
+TENANT_SETTINGS_TAG = "Tenant Settings"
 DASHBOARD_TAG = "Dashboard"
 EMPLOYEES_TAG = "Employees"
 LEAVE_BALANCES_TAG = "Leave Balances"
@@ -17,6 +19,20 @@ OPENAPI_TAGS = [
         "name": PUBLIC_TAG,
         "description": (
             "Browser-facing Wealthy Falcon HR pages served outside the tenant-scoped JSON API."
+        ),
+    },
+    {
+        "name": PLATFORM_TENANTS_TAG,
+        "description": (
+            "Default-deny platform provisioning and lifecycle metadata. Responses contain tenant "
+            "plan, region, locale, timezone, and lifecycle-derived health only—never HR data."
+        ),
+    },
+    {
+        "name": TENANT_SETTINGS_TAG,
+        "description": (
+            "Trusted-principal tenant metadata and a fixed, typed settings allowlist with "
+            "lifecycle-aware read and write behavior."
         ),
     },
     {

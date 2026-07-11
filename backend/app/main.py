@@ -12,6 +12,8 @@ from app.api.landing import router as landing_router
 from app.api.leave_balances import router as leave_balances_router
 from app.api.leave_requests import router as leave_requests_router
 from app.api.openapi import OPENAPI_TAGS
+from app.api.platform_tenants import router as platform_tenants_router
+from app.api.tenant import router as tenant_router
 from app.core.config import APP_SETTINGS_STATE_KEY, Settings, get_settings
 from app.db.session import (
     DATABASE_RUNTIME_STATE_KEY,
@@ -50,6 +52,8 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(ApplicationError, application_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
+    app.include_router(platform_tenants_router)
+    app.include_router(tenant_router)
     app.include_router(dashboard_router)
     app.include_router(employees_router)
     app.include_router(leave_balances_router)

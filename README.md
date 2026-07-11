@@ -55,8 +55,8 @@ backend/
 ```
 
 `platform/` ve `modules/` Faz 0'da import-boundary testleriyle korunan canonical hedeftir.
-Mevcut employee/leave kodu davranış uyumluluğu için flat paketlerde artımlı geçiş alanı
-olarak kalır; gerçek bir ürün modülünün taşınması Murat review sapmaları arasındadır.
+F1A tenant lifecycle/value policy'sini `app.modules.core.domain` içine yerleştirir; mevcut
+employee/leave kodu davranış uyumluluğu için flat paketlerde artımlı geçiş alanı olarak kalır.
 
 ## Lokal geliştirme
 
@@ -136,10 +136,14 @@ ve broker kurulmamıştır. `app.platform.workers` yalnız non-zero tenant, idem
 payload, timeout ve attempt sınırı isteyen dar `JobQueue`/`JobSpec` portu ile deterministik test
 fake'ini içerir.
 
-Phase 0 OpenAPI contract'ı
+Historical Phase 0 OpenAPI contract'ı
 `backend/tests/contracts/phase0_openapi_contract.json` içinde operation/component bazlı canonical
 hash manifestiyle sabitlenir. Contract testi, metadata testleri ve backend smoke registry birlikte
-14 generated operasyonu ve runtime `/openapi.json` dahil 15 documented endpointi korur.
+o checkpoint'teki 14 generated operasyonu ve runtime `/openapi.json` dahil 15 documented endpointi
+korur. F1A tam olarak yedi additive platform/tenant operation'ı ekler; current target 21 generated
+operation ve runtime `/openapi.json` dahil 22 documented endpoint'tir. Additive snapshot ayrı
+`backend/tests/contracts/f1a_openapi_contract.json` dosyasında tutulur; historical Phase-0
+manifesti yeniden yazılmaz. F1A OpenAPI/metadata testleri ve runtime smoke bu iki sayıyı doğrular.
 
 P0D ile mevcut tenant-owned parent tablolarından `employees` ve `users` için `(tenant_id, id)`
 candidate key'leri; `leave_requests` ve `leave_balance_summaries` içindeki dört employee/user
@@ -151,7 +155,7 @@ için preflight'ı constraint lock'ları altında yeniden çalıştırır. `0010
 foreign key'leri validate ettikten sonra yalnız eski employee/user scalar foreign key'lerini
 kaldırır. Böylece doğrudan DB write yolu tenant'lar arası employee/user bağlantısı kuramaz;
 tenant root foreign key'leri ve mevcut servis guard'ları korunur. RLS bu değişikliğin parçası
-değildir ve Faz 1'de ayrıca uygulanacaktır.
+değildir; F1A da RLS eklemez ve rollout daha sonraki ayrı Faz 1 taskıdır.
 
 P0E ile kritik create/decision POST komutları opsiyonel canonical `X-Idempotency-Key` destekler.
 Key tenant genelinde unique'tir; aynı tenant/key ve aynı semantik request ilk başarılı
@@ -168,6 +172,16 @@ kaydı görünmez sayar. Employee number tarihsel kimlik olarak reserved kalır;
 ve balance kayıtları korunur. Bu iki child foreign key artık `ON DELETE RESTRICT` kullanır. Public
 purge endpoint'i yoktur; tenant-root cascade yalnız kısıtlı operator retention/offboarding yolu
 olarak değerlendirilir.
+
+F1A `0013_tenant_settings` ile tenant başına fixed `week_start_day`, `date_format`, `time_format`
+kolonlarını ve existing-tenant default backfill'ini ekler. Locale/timezone tenant'ın typed temel
+alanlarıdır. Downgrade yalnız tüm settings satırları default değerlerdeyse tabloyu kaldırır;
+custom değer varsa `custom_tenant_settings` sayılı preflight ile veri kaybından önce durur.
+Platform provisioning/lifecycle ve tenant current/settings API'leri injected immutable
+principal ister; default dependency `403` ile fail closed olur. Caller-supplied tenant/user header,
+path veya body kimliği authorization değildir. Canonical create/PATCH planları
+`core|professional|enterprise`; existing `premium` yalnız read compatibility'dir. Feature flags,
+auth/RBAC/audit persistence/RLS/legal entity bu kesitte yoktur.
 
 Veritabanı migration komutları:
 
@@ -218,6 +232,10 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/health`
 - `/`
 - `/openapi.json`
+- `/api/v1/platform/tenants` platform-principal provisioning ve bounded metadata-only liste
+- `/api/v1/platform/tenants/{tenant_id}` platform-safe detail ve explicit lifecycle PATCH
+- `/api/v1/tenant` injected tenant-principal current metadata
+- `/api/v1/tenant/settings` beş-key typed/allowlisted GET/PATCH
 - `/api/v1/dashboard/summary` active employee count, pending leave count, this-month
   starters, department distribution and recent activity
 - `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, deterministic
@@ -235,12 +253,18 @@ ve runtime'da gerçekten çağrılan endpoint setini kendi coverage registry'siy
 dokümanlanan endpoint smoke kapsamı dışında kalırsa veya smoke senaryosunda hiç çağrılmazsa komut
 fail olur.
 
+F1A smoke/contract gate'i lifecycle, default-deny principals, typed extra-key rejection,
+cross-tenant principal isolation ve platform response'unda HR alanı bulunmamasını da kanıtlamalıdır;
+güncel gate `BACKEND_SMOKE_OK` ile 22 documented endpoint'i çalıştırmış ve F1A OpenAPI snapshot'ını
+21 generated operation için doğrulamıştır.
+
 OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
-`Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`. W4C5 OpenAPI tag hygiene
+`Platform Tenants`, `Tenant Settings`, `Dashboard`, `Employees`, `Leave Balances`,
+`Leave Requests`. W4C5 OpenAPI tag hygiene
 kapsamında tag açıklamaları, tenant-aware operation summary/description metinleri ve
 filtre/header açıklamaları güncel API docs okunabilirliği için netleştirildi; request/response
-davranışı değişmedi. W4C6 implementation report refresh kapsamında tamamlanmış API yüzeyi ve
-kalan backend backlog'u güncellendi; yeni endpoint veya API davranış değişikliği eklenmedi.
+davranışı değişmedi. Historical W4C6 checkpoint'inde endpoint değişikliği yoktu; F1A daha sonra
+yukarıdaki yedi operation ve iki tag'i additive olarak ekler.
 
 Tenant header dependency hataları, API edge'deki merkezi `ApplicationError` mapper'ının
 dönüştürdüğü typed domain/application hataları ve employee, leave balance, leave request
@@ -249,7 +273,9 @@ endpointlerindeki otomatik request validation `422` hataları şu zarfla döner:
 Bu kapsam `tenant_header_missing`, `tenant_header_invalid`, `tenant_slug_header_invalid`,
 not-found, conflict, date-range, employee lifecycle, `employee_validation_error`,
 `leave_balance_validation_error`, `leave_request_validation_error` ve leave transition
-hatalarıdır. Diğer endpointlerdeki otomatik FastAPI validation `422` yanıtları henüz framework
+hatalarıdır. F1A platform/tenant yolları da default-deny, lifecycle ve
+`platform_tenant_validation_error`/`tenant_settings_validation_error` yanıtlarını aynı zarfla
+döner. Bu aileler dışındaki otomatik FastAPI validation `422` yanıtları henüz framework
 varsayılanındadır.
 P0C mevcut employee/leave status, code ve public mesajlarını korur. Named
 `uq_employees_tenant_employee_number` DB constraint ihlali pre-check yarışında da mevcut
@@ -277,6 +303,8 @@ zarfını döner. Tekrarlı veya boş `X-Tenant-Slug` için mesaj
 
 Bu W4B3 örnekleri mevcut FastAPI davranışını gösterir: employee ve leave endpointleri bugün
 doğrudan schema/list döner; `{ data, meta }` zarfı henüz uygulanmış response shape değildir.
+F1A tenant/platform success response'ları da Faz 1.2 compatibility planına kadar doğrudan typed
+object/list döner.
 HTTP request bloklarında gösterilen tenant header'ları her domain endpoint için zorunludur.
 List endpointleri plain JSON array döner; eşleşen kayıt yoksa `200 []` yanıtı alınır ve pagination
 body metadata dönmez. Employee ve leave-request listelerinde başka sayfa varsa response

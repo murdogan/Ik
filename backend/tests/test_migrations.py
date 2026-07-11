@@ -266,6 +266,23 @@ def _run_alembic_p0e_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_f1a_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0013_tenant_settings:0012_p0f_query_performance",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -298,8 +315,9 @@ def test_core_migration_chain_is_linear() -> None:
     )
     p0e_revision = script.get_revision("0011_p0e_concurrency_idempotency_archive")
     p0f_revision = script.get_revision("0012_p0f_query_performance")
+    tenant_settings_revision = script.get_revision("0013_tenant_settings")
 
-    assert script.get_heads() == ["0012_p0f_query_performance"]
+    assert script.get_heads() == ["0013_tenant_settings"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -328,6 +346,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert p0e_revision.down_revision == "0010_contract_tenant_relational_integrity"
     assert p0f_revision is not None
     assert p0f_revision.down_revision == "0011_p0e_concurrency_idempotency_archive"
+    assert tenant_settings_revision is not None
+    assert tenant_settings_revision.down_revision == "0012_p0f_query_performance"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -370,6 +390,14 @@ def test_alembic_offline_p0e_downgrade_renders_retention_preflight() -> None:
     assert "P0E downgrade preflight failed" in result.stdout
 
 
+def test_alembic_offline_f1a_downgrade_renders_settings_preflight() -> None:
+    result = _run_alembic_f1a_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $f1a_downgrade_preflight$" in result.stdout
+    assert "F1A downgrade preflight failed" in result.stdout
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -402,6 +430,116 @@ def test_sqlite_p0d_downgrade_reupgrade_preserves_head_schema(tmp_path: Path) ->
     alembic_command.upgrade(config, "head")
 
     _assert_database_matches_current_model_schema(database_path)
+
+
+def test_sqlite_tenant_settings_migration_backfills_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-tenant-settings-round-trip.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    tenant_id = "11111111aaaa41118111111111111111"
+
+    alembic_command.upgrade(config, "0012_p0f_query_performance")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'settings-backfill', 'Settings Backfill', 'active', "
+                    "'core', 'tr-1', 'tr-TR', 'Europe/Istanbul', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            settings = connection.execute(
+                text(
+                    "select week_start_day, date_format, time_format "
+                    "from tenant_settings where tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            ).one()
+        assert settings == ("monday", "DD.MM.YYYY", "24h")
+
+        alembic_command.downgrade(config, "0012_p0f_query_performance")
+        assert "tenant_settings" not in inspect(engine).get_table_names()
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            settings_count = connection.scalar(
+                text(
+                    "select count(*) from tenant_settings "
+                    "where tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            )
+        assert settings_count == 1
+    finally:
+        engine.dispose()
+
+
+def test_tenant_settings_downgrade_refuses_custom_values(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-tenant-settings-retention-guard.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    tenant_id = "11111111aaaa41118111111111111111"
+    alembic_command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'settings-guard', 'Settings Guard', 'active', 'core', 'tr-1', "
+                    "'tr-TR', 'Europe/Istanbul', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into tenant_settings ("
+                    "tenant_id, week_start_day, date_format, time_format, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":tenant_id, 'sunday', 'DD.MM.YYYY', '24h', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"tenant_id": tenant_id},
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match="F1A downgrade preflight failed.*custom_tenant_settings=1",
+        ):
+            alembic_command.downgrade(config, "0012_p0f_query_performance")
+
+        with engine.connect() as connection:
+            revision = connection.scalar(text("select version_num from alembic_version"))
+            week_start_day = connection.scalar(
+                text(
+                    "select week_start_day from tenant_settings "
+                    "where tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            )
+        assert revision == "0013_tenant_settings"
+        assert week_start_day == "sunday"
+    finally:
+        engine.dispose()
 
 
 def test_p0e_downgrade_refuses_to_discard_retained_state(tmp_path: Path) -> None:
@@ -629,6 +767,19 @@ def test_p0f_query_performance_migration_exists() -> None:
     assert "department_normalized" in text
     assert "ix_employees_tenant_department_normalized" in text
     assert "ix_leave_requests_tenant_created_cursor" in text
+
+
+def test_tenant_settings_migration_exists() -> None:
+    migration = Path("backend/alembic/versions/0013_tenant_settings.py")
+
+    assert migration.exists()
+    text = migration.read_text()
+    assert "tenant_settings" in text
+    assert "fk_tenant_settings_tenant_id_tenants" in text
+    assert "ck_tenant_settings_week_start_day" in text
+    assert "ck_tenant_settings_date_format" in text
+    assert "ck_tenant_settings_time_format" in text
+    assert "CURRENT_TIMESTAMP from tenants" in text
 
 
 def test_readme_documents_migration_commands() -> None:

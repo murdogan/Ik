@@ -13,7 +13,8 @@ Bu doküman, foundation ERD dokümanını implementasyon sırasına indirger. Am
 - Constraint expand adımından önce orphan/cross-tenant preflight çalışır; contract ancak yeni
   constraint validate edildikten sonra eski constraint'i kaldırır.
 - Migration testleri model metadata ve migration dosyası varlığını doğrular.
-- Tenant guard testleri Faz 0'da; RLS catalog/policy testleri Faz 1 rollout'unda zorunludur.
+- Tenant guard testleri Faz 0/F1A'da; RLS catalog/policy testleri daha sonraki ayrı Faz 1
+  rollout'unda zorunludur. F1A RLS uygulamaz.
 
 ### 1.1 Uygulanan P0D geçişi
 
@@ -64,6 +65,32 @@ Downgrade indexleri ve generated kolonu kaldırır ancak başka consumer'larca k
 ve `EXPLAIN (ANALYZE, BUFFERS)` entegrasyon testiyle doğrulanır; SQLite yalnız zincir/model
 uyumluluğu içindir.
 
+### 1.4 F1A tenant settings geçişi
+
+`0013_tenant_settings`, tenant lifecycle/settings vertical slice'ı için şemayı additive olarak
+genişletir:
+
+- Mevcut `tenants` şeması yeniden yazılmaz. Var olan status check'i korunur; plan, region ve locale
+  için yeni DB check eklenmez veya legacy `premium` gibi satırlar normalize edilmez. Canonical yeni
+  create/update inputları API/domain allowlist'iyle sınırlanır. IANA timezone katalog doğrulaması
+  portable bir SQL check olmadığı için API/domain boundary'sinde uygulanır.
+- `tenant_settings.tenant_id` hem primary key hem `tenants.id` için named
+  `ON DELETE CASCADE` foreign key'dir. Her tenant böylece en fazla bir settings satırına sahiptir.
+- Fixed settings kolonları `week_start_day` (`monday|sunday`, default `monday`), `date_format`
+  (`DD.MM.YYYY|MM/DD/YYYY|YYYY-MM-DD`, default `DD.MM.YYYY`) ve `time_format`
+  (`24h|12h`, default `24h`) ile non-null `created_at`/`updated_at` alanlarıdır. Arbitrary JSON,
+  feature flag veya legal entity kolonu eklenmez.
+- Upgrade mevcut her tenant için bir default settings satırı backfill eder. Downgrade önce
+  `week_start_day=monday`, `date_format=DD.MM.YYYY`, `time_format=24h` dışındaki satırları sayar.
+  `custom_tenant_settings > 0` ise export veya default restoration istenerek revision/table yerinde
+  bırakılır; yalnız default-only state'te additive tablo kaldırılabilir. Tenant/employee/leave
+  satırları silinmez. SQLite ve gerçek PostgreSQL zincirinde
+  `0012 → head → 0012 → head` data-preserving round-trip beklenir.
+
+F1A migration gate'i SQLite ve PostgreSQL 17.10 üzerinde backfill, metadata/schema drift,
+`0012 → head → 0012 → head` round-trip, custom-settings downgrade refusal ve tenant-root foreign
+key reddini doğrular.
+
 ## 2. Migration sırası
 
 Bu tablo ilk ürün planındaki kavramsal uygulama sırasıdır; `Plan` değerleri yayınlanmış Alembic
@@ -103,7 +130,33 @@ Zorunlu alanlar:
 Kısıtlar:
 
 - `slug` unique.
-- `status` enum/check.
+- `status` allowlist/check: `provisioning`, `trial`, `active`, `suspended`, `offboarding`, `closed`.
+- Yeni/update API `plan_code` allowlist'i: `core`, `professional`, `enterprise`; legacy satırlar
+  migration'da dönüştürülmez.
+- Yeni/update API `data_region` allowlist'i: `tr-1`, `eu-1`; provisioning sonrası değişiklik
+  domain/API kuralıyla reddedilir.
+- Yeni/update API `locale` allowlist'i: `tr-TR`, `en-US`.
+- `timezone` geçerli IANA timezone adı olmalıdır.
+
+### `tenant_settings`
+
+Zorunlu alanlar:
+
+- `tenant_id` (primary key ve tenant foreign key)
+- `week_start_day`
+- `date_format`
+- `time_format`
+- `created_at`
+- `updated_at`
+
+Kısıtlar:
+
+- `tenant_id → tenants.id` named `ON DELETE CASCADE` foreign key.
+- `week_start_day`: `monday|sunday`.
+- `date_format`: `DD.MM.YYYY|MM/DD/YYYY|YYYY-MM-DD`.
+- `time_format`: `24h|12h`.
+- JSON settings/config/feature blob'u yoktur. API'nin settings allowlist'i tenant tablosundaki
+  `locale`/`timezone` ile bu üç fixed kolondan oluşur.
 
 ### `users`
 
@@ -243,6 +296,10 @@ WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
 | Required columns | Zorunlu kolonlar var mı |
 | Migration exists | Migration dosyası var mı |
 | Alembic history | Zincir doğru mu |
+| Existing tenant settings backfill | Her mevcut tenant tam bir default settings satırı alıyor mu |
+| Settings downgrade refusal | Default dışı typed settings sayılı preflight ile kayıp öncesi downgrade'i durduruyor mu |
+| Tenant lifecycle/catalog parity | Domain/schema allowlist'leri ve mevcut DB status check'i uyumlu mu; legacy plan satırları korunuyor mu |
+| Settings allowlist | Sabit kolonlar ve API typed key'leri dışındaki payload reddediliyor mu |
 | RLS catalog test | Tenant tablolarında RLS açık mı |
 | Cross-tenant query | Tenant A verisi Tenant B'den görünmüyor mu |
 | Relational preflight | Orphan ve cross-tenant satırlar constraint DDL'den önce raporlanıyor mu |
@@ -286,6 +343,7 @@ kişisel veri içermemelidir.
 | UUID | Public ID'ler uygulama tarafında `uuid4` ile üretilir; DB server default eklenmez | Uygulandı |
 | User email canonicalization | Mevcut `(tenant_id, email)` unique davranışı case-sensitive kalır; auth öncesi explicit `lower(btrim(email))` normalize kolon/index kullanılır, `citext` kullanılmaz | Phase 2 auth migration'ından önce |
 | RLS | Faz 0 composite FK + app guard katmanını kurar; PostgreSQL RLS ve transaction-local tenant context Faz 1'de ayrı expand migration'dır | Faz 1 |
+| F1A tenant settings | `0013` fixed-column settings check'leri, existing-tenant backfill ve custom-settings downgrade refusal ekler; tenant plan/region/locale input allowlist'i API/domain'dedir; arbitrary JSON/features/legal entity yoktur | F1A; SQLite + PostgreSQL 17.10 gate passed |
 | Hassas alan encryption | Key/provider ve envelope encryption kararı olmadan TCKN, IBAN, ücret veya sağlık kolonları eklenmez | İlgili employee/security fazı öncesi Murat kararı |
 | Audit immutability | Audit aynı PostgreSQL DB'de append-only write modelidir; runtime role update/delete engeli ve recorder Faz 2'de birlikte uygulanır | Faz 2 |
 

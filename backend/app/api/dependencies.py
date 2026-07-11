@@ -10,14 +10,47 @@ from app.api.errors import (
     TENANT_ID_HEADER,
     TENANT_SLUG_HEADER,
     idempotency_key_invalid_error,
+    platform_access_denied_error,
+    tenant_access_denied_error,
     tenant_header_invalid_error,
     tenant_header_missing_error,
     tenant_slug_header_invalid_error,
 )
 from app.db.session import get_session
 from app.platform.db import SqlAlchemyUnitOfWork
+from app.platform.principals import PlatformPrincipal, TenantPrincipal
 from app.platform.tenancy import TenantContext
 from app.services.command_idempotency import CommandIdempotencyService
+from app.services.tenant_commands import TenantCommandHandler
+from app.services.tenant_service import TenantService
+
+
+def get_platform_principal() -> PlatformPrincipal:
+    """Fail closed until a trusted Phase-2 identity adapter injects platform authority."""
+
+    raise platform_access_denied_error()
+
+
+def get_tenant_principal() -> TenantPrincipal:
+    """Fail closed until a trusted identity adapter injects tenant scope."""
+
+    raise tenant_access_denied_error()
+
+
+def require_platform_principal(
+    principal: Annotated[PlatformPrincipal, Depends(get_platform_principal)],
+) -> PlatformPrincipal:
+    if not isinstance(principal, PlatformPrincipal):
+        raise platform_access_denied_error()
+    return principal
+
+
+def require_tenant_principal(
+    principal: Annotated[TenantPrincipal, Depends(get_tenant_principal)],
+) -> TenantPrincipal:
+    if not isinstance(principal, TenantPrincipal):
+        raise tenant_access_denied_error()
+    return principal
 
 
 def get_unit_of_work(
@@ -30,6 +63,19 @@ def get_command_idempotency_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CommandIdempotencyService:
     return CommandIdempotencyService(session=session)
+
+
+def get_tenant_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> TenantService:
+    return TenantService(session=session)
+
+
+def get_tenant_command_handler(
+    service: Annotated[TenantService, Depends(get_tenant_service)],
+    unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
+) -> TenantCommandHandler:
+    return TenantCommandHandler(service=service, unit_of_work=unit_of_work)
 
 
 def get_idempotency_key(

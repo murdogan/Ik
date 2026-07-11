@@ -1,15 +1,63 @@
 # API Implementation Status Report
 
 Date: 2026-07-11
-Branch: `codex/mvp-phase0-until-20260711-1100`
-Task: `P0G Phase 0 architecture gate, documentation sync and review checkpoint`
-Review checkpoint: `STOP — awaiting Murat review; Phase 1 has not started`
-Review decision: `Pending Murat disposition of the recorded plan deviations`
-Push state: `P0A–P0F are synchronized at 585fa0a; the supervisor must push the local P0G work`
+Branch: `codex/mvp-phase1-until-20260712-0900`
+Task: `F1A Tenant lifecycle, typed settings and platform provisioning vertical slice`
+Review checkpoint: `F1A implementation and required local verification complete`
+Review decision: `Ready for supervisor review; no push, merge or deploy performed`
+Push state: `Local work only; no push, merge or deploy`
 
 ## Scope
 
-### P0G architecture gate and review checkpoint
+### F1A tenant lifecycle, typed settings and platform provisioning
+
+- Adds exactly seven visible operations:
+  `POST/GET /api/v1/platform/tenants`,
+  `GET/PATCH /api/v1/platform/tenants/{tenant_id}`,
+  `GET /api/v1/tenant` and
+  `GET/PATCH /api/v1/tenant/settings`. `/api/v1/tenant/features` is not part of F1A.
+- Platform routes require immutable injected `PlatformPrincipal(source)` and tenant routes require
+  immutable injected `TenantPrincipal(tenant_id, source)`. The default dependencies
+  `app.api.dependencies.get_platform_principal` and `get_tenant_principal` deny with `403`; tests
+  may override them until Phase 2 auth exists. Caller-supplied header, path, query, body user ID or
+  tenant ID never grants authorization.
+- Provisioning creates server-owned UUID/status `provisioning` plus a fixed-column settings row in
+  one Unit of Work. Canonical new input catalogs are plan `core|professional|enterprise`, region
+  `tr-1|eu-1`, locale `tr-TR|en-US` and a recognized IANA timezone. Region is mutable only while
+  provisioning; legacy `premium` plan rows remain readable but cannot be created/updated and are
+  not rewritten by migration.
+- Settings accept only `locale`, `timezone`, `week_start_day`, `date_format`, `time_format`.
+  `tenant_settings` contains fixed columns, named checks and a tenant PK/FK; no arbitrary JSON,
+  feature configuration, legal entity or customer business payload is introduced.
+- Lifecycle graph and access are explicit: provisioning is platform-only; trial/active read-write;
+  suspended/offboarding read-only; closed denied. Same-state updates are no-op and only the
+  transition graph documented in ADR-017 is accepted. Tenant access returns `423` for provisioning,
+  `410` for closed, and settings PATCH returns `423` for suspended/offboarding.
+- Platform list/detail expose exactly tenant metadata, plan, region, locale/timezone, timestamps and
+  lifecycle-derived health (`provisioning|healthy|restricted|offboarding|closed`). They do not join,
+  count or return employee, user, leave, document or other HR data.
+- F1A success responses remain direct typed object/list for compatibility. General immutable
+  request context, `{data, meta}` envelope and correlation middleware remain Phase 1.2 work.
+- F1A does not implement auth/session/RBAC, audit persistence/recorder, PostgreSQL RLS, feature
+  flags, support access, legal entity, payroll, SGK, banking, PDKS, AI or external integrations.
+- Migration `0013_tenant_settings` is additive and backfills default settings for existing tenants.
+  Downgrade refuses to discard any non-default typed setting, reports
+  `custom_tenant_settings=<count>`, and proceeds only for default-only rows. SQLite/PostgreSQL
+  round-trip/refusal, native constraint, schema-drift and tenant-root FK evidence passed. No commit
+  SHA is recorded until the verified worktree is committed.
+
+#### F1A OpenAPI compatibility decision
+
+- The contract delta is additive: Phase-0's 14 generated operations remain, and F1A adds seven for
+  21 generated operations plus runtime `/openapi.json` in the 22-row documented table.
+- Platform read fields are exactly `id`, `slug`, `name`, `status`, `plan_code`, `data_region`,
+  `locale`, `timezone`, `health`, `created_at`, `updated_at`. Tenant current and settings field sets
+  are the narrower exact shapes recorded in the endpoint draft.
+- These operations intentionally do not adopt the Phase 1.2 envelope early. Generated schema,
+  separate `backend/tests/contracts/f1a_openapi_contract.json` snapshot and smoke/documentation
+  parity passed; the historical Phase-0 manifest is preserved.
+
+### Historical P0G architecture gate and review checkpoint
 
 - Re-ran the fast SQLite, real PostgreSQL 16.4 checkpoint, Ruff and local API smoke gates. The
   2026-07-11 continuation also re-ran the complete and focused PostgreSQL lanes on 17.10, satisfying
@@ -38,7 +86,7 @@ Push state: `P0A–P0F are synchronized at 585fa0a; the supervisor must push the
 - No Phase-1 API, auth, RBAC, RLS, audit/outbox, new product module, payroll, SGK, banking, PDKS,
   AI, external integration, deploy, staging or cron behavior was started.
 
-#### OpenAPI compatibility decision
+#### Historical Phase-0 OpenAPI compatibility decision
 
 Generated OpenAPI was compared with the Phase-0 base commit `80b2768` and frozen at this review
 checkpoint:
@@ -81,7 +129,7 @@ exactly nine changed operation documents, no component/request/success-body sche
 the intentional differences enumerated above. The manifest test separately proves current
 generated OpenAPI equals the reviewed P0G snapshot.
 
-#### Review-only plan deviations
+#### Historical review-only plan deviations
 
 The enumerated Phase-0 architecture gate below is locally green. The following broader master-plan
 items are incomplete or only partially evidenced and require Murat's explicit disposition before
@@ -106,7 +154,7 @@ The user-email strategy is now decided but intentionally not migrated early: cur
 `users(tenant_id, email)` remains case-sensitive; before auth, an explicit
 `lower(btrim(email))` normalized column/index will be introduced rather than `citext`.
 
-#### P0G verification matrix
+#### Historical P0G verification matrix
 
 Final commands and results are recorded here after the complete P0G rerun:
 
@@ -164,7 +212,7 @@ fi
 Result: all commands exited zero with no prohibited match; `git status --short --branch` showed only
 the expected local commits ahead of the review-branch remote after the final commit.
 
-### P0F pagination, search and query-performance baseline
+### Historical P0F pagination, search and query-performance baseline
 
 - Added versioned opaque keyset cursors to employee and leave-request high-growth lists while
   preserving their plain-array bodies and bounded `offset` compatibility path. A page that proves
@@ -190,7 +238,7 @@ the expected local commits ahead of the review-branch remote after the final com
 - Reproduction and captured PostgreSQL 16.4 evidence are recorded in
   `docs/09-uygulama/12-phase-0-query-performance-baseline.md`.
 
-### P0E concurrency, idempotency and archive hardening
+### Historical P0E concurrency, idempotency and archive hardening
 
 - Added database-backed, tenant-global command receipts for optional `X-Idempotency-Key` on
   employee create, leave request create, and leave approve/reject/cancel. The same semantic
@@ -226,7 +274,7 @@ the expected local commits ahead of the review-branch remote after the final com
 - P0E adds no auth/RBAC/RLS, audit/outbox, worker/TTL cleanup, payroll/bordro, SGK, banking, PDKS,
   AI, external integration, deployment, or new product module.
 
-### P0D tenant relational integrity
+### Historical P0D tenant relational integrity
 
 - At the P0D checkpoint, inventoried every then-implemented foreign key. Root ownership references
   from `users`, `employees`, `leave_requests`, and `leave_balance_summaries` to `tenants.id` remain
@@ -254,7 +302,7 @@ the expected local commits ahead of the review-branch remote after the final com
 - P0D changes no endpoint, OpenAPI schema, response/error contract, auth/RBAC behavior, or product
   feature. Existing application tenant guards remain; PostgreSQL RLS remains Phase 1.
 
-### P0C transaction and error boundary
+### Historical P0C transaction and error boundary
 
 - Added `SqlAlchemyUnitOfWork.execute` as the sole begin/commit/rollback owner for the transitional
   `EmployeeCommandHandler` and `LeaveRequestCommandHandler` write paths.
@@ -284,7 +332,7 @@ the expected local commits ahead of the review-branch remote after the final com
   product feature changes. The only new HTTP outcomes are safe stable mappings for persistence
   failures that previously could escape as internal errors.
 
-### Preserved P0A/P0B foundation
+### Historical preserved P0A/P0B foundation
 
 - Added the canonical `app.platform` and `app.modules` package skeleton from the master plan,
   without moving employee/leave routes, services, schemas, or SQLAlchemy models.
@@ -329,6 +377,13 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/health` | Implemented | Health response, OpenAPI operation, and docs-table registry |
 | GET | `/` | Implemented | Wealthy Falcon HR landing response, OpenAPI operation, and docs-table registry |
 | GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and docs-table registry |
+| POST | `/api/v1/platform/tenants` | Implemented and verified | Default-deny injected platform principal, server-owned provisioning status/ID, atomic typed settings |
+| GET | `/api/v1/platform/tenants` | Implemented and verified | Bounded metadata-only list, lifecycle-derived health, no HR counts/payload |
+| GET | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | Platform-safe metadata/plan/region/health detail only |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | Typed metadata, plan and explicit lifecycle transition guards |
+| GET | `/api/v1/tenant` | Implemented and verified | Injected tenant-principal current metadata and lifecycle access guard |
+| GET | `/api/v1/tenant/settings` | Implemented and verified | Exact five-key typed settings view and tenant isolation |
+| PATCH | `/api/v1/tenant/settings` | Implemented and verified | Exact allowlist partial update and suspended/offboarding read-only guard |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -344,6 +399,36 @@ the expected local commits ahead of the review-branch remote after the final com
 
 ## Current Behavior Notes
 
+- F1A platform and tenant dependencies deny by default: absent injected context returns
+  `403 platform_access_denied` or `403 tenant_access_denied`. Tests inject principals by dependency
+  override; no HTTP header/body/path/query field constructs platform authority or chooses the
+  current tenant. Legacy employee/leave `X-Tenant-Id` compatibility remains intentionally separate
+  and does not authorize these new endpoints.
+- Platform create accepts only `slug`, `name`, canonical optional `plan_code`, `data_region`,
+  `locale`, IANA `timezone`, and nested `settings` containing week/date/time formats. The server
+  owns UUID and initial `provisioning` status. Duplicate slug returns `409 tenant_slug_conflict`.
+- Platform PATCH accepts only `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone`;
+  slug/id/extra/null/empty changes are rejected. Same-state is a no-op. Invalid transitions,
+  post-provisioning region relocation, closed metadata mutation, and offboarding non-closure
+  mutation return `409 tenant_lifecycle_conflict`.
+- Platform responses have an exact safe schema: `id`, `slug`, `name`, `status`, `plan_code`,
+  `data_region`, `locale`, `timezone`, `health`, `created_at`, `updated_at`. The bounded list uses
+  `limit` default `50`/max `200` and `offset` default `0`, ordered by `created_at asc, id asc`.
+  Health is a pure lifecycle mapping; platform services do not query employee or leave data.
+- `plan_code` response parsing recognizes pre-F1A `premium` rows solely for read compatibility.
+  Create/PATCH catalogs remain canonical and cannot write `premium`; `0013` does not reinterpret
+  stored legacy plan values.
+- Tenant current has exactly `id`, `slug`, `name`, `status`, `plan_code`, `locale`, `timezone`.
+  Tenant settings has exactly `locale`, `timezone`, `week_start_day`, `date_format`, `time_format`.
+  Typed allowlists are locale `tr-TR|en-US`, week `monday|sunday`, date
+  `DD.MM.YYYY|MM/DD/YYYY|YYYY-MM-DD`, time `24h|12h`; timezone uses the IANA catalog. Arbitrary
+  payloads, explicit nulls and empty PATCH bodies fail validation.
+- Lifecycle access is deterministic. Provisioning tenant endpoints return `423 tenant_not_ready`;
+  closed returns `410 tenant_closed`; suspended/offboarding GETs remain available while settings
+  PATCH returns `423 tenant_read_only`. Trial/active are read-write. Platform health maps these
+  states to `provisioning`, `healthy`, `restricted`, `offboarding`, `closed`.
+- New F1A success responses are direct typed object/list. Phase 1.2 owns the future `{data, meta}`
+  envelope, immutable general request context and correlation middleware compatibility plan.
 - Domain endpoints require exactly one canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
   remains optional but cannot be blank or repeated when sent.
 - Employee create, leave request create, and leave approve/reject/cancel accept an optional
@@ -387,13 +472,13 @@ the expected local commits ahead of the review-branch remote after the final com
 - W4C2 locks the current limitation: leave balance reads do not derive balances from leave
   requests. A tenant employee with leave request records but no manual balance summary rows gets
   `200 []`.
-- OpenAPI uses readable tags: `System`, `Public`, `Dashboard`, `Employees`, `Leave Balances`, and
-  `Leave Requests`. W4C5 refines tag descriptions and operation summaries/descriptions for docs
-  readability while keeping every path, method, request, response, and tenant requirement
-  unchanged.
-- W4C6 is a report and smoke-governance refresh only. It does not add, remove, rename, or change
-  any API operation; it confirms the implementation report, OpenAPI endpoint draft, smoke registry,
-  and smoke runtime scenarios all agree on the same 15 documented endpoints.
+- OpenAPI uses readable tags: `System`, `Public`, `Platform Tenants`, `Tenant Settings`, `Dashboard`,
+  `Employees`, `Leave Balances`, and `Leave Requests`. F1A adds only the two tenant tag groups and
+  seven operations; generated contract verification passed.
+- Historical W4C6 was a report and smoke-governance refresh only. At that checkpoint the
+  implementation report, endpoint draft and smoke agreed on 15 documented endpoints. F1A's current
+  target is 21 generated operations plus runtime `/openapi.json`; this does not rewrite that
+  historical evidence.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -434,6 +519,7 @@ Final model metadata and the Alembic head represent these tenant-owned relations
 | `leave_requests(tenant_id, requested_by_user_id)` | `users(tenant_id, id)` | `NO ACTION`, required |
 | `leave_requests(tenant_id, decided_by_user_id)` | `users(tenant_id, id)` | `NO ACTION`, nullable id / `MATCH SIMPLE` |
 | `leave_balance_summaries(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE RESTRICT`, required |
+| `tenant_settings(tenant_id)` | `tenants(id)` root | `ON DELETE CASCADE`, required PK/FK |
 
 `TENANT_RELATIONSHIP_PREFLIGHT_SQL` also inventories the four root
 `tenant_id → tenants.id` links, so orphan ownership rows and the four cross-tenant child links are
@@ -453,8 +539,13 @@ one `upgrade head` command rather than running the two revisions separately.
 
 The SQLite migration branch rebuilds tables only to preserve the fast migration-chain and metadata
 checks. P0D enforcement evidence lives exclusively in the `postgres`-marked integration tests.
-Existing API/service tenant checks remain defense-in-depth, and RLS is intentionally unchanged for
-Phase 1.
+Existing API/service tenant checks remain defense-in-depth. F1A adds principal-scoped current tenant
+settings but intentionally does not add RLS; the RLS rollout remains a later separate Phase 1 task.
+
+Revision `0013_tenant_settings` adds the root settings FK after the P0D expand/contract chain, so it
+does not alter the historical four-relationship P0D preflight. Its upgrade backfills one fixed
+settings row per existing tenant. Its downgrade drops the additive table only when every row still
+has defaults; otherwise a `custom_tenant_settings` count aborts before data loss.
 
 Revision `0011_p0e_concurrency_idempotency_archive` replaces only the two employee-history delete
 actions with `RESTRICT`; it does not weaken their P0D composite tenant keys. Root ownership FKs to
@@ -519,6 +610,12 @@ SQLite. The PostgreSQL baseline invokes the same script with `--database-url` ag
 test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
 services.
 
+F1A documentation expects the registry to contain 22 rows: 21 generated operations plus runtime
+`/openapi.json`. Smoke must execute all seven new platform/tenant operations with dependency
+overrides, prove default principal denial separately, and inspect platform responses for the exact
+metadata allowlist/no HR fields. The updated run passed with `BACKEND_SMOKE_OK`; historical Phase-0
+smoke evidence below remains unchanged.
+
 The script now verifies the documented API surface in four directions:
 
 - Every generated OpenAPI operation must be listed in the smoke registry, and every OpenAPI
@@ -530,7 +627,7 @@ The script now verifies the documented API surface in four directions:
 - Every endpoint in the smoke registry must be executed by at least one runtime smoke scenario,
   including `/openapi.json` and each tenant-scoped domain path.
 
-The runtime scenarios currently verify:
+The historical Phase-0 runtime scenarios verify:
 
 - `/health`, `/`, and `/openapi.json`.
 - Tenant header missing, invalid, repeated, and cross-tenant behavior.
@@ -544,7 +641,30 @@ The runtime scenarios currently verify:
   cross-tenant user/request checks, date-window behavior, and tenant isolation.
 - Dashboard counts, department distribution, recent activity shape, and tenant isolation.
 
+The F1A runtime and focused contract scenarios verify provisioning/list/detail/lifecycle PATCH,
+current tenant/settings GET/PATCH, typed extra-key rejection, region immutability,
+suspended/offboarding/closed behavior, cross-tenant principal isolation, and the absence of
+employee/leave data from platform output.
+
 ## Verification
+
+### F1A required gates — passed
+
+| Gate | Command | Result |
+|---|---|---|
+| Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
+| Fast SQLite | `uv run pytest -q` | Passed, 552 tests; 22 PostgreSQL tests deselected; one known Starlette warning |
+| PostgreSQL 17.10 | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed, 22 tests; 552 fast tests deselected; includes 7 migration/runtime/settings baseline tests and 3 F1A transaction/concurrency tests |
+| Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed, `BACKEND_SMOKE_OK`; all 22 documented endpoints executed |
+| OpenAPI contract | `uv run pytest -q backend/tests/test_openapi_metadata.py backend/tests/test_openapi_contract.py` | Passed, 16 tests; 21 generated operations, exact F1A snapshot and unchanged Phase-0 operation/components |
+| SQLite migrations | `uv run pytest -q backend/tests/test_migrations.py` | Passed, 26 tests; backfill, round-trip, drift and custom-settings downgrade refusal |
+| PostgreSQL F1A baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_baseline.py` | Passed, 7 tests; native constraints/FK, backfill/round-trip/refusal, drift, runtime and API smoke |
+| PostgreSQL F1A concurrency | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_f1a_tenant_concurrency.py` | Passed, 3 tests; same-slug create winner, lifecycle row-lock serialization and typed-settings partial-update serialization |
+
+The PostgreSQL lane used a disposable local PostgreSQL 17.10 cluster and a fresh database per test.
+No staging/production database, deployment, credential file or `.env` was changed.
+
+### Historical Phase-0 verification evidence
 
 P0F local gate evidence:
 
@@ -679,13 +799,17 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Remaining Backend Backlog
+## Post-F1A Backend Backlog
 
 - Auth/session/RBAC dependencies, permission enforcement, and current-user context.
-- Tenant current/settings/onboarding endpoints plus user/role management endpoints.
-- Phase-1 `{data, meta}` response envelope, global sort controls, global correlation middleware,
+- Phase 1.2 immutable general `RequestContext`, `{data, meta}` response envelope compatibility,
+  global sort controls, global correlation middleware,
   and validation/error normalization beyond the employee and leave endpoint families already
   covered.
+- PostgreSQL RLS helpers/catalog policies, transaction-local tenant context and no-`BYPASSRLS`
+  runtime-role evidence in a separate Phase 1 slice.
+- Internal feature flag model/rollout surface; F1A intentionally has no
+  `/api/v1/tenant/features`. User/role management remains Phase 2.
 - Idempotency receipt TTL/cleanup policy and expansion beyond the current employee-create and
   leave-create/decision command scope.
 - Authorized retention/offboarding orchestration around the tenant-root graph boundary; there is

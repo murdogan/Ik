@@ -82,3 +82,17 @@ sorgularını destekler:
 Extension oluşturma yetkisi managed PostgreSQL'de migration rolüne verilmiyorsa `pg_trgm`
 platform operatörü tarafından upgrade öncesi provision edilmelidir; index migration'ı extension
 yoksa fail ederek indexsiz aramaya sessizce geçmez.
+
+## F1A typed tenant settings
+
+`0013_tenant_settings`, tenant başına tek fixed settings satırı ekler. `tenant_id` hem primary key
+hem `tenants.id` için named `ON DELETE CASCADE` root foreign key'dir. `week_start_day`,
+`date_format` ve `time_format` named allowlist check'leri taşır; arbitrary JSON veya feature flag
+kolonu yoktur. Upgrade mevcut tenant'ları `monday`, `DD.MM.YYYY`, `24h` defaultlarıyla backfill
+eder.
+
+Downgrade non-default settings sayısını önce kontrol eder. Herhangi bir custom değer varsa
+`custom_tenant_settings=<count>` ile fail eder ve revision/table'ı yerinde bırakır; yalnız yeniden
+üretilebilir default-only satırlar düşürülebilir. SQLite ve PostgreSQL 17.10 testleri backfill,
+round-trip, custom-settings refusal, schema drift, native check'ler ve tenant-root FK reddini
+doğrular.

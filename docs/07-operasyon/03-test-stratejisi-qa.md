@@ -60,11 +60,13 @@ Repo içinde PostgreSQL service'ini tarif eden
 yoktur. Bu nedenle P0G kanıtı lokal gerçek PostgreSQL çalıştırmasıdır, aktif PR CI lane'i gibi
 sunulmaz. Workflow aktivasyonu repo yönetimi/supervisor işidir.
 
-OpenAPI gate'i `backend/tests/contracts/phase0_openapi_contract.json` manifestinde top-level
+Historical Phase-0 OpenAPI gate'i `backend/tests/contracts/phase0_openapi_contract.json`, F1A'nın
+additive güncel gate'i `backend/tests/contracts/f1a_openapi_contract.json` manifestinde top-level
 metadata, her operasyon ve her component schema için canonical SHA-256 snapshot tutar. Seçili
-metadata assertions, 14 generated path/method operasyonunun registry kontrolü, iki doküman
-tablosu ve 15 endpoint runtime smoke coverage bu snapshot'ı tamamlar. Contract değişikliği ancak
-intentional diff ve aynı commit'teki snapshot/doküman güncellemesiyle kabul edilir.
+metadata assertions, güncel 21 generated path/method operasyonunun registry kontrolü, iki doküman
+tablosu ve runtime `/openapi.json` dahil 22 endpoint smoke coverage bu snapshot'ı tamamlar.
+Contract değişikliği ancak intentional diff ve aynı commit'teki snapshot/doküman güncellemesiyle
+kabul edilir; historical manifest yeniden yazılmaz.
 
 P0F query-plan prosedürünü kanıt satırıyla tek başına çalıştırmak için:
 

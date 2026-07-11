@@ -11,6 +11,7 @@ from app.models import (  # noqa: F401
     LeaveBalanceSummary,
     LeaveRequest,
     Tenant,
+    TenantSettings,
     User,
 )
 from sqlalchemy import String, pool

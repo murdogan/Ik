@@ -33,6 +33,16 @@ Bu modül seti doğrudan [MVP, V1 ve V2 Kapsam Kararları](../02-urun/03-mvp-v1-
 
 Kapsam dışı maddeler ürün vizyonundan çıkarılmış değildir; V1, V2 veya Enterprise fazına ertelenmiştir.
 
+F1A current implementation boundary:
+
+- Yalnız tenant lifecycle, plan/region/locale/timezone, fixed typed settings ve yedi
+  platform/tenant operation'ı uygulanır. Authentication/session/RBAC, audit persistence, RLS,
+  feature flags ve legal entity F1A'ya dahil değildir.
+- Platform/tenant authorization caller header'ından gelmez. Trusted injected
+  `PlatformPrincipal`/`TenantPrincipal` yoksa dependency `403` ile fail closed olur; Phase 2 auth
+  bu seam'i dolduracaktır.
+- Success body'ler Faz 1.2 `{data, meta}` compatibility geçişine kadar doğrudan typed object/list'tir.
+
 ## 3. Kullanıcı rolleri ve sorumluluklar
 
 | Rol | Modüldeki işi | Yetki seviyesi | Kritik risk |
@@ -154,10 +164,10 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 
 | Varlık | Amaç | Kritik alanlar |
 |---|---|---|
-| `tenants` | Müşteri/kurum hesabı | `id`, `slug`, `name`, `timezone`, `status`, `plan_id` |
-| `tenant_settings` | Kurum ayarları | `tenant_id`, `key`, `value`, `updated_by` |
-| `plans` | Paket ve lisans planı | `code`, `features`, `limits` |
-| `feature_flags` | Modül ve özellik aç/kapa | `tenant_id`, `flag`, `enabled`, `source` |
+| `tenants` | Müşteri/kurum hesabı | `id`, `slug`, `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone` |
+| `tenant_settings` | F1A fixed kurum ayarları | `tenant_id`, `week_start_day`, `date_format`, `time_format`, timestamps; arbitrary key/value yok |
+| `plans` | İleri-faz paket/limit katalogu | F1A ayrı plan tablosu kurmaz; canonical write kodları `core`, `professional`, `enterprise` |
+| `feature_flags` | İleri-faz modül aç/kapa | F1A tablo veya `/api/v1/tenant/features` endpoint'i eklemez |
 | `users` | Login kimliği | `id`, `tenant_id`, `email`, `password_hash`, `status` |
 | `user_identities` | SSO/harici kimlik | `provider`, `subject`, `user_id` |
 | `sessions` | Oturum ve cihaz bilgisi | `user_id`, `device_id`, `refresh_family_id`, `revoked_at` |
@@ -172,6 +182,13 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 
 | Method | Endpoint | Açıklama | Faz |
 |---|---|---|---|
+| POST | `/api/v1/platform/tenants` | Platform-safe tenant provisioning | F1A |
+| GET | `/api/v1/platform/tenants` | Metadata/plan/region/lifecycle health listesi; HR veri yok | F1A |
+| GET | `/api/v1/platform/tenants/{tenant_id}` | Platform-safe tenant metadata detayı | F1A |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Explicit lifecycle/typed metadata değişikliği | F1A |
+| GET | `/api/v1/tenant` | Injected principal current tenant metadata | F1A |
+| GET | `/api/v1/tenant/settings` | Beş typed setting | F1A |
+| PATCH | `/api/v1/tenant/settings` | Fixed allowlist partial update | F1A |
 | POST | `/api/v1/auth/login` | Login başlatır | MVP |
 | POST | `/api/v1/auth/refresh` | Token yeniler | MVP |
 | POST | `/api/v1/auth/logout` | Session kapatır | MVP |
@@ -191,6 +208,7 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 
 | Kural | Açıklama |
 |---|---|
+| F1A principal default-deny | Injected trusted platform/tenant principal yoksa `403`; header/path/body kimliği authorization değil |
 | Tenant context body'den alınmaz | Tenant token, subdomain veya session context'ten gelir |
 | Her sorgu tenant filtreli olmalı | App katmanı ve tercihen DB RLS ile korunur |
 | Kullanıcı global unique olmak zorunda değil | Aynı e-posta farklı tenantlarda olabilir; login tenant-aware olmalı |

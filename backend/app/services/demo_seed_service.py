@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
-from app.models.tenant import Tenant, TenantStatus
+from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 
 
@@ -18,7 +18,7 @@ class DemoTenantFixture:
     slug: str
     name: str
     status: TenantStatus = TenantStatus.ACTIVE
-    plan_code: str = "premium"
+    plan_code: str = "core"
     data_region: str = "tr-1"
     locale: str = "en-US"
     timezone: str = "Europe/Istanbul"
@@ -301,6 +301,8 @@ DEMO_LEAVE_REQUESTS: tuple[DemoLeaveRequestFixture, ...] = (
 async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
     tenants = await _upsert_tenants(session)
     await session.flush()
+    await _ensure_tenant_settings(session, tenants)
+    await session.flush()
 
     users = await _upsert_users(session, tenants)
     await session.flush()
@@ -346,6 +348,15 @@ async def _upsert_tenants(session: AsyncSession) -> dict[str, Tenant]:
         tenant.timezone = fixture.timezone
         tenants[fixture.key] = tenant
     return tenants
+
+
+async def _ensure_tenant_settings(
+    session: AsyncSession,
+    tenants: dict[str, Tenant],
+) -> None:
+    for tenant in tenants.values():
+        if await session.get(TenantSettings, tenant.id) is None:
+            session.add(TenantSettings(tenant_id=tenant.id))
 
 
 async def _upsert_users(session: AsyncSession, tenants: dict[str, Tenant]) -> dict[str, User]:

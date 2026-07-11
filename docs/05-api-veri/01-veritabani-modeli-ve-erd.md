@@ -6,7 +6,8 @@ Bu doküman, IK Platform'un ana veri modelini, domain tablolarını, tenant izol
 
 Ana veri deposu PostgreSQL'dir. Tüm tenant-owned tablolarda `tenant_id` bulunur. Hassas alanlar
 uygulama seviyesinde şifrelenir veya maskelenir. Tenant izolasyonu uygulama guard'ları,
-tenant-owned ilişkilerde composite foreign key'ler ve Faz 1 PostgreSQL RLS ile katmanlı korunur.
+tenant-owned ilişkilerde composite foreign key'ler ve daha sonraki ayrı Faz 1 PostgreSQL RLS
+rollout'u ile katmanlı korunur. F1A principal-injection ve typed settings kesiti RLS içermez.
 
 ## 2. Kavramsal ERD
 
@@ -15,6 +16,7 @@ erDiagram
   tenants ||--o{ users : has
   tenants ||--o{ employees : has
   tenants ||--o{ command_idempotency : owns
+  tenants ||--|| tenant_settings : configures
   users ||--o{ sessions : opens
   roles ||--o{ role_permissions : grants
   users ||--o{ user_roles : assigned
@@ -34,7 +36,7 @@ erDiagram
 
 | Domain | Tablolar |
 |---|---|
-| CORE/AUTH/RBAC | `tenants`, `tenant_settings`, `users`, `sessions`, `roles`, `permissions`, `user_roles`, `command_idempotency` |
+| CORE/AUTH/RBAC | F1A: `tenants`, `tenant_settings`; mevcut foundation: `users`, `command_idempotency`; session/RBAC tabloları Faz 2 |
 | EMP/DOC | `employees`, `employee_profiles`, `employee_employments`, `employee_assignments`, `employee_documents`, `document_types` |
 | ORG | `legal_entities`, `branches`, `departments`, `positions`, `headcount_requests` |
 | LEAVE/TIME | `leave_types`, `leave_balances`, `leave_requests`, `holiday_calendars`, `shift_assignments`, `time_clock_events`, `timesheet_days` |
@@ -65,6 +67,23 @@ Mevcut Faz 0 şemasında `employees` ve `users` parent candidate key taşır.
 olarak kalır. Bu kural yeni tenant-owned ilişki eklenirken de migration ve model metadata'sında
 birlikte temsil edilmelidir.
 
+F1A tenant/config kuralları:
+
+- Mevcut `tenants.status` DB check'i `provisioning|trial|active|suspended|offboarding|closed`
+  değerlerini korur. Yeni/create update inputlarında `plan_code` yalnız
+  `core|professional|enterprise`, `data_region` yalnız `tr-1|eu-1`, `locale` yalnız
+  `tr-TR|en-US` kabul edilir; migration legacy plan satırlarını dönüştürmez ve bu üç kolona yeni DB
+  check eklemez. Timezone geçerli IANA adı olarak application boundary'de doğrulanır.
+  `data_region` yalnız provisioning durumunda değiştirilebilir.
+- `tenant_settings.tenant_id` tekil tenant config kimliğidir: primary key ve `tenants.id` için
+  `ON DELETE CASCADE` foreign key. Kolonlar yalnız `week_start_day`, `date_format`, `time_format`
+  ve timestamps'tir; arbitrary JSON/settings/features blob'u yoktur.
+- API settings görünümü tenant üzerindeki `locale` ve `timezone` ile fixed settings satırındaki
+  `week_start_day`, `date_format`, `time_format` alanlarını birleştirir. Başka key kabul edilmez.
+- Platform health persisted bir HR ölçümü değildir. Yalnız tenant lifecycle'dan
+  `provisioning|healthy|restricted|offboarding|closed` olarak türetilir; employee/leave count veya
+  payload platform sorgusuna katılmaz.
+
 P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurallar şöyledir:
 
 - `employees.archived_at is null` normal employee görünürlüğünü ifade eder. Arşivli satır
@@ -89,6 +108,8 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 
 | Tablo | İndeks |
 |---|---|
+| `tenants` | unique `slug`; mevcut lifecycle status check'i; yeni plan/region/locale inputları API/domain allowlist'inde |
+| `tenant_settings` | primary key `tenant_id` aynı zamanda tenant foreign key |
 | `employees` | `(tenant_id, employee_number) unique`, `(tenant_id, status)`, `(tenant_id, archived_at)`, non-archived `employee_number`/`email` partial `pg_trgm` GIN, non-archived `(tenant_id, department_normalized)` |
 | `command_idempotency` | `(tenant_id, idempotency_key) unique`, `(tenant_id)` |
 | `employee_assignments` | `(tenant_id, employee_id, valid_from desc)`, `(tenant_id, department_id)` |
@@ -124,7 +145,7 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 
 ## 8. RLS standardı
 
-RLS uygulanırsa standart policy:
+RLS F1A kapsamı değildir. Daha sonraki ayrı Faz 1 rollout'unda uygulanırsa standart policy:
 
 ```sql
 CREATE POLICY tenant_isolation
@@ -156,6 +177,11 @@ Kurallar:
 - Critical tablolar için indeks stratejisi tanımlıdır.
 - Audit/time/webhook gibi yüksek hacimli tablolar partition adayıdır.
 - Cross-tenant testler veri modeliyle desteklenir.
+- Tenant settings tablosu fixed kolonlu, tenant başına tek satırlı ve typed API allowlist'iyle
+  birebir uyumludur.
+- `0013` downgrade default dışı typed setting varsa sayılı preflight ile reddedilir; custom değer
+  sessizce düşürülemez.
+- Platform tenant metadata sorgusu HR tablosuna join/count yapmaz; health yalnız lifecycle'dır.
 - PostgreSQL doğrudan write negatif testleri composite foreign key constraint adını doğrular;
   SQLite sonucu PostgreSQL constraint kanıtı sayılmaz.
 - Concurrent leave decision ve aynı-key idempotency winner davranışı gerçek PostgreSQL bağımsız

@@ -4,7 +4,7 @@ import pytest
 from app.db.base import Base
 from app.models.employee import Employee
 from app.models.leave_request import LeaveRequest
-from app.models.tenant import Tenant, TenantStatus
+from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User
 from app.services.demo_seed_service import (
     DEMO_EMPLOYEES,
@@ -40,12 +40,16 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         employee = await session.get(Employee, employee_fixture.id)
         assert employee is not None
         employee.department = "Changed"
+        tenant_settings = await session.get(TenantSettings, DEMO_TENANTS[0].id)
+        assert tenant_settings is not None
+        tenant_settings.week_start_day = "sunday"
         await session.commit()
 
         second_result = await seed_demo_data(session)
 
         assert second_result == first_result
         assert await _count(session, Tenant) == len(DEMO_TENANTS)
+        assert await _count(session, TenantSettings) == len(DEMO_TENANTS)
         assert await _count(session, User) == len(DEMO_USERS)
         assert await _count(session, Employee) == len(DEMO_EMPLOYEES)
         assert await _count(session, LeaveRequest) == len(DEMO_LEAVE_REQUESTS)
@@ -54,6 +58,9 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         updated_employee = await session.get(Employee, employee_fixture.id)
         assert updated_employee is not None
         assert updated_employee.department == employee_fixture.department
+        preserved_settings = await session.get(TenantSettings, DEMO_TENANTS[0].id)
+        assert preserved_settings is not None
+        assert preserved_settings.week_start_day == "sunday"
 
         leave_requests = list(await session.scalars(select(LeaveRequest)))
         assert leave_requests
@@ -87,6 +94,7 @@ async def test_demo_seed_service_flushes_without_completing_transaction() -> Non
 
         async with AsyncSession(engine, expire_on_commit=False) as verification_session:
             assert await _count(verification_session, Tenant) == 0
+            assert await _count(verification_session, TenantSettings) == 0
             assert await _count(verification_session, User) == 0
             assert await _count(verification_session, Employee) == 0
             assert await _count(verification_session, LeaveRequest) == 0

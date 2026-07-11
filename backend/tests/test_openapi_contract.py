@@ -8,14 +8,30 @@ from typing import Any
 from app.main import create_app
 
 HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
-SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "phase0_openapi_contract.json"
+SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1a_openapi_contract.json"
+PHASE0_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "phase0_openapi_contract.json"
 
 
-def test_phase0_openapi_contract_matches_review_snapshot() -> None:
+def test_f1a_openapi_contract_matches_review_snapshot() -> None:
     snapshot = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
 
     assert snapshot["format_version"] == 1
     assert snapshot["contract"] == build_openapi_contract_manifest(create_app().openapi())
+
+
+def test_f1a_contract_preserves_every_phase0_operation_and_component() -> None:
+    phase0 = json.loads(PHASE0_SNAPSHOT_PATH.read_text(encoding="utf-8"))["contract"]
+    current = build_openapi_contract_manifest(create_app().openapi())
+
+    assert {
+        operation: current["operations"].get(operation)
+        for operation in phase0["operations"]
+    } == phase0["operations"]
+    for group_name, components in phase0["components"].items():
+        assert {
+            component: current["components"].get(group_name, {}).get(component)
+            for component in components
+        } == components
 
 
 def build_openapi_contract_manifest(openapi: dict[str, Any]) -> dict[str, Any]:
