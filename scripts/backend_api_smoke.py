@@ -68,6 +68,7 @@ PLATFORM_TENANT_FIELDS = {
     "locale",
     "timezone",
     "health",
+    "limits",
     "created_at",
     "updated_at",
 }
@@ -86,6 +87,17 @@ TENANT_SETTINGS_FIELDS = {
     "week_start_day",
     "date_format",
     "time_format",
+}
+TENANT_FEATURE_FIELDS = {"features"}
+FEATURE_FLAG_ITEM_FIELDS = {"key", "enabled", "source"}
+FEATURE_DEFAULTS = {
+    "organization": False,
+    "employees": True,
+    "documents": False,
+    "leave": True,
+    "self_service": False,
+    "reporting": True,
+    "notifications": False,
 }
 FORBIDDEN_HR_FIELDS = {
     "employee_count",
@@ -110,9 +122,12 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants/{tenant_id}"),
     ("patch", "/api/v1/platform/tenants/{tenant_id}"),
+    ("get", "/api/v1/platform/tenants/{tenant_id}/features"),
+    ("patch", "/api/v1/platform/tenants/{tenant_id}/features"),
     ("get", "/api/v1/tenant"),
     ("get", "/api/v1/tenant/settings"),
     ("patch", "/api/v1/tenant/settings"),
+    ("get", "/api/v1/tenant/features"),
     ("get", "/api/v1/dashboard/summary"),
     ("get", "/api/v1/employees"),
     ("post", "/api/v1/employees"),
@@ -135,9 +150,12 @@ PHASE1_SUCCESS_RESPONSES = {
     ("get", "/api/v1/platform/tenants"): "200",
     ("get", "/api/v1/platform/tenants/{tenant_id}"): "200",
     ("patch", "/api/v1/platform/tenants/{tenant_id}"): "200",
+    ("get", "/api/v1/platform/tenants/{tenant_id}/features"): "200",
+    ("patch", "/api/v1/platform/tenants/{tenant_id}/features"): "200",
     ("get", "/api/v1/tenant"): "200",
     ("get", "/api/v1/tenant/settings"): "200",
     ("patch", "/api/v1/tenant/settings"): "200",
+    ("get", "/api/v1/tenant/features"): "200",
 }
 PHASE0_CURSOR_LIST_PATHS = {
     "/api/v1/employees",
@@ -218,7 +236,8 @@ async def main(database_url: str | None = None) -> None:
         f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
         "checked=health,landing,openapi,documented_endpoint_tables,principal_default_denial,"
         "correlation_middleware,phase1_envelopes,platform_cursor_pagination,platform_tenants,"
-        "tenant_settings,tenant_headers,phase0_contract_compatibility,"
+        "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
+        "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
         "leave_balances,leave_filters,leave_requests,workflow_transitions"
     )
@@ -390,6 +409,24 @@ async def _smoke_principal_default_denials(client: AsyncClient) -> None:
         "tenant_access_denied",
         "GET /api/v1/tenant without injected tenant principal",
     )
+    _expect_phase1_error_code(
+        await client.get(
+            f"/api/v1/platform/tenants/{TENANT_ID}/features",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        403,
+        "platform_access_denied",
+        "GET platform tenant features without injected platform principal",
+    )
+    _expect_phase1_error_code(
+        await client.get(
+            "/api/v1/tenant/features",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        403,
+        "tenant_access_denied",
+        "GET tenant features without injected tenant principal",
+    )
 
 
 def _install_test_principal_overrides(app: Any) -> dict[str, UUID]:
@@ -427,7 +464,7 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
         "GET /openapi.json",
     )
     _expect_documented_openapi_operations(openapi)
-    _expect_f1b_openapi_contracts(openapi)
+    _expect_f1d_openapi_contracts(openapi)
 
 
 async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
@@ -462,6 +499,40 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
     _assert_equal(created["health"], "provisioning", "provisioned tenant health")
     _assert_equal(created["plan_code"], "professional", "provisioned tenant plan")
     _assert_equal(created["data_region"], "eu-1", "provisioned tenant region")
+    _assert_equal(
+        created["limits"],
+        {"active_employees": None},
+        "unconfigured provisioned tenant limits",
+    )
+
+    default_features = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/platform/tenants/{created['id']}/features",
+            documented_path="/api/v1/platform/tenants/{tenant_id}/features",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        200,
+        "GET /api/v1/platform/tenants/{tenant_id}/features",
+        TENANT_FEATURE_FIELDS,
+    )
+    _assert_feature_flags(default_features, {})
+
+    updated_features = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/platform/tenants/{created['id']}/features",
+            documented_path="/api/v1/platform/tenants/{tenant_id}/features",
+            headers=SPOOFED_IDENTITY_HEADERS,
+            json={"features": [{"key": "organization", "enabled": True}]},
+        ),
+        200,
+        "PATCH /api/v1/platform/tenants/{tenant_id}/features",
+        TENANT_FEATURE_FIELDS,
+    )
+    _assert_feature_flags(updated_features, {"organization": True})
 
     first_page_response = await _request_documented(
         client,
@@ -579,6 +650,7 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
             json={
                 "name": "Smoke Active Falcon",
                 "status": TenantStatus.ACTIVE.value,
+                "limits": {"active_employees": 350},
             },
         ),
         200,
@@ -590,7 +662,15 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
     _assert_equal(updated["status"], TenantStatus.ACTIVE.value, "updated tenant status")
     _assert_equal(updated["health"], "healthy", "updated tenant health")
     _assert_equal(updated["name"], "Smoke Active Falcon", "updated tenant name")
-    _assert_no_hr_fields([created, listed, detail, updated], "platform tenant responses")
+    _assert_equal(
+        updated["limits"],
+        {"active_employees": 350},
+        "updated configured tenant limit metadata",
+    )
+    _assert_no_hr_fields(
+        [created, listed, detail, updated, default_features, updated_features],
+        "platform tenant responses",
+    )
     return provisioned_tenant_id
 
 
@@ -613,6 +693,19 @@ async def _smoke_current_tenant_endpoints(
     _assert_equal(current["slug"], "smoke-provisioned-falcon", "current tenant slug")
     _assert_equal(current["status"], TenantStatus.ACTIVE.value, "current tenant status")
     _assert_equal(current["plan_code"], "professional", "current tenant plan")
+
+    features = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/tenant/features",
+            headers=SPOOFED_IDENTITY_HEADERS,
+        ),
+        200,
+        "GET /api/v1/tenant/features",
+        TENANT_FEATURE_FIELDS,
+    )
+    _assert_feature_flags(features, {"organization": True})
 
     settings = _expect_phase1_data(
         await _request_documented(
@@ -681,7 +774,7 @@ async def _smoke_current_tenant_endpoints(
         "persisted typed tenant settings",
     )
     _assert_no_hr_fields(
-        [current, settings, updated_settings],
+        [current, features, settings, updated_settings],
         "current tenant and settings responses",
     )
 
@@ -707,7 +800,7 @@ def _expect_documented_openapi_operations(openapi: dict[str, Any]) -> None:
         )
 
 
-def _expect_f1b_openapi_contracts(openapi: dict[str, Any]) -> None:
+def _expect_f1d_openapi_contracts(openapi: dict[str, Any]) -> None:
     paths = openapi["paths"]
     for (method, path), status_code in PHASE1_SUCCESS_RESPONSES.items():
         success_response = paths[path][method]["responses"][status_code]
@@ -766,6 +859,33 @@ def _expect_f1b_openapi_contracts(openapi: dict[str, Any]) -> None:
         platform_page_meta["properties"]["limit"].get("maximum"),
         200,
         "platform tenant page metadata maximum limit",
+    )
+
+    schemas = openapi["components"]["schemas"]
+    _assert_equal(
+        schemas["FeatureFlagKey"].get("enum"),
+        list(FEATURE_DEFAULTS),
+        "typed feature flag OpenAPI catalog",
+    )
+    _assert_equal(
+        set(schemas["TenantFeatureFlagRead"].get("properties", {})),
+        FEATURE_FLAG_ITEM_FIELDS,
+        "feature flag response fields",
+    )
+    _assert_equal(
+        set(schemas["TenantFeaturesUpdate"].get("properties", {})),
+        TENANT_FEATURE_FIELDS,
+        "feature update allowlist",
+    )
+    _assert_equal(
+        schemas["TenantFeaturesUpdate"]["properties"]["features"].get("maxItems"),
+        len(FEATURE_DEFAULTS),
+        "feature update catalog bound",
+    )
+    _assert_equal(
+        schemas["TenantPlatformRead"]["properties"]["limits"].get("$ref"),
+        "#/components/schemas/TenantLimitsRead",
+        "platform metadata configured limits schema",
     )
 
     for path in PHASE0_CURSOR_LIST_PATHS:
@@ -2361,6 +2481,30 @@ def _assert_exact_fields(
     if not isinstance(payload, dict):
         raise AssertionError(f"{label} expected an object, got {type(payload).__name__}")
     _assert_equal(set(payload), expected_fields, f"{label} fields")
+
+
+def _assert_feature_flags(
+    payload: dict[str, Any],
+    overrides: dict[str, bool],
+) -> None:
+    features = payload.get("features")
+    if not isinstance(features, list):
+        raise AssertionError("feature response must contain a feature list")
+    expected = [
+        {
+            "key": key,
+            "enabled": overrides.get(key, default_enabled),
+            "source": (
+                "override"
+                if key in overrides and overrides[key] is not default_enabled
+                else "default"
+            ),
+        }
+        for key, default_enabled in FEATURE_DEFAULTS.items()
+    ]
+    for feature in features:
+        _assert_exact_fields(feature, FEATURE_FLAG_ITEM_FIELDS, "feature flag item")
+    _assert_equal(features, expected, "effective tenant feature flags")
 
 
 def _assert_no_hr_fields(payload: object, label: str) -> None:

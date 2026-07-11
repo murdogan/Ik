@@ -59,14 +59,15 @@ OPENAPI_TAGS = [
         "name": PLATFORM_TENANTS_TAG,
         "description": (
             "Default-deny platform provisioning and lifecycle metadata. Responses contain tenant "
-            "plan, region, locale, timezone, and lifecycle-derived health only—never HR data."
+            "plan, configured limits, region, locale, timezone, lifecycle-derived health, and "
+            "allowlisted rollout flags only—never HR data or HR-derived usage counts."
         ),
     },
     {
         "name": TENANT_SETTINGS_TAG,
         "description": (
-            "Trusted-principal tenant metadata and a fixed, typed settings allowlist with "
-            "lifecycle-aware read and write behavior."
+            "Trusted-principal tenant metadata, a fixed typed settings allowlist, and read-only "
+            "effective module flags with lifecycle-aware behavior."
         ),
     },
     {

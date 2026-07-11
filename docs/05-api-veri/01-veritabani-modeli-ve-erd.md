@@ -17,6 +17,7 @@ erDiagram
   tenants ||--o{ employees : has
   tenants ||--o{ command_idempotency : owns
   tenants ||--|| tenant_settings : configures
+  tenants ||--o{ tenant_feature_flags : rolls_out
   users ||--o{ sessions : opens
   roles ||--o{ role_permissions : grants
   users ||--o{ user_roles : assigned
@@ -36,7 +37,7 @@ erDiagram
 
 | Domain | Tablolar |
 |---|---|
-| CORE/AUTH/RBAC | F1A: `tenants`, `tenant_settings`; mevcut foundation: `users`, `command_idempotency`; session/RBAC tabloları Faz 2 |
+| CORE/AUTH/RBAC | F1D current: `tenants`, `tenant_settings`, `tenant_feature_flags`; mevcut foundation: `users`, `command_idempotency`; session/RBAC tabloları Faz 2 |
 | EMP/DOC | `employees`, `employee_profiles`, `employee_employments`, `employee_assignments`, `employee_documents`, `document_types` |
 | ORG | `legal_entities`, `branches`, `departments`, `positions`, `headcount_requests` |
 | LEAVE/TIME | `leave_types`, `leave_balances`, `leave_requests`, `holiday_calendars`, `shift_assignments`, `time_clock_events`, `timesheet_days` |
@@ -84,6 +85,23 @@ F1A tenant/config kuralları:
   `provisioning|healthy|restricted|offboarding|closed` olarak türetilir; employee/leave count veya
   payload platform sorgusuna katılmaz.
 
+F1D rollout/configured-limit kuralları:
+
+- `tenants.active_employee_limit` nullable ve `1..1_000_000` check'li configured platform
+  metadata'dır. API alanı `limits.active_employees`'tır; employee usage/count değildir.
+- `tenant_feature_flags` primary key'i `(tenant_id,key)` ve `tenant_id → tenants.id` named
+  `ON DELETE CASCADE` foreign key'idir. Key check sırası `organization`, `employees`, `documents`,
+  `leave`, `self_service`, `reporting`, `notifications`; `enabled` yalnız boolean'dır.
+- Existing tenant backfill'inde yalnız `employees`, `leave`, `reporting` true; diğer dört key
+  false'dur. Effective API response persisted değer ile katalog defaultunu karşılaştırıp
+  `source=default|override` üretir; source ayrı serbest metadata kolonu değildir.
+- Platform list/detail query'si `tenants` tablosundaki allowlisted kolonları explicit project eder.
+  Feature query yalnız `tenant_feature_flags` ve target tenant metadata erişimini kullanır; hiçbir
+  platform query employee/user/leave/document tablosuna join/count yapmaz.
+- `tenant.created`, `tenant.status_changed`, `tenant.setting_changed`, `feature_flag.changed`
+  eventleri F1D'de typed application contract'tır; `audit_events` persistence tablosu bu migration'a
+  eklenmez.
+
 P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurallar şöyledir:
 
 - `employees.archived_at is null` normal employee görünürlüğünü ifade eder. Arşivli satır
@@ -110,6 +128,7 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 |---|---|
 | `tenants` | unique `slug`; mevcut lifecycle status check'i; yeni plan/region/locale inputları API/domain allowlist'inde |
 | `tenant_settings` | primary key `tenant_id` aynı zamanda tenant foreign key |
+| `tenant_feature_flags` | composite primary key `(tenant_id,key)`; fixed key/enabled check; tenant root FK; katalog sırası bounded olduğu için ayrı liste indexi yok |
 | `employees` | `(tenant_id, employee_number) unique`, `(tenant_id, status)`, `(tenant_id, archived_at)`, non-archived `employee_number`/`email` partial `pg_trgm` GIN, non-archived `(tenant_id, department_normalized)` |
 | `command_idempotency` | `(tenant_id, idempotency_key) unique`, `(tenant_id)` |
 | `employee_assignments` | `(tenant_id, employee_id, valid_from desc)`, `(tenant_id, department_id)` |
@@ -145,7 +164,8 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 
 ## 8. RLS standardı
 
-F1C itibarıyla altı mevcut tenant-owned tablo RLS enabled/forced durumdadır. Standart app policy:
+F1C historical checkpoint'inde altı tenant-owned tablo RLS enabled/forced durumuna gelmiştir. F1D
+current head `tenant_feature_flags` tablosunu kendi revision'ında aynı standarda ekler. Standart app policy:
 
 ```sql
 CREATE POLICY tenant_isolation_app
@@ -161,6 +181,9 @@ Kurallar:
 - Transaction başında capability role ve tenant context `SET LOCAL` ile set edilir.
 - Platform rolünün HR tablo grant/policy'si yoktur; tenant metadata DML ve provisioning-only
   settings INSERT açıktır, settings SELECT/UPDATE kapalıdır.
+- Feature tablosunda app role yalnız tenant-scoped `SELECT`, platform role yalnız
+  `SELECT/INSERT/UPDATE` alır; ikisi de `DELETE` alamaz. Platform feature policy'si HR grant'i
+  yaratmaz.
 - Eksik/empty context sıfır satır, malformed UUID hata üretir; pool reuse tenant state taşımaz.
 - Policy'siz, RLS'siz veya FORCE edilmemiş tenant tablosu PostgreSQL catalog testinde fail eder.
 
@@ -186,6 +209,12 @@ Kurallar:
 - `0013` downgrade default dışı typed setting varsa sayılı preflight ile reddedilir; custom değer
   sessizce düşürülemez.
 - Platform tenant metadata sorgusu HR tablosuna join/count yapmaz; health yalnız lifecycle'dır.
+- Platform response'undaki `limits.active_employees` yalnız configured nullable metadata'dır;
+  employee usage/count olarak üretilemez.
+- Feature catalog/order/defaultlar domain, migration backfill/check ve API response ile aynıdır;
+  unknown key ve cross-tenant override erişimi reddedilir.
+- `tenant_feature_flags` PostgreSQL'de FORCE RLS ve exact app/platform/no-DELETE privilege matrisiyle
+  korunur; SQLite sonucu bu güvenlik iddiasının kanıtı değildir.
 - PostgreSQL doğrudan write negatif testleri composite foreign key constraint adını doğrular;
   SQLite sonucu PostgreSQL constraint kanıtı sayılmaz.
 - Concurrent leave decision ve aynı-key idempotency winner davranışı gerçek PostgreSQL bağımsız

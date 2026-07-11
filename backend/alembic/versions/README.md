@@ -130,3 +130,38 @@ Yeni tenant-owned tablo ekleyen her sonraki revision, aynı stable migration hel
 revision'a sabitlenmiş bir tablo listesiyle çağırmalıdır. ORM metadata'sından dinamik migration
 envanteri türetilmez. PostgreSQL catalog, raw-SQL isolation, role privilege ve pool-reuse kanıtı
 `backend/tests/integration/test_postgresql_f1c_rls.py` içinde gerçek normal role ile çalışır.
+
+## F1D typed feature rollout and configured limit metadata
+
+`0015_f1d_feature_flags`, `0014_f1c_postgresql_rls` üzerine iki additive platform metadata
+değişikliği kurar:
+
+- `tenants.active_employee_limit` nullable integer'dır; yalnız `1..1_000_000` aralığındaki configured
+  limit metadata'sını taşır. `null` limitsiz kullanım iddiası veya HR usage ölçümü değildir.
+- `tenant_feature_flags` composite primary key olarak `(tenant_id, key)` kullanır; tenant root'una
+  named `ON DELETE CASCADE` foreign key ile bağlıdır. `key` ve boolean `enabled` named check
+  constraint'lerle korunur.
+- Revision'a frozen flag sırası `organization`, `employees`, `documents`, `leave`, `self_service`,
+  `reporting`, `notifications`'tır. Upgrade her mevcut tenant için tam yedi satır backfill eder;
+  yalnız `employees`, `leave`, `reporting` default `true`, diğerleri `false` olur.
+- F1C tenant root'ta owner dahil FORCE RLS uyguladığı için upgrade backfill'i ve downgrade limit
+  retention sorgusu migration/table owner adına transaction içinde tenant RLS flag'lerini geçici
+  kaldırır ve `ENABLE + FORCE` durumunu geri kurar. Non-superuser, `NOBYPASSRLS` migration-owner
+  PostgreSQL testi hem yedi-row backfill'i hem failed downgrade sonrası flag restoration'ı kanıtlar.
+- PostgreSQL'de yeni tablo RLS `ENABLE + FORCE` durumundadır. `wealthy_falcon_app` yalnız tenant
+  policy'si altında `SELECT`; `wealthy_falcon_platform` unrestricted platform policy'si altında
+  `SELECT/INSERT/UPDATE` alır. İki capability role de tablo üzerinde `DELETE` alamaz. SQLite branch
+  şema/constraint/API compatibility testidir, bu privilege/RLS iddiasının kanıtı değildir.
+- Revision, migration owner'ın hostile `ALTER DEFAULT PRIVILEGES` ayarını miras bırakmamak için
+  yeni tablo grant'lerini önce `PUBLIC`, tenant ve platform capability'lerinde sıfırlar; exact
+  least-privilege matrisini bundan sonra verir.
+- Downgrade yalnız bütün flag satırları frozen default değerlerde ve hiçbir tenant'ta configured
+  active employee limit yokken çalışır. Override veya configured limit varsa sayılı
+  `feature_overrides`/`configured_active_employee_limits` preflight hatasıyla revision ve veriyi
+  yerinde bırakır; sessiz rollout/limit metadata kaybı yapmaz.
+
+F1D migration, `audit_events` veya başka audit persistence tablosu eklemez. Dört platform event
+sözleşmesi application/UoW portudur; append-only audit modeli Faz 2 migration'ında kurulacaktır.
+SQLite round-trip/drift ile gerçek PostgreSQL 17.10 catalog/RLS/grant/cross-tenant,
+hostile-default-ACL ve non-BYPASS migration-owner testleri geçmiştir; exact sonuçlar
+implementation-status dokümanında kayıtlıdır.

@@ -25,11 +25,19 @@ PLATFORM_TENANT_OPERATIONS = {
     ("/api/v1/platform/tenants", "get"),
     ("/api/v1/platform/tenants/{tenant_id}", "get"),
     ("/api/v1/platform/tenants/{tenant_id}", "patch"),
+    ("/api/v1/platform/tenants/{tenant_id}/features", "get"),
+    ("/api/v1/platform/tenants/{tenant_id}/features", "patch"),
 }
 TENANT_PRINCIPAL_OPERATIONS = {
     ("/api/v1/tenant", "get"),
+    ("/api/v1/tenant/features", "get"),
     ("/api/v1/tenant/settings", "get"),
     ("/api/v1/tenant/settings", "patch"),
+}
+FEATURE_OPERATIONS = {
+    ("/api/v1/platform/tenants/{tenant_id}/features", "get"),
+    ("/api/v1/platform/tenants/{tenant_id}/features", "patch"),
+    ("/api/v1/tenant/features", "get"),
 }
 
 
@@ -44,9 +52,12 @@ def test_openapi_uses_readable_tag_catalog() -> None:
     assert "service health, version, and environment readiness" in descriptions[SYSTEM_TAG]
     assert "outside the tenant-scoped JSON API" in descriptions[PUBLIC_TAG]
     assert "Default-deny platform provisioning" in descriptions[PLATFORM_TENANTS_TAG]
+    assert "configured limits" in descriptions[PLATFORM_TENANTS_TAG]
+    assert "allowlisted rollout flags" in descriptions[PLATFORM_TENANTS_TAG]
     assert "never HR data" in descriptions[PLATFORM_TENANTS_TAG]
-    assert "fixed, typed settings allowlist" in descriptions[TENANT_SETTINGS_TAG]
-    assert "lifecycle-aware read and write behavior" in descriptions[TENANT_SETTINGS_TAG]
+    assert "fixed typed settings allowlist" in descriptions[TENANT_SETTINGS_TAG]
+    assert "read-only effective module flags" in descriptions[TENANT_SETTINGS_TAG]
+    assert "lifecycle-aware behavior" in descriptions[TENANT_SETTINGS_TAG]
     assert "department distribution, new starters" in descriptions[DASHBOARD_TAG]
     assert "employee master data" in descriptions[EMPLOYEES_TAG]
     assert "no accrual engine" in descriptions[LEAVE_BALANCES_TAG]
@@ -79,7 +90,7 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         ("/api/v1/platform/tenants", "get"): (
             PLATFORM_TENANTS_TAG,
             "List platform tenant metadata",
-            "do not join or expose employees, users, leave records",
+            "do not join, count, or expose employees, users, leave records",
         ),
         ("/api/v1/platform/tenants/{tenant_id}", "get"): (
             PLATFORM_TENANTS_TAG,
@@ -91,10 +102,25 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
             "Update platform tenant lifecycle",
             "Closed is terminal, offboarding is closure-only",
         ),
+        ("/api/v1/platform/tenants/{tenant_id}/features", "get"): (
+            PLATFORM_TENANTS_TAG,
+            "Read platform tenant feature flags",
+            "No employee, user, leave, document, or HR-derived usage data",
+        ),
+        ("/api/v1/platform/tenants/{tenant_id}/features", "patch"): (
+            PLATFORM_TENANTS_TAG,
+            "Update platform tenant feature flags",
+            "Unknown, duplicate, null, numeric, string, and arbitrary nested flag values",
+        ),
         ("/api/v1/tenant", "get"): (
             TENANT_SETTINGS_TAG,
             "Read current tenant metadata",
             "user IDs, and tenant IDs do not select or authorize this resource",
+        ),
+        ("/api/v1/tenant/features", "get"): (
+            TENANT_SETTINGS_TAG,
+            "Read current tenant feature flags",
+            "cannot switch tenant scope",
         ),
         ("/api/v1/tenant/settings", "get"): (
             TENANT_SETTINGS_TAG,
@@ -254,7 +280,19 @@ def test_phase1_tenant_operations_document_lifecycle_and_resource_errors() -> No
             "404": {"tenant_not_found"},
             "409": {"tenant_lifecycle_conflict"},
         },
+        ("/api/v1/platform/tenants/{tenant_id}/features", "get"): {
+            "404": {"tenant_not_found"},
+        },
+        ("/api/v1/platform/tenants/{tenant_id}/features", "patch"): {
+            "404": {"tenant_not_found"},
+            "409": {"tenant_lifecycle_conflict"},
+        },
         ("/api/v1/tenant", "get"): {
+            "404": {"tenant_not_found"},
+            "410": {"tenant_closed"},
+            "423": {"tenant_not_ready"},
+        },
+        ("/api/v1/tenant/features", "get"): {
             "404": {"tenant_not_found"},
             "410": {"tenant_closed"},
             "423": {"tenant_not_ready"},
@@ -294,7 +332,7 @@ def test_platform_tenant_operations_do_not_accept_caller_identity_headers() -> N
         assert [parameter for parameter in parameters if parameter["in"] == "header"] == []
 
 
-def test_platform_tenant_response_schemas_cannot_reference_hr_schemas() -> None:
+def test_platform_and_feature_response_schemas_cannot_reference_hr_schemas() -> None:
     client = TestClient(create_app())
 
     response = client.get("/openapi.json")
@@ -302,7 +340,7 @@ def test_platform_tenant_response_schemas_cannot_reference_hr_schemas() -> None:
     assert response.status_code == 200
     openapi = response.json()
     schemas = openapi["components"]["schemas"]
-    for path, method in PLATFORM_TENANT_OPERATIONS:
+    for path, method in PLATFORM_TENANT_OPERATIONS | FEATURE_OPERATIONS:
         references = _transitive_schema_references(
             openapi["paths"][path][method]["responses"],
             schemas,
@@ -327,7 +365,10 @@ def test_phase1_operations_use_standard_envelopes_and_correlation_headers() -> N
         ("/api/v1/platform/tenants", "get"): "200",
         ("/api/v1/platform/tenants/{tenant_id}", "get"): "200",
         ("/api/v1/platform/tenants/{tenant_id}", "patch"): "200",
+        ("/api/v1/platform/tenants/{tenant_id}/features", "get"): "200",
+        ("/api/v1/platform/tenants/{tenant_id}/features", "patch"): "200",
         ("/api/v1/tenant", "get"): "200",
+        ("/api/v1/tenant/features", "get"): "200",
         ("/api/v1/tenant/settings", "get"): "200",
         ("/api/v1/tenant/settings", "patch"): "200",
     }
@@ -354,6 +395,92 @@ def test_phase1_operations_use_standard_envelopes_and_correlation_headers() -> N
                 "X-Request-Id",
                 "X-Trace-Id",
             }
+
+
+def test_feature_operations_document_project_validation_error_envelopes() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    for path, method in FEATURE_OPERATIONS:
+        validation = paths[path][method]["responses"]["422"]
+        schema_ref = validation["content"]["application/json"]["schema"]["$ref"]
+        assert validation["description"].strip()
+        assert schema_ref.endswith("/ApiErrorResponse")
+        assert not schema_ref.endswith("/HTTPValidationError")
+
+
+def test_feature_flag_openapi_schemas_are_finite_strict_and_tenant_safe() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    assert schemas["FeatureFlagKey"]["enum"] == [
+        "organization",
+        "employees",
+        "documents",
+        "leave",
+        "self_service",
+        "reporting",
+        "notifications",
+    ]
+
+    update = schemas["TenantFeaturesUpdate"]
+    assert update["additionalProperties"] is False
+    assert set(update["properties"]) == {"features"}
+    assert update["required"] == ["features"]
+    assert update["properties"]["features"]["minItems"] == 1
+    assert update["properties"]["features"]["maxItems"] == 7
+    assert update["properties"]["features"]["items"]["$ref"].endswith(
+        "/TenantFeatureFlagUpdate"
+    )
+
+    update_item = schemas["TenantFeatureFlagUpdate"]
+    assert update_item["additionalProperties"] is False
+    assert set(update_item["properties"]) == {"key", "enabled"}
+    assert set(update_item["required"]) == {"key", "enabled"}
+    assert update_item["properties"]["key"]["$ref"].endswith("/FeatureFlagKey")
+    assert update_item["properties"]["enabled"]["type"] == "boolean"
+
+    read_item = schemas["TenantFeatureFlagRead"]
+    assert set(read_item["properties"]) == {"key", "enabled", "source"}
+    assert set(read_item["required"]) == {"key", "enabled", "source"}
+    assert read_item["properties"]["source"]["enum"] == ["default", "override"]
+
+
+def test_platform_tenant_schema_exposes_configured_limits_without_usage_fields() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    platform_read = schemas["TenantPlatformRead"]
+    assert platform_read["properties"]["limits"]["$ref"].endswith("/TenantLimitsRead")
+    assert "limits" in platform_read["required"]
+
+    limits = schemas["TenantLimitsRead"]
+    assert set(limits["properties"]) == {"active_employees"}
+    assert limits["required"] == ["active_employees"]
+    assert "not an HR-derived usage counter" in limits["description"]
+    variants = limits["properties"]["active_employees"]["anyOf"]
+    integer_schema = next(item for item in variants if item.get("type") == "integer")
+    assert integer_schema["minimum"] == 1
+    assert integer_schema["maximum"] == 1_000_000
+    assert {item.get("type") for item in variants} == {"integer", "null"}
+
+    for forbidden_field in {
+        "employee_count",
+        "used",
+        "remaining",
+        "usage",
+        "employees",
+    }:
+        assert forbidden_field not in limits["properties"]
 
 
 def test_platform_tenant_list_documents_cursor_only_bounded_page_contract() -> None:

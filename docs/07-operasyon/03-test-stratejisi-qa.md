@@ -46,6 +46,10 @@ bozmasını engeller. PostgreSQL hattı en az şunları kanıtlar:
   mapping'i, leave kararlarında tam bir terminal winner, aynı idempotency key ile tek resource
   replay'i, employee archive/history `RESTRICT` davranışı ve unsafe downgrade reddi.
 - Mevcut tenant-scoped API ve OpenAPI operasyon setinin PostgreSQL üzerindeki uyumluluğu.
+- F1D `tenant_feature_flags` catalog/backfill/check, FORCE RLS, app tenant-scoped SELECT, platform
+  SELECT/INSERT/UPDATE, no-DELETE privilege matrisi; raw tenant A/B erişimi ve platform-to-HR denial.
+- Platform tenant metadata query'sinin yalnız `tenants` projection'ı kullanması; configured
+  `limits.active_employees` alanının employee usage/count sorgusuna dönüşmemesi.
 - Pool/bağlantı yaşam döngüsü ile `statement_timeout` ve PostgreSQL 16 uyumlu
   `idle_in_transaction_session_timeout` ayarları.
 - P0F disposable fixture'ında 10,000 employee + 5,000 leave seed'i sonrası selective search ve
@@ -60,13 +64,14 @@ Repo içinde PostgreSQL service'ini tarif eden
 yoktur. Bu nedenle P0G kanıtı lokal gerçek PostgreSQL çalıştırmasıdır, aktif PR CI lane'i gibi
 sunulmaz. Workflow aktivasyonu repo yönetimi/supervisor işidir.
 
-Historical Phase-0 OpenAPI gate'i `backend/tests/contracts/phase0_openapi_contract.json`, F1A'nın
-additive güncel gate'i `backend/tests/contracts/f1a_openapi_contract.json` manifestinde top-level
-metadata, her operasyon ve her component schema için canonical SHA-256 snapshot tutar. Seçili
-metadata assertions, güncel 21 generated path/method operasyonunun registry kontrolü, iki doküman
-tablosu ve runtime `/openapi.json` dahil 22 endpoint smoke coverage bu snapshot'ı tamamlar.
+Historical Phase-0 OpenAPI gate'i `backend/tests/contracts/phase0_openapi_contract.json`, F1A gate'i
+`backend/tests/contracts/f1a_openapi_contract.json` manifestinde top-level metadata, her operasyon
+ve her component schema için canonical SHA-256 snapshot tutar. F1B historical envelope diff'i ve
+F1D current additive diff'i ayrı snapshot/assertion olarak korunur; önceki manifestler overwrite
+edilmez. F1D metadata assertions, 24 generated path/method operation registry kontrolü, iki
+doküman tablosu ve runtime `/openapi.json` dahil 25 endpoint smoke coverage ile tamamlanır.
 Contract değişikliği ancak intentional diff ve aynı commit'teki snapshot/doküman güncellemesiyle
-kabul edilir; historical manifest yeniden yazılmaz.
+kabul edilir. F1D sonucu final contract/smoke komutları çalışmadan `passed` sayılmaz.
 
 P0F query-plan prosedürünü kanıt satırıyla tek başına çalıştırmak için:
 
@@ -150,6 +155,8 @@ V1 yerleşik bordro motorunda golden dataset zorunlu olur.
 
 - Tenant tablosunda `tenant_id` bulunur.
 - RLS veya tenant guard eksik tablo CI'da yakalanır.
+- Feature rollout tablosu fixed catalog/check, FORCE RLS ve exact role privilege matrisi dışında
+  bırakılamaz; SQLite privilege/RLS kanıtı sayılmaz.
 - App katmanı bypass edilerek DB seviyesinde cross-tenant erişim test edilir.
 - Tenant-owned foreign key'ler için yanlış `(tenant_id, foreign_id)` kombinasyonu her ilişki ve
   named constraint bazında gerçek PostgreSQL'de reddedilir.

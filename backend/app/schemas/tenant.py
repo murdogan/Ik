@@ -9,12 +9,15 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictInt,
     StrictStr,
     StringConstraints,
     field_validator,
     model_validator,
 )
 
+from app.modules.core.domain.feature_flags import FeatureFlagKey
 from app.modules.core.domain.tenant import (
     TenantDateFormat,
     TenantHealth,
@@ -48,6 +51,10 @@ TenantTimezone = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
 ]
 TenantPlanRead = TenantPlan | Literal["premium"]
+TenantActiveEmployeeLimit = Annotated[
+    StrictInt,
+    Field(ge=1, le=1_000_000),
+]
 
 
 class _TenantPayload(BaseModel):
@@ -71,6 +78,55 @@ class TenantSettingsProvision(_TenantPayload):
     time_format: TenantTimeFormat = TenantTimeFormat.HOUR_24
 
 
+class TenantLimitsProvision(_TenantPayload):
+    """Configured commercial limit metadata; absence never triggers an HR usage query."""
+
+    active_employees: TenantActiveEmployeeLimit | None = None
+
+
+class TenantLimitsUpdate(_TenantPayload):
+    active_employees: TenantActiveEmployeeLimit
+
+
+class TenantLimitsRead(BaseModel):
+    """Configured platform metadata, not an HR-derived usage counter."""
+
+    active_employees: TenantActiveEmployeeLimit | None
+
+
+class TenantFeatureFlagUpdate(_TenantPayload):
+    key: FeatureFlagKey
+    enabled: StrictBool
+
+
+class TenantFeaturesUpdate(_TenantPayload):
+    features: list[TenantFeatureFlagUpdate] = Field(
+        min_length=1,
+        max_length=len(FeatureFlagKey),
+    )
+
+    @field_validator("features")
+    @classmethod
+    def require_unique_feature_keys(
+        cls,
+        value: list[TenantFeatureFlagUpdate],
+    ) -> list[TenantFeatureFlagUpdate]:
+        keys = [feature.key for feature in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Feature keys must be unique within one update")
+        return value
+
+
+class TenantFeatureFlagRead(BaseModel):
+    key: FeatureFlagKey
+    enabled: bool
+    source: Literal["default", "override"]
+
+
+class TenantFeaturesRead(BaseModel):
+    features: list[TenantFeatureFlagRead]
+
+
 class TenantPlatformCreate(_TenantPayload):
     slug: TenantSlug
     name: TenantName
@@ -79,6 +135,7 @@ class TenantPlatformCreate(_TenantPayload):
     locale: TenantLocale = TenantLocale.TR_TR
     timezone: TenantTimezone = "Europe/Istanbul"
     settings: TenantSettingsProvision = Field(default_factory=TenantSettingsProvision)
+    limits: TenantLimitsProvision = Field(default_factory=TenantLimitsProvision)
 
 
 class TenantPlatformUpdate(_TenantPayload):
@@ -88,6 +145,7 @@ class TenantPlatformUpdate(_TenantPayload):
     data_region: TenantRegion | None = None
     locale: TenantLocale | None = None
     timezone: TenantTimezone | None = None
+    limits: TenantLimitsUpdate | None = None
 
     @model_validator(mode="after")
     def require_non_null_change(self) -> Self:
@@ -120,6 +178,7 @@ class TenantPlatformRead(BaseModel):
     locale: TenantLocale
     timezone: str
     health: TenantHealth
+    limits: TenantLimitsRead
     created_at: datetime
     updated_at: datetime
 

@@ -2,14 +2,55 @@
 
 Date: 2026-07-11
 Branch: `codex/mvp-phase1-until-20260712-0900`
-Task: `F1C PostgreSQL RLS foundation and transaction tenant binding`
-Review checkpoint: `F1C required local and PostgreSQL gates passed; commit recorded in history`
-Review decision: `Ready for supervisor review; no push, merge or deploy performed`
+Task: `F1D feature flags, platform tenant operations hardening and platform audit contracts`
+Review checkpoint: `F1D required local and PostgreSQL gates passed`
+Review decision: `Ready for supervisor review; no push, merge or deploy`
 Push state: `Local work only; no push, merge or deploy`
 
 ## Scope
 
-### F1C PostgreSQL RLS foundation and transaction tenant binding
+### F1D typed rollout, platform metadata hardening and event contracts
+
+- Adds three visible operations:
+  `GET/PATCH /api/v1/platform/tenants/{tenant_id}/features` and
+  `GET /api/v1/tenant/features`. Current target is 24 generated OpenAPI operations and runtime
+  `/openapi.json` for a 25-row documented/smoke registry. Historical Phase-0/F1A/F1B snapshots stay
+  immutable; F1D owns an explicit additive/component diff.
+- The code-owned ordered flag catalog is `organization`, `employees`, `documents`, `leave`,
+  `self_service`, `reporting`, `notifications`. Only `employees`, `leave`, `reporting` default true.
+  Effective reads always return all seven in that order with `source=default|override`; unknown,
+  duplicate or non-boolean writes fail closed and customer-specific forks are not supported.
+- Migration `0015_f1d_feature_flags` adds `tenant_feature_flags(tenant_id,key)` with fixed checks,
+  tenant-root FK, existing-tenant default backfill and downgrade refusal when overrides exist. It
+  also adds nullable checked `tenants.active_employee_limit`, serialized only as configured
+  `limits.active_employees` metadata—not as an HR usage counter.
+- PostgreSQL feature state is FORCE-RLS protected. Tenant capability receives tenant-scoped SELECT;
+  platform capability receives SELECT/INSERT/UPDATE; neither receives DELETE. The PostgreSQL 17.10
+  lane passed catalog/raw A-B/platform-HR, hostile-default-ACL and non-BYPASS migration-owner tests;
+  SQLite is not used as proof for these grants/policies.
+- Platform list/detail now use a dedicated query service that explicitly projects allowlisted
+  `tenants` columns only. It does not import/join/count employee, user, leave or document models.
+  Responses expose identity, plan/region/locale/timezone, lifecycle-derived health, configured
+  limit and timestamps only.
+- Lifecycle hardening rejects combining an `offboarding` or `closed` transition with metadata/limit
+  mutation, and requires data-region changes to finish while status remains `provisioning`. Closed
+  remains terminal, offboarding remains closure-only, and same-value/status/flag updates do not emit
+  change events.
+- Exactly four frozen/extra-forbid CORE application contracts exist: `tenant.created`,
+  `tenant.status_changed`, `tenant.setting_changed`, `feature_flag.changed`. They carry fixed
+  tenant/platform-ops audit metadata and only typed deltas; generic payload/metadata/entity
+  snapshots, passwords/hashes/tokens/OTP/secrets and employee/HR/sensitive fields are structurally
+  rejected. Both recorder adapters additionally require one of the four exact registered classes;
+  the marker, structural lookalikes, and sensitive-field subclasses are rejected.
+- Tenant commands invoke an async `PlatformEventRecorder` inside the command UoW callback. Phase 1
+  defaults to a discarding adapter and therefore makes no persistence claim; Phase 2 can replace
+  the same port with same-session append-only persistence. F1D adds no `audit_events` table, audit
+  read route, retention/index or full audit center.
+- Platform and tenant dependencies remain fail closed and Phase-2 replaceable. A tenant principal
+  cannot call platform list/detail/status/feature routes, and caller header/path/body/query identity
+  cannot construct platform authority or change current tenant scope.
+
+### Historical F1C PostgreSQL RLS foundation and transaction tenant binding
 
 - Migration `0014_f1c_postgresql_rls` enables and forces RLS on every current tenant-owned table:
   `users`, `employees`, `leave_requests`, `leave_balance_summaries`, `command_idempotency` and
@@ -467,13 +508,16 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/health` | Implemented | Health response, OpenAPI operation, and docs-table registry |
 | GET | `/` | Implemented | Wealthy Falcon HR landing response, OpenAPI operation, and docs-table registry |
 | GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and docs-table registry |
-| POST | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, default-deny platform principal, server-owned status/ID, atomic typed settings |
-| GET | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, bounded deterministic cursor page, lifecycle health, no HR payload |
-| GET | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}` with platform-safe metadata/plan/region/health detail only |
-| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}`, typed metadata/plan and explicit lifecycle transition guards |
+| POST | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, default-deny platform principal, server-owned status/ID, typed settings/configured limit |
+| GET | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, bounded cursor, projected lifecycle/plan/configured-limit metadata, no HR payload/count |
+| GET | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}` with platform-safe metadata/plan/region/health/configured limit only |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}`, typed metadata/plan/limit and hardened terminal lifecycle transitions |
+| GET | `/api/v1/platform/tenants/{tenant_id}/features` | Implemented and verified | Fixed ordered effective feature catalog through platform-only capability; no HR data/usage |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}/features` | Implemented and verified | Unique typed keys + strict booleans, lifecycle guard and redacted actual-change events |
 | GET | `/api/v1/tenant` | Implemented and verified | `{data,meta}`, injected tenant-principal metadata and lifecycle access guard |
 | GET | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact five-key typed settings view and tenant isolation |
 | PATCH | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact allowlist update and suspended/offboarding read-only guard |
+| GET | `/api/v1/tenant/features` | Implemented and verified | Current-principal-only ordered effective flags; no tenant selector or mutation |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -502,17 +546,21 @@ the expected local commits ahead of the review-branch remote after the final com
   current tenant. Legacy employee/leave `X-Tenant-Id` compatibility remains intentionally separate
   and does not authorize these new endpoints.
 - Platform create accepts only `slug`, `name`, canonical optional `plan_code`, `data_region`,
-  `locale`, IANA `timezone`, and nested `settings` containing week/date/time formats. The server
-  owns UUID and initial `provisioning` status. Duplicate slug returns `409 tenant_slug_conflict`.
-- Platform PATCH accepts only `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone`;
-  slug/id/extra/null/empty changes are rejected. Same-state is a no-op. Invalid transitions,
+  `locale`, IANA `timezone`, nested `settings` containing week/date/time formats and optional nested
+  `limits.active_employees`. The server owns UUID and initial `provisioning` status. Duplicate slug
+  returns `409 tenant_slug_conflict`.
+- Platform PATCH accepts only `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone` and
+  nested configured limit; slug/id/extra/null/empty changes are rejected. Same-state is a no-op. Invalid transitions,
   post-provisioning region relocation, closed metadata mutation, and offboarding non-closure
-  mutation return `409 tenant_lifecycle_conflict`.
+  mutation return `409 tenant_lifecycle_conflict`. Transition to offboarding/closed cannot be
+  combined with metadata/limit mutation in the same command.
 - Platform response `data` has an exact safe schema: `id`, `slug`, `name`, `status`, `plan_code`,
-  `data_region`, `locale`, `timezone`, `health`, `created_at`, `updated_at`. The bounded list uses
+  `data_region`, `locale`, `timezone`, `health`, nested `limits.active_employees`, `created_at`,
+  `updated_at`. The bounded list uses
   `limit` default `50`, range `1..200`, and opaque cursor ordered by `created_at asc, id asc`;
   continuation is `meta.next_cursor`, and offset is rejected. Health is a pure lifecycle mapping;
-  platform services do not query employee or leave data.
+  configured limit is not an employee usage count. Dedicated platform query code explicitly
+  projects `tenants` columns and does not query/join employee, user, leave or document data.
 - `plan_code` response parsing recognizes pre-F1A `premium` rows solely for read compatibility.
   Create/PATCH catalogs remain canonical and cannot write `premium`; `0013` does not reinterpret
   stored legacy plan values.
@@ -525,6 +573,16 @@ the expected local commits ahead of the review-branch remote after the final com
   closed returns `410 tenant_closed`; suspended/offboarding GETs remain available while settings
   PATCH returns `423 tenant_read_only`. Trial/active are read-write. Platform health maps these
   states to `provisioning`, `healthy`, `restricted`, `offboarding`, `closed`.
+- Feature reads always return `organization`, `employees`, `documents`, `leave`, `self_service`,
+  `reporting`, `notifications` in that order. Defaults are true only for employees/leave/reporting;
+  each item reports effective boolean and `default|override` source. Platform PATCH accepts a
+  non-empty unique subset of typed keys with strict booleans; tenant feature API is read-only and
+  scopes exclusively from the injected principal.
+- Tenant principal injection alone still yields `403 platform_access_denied` on platform feature
+  and tenant-operations routes. Header/query/body/path tenant or user identifiers never promote it.
+- Actual create/status/setting/flag changes produce one of four exact redacted event contracts
+  inside the command UoW. No-op and failed commands emit none. The default recorder discards; no
+  audit row/read-center exists until Phase 2 supplies a transactional adapter.
 - The seven F1A success operations now use the F1B `{data,meta}` contract. Existing Phase-0
   employee/leave response bodies remain direct schema/list; employee and leave-request lists use
   the explicit plain-array + `X-Next-Cursor` adapter and retain deprecated offset compatibility.
@@ -574,10 +632,12 @@ the expected local commits ahead of the review-branch remote after the final com
 - OpenAPI uses readable tags: `System`, `Public`, `Platform Tenants`, `Tenant Settings`, `Dashboard`,
   `Employees`, `Leave Balances`, and `Leave Requests`. F1B adds no operation; it documents the
   seven envelopes, safe response headers, platform cursor contract and explicit Phase-0 adapters.
+  F1D reuses the two tenant/platform tags and adds three feature operations without an audit-center
+  tag.
 - Historical W4C6 was a report and smoke-governance refresh only. At that checkpoint the
-  implementation report, endpoint draft and smoke agreed on 15 documented endpoints. F1A's current
-  target is 21 generated operations plus runtime `/openapi.json`; this does not rewrite that
-  historical evidence.
+  implementation report, endpoint draft and smoke agreed on 15 documented endpoints. Historical
+  F1A target was 21 generated operations plus runtime `/openapi.json`; current F1D target is 24
+  generated and 25 documented. Neither rewrites the earlier checkpoint evidence.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -610,7 +670,8 @@ the expected local commits ahead of the review-branch remote after the final com
 
 ## Current Tenant Relational Integrity and Retention
 
-Final model metadata and the Alembic head represent these tenant-owned relationships:
+Current model metadata and the Alembic head represent these tenant-owned relationships; F1D final
+gate status is tracked separately below:
 
 | Child columns | Parent candidate key | Delete/null behavior |
 |---|---|---|
@@ -619,6 +680,7 @@ Final model metadata and the Alembic head represent these tenant-owned relations
 | `leave_requests(tenant_id, decided_by_user_id)` | `users(tenant_id, id)` | `NO ACTION`, nullable id / `MATCH SIMPLE` |
 | `leave_balance_summaries(tenant_id, employee_id)` | `employees(tenant_id, id)` | `ON DELETE RESTRICT`, required |
 | `tenant_settings(tenant_id)` | `tenants(id)` root | `ON DELETE CASCADE`, required PK/FK |
+| `tenant_feature_flags(tenant_id,key)` | `tenants(id)` root | `ON DELETE CASCADE`, required composite PK + fixed key |
 
 `TENANT_RELATIONSHIP_PREFLIGHT_SQL` also inventories the four root
 `tenant_id → tenants.id` links, so orphan ownership rows and the four cross-tenant child links are
@@ -646,6 +708,14 @@ Revision `0013_tenant_settings` adds the root settings FK after the P0D expand/c
 does not alter the historical four-relationship P0D preflight. Its upgrade backfills one fixed
 settings row per existing tenant. Its downgrade drops the additive table only when every row still
 has defaults; otherwise a `custom_tenant_settings` count aborts before data loss.
+
+Revision `0015_f1d_feature_flags` adds the feature root FK/table and nullable configured active
+employee limit after F1C. Existing tenants receive exactly seven frozen defaults. PostgreSQL FORCE
+RLS gives app tenant-scoped SELECT and platform SELECT/INSERT/UPDATE only; neither role receives
+DELETE. Downgrade refuses feature overrides or configured limits instead of silently discarding
+them. Backfill and limit-retention checks transactionally restore tenant-root `ENABLE + FORCE` RLS,
+so they do not assume a superuser/BYPASSRLS migration owner; a dedicated PostgreSQL non-bypass
+owner test covers backfill, refusal, restoration and clean downgrade.
 
 Revision `0011_p0e_concurrency_idempotency_archive` replaces only the two employee-history delete
 actions with `RESTRICT`; it does not weaken their P0D composite tenant keys. Root ownership FKs to
@@ -710,11 +780,12 @@ SQLite. The PostgreSQL baseline invokes the same script with `--database-url` ag
 test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
 services.
 
-Current documentation expects the registry to contain 22 rows: 21 generated operations plus runtime
-`/openapi.json`. Smoke executes all seven platform/tenant operations with dependency overrides,
-proves default principal denial separately, inspects the exact metadata allowlist/no-HR boundary,
-and verifies F1B response correlation, `{data,meta}`, unsafe-ID non-reflection and deterministic
-platform cursor traversal. Historical Phase-0 smoke evidence below remains unchanged.
+Current F1D documentation expects the registry to contain 25 rows: 24 generated operations plus
+runtime `/openapi.json`. Smoke must execute all ten platform/tenant operations with dependency
+overrides, prove default and tenant-principal-on-platform denial, inspect exact projected
+metadata/configured-limit/no-HR boundaries, and verify feature defaults/overrides/tenant isolation
+alongside F1B correlation, `{data,meta}`, unsafe-ID non-reflection and deterministic cursor behavior.
+Historical Phase-0/F1A/F1B smoke evidence below remains unchanged.
 
 The script now verifies the documented API surface in four directions:
 
@@ -751,7 +822,29 @@ allowlists, canonical/malformed/duplicate/conflicting correlation inputs, worker
 seven Phase-1 envelopes, cursor-only platform pagination, and unchanged Phase-0 employee/leave
 plain-array contracts.
 
+F1D scenarios must additionally verify three feature operations, exact seven-key ordering and
+defaults, default/override source transitions, strict/unknown/duplicate input rejection, tenant A/B
+isolation, tenant-principal platform denial, configured limit propagation without HR count, terminal
+lifecycle hardening, four redacted event shapes and no event on no-op/failure. Final smoke evidence
+is pending until the synchronized script/registry and full required commands complete.
+
 ## Verification
+
+### F1D required gates — passed
+
+| Gate | Command | Current evidence state |
+|---|---|---|
+| Ruff | `uv run ruff check backend` | Passed |
+| Fast suite | `uv run pytest -q` | Passed: 735 passed, 30 deselected; one known Starlette/httpx deprecation warning |
+| Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`, 25/25 documented endpoint coverage |
+| OpenAPI contract | `uv run pytest -q backend/tests/test_openapi_metadata.py backend/tests/test_openapi_contract.py` | Passed; exact 24-operation F1D snapshot and historical subset/diff assertions |
+| SQLite migration/API/event focus | `uv run pytest -q backend/tests/test_migrations.py backend/tests/test_tenant_api_f1d.py backend/tests/test_platform_events.py` | Passed in focused and full suites; SQLite remains compatibility evidence only |
+| PostgreSQL full lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed on PostgreSQL 17.10: 30 passed, 735 deselected; one known deprecation warning |
+| PostgreSQL F1D security | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed current-head catalog, A/B flag RLS, exact/no-DELETE ACLs, platform-HR denial, non-BYPASS owner backfill/refusal/restoration and migrated API smoke |
+
+The F1D commit SHA is reported through Git history and the final handoff rather than embedded as
+self-referential document content. The historical passed
+sections below remain evidence for their own F1A/F1B/F1C checkpoints only.
 
 ### F1C required gates — passed
 
@@ -932,15 +1025,15 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Post-F1C Backend Backlog
+## Post-F1D Backend Backlog
 
-- Auth/session/RBAC dependencies, permission enforcement, and current-user context.
+- Auth/session/RBAC dependencies, permission enforcement, current-user context and persistent
+  append-only audit recorder/read policy remain Phase 2. F1D provides only redacted event contracts
+  plus the default-discard replaceable port; it does not fabricate an audit center.
 - Global sort controls and validation/error normalization beyond the endpoint families already
   covered. Immutable `RequestContext`, global correlation middleware and the new Phase-1
   `{data,meta}` standard are implemented; remaining Phase-0 envelope migrations require an explicit
   version/deprecation decision.
-- Internal feature flag model/rollout surface; F1A intentionally has no
-  `/api/v1/tenant/features`. User/role management remains Phase 2.
 - Idempotency receipt TTL/cleanup policy and expansion beyond the current employee-create and
   leave-create/decision command scope.
 - Authorized retention/offboarding orchestration around the tenant-root graph boundary; there is

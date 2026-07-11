@@ -25,6 +25,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-017 | Tenant lifecycle ve provisioning yüzeyi | Typed tenant/settings modeli, injected principal ile default-deny platform/tenant API, lifecycle-derived health | Kabul |
 | ADR-018 | Request context ve API contract standardı | Immutable context, güvenli correlation middleware, yeni Faz-1 `{data, meta}` ve explicit Faz-0 adapter'ları | Kabul |
 | ADR-019 | PostgreSQL tenant RLS ve DB capability yolları | Forced RLS, transaction-local tenant binding, HR'sız platform role | Kabul |
+| ADR-020 | Typed tenant rollout ve platform event contracts | Allowlisted per-tenant flags, configured-limit-only queries, redacted UoW event seam | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -707,7 +708,100 @@ Sonuç:
 - Gerçek worker adapter'ı tenant-required envelope'dan aynı transaction binder'ı kurmadan HR
   persistence çalıştıramaz; mevcut fake cross-tenant context eşitliğini fail closed doğrular.
 
-## 21. Ertelenen kararlar
+## 21. ADR-020 Typed tenant rollout, platform metadata query ve redacted event contracts
+
+Bağlam:
+
+- Phase 1 platform operations yüzeyi plan/status/health metadata'sını gösteriyordu ancak internal
+  module rollout katalogu ve `/api/v1/tenant/features` uygulanmamıştı. Customer-specific kod fork'u
+  veya arbitrary string flag kalıcı bir ürün/güvenlik açığı oluştururdu.
+- Platform detail/list response'unda configured plan limiti gerekliydi; bunu employee count/usage
+  sorgusuyla üretmek platform capability'sini HR tablolarına bağlar ve müşteri verisi sızıntısı
+  riski yaratırdı.
+- F1A command UoW seam'i vardı fakat Phase 1 tenant create/status/setting/flag değişiklikleri için
+  Phase 2 append-only audit recorder'ının tüketebileceği kapalı/redacted sözleşmeler yoktu. Bir
+  generic metadata dict erken audit-center/payload şeması yaratır ve parola/token/HR verisinin
+  platform olayına taşınmasına izin verirdi.
+- F1C platform ve tenant PostgreSQL capability'lerini ayırmıştı. Yeni tenant-owned flag tablosunun
+  aynı forced-RLS ve least-privilege yaklaşımını kendi revision'ında genişletmesi gerekiyordu.
+
+Karar:
+
+- CORE domain flag katalogu ordered ve code-owned'dır: `organization`, `employees`, `documents`,
+  `leave`, `self_service`, `reporting`, `notifications`. Deployed Phase-0 modülleri olduğu için
+  yalnız `employees`, `leave`, `reporting` default `true`; diğerleri `false`'tur. Unknown key,
+  per-customer schema ve customer-specific branch reddedilir.
+- `0015_f1d_feature_flags`, tenant-owned assignment/override state'i taşıyan
+  `tenant_feature_flags(tenant_id,key,enabled,timestamps)` tablosunu ekler. `(tenant_id,key)` primary
+  key, tenant-root named cascade FK ve frozen key/boolean check'leri vardır. Migration anındaki
+  existing tenant'lar revision'ın yedi frozen default satırıyla backfill edilir; daha sonra
+  provision edilen tenant aynı yedi default satırı tenant/settings write'ıyla aynı UoW'da alır.
+- F1C tenant root'ta table owner'a da FORCE RLS uygular. F1D upgrade backfill'i ve downgrade limit
+  preflight'ı, migration owner'ın superuser/BYPASSRLS olduğunu varsaymadan transaction içinde
+  tenant-root RLS flag'lerini geçici kaldırır ve `ENABLE + FORCE` durumunu geri kurar. Ayrı gerçek
+  PostgreSQL testi `NOSUPERUSER NOBYPASSRLS` owner ile backfill, refusal ve restoration'ı doğrular.
+- PostgreSQL'de feature tablosu RLS `ENABLE + FORCE` edilir. Tenant capability kendi policy'si
+  altında yalnız `SELECT`; platform capability unrestricted platform policy'si altında yalnız
+  `SELECT/INSERT/UPDATE` alır. İki capability'ye de `DELETE` verilmez. F1C historical migration
+  inventory'si yeniden yazılmaz; F1D kendi policy/grant DDL'ini taşır. Hostile migration-owner
+  default ACL'leri `PUBLIC` ve iki capability için önce revoke edilir, sonra exact grant uygulanır.
+- Aynı revision `tenants.active_employee_limit` nullable integer metadata kolonunu, `1..1_000_000`
+  named check'iyle ekler. HTTP contract bu değeri `limits.active_employees` altında gösterir.
+  Bu configured limit, active employee usage/count değildir; `null` da ölçülmüş limitsiz kullanım
+  anlamına gelmez.
+- Downgrade ancak bütün feature row'ları frozen defaultlarda ve configured active employee limit
+  sayısı sıfırken çalışır. Aksi durumda override/limit sayılarını raporlayarak revision ve veriyi
+  yerinde bırakır.
+- F1D üç additive operation ekler:
+  `GET/PATCH /api/v1/platform/tenants/{tenant_id}/features` ve
+  `GET /api/v1/tenant/features`. Böylece current generated OpenAPI 24 operation, runtime
+  `/openapi.json` ile documented registry 25 endpoint'tir. Historical Phase-0/F1A/F1B snapshotları
+  değiştirilmez; F1D ayrı intentional contract diff'idir.
+- Feature response fixed katalog sırasında tam yedi item taşır. Her item typed `key`, boolean
+  `enabled` ve `source=default|override` alanlarından oluşur. Platform PATCH non-empty, unique-key,
+  strict-boolean allowlist kabul eder. Tenant feature GET tenant ID'yi injected principal/context'ten
+  alır; tenant caller platform feature route'unu authorize edemez.
+- Platform tenant list/detail, ORM entity veya HR aggregate döndürmek yerine dedicated query service
+  ile yalnız `tenants.id/slug/name/status/plan_code/data_region/locale/timezone/active_employee_limit/
+  created_at/updated_at` kolonlarını project eder. Health lifecycle'dan türetilir. Query service HR
+  model import etmez, HR tablosuna join/count yapmaz; response employee/user/leave/document record
+  veya usage sayacı taşımaz.
+- Lifecycle hardening, `offboarding` veya `closed` transition'ının metadata/limit değişikliğiyle aynı
+  PATCH'te birleştirilmesini reddeder. Closed terminal ve offboarding closure-only kuralları korunur;
+  same-value/status/flag update actual change event üretmez.
+- CORE application tam olarak dört Pydantic event sözleşmesine sahiptir: `tenant.created`,
+  `tenant.status_changed`, `tenant.setting_changed`, `feature_flag.changed`. Modeller frozen ve
+  `extra="forbid"`'dır; safe request/trace, non-zero UUID, timezone-aware occurrence, tenant scope,
+  tenant resource/action, allowlisted actor kind/opaque actor-session placeholders ve fixed
+  platform category/result/classification/visibility taşır.
+  `tenant.setting_changed` yalnız non-empty unique changed-field tuple; flag event yalnız typed key
+  ve strict before/after boolean taşır. Generic payload/metadata/before-data/after-data, parola/hash/
+  token/OTP/secret ve employee/HR/sensitive data alanları yapısal olarak yoktur.
+- `app.platform.events` ürün modülünü import etmez; framework-neutral primitive, nominal
+  `PlatformEventContract` marker'ı, dört frozen kimlikle sınırlı exact-type registry ve async
+  `PlatformEventRecorder` portunu sağlar. Recorder adapter'ları marker'ın kendisini, aynı property
+  adlarını taşıyan structural nesneyi ve secret/HR alanı ekleyen subclass'ı reddeder. Phase 1 default adapter
+  event'i discard ederek persistence iddiasında bulunmaz. Command handler actual event'i domain
+  write ile aynı UoW callback'i içinde recorder'a verir; Phase 2 adapter'ı aynı-session append-only
+  write ile değiştirebilir.
+- F1D `audit_events` tablosu, audit retention/indexi, audit query API'si veya platform/tenant audit
+  center eklemez. Bunlar ADR/master plan uyarınca Phase 2'dir.
+
+Sonuç:
+
+- Module rollout tenant-aware ve typed'dır; customer customization aynı codebase/catalog üzerinden
+  yapılır. Tenant ve platform principal/DB capability sınırları ayrı kalır.
+- Plan/limit/health/feature operasyon metadata'sı platforma görünürken customer HR record veya usage
+  sorgusu platform path'ine girmez.
+- Dört exact event Phase 2 atomik recorder'ına hazırdır fakat Phase 1, kalıcı audit izi varmış gibi
+  davranmaz. Recorder hatası UoW callback'ini fail ettirebildiği için ileride audit write başarısızlığı
+  domain write ile birlikte rollback edilebilir.
+- SQLite migration/API tests portable contract kanıtıdır. RLS, grants, raw cross-tenant erişim ve
+  platform-HR denial iddiaları gerçek PostgreSQL F1D lane'i yeşil olmadan tamamlanmış sayılmaz.
+  Final Ruff/pytest/PostgreSQL/smoke ve exact OpenAPI snapshot sonuçları implementation-status
+  belgesine yalnız çalıştırıldıktan sonra yazılır.
+
+## 22. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -717,7 +811,7 @@ Sonuç:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 22. İlgili dokümanlar
+## 23. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

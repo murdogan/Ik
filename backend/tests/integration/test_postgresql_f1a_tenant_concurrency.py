@@ -16,6 +16,7 @@ from app.platform.db import (
     configure_platform_database_access,
     configure_tenant_database_access,
 )
+from app.platform.request_context import RequestContext
 from app.schemas.tenant import (
     TenantPlatformCreate,
     TenantPlatformUpdate,
@@ -36,6 +37,10 @@ pytestmark = pytest.mark.postgres
 
 ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = ROOT / "alembic.ini"
+COMMAND_CONTEXT = RequestContext(
+    request_id="req_f1a_concurrency_001",
+    trace_id="0123456789abcdef0123456789abcdef",
+)
 
 
 @pytest.fixture
@@ -76,7 +81,10 @@ async def _assert_same_slug_provisioning_race(database_url: URL) -> None:
                     service=_BarrierTenantService(session, barrier),
                     unit_of_work=SqlAlchemyUnitOfWork(session),
                 )
-                return await handler.create_tenant(payload)
+                return await handler.create_tenant(
+                    payload,
+                    request_context=COMMAND_CONTEXT,
+                )
 
         outcomes = await asyncio.wait_for(
             asyncio.gather(provision(), provision(), return_exceptions=True),
@@ -133,6 +141,7 @@ async def _assert_lifecycle_lock_serialization(database_url: URL) -> None:
                         await handler.update_tenant(
                             tenant_id,
                             TenantPlatformUpdate(status="suspended"),
+                            request_context=COMMAND_CONTEXT,
                         )
                     assert lock_error.value.sqlstate == "55P03"
 
@@ -146,6 +155,7 @@ async def _assert_lifecycle_lock_serialization(database_url: URL) -> None:
                 await retry_handler.update_tenant(
                     tenant_id,
                     TenantPlatformUpdate(status="suspended"),
+                    request_context=COMMAND_CONTEXT,
                 )
 
         async with session_factory() as verification_session:
@@ -180,6 +190,7 @@ async def _assert_settings_lock_serialization(database_url: URL) -> None:
                         await handler.update_tenant_settings(
                             tenant_id,
                             TenantSettingsUpdate(date_format="YYYY-MM-DD"),
+                            request_context=COMMAND_CONTEXT,
                         )
                     assert lock_error.value.sqlstate == "55P03"
 
@@ -192,6 +203,7 @@ async def _assert_settings_lock_serialization(database_url: URL) -> None:
             retried = await retry_handler.update_tenant_settings(
                 tenant_id,
                 TenantSettingsUpdate(date_format="YYYY-MM-DD"),
+                request_context=COMMAND_CONTEXT,
             )
             assert retried.week_start_day == "sunday"
             assert retried.date_format == "YYYY-MM-DD"

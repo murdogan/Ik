@@ -33,7 +33,7 @@ Bu modül seti doğrudan [MVP, V1 ve V2 Kapsam Kararları](../02-urun/03-mvp-v1-
 
 Kapsam dışı maddeler ürün vizyonundan çıkarılmış değildir; V1, V2 veya Enterprise fazına ertelenmiştir.
 
-F1A current implementation boundary:
+Historical F1A implementation boundary:
 
 - Yalnız tenant lifecycle, plan/region/locale/timezone, fixed typed settings ve yedi
   platform/tenant operation'ı uygulanır. Authentication/session/RBAC, audit persistence, RLS,
@@ -42,6 +42,23 @@ F1A current implementation boundary:
   `PlatformPrincipal`/`TenantPrincipal` yoksa dependency `403` ile fail closed olur; Phase 2 auth
   bu seam'i dolduracaktır.
 - Success body'ler Faz 1.2 `{data, meta}` compatibility geçişine kadar doğrudan typed object/list'tir.
+
+Current F1D CORE boundary:
+
+- F1A/F1B/F1C'nin lifecycle, typed settings, request context ve forced-RLS katmanları korunur.
+  F1D yalnız typed platform rollout/metadata ve platform-event contract yüzeyini tamamlar;
+  authentication/session/RBAC ve audit persistence hâlâ Faz 2 işidir.
+- Sabit flag katalog sırası `organization`, `employees`, `documents`, `leave`, `self_service`,
+  `reporting`, `notifications`'tır. Default `true` değerleri yalnız `employees`, `leave`,
+  `reporting`; diğerleri `false`'tur. Tenant response'u her key için effective boolean ve
+  `default|override` kaynağını döndürür; arbitrary customer flag veya code fork yoktur.
+- Platform tenant response'unda `limits.active_employees` nullable configured metadata'dır; aktif
+  çalışan usage/count değeri değildir. Platform metadata query'si yalnız `tenants` kolonlarını
+  explicit project eder ve HR tablolarına join/count yapmaz.
+- `tenant.created`, `tenant.status_changed`, `tenant.setting_changed`, `feature_flag.changed`
+  sözleşmeleri frozen/extra-forbid ve platform-metadata-only'dir. Varsayılan recorder discard eder;
+  Faz 2 aynı UoW portuna append-only persistence adapter'ı bağlayacaktır. Audit tablosu/read center
+  F1D kapsamında yoktur.
 
 ## 3. Kullanıcı rolleri ve sorumluluklar
 
@@ -164,10 +181,10 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 
 | Varlık | Amaç | Kritik alanlar |
 |---|---|---|
-| `tenants` | Müşteri/kurum hesabı | `id`, `slug`, `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone` |
+| `tenants` | Müşteri/kurum hesabı | `id`, `slug`, `name`, `status`, `plan_code`, `data_region`, `locale`, `timezone`, nullable configured `active_employee_limit` |
 | `tenant_settings` | F1A fixed kurum ayarları | `tenant_id`, `week_start_day`, `date_format`, `time_format`, timestamps; arbitrary key/value yok |
-| `plans` | İleri-faz paket/limit katalogu | F1A ayrı plan tablosu kurmaz; canonical write kodları `core`, `professional`, `enterprise` |
-| `feature_flags` | İleri-faz modül aç/kapa | F1A tablo veya `/api/v1/tenant/features` endpoint'i eklemez |
+| `plans` | İleri-faz paket katalogu | Ayrı plan tablosu yok; canonical write kodları `core`, `professional`, `enterprise`; F1D tek configured active-employee limitini tenant metadata'sında taşır |
+| `tenant_feature_flags` | F1D tenant/modül rollout state'i | Composite `(tenant_id,key)` PK; fixed key check, boolean enabled, timestamps; default/override effective read |
 | `users` | Login kimliği | `id`, `tenant_id`, `email`, `password_hash`, `status` |
 | `user_identities` | SSO/harici kimlik | `provider`, `subject`, `user_id` |
 | `sessions` | Oturum ve cihaz bilgisi | `user_id`, `device_id`, `refresh_family_id`, `revoked_at` |
@@ -189,6 +206,9 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 | GET | `/api/v1/tenant` | Injected principal current tenant metadata | F1A |
 | GET | `/api/v1/tenant/settings` | Beş typed setting | F1A |
 | PATCH | `/api/v1/tenant/settings` | Fixed allowlist partial update | F1A |
+| GET | `/api/v1/platform/tenants/{tenant_id}/features` | Bir tenant'ın effective rollout metadata'sı | F1D |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}/features` | Typed, allowlisted tenant flag değişikliği | F1D |
+| GET | `/api/v1/tenant/features` | Injected tenant principal'ın kendi effective flag'leri | F1D |
 | POST | `/api/v1/auth/login` | Login başlatır | MVP |
 | POST | `/api/v1/auth/refresh` | Token yeniler | MVP |
 | POST | `/api/v1/auth/logout` | Session kapatır | MVP |
@@ -209,6 +229,8 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 | Kural | Açıklama |
 |---|---|
 | F1A principal default-deny | Injected trusted platform/tenant principal yoksa `403`; header/path/body kimliği authorization değil |
+| F1D platform/tenant ayrımı | Tenant principal platform feature/list/detail/PATCH route'larını authorize edemez; platform path tenant ID yalnız resource selector'dır |
+| Platform metadata isolation | Platform query/response plan, configured limit, lifecycle health ve rollout metadata'sıyla sınırlıdır; HR record/count yoktur |
 | Tenant context body'den alınmaz | Tenant token, subdomain veya session context'ten gelir |
 | Her sorgu tenant filtreli olmalı | App katmanı ve tercihen DB RLS ile korunur |
 | Kullanıcı global unique olmak zorunda değil | Aynı e-posta farklı tenantlarda olabilir; login tenant-aware olmalı |
@@ -260,11 +282,14 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 | Rol atama/değiştirme | Evet | Önce/sonra ve gerekçe |
 | Hassas alan görüntüleme | Evet | Alan adı ve actor yazılır |
 | Export oluşturma | Evet | Filtre, alan ve dosya tipi |
-| Feature flag değişimi | Evet | Plan ve modül etkisi |
-| Tenant ayarı değişimi | Evet | Önce/sonra snapshot |
+| Tenant oluşturma/durum değişimi | Evet | F1D exact redacted contract; yalnız typed platform metadata |
+| Feature flag değişimi | Evet | Typed key ve before/after boolean; arbitrary payload yok |
+| Tenant ayarı değişimi | Evet | Yalnız non-empty allowlisted changed-field tuple; değer/entity snapshot'ı yok |
 | Session revoke | Evet | Kullanıcı veya admin aksiyonu |
 
 Saklama kararı: Güvenlik ve audit logları operasyonel ihtiyaç ve yasal saklama politikasıyla uyumlu şekilde ayrı retention sınıfına alınmalıdır. Hassas metadata minimum tutulmalıdır.
+F1D bu olayların persistence/read modelini kurmaz; contract ve transaction içi recorder seam'i Faz 2
+atomik audit yazımı için hazırlar.
 
 ## 11. Bildirimler ve arka plan işler
 
@@ -295,6 +320,9 @@ Arka plan işler:
 | Integration | Login → refresh → logout akışı |
 | Integration | Role değişince yetki etkisi |
 | Integration | Tenant A kullanıcısı Tenant B kaydını göremez |
+| Integration | Tenant A effective flag'i Tenant B override'ını göremez; tenant principal platform feature route'unda `403` alır |
+| Integration/PostgreSQL | Tenant flag tablosu FORCE RLS; app yalnız tenant SELECT, platform yalnız SELECT/INSERT/UPDATE; iki role de DELETE yok |
+| Contract | Dört F1D event yalnız allowlisted metadata kabul eder; parola/token/employee/HR ve generic payload reddedilir |
 | E2E | Tenant admin kullanıcı davet eder ve rol atar |
 | E2E | Manager sadece kendi ekibini görür |
 | Security | Broken object level authorization denemeleri |
@@ -312,6 +340,10 @@ Arka plan işler:
 - Rol değişiklikleri audit'e düşer.
 - Export işlemleri ayrı permission ve audit ister.
 - Feature flag ile modül/özellik erişimi kontrol edilebilir.
+- Platform plan/limit/health/flag response'ları customer HR kaydı veya usage count içermez.
+- Feature flag katalogu typed ve tenant-aware'dir; unknown key fail closed olur.
+- F1D event sözleşmeleri Phase 2 recorder'ıyla aynı UoW içinde kalıcılaştırılabilecek dar porttan
+  geçer fakat Faz 1 audit persistence iddiasında bulunmaz.
 
 ## 14. Riskler, açık sorular ve kararlar
 

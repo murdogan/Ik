@@ -23,6 +23,10 @@ from app.platform.db import (
     SqlAlchemyUnitOfWork,
 )
 from app.platform.db.tenant_access import DATABASE_ACCESS_CONTEXT_STATE_KEY
+from app.platform.events import (
+    DiscardingPlatformEventRecorder,
+    PlatformEventRecorder,
+)
 from app.platform.observability.correlation import (
     get_or_create_request_context,
     replace_request_context,
@@ -31,7 +35,9 @@ from app.platform.principals import PlatformPrincipal, TenantPrincipal
 from app.platform.request_context import RequestContext
 from app.platform.tenancy import TenantContext
 from app.services.command_idempotency import CommandIdempotencyService
+from app.services.platform_tenant_queries import PlatformTenantQueryService
 from app.services.tenant_commands import TenantCommandHandler
+from app.services.tenant_feature_service import TenantFeatureService
 from app.services.tenant_service import TenantService
 
 
@@ -124,11 +130,42 @@ def get_tenant_service(
     return TenantService(session=session)
 
 
+def get_platform_tenant_query_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> PlatformTenantQueryService:
+    return PlatformTenantQueryService(session=session)
+
+
+def get_tenant_feature_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> TenantFeatureService:
+    return TenantFeatureService(session=session)
+
+
+def get_platform_event_recorder() -> PlatformEventRecorder:
+    """Contract-only Phase-1 seam; Phase 2 replaces it with same-session persistence."""
+
+    return DiscardingPlatformEventRecorder()
+
+
 def get_tenant_command_handler(
     service: Annotated[TenantService, Depends(get_tenant_service)],
+    feature_service: Annotated[
+        TenantFeatureService,
+        Depends(get_tenant_feature_service),
+    ],
     unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
+    event_recorder: Annotated[
+        PlatformEventRecorder,
+        Depends(get_platform_event_recorder),
+    ],
 ) -> TenantCommandHandler:
-    return TenantCommandHandler(service=service, unit_of_work=unit_of_work)
+    return TenantCommandHandler(
+        service=service,
+        feature_service=feature_service,
+        unit_of_work=unit_of_work,
+        event_recorder=event_recorder,
+    )
 
 
 def get_idempotency_key(

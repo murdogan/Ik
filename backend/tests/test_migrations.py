@@ -22,6 +22,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.exc import IntegrityError
 
 ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = Path("alembic.ini")
@@ -317,6 +318,40 @@ def _run_alembic_f1c_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_f1d_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0014_f1c_postgresql_rls:0015_f1d_feature_flags",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_f1d_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0015_f1d_feature_flags:0014_f1c_postgresql_rls",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -351,8 +386,9 @@ def test_core_migration_chain_is_linear() -> None:
     p0f_revision = script.get_revision("0012_p0f_query_performance")
     tenant_settings_revision = script.get_revision("0013_tenant_settings")
     f1c_rls_revision = script.get_revision("0014_f1c_postgresql_rls")
+    f1d_feature_revision = script.get_revision("0015_f1d_feature_flags")
 
-    assert script.get_heads() == ["0014_f1c_postgresql_rls"]
+    assert script.get_heads() == ["0015_f1d_feature_flags"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -385,6 +421,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert tenant_settings_revision.down_revision == "0012_p0f_query_performance"
     assert f1c_rls_revision is not None
     assert f1c_rls_revision.down_revision == "0013_tenant_settings"
+    assert f1d_feature_revision is not None
+    assert f1d_feature_revision.down_revision == "0014_f1c_postgresql_rls"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -501,6 +539,76 @@ def test_alembic_offline_f1c_downgrade_removes_local_security_without_dropping_r
     assert "DROP ROLE" not in result.stdout
 
 
+def test_alembic_offline_f1d_upgrade_renders_feature_rls_and_narrow_grants() -> None:
+    result = _run_alembic_f1d_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "ADD COLUMN active_employee_limit INTEGER" in result.stdout
+    assert "ck_tenants_active_employee_limit_positive" in result.stdout
+    assert "active_employee_limit between 1 and 1000000" in result.stdout
+    assert "CREATE TABLE tenant_feature_flags" in result.stdout
+    assert "ck_tenant_feature_flags_key" in result.stdout
+    assert "ck_tenant_feature_flags_enabled" in result.stdout
+    assert result.stdout.count("insert into tenant_feature_flags") == 7
+    assert (
+        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" FROM PUBLIC'
+        in result.stdout
+    )
+    assert (
+        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" '
+        'FROM "wealthy_falcon_app"'
+    ) in result.stdout
+    assert (
+        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" '
+        'FROM "wealthy_falcon_platform"'
+    ) in result.stdout
+    assert 'ALTER TABLE "tenants" NO FORCE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenants" DISABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenants" ENABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenants" FORCE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenant_feature_flags" ENABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenant_feature_flags" FORCE ROW LEVEL SECURITY' in result.stdout
+    assert (
+        'ON "tenant_feature_flags" AS PERMISSIVE FOR ALL TO "wealthy_falcon_app"'
+        in result.stdout
+    )
+    assert (
+        'CREATE POLICY "platform_feature_operations" ON "tenant_feature_flags"'
+        in result.stdout
+    )
+    assert (
+        'GRANT SELECT ON TABLE "tenant_feature_flags" TO "wealthy_falcon_app"'
+        in result.stdout
+    )
+    assert (
+        'GRANT SELECT, INSERT, UPDATE ON TABLE "tenant_feature_flags" '
+        'TO "wealthy_falcon_platform"'
+    ) in result.stdout
+    assert "GRANT DELETE" not in result.stdout
+
+
+def test_alembic_offline_f1d_downgrade_guards_state_and_removes_local_security() -> None:
+    result = _run_alembic_f1d_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $f1d_downgrade_preflight$" in result.stdout
+    assert "F1D downgrade preflight failed" in result.stdout
+    assert 'ALTER TABLE "tenant_feature_flags" NO FORCE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenant_feature_flags" DISABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenants" NO FORCE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenants" DISABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenants" ENABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "tenants" FORCE ROW LEVEL SECURITY' in result.stdout
+    assert (
+        'REVOKE SELECT, INSERT, UPDATE ON TABLE "tenant_feature_flags" '
+        'FROM "wealthy_falcon_platform"'
+    ) in result.stdout
+    assert 'DROP POLICY IF EXISTS "platform_feature_operations"' in result.stdout
+    assert 'DROP POLICY IF EXISTS "tenant_isolation_app"' in result.stdout
+    assert "DROP TABLE tenant_feature_flags" in result.stdout
+    assert "DROP COLUMN active_employee_limit" in result.stdout
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -533,7 +641,7 @@ def test_sqlite_f1c_security_migration_is_a_schema_noop(tmp_path: Path) -> None:
     try:
         before_tables = set(inspect(engine).get_table_names())
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, "0014_f1c_postgresql_rls")
 
         assert set(inspect(engine).get_table_names()) == before_tables
         with engine.connect() as connection:
@@ -544,6 +652,187 @@ def test_sqlite_f1c_security_migration_is_a_schema_noop(tmp_path: Path) -> None:
         alembic_command.downgrade(config, "0013_tenant_settings")
 
         assert set(inspect(engine).get_table_names()) == before_tables
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_f1d_feature_defaults_limits_and_constraints_round_trip(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-f1d-round-trip.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    tenant_id = "11111111aaaa41118111111111111111"
+    alembic_command.upgrade(config, "0014_f1c_postgresql_rls")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'f1d-backfill', 'F1D Backfill', 'active', 'core', 'tr-1', "
+                    "'tr-TR', 'Europe/Istanbul', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            feature_rows = dict(
+                list(
+                    connection.execute(
+                        text(
+                            "select key, enabled from tenant_feature_flags "
+                            "where tenant_id = :tenant_id"
+                        ),
+                        {"tenant_id": tenant_id},
+                    ).tuples()
+                )
+            )
+            configured_limit = connection.scalar(
+                text(
+                    "select active_employee_limit from tenants where id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            )
+
+        assert feature_rows == {
+            "organization": 0,
+            "employees": 1,
+            "documents": 0,
+            "leave": 1,
+            "self_service": 0,
+            "reporting": 1,
+            "notifications": 0,
+        }
+        assert configured_limit is None
+        assert "tenant_feature_flags" in inspect(engine).get_table_names()
+        assert "active_employee_limit" in {
+            column["name"] for column in inspect(engine).get_columns("tenants")
+        }
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "insert into tenant_feature_flags ("
+                        "tenant_id, key, enabled, created_at, updated_at"
+                        ") values ("
+                        ":tenant_id, 'payroll', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                        ")"
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "update tenant_feature_flags set enabled = 2 "
+                        "where tenant_id = :tenant_id and key = 'organization'"
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+        for invalid_limit in (0, 1_000_001):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "update tenants set active_employee_limit = :limit "
+                            "where id = :tenant_id"
+                        ),
+                        {"limit": invalid_limit, "tenant_id": tenant_id},
+                    )
+
+        alembic_command.downgrade(config, "0014_f1c_postgresql_rls")
+        assert "tenant_feature_flags" not in inspect(engine).get_table_names()
+        assert "active_employee_limit" not in {
+            column["name"] for column in inspect(engine).get_columns("tenants")
+        }
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.scalar(
+                text(
+                    "select count(*) from tenant_feature_flags "
+                    "where tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            ) == len(feature_rows)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("retained_write", "expected_counts", "remediation"),
+    [
+        (
+            "update tenant_feature_flags set enabled = true "
+            "where key = 'organization'",
+            "feature_overrides=1, configured_active_employee_limits=0",
+            "update tenant_feature_flags set enabled = false "
+            "where key = 'organization'",
+        ),
+        (
+            "update tenants set active_employee_limit = 250",
+            "feature_overrides=0, configured_active_employee_limits=1",
+            "update tenants set active_employee_limit = null",
+        ),
+    ],
+)
+def test_sqlite_f1d_downgrade_refuses_rollout_or_limit_state(
+    tmp_path: Path,
+    retained_write: str,
+    expected_counts: str,
+    remediation: str,
+) -> None:
+    database_path = tmp_path / "migration-f1d-retention-guard.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    tenant_id = "11111111aaaa41118111111111111111"
+    alembic_command.upgrade(config, "0014_f1c_postgresql_rls")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'f1d-retained', 'F1D Retained', 'active', 'core', 'tr-1', "
+                    "'tr-TR', 'Europe/Istanbul', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+        alembic_command.upgrade(config, "head")
+        with engine.begin() as connection:
+            connection.execute(text(retained_write))
+
+        with pytest.raises(
+            RuntimeError,
+            match=f"F1D downgrade preflight failed.*{expected_counts}",
+        ):
+            alembic_command.downgrade(config, "0014_f1c_postgresql_rls")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0015_f1d_feature_flags"
+            )
+            assert connection.scalar(
+                text("select count(*) from tenant_feature_flags")
+            ) == 7
+
+        with engine.begin() as connection:
+            connection.execute(text(remediation))
+        alembic_command.downgrade(config, "0014_f1c_postgresql_rls")
+        assert "tenant_feature_flags" not in inspect(engine).get_table_names()
     finally:
         engine.dispose()
 
@@ -936,6 +1225,25 @@ def test_f1c_postgresql_rls_migration_freezes_complete_security_inventory() -> N
     assert "TENANT_APPLICATION_ROLE" in migration_text
     assert "PLATFORM_APPLICATION_ROLE" in migration_text
     assert "nullif(current_setting('app.tenant_id', true), '')::uuid" in helper_text
+
+
+def test_f1d_feature_flag_migration_freezes_catalog_limits_and_security() -> None:
+    migration = Path("backend/alembic/versions/0015_f1d_feature_flags.py")
+
+    assert migration.exists()
+    migration_text = migration.read_text()
+    assert "0014_f1c_postgresql_rls" in migration_text
+    assert "tenant_feature_flags" in migration_text
+    assert "active_employee_limit" in migration_text
+    assert "ck_tenants_active_employee_limit_positive" in migration_text
+    assert "ck_tenant_feature_flags_key" in migration_text
+    assert "ck_tenant_feature_flags_enabled" in migration_text
+    assert "fk_tenant_feature_flags_tenant_id_tenants" in migration_text
+    assert "_FEATURE_DEFAULTS" in migration_text
+    assert "enable_forced_row_security" in migration_text
+    assert "TENANT_APPLICATION_ROLE" in migration_text
+    assert "PLATFORM_APPLICATION_ROLE" in migration_text
+    assert "F1D downgrade preflight failed" in migration_text
 
 
 def test_readme_documents_migration_commands() -> None:

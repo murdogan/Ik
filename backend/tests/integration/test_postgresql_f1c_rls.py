@@ -58,10 +58,13 @@ TENANT_OWNED_TABLES = frozenset(
         "leave_balance_summaries",
         "command_idempotency",
         "tenant_settings",
+        "tenant_feature_flags",
     }
 )
 ROW_SECURITY_TABLES = TENANT_OWNED_TABLES | {"tenants"}
-PLATFORM_TABLES = frozenset({"tenants", "tenant_settings"})
+PLATFORM_TABLES = frozenset(
+    {"tenants", "tenant_settings", "tenant_feature_flags"}
+)
 HR_TABLES = ROW_SECURITY_TABLES - PLATFORM_TABLES
 
 TABLE_PRIVILEGES = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
@@ -73,11 +76,12 @@ EXPECTED_APPLICATION_PRIVILEGES = {
     "leave_balance_summaries": frozenset({"SELECT"}),
     "command_idempotency": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "tenant_settings": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "tenant_feature_flags": frozenset({"SELECT"}),
 }
 EXPECTED_PLATFORM_PRIVILEGES = {
     table_name: (
         frozenset({"SELECT", "INSERT", "UPDATE"})
-        if table_name == "tenants"
+        if table_name in {"tenants", "tenant_feature_flags"}
         else frozenset({"INSERT"})
         if table_name == "tenant_settings"
         else frozenset()
@@ -147,6 +151,7 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
             } | {
                 ("tenants", "platform_operations"),
                 ("tenant_settings", "platform_provision_settings"),
+                ("tenant_feature_flags", "platform_feature_operations"),
             }
             assert set(policies) == expected_policy_keys
 
@@ -178,6 +183,15 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
             assert settings_policy["cmd"] == "INSERT"
             assert settings_policy["qual"] is None
             assert settings_policy["with_check"] == "true"
+
+            feature_policy = policies[
+                ("tenant_feature_flags", "platform_feature_operations")
+            ]
+            assert feature_policy["permissive"] == "PERMISSIVE"
+            assert tuple(feature_policy["roles"]) == (PLATFORM_APPLICATION_ROLE,)
+            assert feature_policy["cmd"] == "ALL"
+            assert feature_policy["qual"] == "true"
+            assert feature_policy["with_check"] == "true"
 
             role_rows = (
                 await connection.execute(
@@ -261,6 +275,7 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                     "data_region",
                     "locale",
                     "timezone",
+                    "active_employee_limit",
                     "created_at",
                     "updated_at",
                 )
@@ -457,6 +472,20 @@ async def test_platform_role_can_operate_metadata_but_cannot_select_any_hr_table
             )
             await connection.execute(
                 text(
+                    "update tenants set active_employee_limit = 250 "
+                    "where id = :tenant_id"
+                ),
+                {"tenant_id": TENANT_A_ID},
+            )
+            await connection.execute(
+                text(
+                    "update tenant_feature_flags set enabled = true "
+                    "where tenant_id = :tenant_id and key = 'documents'"
+                ),
+                {"tenant_id": TENANT_A_ID},
+            )
+            await connection.execute(
+                text(
                     "insert into tenants ("
                     "id, slug, name, status, plan_code, data_region, locale, timezone"
                     ") values ("
@@ -474,6 +503,20 @@ async def test_platform_role_can_operate_metadata_but_cannot_select_any_hr_table
                 ),
                 {"tenant_id": TENANT_C_ID},
             )
+            await connection.execute(
+                text(
+                    "insert into tenant_feature_flags (tenant_id, key, enabled) "
+                    "values (:tenant_id, 'organization', true)"
+                ),
+                {"tenant_id": TENANT_C_ID},
+            )
+            assert await connection.scalar(
+                text(
+                    "select enabled from tenant_feature_flags "
+                    "where tenant_id = :tenant_id and key = 'documents'"
+                ),
+                {"tenant_id": TENANT_A_ID},
+            ) is True
 
         with pytest.raises(DBAPIError) as settings_read_error:
             async with engine.begin() as connection:
@@ -503,6 +546,23 @@ async def test_platform_role_can_operate_metadata_but_cannot_select_any_hr_table
                 )
                 == "monday"
             )
+            assert (
+                await connection.scalar(
+                    text(
+                        "select active_employee_limit from tenants "
+                        "where id = :tenant_id"
+                    ),
+                    {"tenant_id": TENANT_A_ID},
+                )
+                == 250
+            )
+            assert await connection.scalar(
+                text(
+                    "select enabled from tenant_feature_flags "
+                    "where tenant_id = :tenant_id and key = 'organization'"
+                ),
+                {"tenant_id": TENANT_C_ID},
+            ) is True
             assert not await connection.scalar(
                 text(
                     "select has_table_privilege("
@@ -518,6 +578,57 @@ async def test_platform_role_can_operate_metadata_but_cannot_select_any_hr_table
                         "relation_name": f"public.{table_name}",
                     },
                 )
+    finally:
+        await engine.dispose()
+
+
+async def test_tenant_feature_flags_are_read_only_and_cross_tenant_hidden(
+    f1c_postgres_database: URL,
+) -> None:
+    engine = create_async_engine(f1c_postgres_database, poolclass=NullPool)
+    try:
+        await _seed_tenants_and_employees(engine)
+
+        async with engine.begin() as connection:
+            await _set_local_role(connection, TENANT_APPLICATION_ROLE)
+            await _set_local_tenant(connection, TENANT_A_ID)
+            assert set(
+                await connection.scalars(
+                    text("select tenant_id from tenant_feature_flags")
+                )
+            ) == {TENANT_A_ID}
+            assert (
+                await connection.scalar(
+                    text(
+                        "select enabled from tenant_feature_flags "
+                        "where tenant_id = :tenant_id and key = 'documents'"
+                    ),
+                    {"tenant_id": TENANT_B_ID},
+                )
+                is None
+            )
+
+        with pytest.raises(DBAPIError) as update_error:
+            async with engine.begin() as connection:
+                await _set_local_role(connection, TENANT_APPLICATION_ROLE)
+                await _set_local_tenant(connection, TENANT_A_ID)
+                await connection.execute(
+                    text(
+                        "update tenant_feature_flags set enabled = true "
+                        "where tenant_id = :tenant_id and key = 'documents'"
+                    ),
+                    {"tenant_id": TENANT_A_ID},
+                )
+        assert sqlstate_from_error(update_error.value) == "42501"
+
+        async with engine.begin() as connection:
+            await _set_local_role(connection, TENANT_APPLICATION_ROLE)
+            await _set_local_tenant(connection, TENANT_B_ID)
+            assert set(
+                await connection.scalars(
+                    text("select tenant_id from tenant_feature_flags")
+                )
+            ) == {TENANT_B_ID}
     finally:
         await engine.dispose()
 
@@ -733,6 +844,13 @@ async def _seed_tenants_and_employees(engine: AsyncEngine) -> None:
             text(
                 "insert into tenant_settings (tenant_id, week_start_day, date_format, time_format) "
                 "values (:tenant_id, 'monday', 'DD.MM.YYYY', '24h')"
+            ),
+            [{"tenant_id": TENANT_A_ID}, {"tenant_id": TENANT_B_ID}],
+        )
+        await connection.execute(
+            text(
+                "insert into tenant_feature_flags (tenant_id, key, enabled) "
+                "values (:tenant_id, 'documents', false)"
             ),
             [{"tenant_id": TENANT_A_ID}, {"tenant_id": TENANT_B_ID}],
         )

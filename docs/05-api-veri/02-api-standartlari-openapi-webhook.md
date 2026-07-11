@@ -2,10 +2,10 @@
 
 Bu doküman, IK Platform HTTP API'lerinin URL, response, hata, pagination, idempotency, async job ve webhook standartlarını tanımlar.
 
-Bu belge hedef standardı da içerir; F1B dahil güncel yüzey
+Bu belge hedef standardı da içerir; F1D dahil güncel yüzey
 [API Implementation Status Report](../09-uygulama/11-api-implementation-status.md) ile sınırlıdır.
 Aşağıdaki payroll, PDKS ve AI referansları ileri-faz capability kataloğudur; bu alanlar MVP
-dışıdır ve F1B runtime davranışı, endpoint'i veya background task'ı değildir.
+dışıdır ve F1D runtime davranışı, endpoint'i veya background task'ı değildir.
 
 ## 1. Temel API ilkeleri
 
@@ -81,6 +81,34 @@ Tekil operation'larda `meta` tam olarak `request_id`, `trace_id`, `correlation_i
 listesinde bunlara ek olarak `limit` ve `next_cursor` taşır. `correlation_id`, geçiş süresince
 `request_id` ile aynı değerdeki deprecated body alias'ıdır. F1A/F1B
 `/api/v1/tenant/features` eklemez.
+
+F1D current additive operation'ları:
+
+- `GET/PATCH /api/v1/platform/tenants/{tenant_id}/features`
+- `GET /api/v1/tenant/features`
+
+Bu üç success operation da `DataEnvelope<TenantFeaturesRead>` kullanır ve response `data.features`
+alanı fixed katalog sırasında tam yedi item taşır. Her item yalnız typed `key`, strict/effective
+boolean `enabled` ve `source=default|override` alanlarından oluşur. Platform PATCH body örneği:
+
+```json
+{
+  "features": [
+    { "key": "organization", "enabled": true }
+  ]
+}
+```
+
+Liste non-empty, key'ler unique ve allowlisted, boolean değer strict olmalıdır. Unknown/duplicate/
+null/numeric/string boolean veya arbitrary nested payload `422 platform_tenant_validation_error`
+ile reddedilir. Tenant feature GET tenant selector kabul etmez; scope injected principal'dan gelir.
+Provisioning tenant GET `423 tenant_not_ready`, closed tenant GET `410 tenant_closed`; suspended ve
+offboarding read-only flag görünürlüğünü korur. Platform flag PATCH closed/offboarding tenant'ta
+`409 tenant_lifecycle_conflict` döner.
+
+Platform tenant create/list/detail/PATCH `TenantPlatformRead` response'u F1D'de nested
+`limits.active_employees` alanını taşır. Değer nullable configured platform metadata'dır; HR usage
+veya employee count değildir. Query service yalnız allowlisted `tenants` kolonlarını project eder.
 
 Hata response:
 
@@ -260,9 +288,11 @@ Kullanım alanları:
 - Public API dokümanı internal endpointleri içermez.
 - Historical F1A additive schema ayrı `f1a_openapi_contract.json` snapshot'ında, Faz-0 schema ise
   kendi immutable manifestinde tutulur. F1B intentional envelope/header/pagination diff'ini contract
-  testleriyle açıkça doğrular; historical Faz-0 manifesti overwrite edilmez.
+  testleriyle açıkça doğrular; historical Faz-0 manifesti overwrite edilmez. F1D üç additive
+  feature operation'ı ve limit/feature component değişikliklerini ayrı current snapshot/diff ile
+  doğrular; historical F1A/F1B snapshotları da overwrite edilmez.
 
-F1A platform/tenant güvenlik standardı:
+Historical F1A platform/tenant güvenlik standardı:
 
 - Platform operation'ları yalnız trusted adapter'ın enjekte ettiği `PlatformPrincipal`; tenant
   operation'ları yalnız enjekte edilen immutable `TenantPrincipal` ile çalışır. Default dependency
@@ -283,10 +313,25 @@ F1A platform/tenant güvenlik standardı:
 - `provisioning` tenant erişimi `423`, `closed` erişimi `410`; `suspended` ve `offboarding` GET
   açıktır ama settings PATCH `423` döner.
 
-Generated OpenAPI 21 operation'lık yüzeyi korur. F1B success schema/header assertion'ları yedi
-tenant/platform operation'ının `{data, meta}` modelini, platform listenin cursor-only query
-parametrelerini ve Faz-0 employee/leave listelerinin plain-array + deprecated-offset compatibility
-kararını görünür kılar. Runtime registry `/openapi.json` dahil 22 documented endpoint'tir.
+F1D ek güvenlik/metadata standardı:
+
+- Tenant principal hiçbir platform operation'ını authorize etmez. Platform feature path'indeki
+  tenant UUID resource selector'dır; caller header/body/query authority değildir.
+- Feature key katalogu sırayla `organization|employees|documents|leave|self_service|reporting|
+  notifications`; default true yalnız `employees|leave|reporting`'dir. Customer-specific key veya
+  fork yoktur.
+- Platform response yalnız tenant identity/lifecycle/plan/region/locale/timezone/timestamps,
+  lifecycle-derived health, configured `limits.active_employees` ve typed feature rollout metadata
+  taşır. Employee/user/leave/document schema, record, count veya usage alanı referanslanamaz.
+- Successful actual platform/tenant mutations exact redacted event contract'ını command UoW içinde
+  async recorder portuna verir. Faz 1 default adapter discard eder; audit persistence ve audit read
+  endpointleri Faz 2'ye aittir.
+
+Historical F1B generated OpenAPI 21 operation'lık yüzeyi korumuştur. Current F1D üç additive
+operation ile 24 generated operation'dır; runtime registry `/openapi.json` dahil 25 documented
+endpoint'tir. Contract assertions F1B'nin yedi envelope/cursor kararını, F1D feature/limit
+componentlerini ve Faz-0 employee/leave plain-array + deprecated-offset compatibility kararını
+birlikte görünür kılar.
 
 ## 9. Webhook mimarisi
 

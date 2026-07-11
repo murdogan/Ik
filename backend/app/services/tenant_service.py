@@ -8,7 +8,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.tenant import Tenant, TenantSettings
+from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
+from app.modules.core.domain.feature_flags import FEATURE_FLAG_DEFAULTS
 from app.modules.core.domain.tenant import (
     TenantAccessMode,
     TenantDateFormat,
@@ -66,6 +67,19 @@ class TenantSettingsSnapshot:
     time_format: str
 
 
+@dataclass(frozen=True, slots=True)
+class TenantUpdateMutation:
+    tenant: Tenant
+    previous_status: TenantStatus
+    changed_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TenantSettingsMutation:
+    settings: TenantSettingsSnapshot
+    changed_fields: tuple[str, ...]
+
+
 class TenantService:
     """Focused tenant metadata, lifecycle, and typed-settings persistence service."""
 
@@ -112,6 +126,7 @@ class TenantService:
             data_region=payload.data_region.value,
             locale=payload.locale.value,
             timezone=payload.timezone,
+            active_employee_limit=payload.limits.active_employees,
         )
         self.session.add(tenant)
         await self._flush_tenant_write()
@@ -124,6 +139,14 @@ class TenantService:
                 time_format=payload.settings.time_format.value,
             )
         )
+        self.session.add_all(
+            TenantFeatureFlag(
+                tenant_id=tenant.id,
+                key=key.value,
+                enabled=enabled,
+            )
+            for key, enabled in FEATURE_FLAG_DEFAULTS.items()
+        )
         await self.session.flush()
         await self.session.refresh(tenant)
         return tenant
@@ -133,8 +156,15 @@ class TenantService:
         tenant_id: UUID,
         payload: TenantPlatformUpdate,
     ) -> Tenant:
+        return (await self.update_tenant_with_changes(tenant_id, payload)).tenant
+
+    async def update_tenant_with_changes(
+        self,
+        tenant_id: UUID,
+        payload: TenantPlatformUpdate,
+    ) -> TenantUpdateMutation:
         tenant = await self._get_tenant_for_update(tenant_id)
-        values = _provided_values(payload)
+        values = _provided_tenant_values(payload)
         current_status = TenantStatus(tenant.status)
         next_status = values.get("status", current_status)
         if not isinstance(next_status, TenantStatus):
@@ -148,27 +178,43 @@ class TenantService:
         changed_fields = {
             field_name
             for field_name, value in values.items()
-            if field_name != "status" and value != getattr(tenant, field_name)
+            if _enum_value(value) != getattr(tenant, field_name)
         }
-        if current_status is TenantStatus.CLOSED and changed_fields:
+        non_status_changed_fields = changed_fields - {"status"}
+        if current_status is TenantStatus.CLOSED and non_status_changed_fields:
             raise TenantLifecycleConflictError("Closed tenants are immutable")
-        if current_status is TenantStatus.OFFBOARDING and changed_fields:
+        if current_status is TenantStatus.OFFBOARDING and non_status_changed_fields:
             raise TenantLifecycleConflictError(
                 "Offboarding tenants can only transition to closed"
             )
         if (
-            "data_region" in changed_fields
-            and current_status is not TenantStatus.PROVISIONING
+            next_status in {TenantStatus.OFFBOARDING, TenantStatus.CLOSED}
+            and next_status is not current_status
+            and non_status_changed_fields
         ):
             raise TenantLifecycleConflictError(
-                "Tenant data region can only change while provisioning"
+                "Offboarding or closure must be requested separately from metadata changes"
+            )
+        if (
+            "data_region" in non_status_changed_fields
+            and (
+                current_status is not TenantStatus.PROVISIONING
+                or next_status is not TenantStatus.PROVISIONING
+            )
+        ):
+            raise TenantLifecycleConflictError(
+                "Tenant data region can only change while the tenant remains provisioning"
             )
 
         for field_name, value in values.items():
             setattr(tenant, field_name, _enum_value(value))
         await self._flush_tenant_write()
         await self.session.refresh(tenant)
-        return tenant
+        return TenantUpdateMutation(
+            tenant=tenant,
+            previous_status=current_status,
+            changed_fields=tuple(sorted(changed_fields)),
+        )
 
     async def get_current_tenant(self, tenant_id: UUID) -> Tenant:
         tenant = await self.get_tenant(tenant_id)
@@ -186,6 +232,15 @@ class TenantService:
         tenant_id: UUID,
         payload: TenantSettingsUpdate,
     ) -> TenantSettingsSnapshot:
+        return (
+            await self.update_tenant_settings_with_changes(tenant_id, payload)
+        ).settings
+
+    async def update_tenant_settings_with_changes(
+        self,
+        tenant_id: UUID,
+        payload: TenantSettingsUpdate,
+    ) -> TenantSettingsMutation:
         tenant = await self._get_tenant_for_update(tenant_id)
         _ensure_tenant_write_access(TenantStatus(tenant.status))
         settings = await self.session.scalar(
@@ -203,14 +258,21 @@ class TenantService:
             self.session.add(settings)
 
         values = _provided_values(payload)
+        changed_fields: list[str] = []
         for field_name, value in values.items():
             target = tenant if field_name in {"locale", "timezone"} else settings
-            setattr(target, field_name, _enum_value(value))
+            normalized_value = _enum_value(value)
+            if normalized_value != getattr(target, field_name):
+                changed_fields.append(field_name)
+                setattr(target, field_name, normalized_value)
 
         await self.session.flush()
         await self.session.refresh(tenant)
         await self.session.refresh(settings)
-        return _settings_snapshot(tenant, settings)
+        return TenantSettingsMutation(
+            settings=_settings_snapshot(tenant, settings),
+            changed_fields=tuple(sorted(changed_fields)),
+        )
 
     async def _get_tenant_for_update(self, tenant_id: UUID) -> Tenant:
         tenant = await self.session.scalar(
@@ -233,11 +295,21 @@ class TenantService:
             raise
 
 
-def _provided_values(payload: TenantPlatformUpdate | TenantSettingsUpdate) -> dict[str, object]:
+def _provided_values(
+    payload: TenantPlatformUpdate | TenantSettingsUpdate,
+) -> dict[str, object]:
     return {
         field_name: getattr(payload, field_name)
         for field_name in payload.model_fields_set
     }
+
+
+def _provided_tenant_values(payload: TenantPlatformUpdate) -> dict[str, object]:
+    values = _provided_values(payload)
+    limits = values.pop("limits", None)
+    if limits is not None:
+        values["active_employee_limit"] = limits.active_employees
+    return values
 
 
 def _enum_value(value: object) -> object:

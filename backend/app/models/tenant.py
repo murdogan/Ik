@@ -1,11 +1,20 @@
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
 from app.modules.core.domain import (
+    FeatureFlagKey,
     TenantAccessMode,
     TenantDateFormat,
     TenantHealth,
@@ -18,6 +27,7 @@ from app.modules.core.domain import (
 )
 
 __all__ = [
+    "FeatureFlagKey",
     "Tenant",
     "TenantAccessMode",
     "TenantDateFormat",
@@ -26,6 +36,7 @@ __all__ = [
     "TenantPlan",
     "TenantRegion",
     "TenantSettings",
+    "TenantFeatureFlag",
     "TenantStatus",
     "TenantTimeFormat",
     "TenantWeekStartDay",
@@ -38,6 +49,10 @@ class Tenant(Base, TimestampMixin):
         CheckConstraint(
             "status in ('provisioning','trial','active','suspended','offboarding','closed')",
             name="ck_tenants_status",
+        ),
+        CheckConstraint(
+            "active_employee_limit is null or active_employee_limit between 1 and 1000000",
+            name="ck_tenants_active_employee_limit_positive",
         ),
         UniqueConstraint("slug"),
     )
@@ -52,6 +67,7 @@ class Tenant(Base, TimestampMixin):
     data_region: Mapped[str] = mapped_column(String(32), nullable=False, default="tr-1")
     locale: Mapped[str] = mapped_column(String(16), nullable=False, default="tr-TR")
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Europe/Istanbul")
+    active_employee_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class TenantSettings(Base, TimestampMixin):
@@ -99,3 +115,32 @@ class TenantSettings(Base, TimestampMixin):
         default=TenantTimeFormat.HOUR_24.value,
         server_default=TenantTimeFormat.HOUR_24.value,
     )
+
+
+class TenantFeatureFlag(Base, TimestampMixin):
+    __tablename__ = "tenant_feature_flags"
+    __table_args__ = (
+        CheckConstraint(
+            "key in ("
+            "'organization','employees','documents','leave','self_service','reporting',"
+            "'notifications'"
+            ")",
+            name="ck_tenant_feature_flags_key",
+        ),
+        CheckConstraint(
+            "enabled in (false, true)",
+            name="ck_tenant_feature_flags_enabled",
+        ),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "tenants.id",
+            name="fk_tenant_feature_flags_tenant_id_tenants",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)

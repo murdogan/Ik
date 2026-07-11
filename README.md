@@ -57,6 +57,9 @@ backend/
 `platform/` ve `modules/` Faz 0'da import-boundary testleriyle korunan canonical hedeftir.
 F1A tenant lifecycle/value policy'sini `app.modules.core.domain` içine yerleştirir; mevcut
 employee/leave kodu davranış uyumluluğu için flat paketlerde artımlı geçiş alanı olarak kalır.
+F1D feature-flag katalogunu CORE domain'de, dört redacted tenant platform event sözleşmesini CORE
+application katmanında tutar; `app.platform.events` yalnız framework-neutral audit primitive/port
+ve provider fake/default adapter sınırıdır.
 
 ## Lokal geliştirme
 
@@ -143,14 +146,17 @@ Historical Phase 0 OpenAPI contract'ı
 `backend/tests/contracts/phase0_openapi_contract.json` içinde operation/component bazlı canonical
 hash manifestiyle sabitlenir. Contract testi, metadata testleri ve backend smoke registry birlikte
 o checkpoint'teki 14 generated operasyonu ve runtime `/openapi.json` dahil 15 documented endpointi
-korur. F1A tam olarak yedi additive platform/tenant operation'ı ekler; current target 21 generated
-operation ve runtime `/openapi.json` dahil 22 documented endpoint'tir. Additive snapshot ayrı
+korur. Historical F1A tam olarak yedi additive platform/tenant operation'ı ekleyerek 21 generated
+operation ve runtime `/openapi.json` dahil 22 documented endpoint'e ulaşmıştır. Additive snapshot ayrı
 `backend/tests/contracts/f1a_openapi_contract.json` dosyasında tutulur; historical Phase-0
 manifesti yeniden yazılmaz. F1A OpenAPI/metadata testleri ve runtime smoke bu iki sayıyı doğrular.
 F1B yeni endpoint eklemeden F1A'nın yedi success operation'ını `{data,meta}` zarfına geçirir,
 platform listesini `(created_at asc, id asc)` opaque cursor + bounded `limit` standardına taşır ve
 üç safe correlation response header'ını OpenAPI'de belgeler. Historical Phase-0 employee/leave
-contract'ı ayrı compatibility assertion'larıyla korunur.
+contract'ı ayrı compatibility assertion'larıyla korunur. F1D current contract'ı platform feature
+`GET/PATCH` ve tenant feature `GET` olmak üzere üç additive operation ile 24 generated operation ve
+runtime `/openapi.json` dahil 25 documented endpoint'tir; historical F1A/F1B manifestleri overwrite
+edilmeden ayrı intentional F1D diff/snapshot ve runtime registry ile korunur.
 
 P0D ile mevcut tenant-owned parent tablolarından `employees` ve `users` için `(tenant_id, id)`
 candidate key'leri; `leave_requests` ve `leave_balance_summaries` içindeki dört employee/user
@@ -210,6 +216,32 @@ yalnız bu rolleri explicit
 `SET LOCAL ROLE` ile kullanmalıdır. SQLite hızlı uyumluluk lane'i olmaya devam eder; catalog,
 raw-SQL, role ve pool-reuse kanıtı `-m postgres` integration lane'indedir. Endpoint/OpenAPI contract
 sayısı F1C'de değişmez.
+
+F1D `0015_f1d_feature_flags` ile `tenant_feature_flags(tenant_id,key)` tablosunu ve nullable
+`tenants.active_employee_limit` platform metadata kolonunu ekler. Sabit flag sırası
+`organization`, `employees`, `documents`, `leave`, `self_service`, `reporting`, `notifications`;
+yalnız `employees`, `leave` ve `reporting` default `true` değerindedir. Migration mevcut tenant'ları
+bu yedi defaultla backfill eder; yeni provisioning aynı satırları settings ile tek UoW'da oluşturur.
+Tenant capability yalnız kendi flag satırlarını `SELECT`, platform
+capability yalnız `SELECT/INSERT/UPDATE` edebilir; iki role de `DELETE` verilmez ve tablo PostgreSQL'de
+RLS `ENABLE + FORCE` altındadır. API effective flag'i `default|override` kaynağıyla döndürür;
+bilinmeyen key ve müşteri bazlı kod fork'u yoktur.
+
+`GET/PATCH /api/v1/platform/tenants/{tenant_id}/features` platform rollout yüzeyidir;
+`GET /api/v1/tenant/features` yalnız injected tenant principal'ın kendi effective flag'lerini okur.
+Platform list/detail response'undaki configured limit yalnız
+`limits.active_employees` metadata'sıdır; employee tablosundan usage/count türetilmez. Dar platform
+query service açık kolon projection'ıyla yalnız `tenants` tablosunu sorgular. Offboarding/closure
+transition'ı metadata değişikliğiyle aynı PATCH'te birleştirilemez; terminal durum kuralları korunur.
+
+Başarılı actual create/status/setting/flag değişiklikleri sırasıyla `tenant.created`,
+`tenant.status_changed`, `tenant.setting_changed`, `feature_flag.changed` frozen/extra-forbid
+sözleşmelerini aynı command UoW içinde recorder portuna verir. Sözleşmeler request/trace ve yalnız
+allowlisted platform metadata taşır; generic payload/metadata, parola/token ve employee/HR alanı
+taşıyamaz. Recorder guard marker/structural nesne ve sensitive alan ekleyen subclass'ı da reddeder.
+Faz 1 default recorder doğrulanan event'i discard eder ve persistence iddiasında bulunmaz; Faz 2
+aynı portu aynı-session append-only audit recorder ile değiştirecektir. F1D audit tablosu veya audit
+read center eklemez.
 
 Veritabanı migration komutları:
 
@@ -290,6 +322,12 @@ güncel gate `BACKEND_SMOKE_OK` ile 22 documented endpoint'i çalıştırmış v
 F1B smoke aynı 22-row registry'yi korurken bütün response'larda safe correlation header'larını,
 unsafe inputun yansıtılmamasını, yedi platform/tenant `{data,meta}` response'unu, deterministic
 platform cursor traversal'ını ve employee/leave plain-array compatibility'sini kontrol eder.
+
+F1D current registry 24 generated operation ve `/openapi.json` dahil 25 documented endpoint bekler.
+Smoke/contract güncellemesi üç feature operation'ını, fixed flag sırasını/default ve override
+kaynağını, nested configured limit metadata'sını, tenant-principal/platform ayrımını ve no-HR
+response sınırını yürütür. Ruff, pytest, PostgreSQL 17.10 ve 25-endpoint smoke tekrarları geçmiştir;
+exact sonuçlar implementation-status kaydındadır.
 
 OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
 `Platform Tenants`, `Tenant Settings`, `Dashboard`, `Employees`, `Leave Balances`,

@@ -131,6 +131,21 @@ success envelope'ları `app.platform.responses` sahipliğindedir; eski employee/
 sözleşmesi yalnız `app.api.compatibility` içindeki açık Faz-0 adapter'ıyla korunur. Bu kesit schema
 ve migration eklemez; auth/RBAC/audit persistence başlatmaz.
 
+F1D'de CORE rollout sahipliği katman sınırını koruyarak eklenir:
+
+- `app.modules.core.domain.feature_flags`, yedi key'lik ordered/typed katalogu ve immutable
+  defaultları sahiplenir; customer-specific kod branch'i veya arbitrary key yoktur.
+- `app.modules.core.application.events`, dört exact frozen/extra-forbid tenant platform event
+  modelini sahiplenir. Bu sınıflar CORE status/plan/region/flag tiplerini kullanır; generic
+  `payload`, `metadata`, before/after entity snapshot'ı ve HR/secret alanı taşımaz.
+- `app.platform.events`, ürün modülü import etmeden framework-neutral audit enum'larını, nominal
+  `PlatformEventContract` marker'ını, dört exact concrete type'la sınırlı registry guard'ını, async
+  `PlatformEventRecorder` protocol'ünü, guard'lı default discard adapter'ı ve recording test fake'ini sağlar. Faz 2
+  recorder'ı aynı portu command UoW session'ında persist edecek; F1D audit store/read center kurmaz.
+- Platform tenant list/detail query'si ayrı dar query service içinde yalnız allowlisted `tenants`
+  kolonlarını project eder. `limits.active_employees` configured metadata'dır; employee usage/count
+  değildir ve platform query HR model/tablosu import etmez veya join etmez.
+
 ### 4.4 Komut transaction ve hata sınırı
 
 Employee create/update/archive ile leave request create/approve/reject/cancel akışlarında
@@ -196,9 +211,9 @@ silme yetkisi veya tenant izolasyonu bypass'ı değildir.
 
 Aşağıdaki listenin correlation/request-context bölümü F1B'de, tenant header compatibility guard'ı,
 request-scoped DB session, application command/UoW ve typed error mapping ise önceki kesitlerde
-uygulanmıştır. F1C transaction-local PostgreSQL RLS context'ini ekler. Authenticated actor/session,
-permission, field masking ve audit persistence henüz uygulanmamıştır; tam akış Faz 2 boyunca
-tamamlanacaktır.
+uygulanmıştır. F1C transaction-local PostgreSQL RLS context'ini, F1D typed feature rollout ve
+redacted platform-event recorder seam'ini ekler. Authenticated actor/session, permission, field
+masking ve audit persistence henüz uygulanmamıştır; tam akış Faz 2 boyunca tamamlanacaktır.
 
 1. Request edge katmanından gelir.
 2. Middleware safe request ID ve trace ID'yi doğrular veya üretir, immutable `RequestContext`'e
@@ -212,7 +227,8 @@ tamamlanacaktır.
    sağlanan idempotency key aynı transaction'da claim/complete edilir. PostgreSQL transaction'ı
    operation/query öncesi explicit local capability role ve tenant/RLS context'i ile bağlanır.
 9. Field masking uygulanır.
-10. Audit/domain event gerekiyorsa yazılır.
+10. F1D CORE command'larında redacted platform event aynı UoW içindeki recorder portuna verilir;
+    Faz 2 adapter'ı geldiğinde audit write aynı transaction'da persist edilir.
 11. Standart response döner.
 
 ## 6. Async işleme

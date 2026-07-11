@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.dependencies import (
     get_tenant_command_handler,
+    get_tenant_feature_service,
     get_tenant_principal_request_context,
     get_tenant_service,
 )
@@ -21,11 +22,17 @@ from app.models.tenant import Tenant
 from app.platform.request_context import RequestContext
 from app.platform.responses import DataEnvelope, data_envelope
 from app.schemas.tenant import (
+    TenantFeatureFlagRead,
+    TenantFeaturesRead,
     TenantRead,
     TenantSettingsRead,
     TenantSettingsUpdate,
 )
 from app.services.tenant_commands import TenantCommandHandler
+from app.services.tenant_feature_service import (
+    TenantFeatureService,
+    TenantFeatureSnapshot,
+)
 from app.services.tenant_service import TenantService, TenantSettingsSnapshot
 
 router = APIRouter(
@@ -130,8 +137,44 @@ async def update_current_tenant_settings(
     snapshot = await command_handler.update_tenant_settings(
         request_context.require_tenant().tenant_id,
         payload,
+        request_context=request_context,
     )
     return data_envelope(_tenant_settings_read(snapshot), request_context)
+
+
+@router.get(
+    "/features",
+    response_model=DataEnvelope[TenantFeaturesRead],
+    summary="Read current tenant feature flags",
+    description=(
+        "Reads the fixed module-rollout catalog for only the injected tenant principal. The "
+        "request accepts no tenant selector, and caller headers, query values, or payload fields "
+        "cannot switch tenant scope. Provisioning tenants are not ready and closed tenants are "
+        "unavailable; suspended and offboarding tenants retain read-only visibility."
+    ),
+    response_description="Effective allowlisted feature flags with safe request metadata.",
+    responses=with_correlation_response_headers({
+        200: {},
+        **TENANT_NOT_FOUND_RESPONSES,
+        **TENANT_CLOSED_RESPONSES,
+        **TENANT_NOT_READY_RESPONSES,
+    }),
+)
+async def get_current_tenant_features(
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_tenant_principal_request_context),
+    ],
+    service: Annotated[
+        TenantFeatureService,
+        Depends(get_tenant_feature_service),
+    ],
+) -> DataEnvelope[TenantFeaturesRead]:
+    features = await service.get_tenant_features(
+        request_context.require_tenant().tenant_id,
+        enforce_tenant_lifecycle=True,
+    )
+    return data_envelope(_tenant_features_read(features), request_context)
 
 
 def _tenant_read(tenant: Tenant) -> TenantRead:
@@ -140,3 +183,14 @@ def _tenant_read(tenant: Tenant) -> TenantRead:
 
 def _tenant_settings_read(snapshot: TenantSettingsSnapshot) -> TenantSettingsRead:
     return TenantSettingsRead.model_validate(snapshot, from_attributes=True)
+
+
+def _tenant_features_read(
+    features: tuple[TenantFeatureSnapshot, ...],
+) -> TenantFeaturesRead:
+    return TenantFeaturesRead(
+        features=[
+            TenantFeatureFlagRead.model_validate(feature, from_attributes=True)
+            for feature in features
+        ]
+    )

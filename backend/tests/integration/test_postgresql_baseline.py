@@ -21,6 +21,7 @@ from app.models import (  # noqa: F401
     LeaveBalanceSummary,
     LeaveRequest,
     Tenant,
+    TenantFeatureFlag,
     TenantSettings,
     User,
 )
@@ -52,6 +53,7 @@ EXPECTED_UUID_COLUMNS = {
     ("leave_requests", "tenant_id"),
     ("tenants", "id"),
     ("tenant_settings", "tenant_id"),
+    ("tenant_feature_flags", "tenant_id"),
     ("users", "id"),
     ("users", "tenant_id"),
 }
@@ -63,6 +65,7 @@ EXPECTED_TIMESTAMP_COLUMNS = {
         "leave_requests",
         "tenants",
         "tenant_settings",
+        "tenant_feature_flags",
         "users",
     }
     for column_name in {"created_at", "updated_at"}
@@ -83,6 +86,9 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_leave_requests_date_order",
     "ck_leave_requests_status",
     "ck_tenants_status",
+    "ck_tenants_active_employee_limit_positive",
+    "ck_tenant_feature_flags_enabled",
+    "ck_tenant_feature_flags_key",
     "ck_tenant_settings_date_format",
     "ck_tenant_settings_time_format",
     "ck_tenant_settings_week_start_day",
@@ -102,6 +108,7 @@ EXPECTED_FOREIGN_KEY_COUNTS = {
     "leave_balance_summaries": 2,
     "leave_requests": 4,
     "tenant_settings": 1,
+    "tenant_feature_flags": 1,
     "users": 1,
 }
 
@@ -183,6 +190,72 @@ def test_tenant_settings_downgrade_refuses_custom_postgresql_values(
     )
 
 
+def test_f1d_migration_owner_without_bypass_backfills_and_guards_limits(
+    postgres_database_url: URL,
+) -> None:
+    migration_role = f"wf_f1d_owner_{uuid4().hex[:12]}"
+    admin_user = postgres_database_url.username
+    assert admin_user is not None
+    asyncio.run(
+        _create_non_bypass_migration_owner(
+            postgres_database_url,
+            migration_role,
+        )
+    )
+    owner_url = postgres_database_url.set(
+        username=migration_role,
+        password=None,
+    )
+    owner_config = _alembic_config(owner_url)
+    admin_config = _alembic_config(postgres_database_url)
+    tenant_id = uuid4()
+    try:
+        alembic_command.upgrade(owner_config, "0013_tenant_settings")
+        alembic_command.upgrade(admin_config, "0014_f1c_postgresql_rls")
+        asyncio.run(_insert_pre_settings_tenant(postgres_database_url, tenant_id))
+        asyncio.run(_set_hostile_feature_default_privileges(owner_url))
+
+        alembic_command.upgrade(owner_config, "head")
+        assert asyncio.run(_tenant_feature_count(postgres_database_url, tenant_id)) == 7
+        assert asyncio.run(_unexpected_feature_delete_grantees(postgres_database_url)) == set()
+        assert asyncio.run(_row_security_flags(postgres_database_url, "tenants")) == (
+            True,
+            True,
+        )
+
+        asyncio.run(_set_active_employee_limit(postgres_database_url, tenant_id, 250))
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "F1D downgrade preflight failed.*"
+                "configured_active_employee_limits=1"
+            ),
+        ):
+            alembic_command.downgrade(owner_config, "0014_f1c_postgresql_rls")
+
+        assert asyncio.run(_current_revision(postgres_database_url)) == (
+            "0015_f1d_feature_flags"
+        )
+        assert asyncio.run(_row_security_flags(postgres_database_url, "tenants")) == (
+            True,
+            True,
+        )
+        assert asyncio.run(
+            _row_security_flags(postgres_database_url, "tenant_feature_flags")
+        ) == (True, True)
+
+        asyncio.run(_set_active_employee_limit(postgres_database_url, tenant_id, None))
+        alembic_command.downgrade(owner_config, "0014_f1c_postgresql_rls")
+    finally:
+        asyncio.run(
+            _remove_migration_owner(
+                postgres_database_url,
+                migration_role,
+                replacement_owner=admin_user,
+            )
+        )
+
+
 def test_live_postgresql_schema_has_no_autogenerate_drift(
     migrated_postgres_database: URL,
 ) -> None:
@@ -237,7 +310,7 @@ def test_full_api_smoke_uses_alembic_migrated_postgresql(
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     assert result.returncode == 0, output
     assert "BACKEND_SMOKE_OK" in result.stdout
-    assert "documented_endpoints=22" in result.stdout
+    assert "documented_endpoints=25" in result.stdout
 
 
 def _alembic_config(database_url: URL) -> Config:
@@ -346,6 +419,177 @@ async def _tenant_exists(database_url: URL, tenant_id) -> bool:
                     text("select exists(select 1 from tenants where id = :tenant_id)"),
                     {"tenant_id": tenant_id},
                 )
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _create_non_bypass_migration_owner(
+    database_url: URL,
+    role_name: str,
+) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            quote = connection.dialect.identifier_preparer.quote
+            quoted_role = quote(role_name)
+            quoted_database = quote(database_url.database)
+            await connection.exec_driver_sql(
+                f"CREATE ROLE {quoted_role} LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT"
+            )
+            await connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_database} OWNER TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f"ALTER SCHEMA public OWNER TO {quoted_role}"
+            )
+            role = (
+                await connection.execute(
+                    text(
+                        "select rolsuper, rolbypassrls from pg_catalog.pg_roles "
+                        "where rolname = :role_name"
+                    ),
+                    {"role_name": role_name},
+                )
+            ).one()
+            assert role == (False, False)
+    finally:
+        await engine.dispose()
+
+
+async def _remove_migration_owner(
+    database_url: URL,
+    role_name: str,
+    *,
+    replacement_owner: str,
+) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            if not await connection.scalar(
+                text(
+                    "select exists(select 1 from pg_catalog.pg_roles where rolname = :role_name)"
+                ),
+                {"role_name": role_name},
+            ):
+                return
+            quote = connection.dialect.identifier_preparer.quote
+            quoted_role = quote(role_name)
+            quoted_replacement = quote(replacement_owner)
+            quoted_database = quote(database_url.database)
+            await connection.exec_driver_sql(
+                f"REASSIGN OWNED BY {quoted_role} TO {quoted_replacement}"
+            )
+            await connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_database} OWNER TO {quoted_replacement}"
+            )
+            await connection.exec_driver_sql(
+                f"ALTER SCHEMA public OWNER TO {quoted_replacement}"
+            )
+            await connection.exec_driver_sql(f"DROP OWNED BY {quoted_role}")
+            await connection.exec_driver_sql(f"DROP ROLE {quoted_role}")
+    finally:
+        await engine.dispose()
+
+
+async def _tenant_feature_count(database_url: URL, tenant_id) -> int:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            return int(
+                await connection.scalar(
+                    text(
+                        "select count(*) from tenant_feature_flags "
+                        "where tenant_id = :tenant_id"
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+                or 0
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _set_hostile_feature_default_privileges(database_url: URL) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql(
+                "ALTER DEFAULT PRIVILEGES GRANT DELETE ON TABLES TO PUBLIC"
+            )
+            await connection.exec_driver_sql(
+                'ALTER DEFAULT PRIVILEGES GRANT DELETE ON TABLES TO "wealthy_falcon_app"'
+            )
+            await connection.exec_driver_sql(
+                'ALTER DEFAULT PRIVILEGES GRANT DELETE ON TABLES TO "wealthy_falcon_platform"'
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _unexpected_feature_delete_grantees(database_url: URL) -> set[str]:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            rows = await connection.scalars(
+                text(
+                    "select grantee from information_schema.table_privileges "
+                    "where table_schema = 'public' "
+                    "and table_name = 'tenant_feature_flags' "
+                    "and privilege_type = 'DELETE' "
+                    "and grantee = any(:grantees)"
+                ),
+                {
+                    "grantees": [
+                        "PUBLIC",
+                        "wealthy_falcon_app",
+                        "wealthy_falcon_platform",
+                    ]
+                },
+            )
+            return set(rows)
+    finally:
+        await engine.dispose()
+
+
+async def _row_security_flags(
+    database_url: URL,
+    table_name: str,
+) -> tuple[bool, bool]:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        "select relrowsecurity, relforcerowsecurity "
+                        "from pg_catalog.pg_class table_class "
+                        "join pg_catalog.pg_namespace namespace "
+                        "on namespace.oid = table_class.relnamespace "
+                        "where namespace.nspname = 'public' and table_class.relname = :table_name"
+                    ),
+                    {"table_name": table_name},
+                )
+            ).one()
+            return bool(row[0]), bool(row[1])
+    finally:
+        await engine.dispose()
+
+
+async def _set_active_employee_limit(
+    database_url: URL,
+    tenant_id,
+    value: int | None,
+) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "update tenants set active_employee_limit = :value "
+                    "where id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id, "value": value},
             )
     finally:
         await engine.dispose()
@@ -487,6 +731,25 @@ async def _assert_constraints_reject_invalid_rows(database_url: URL) -> None:
             {"id": uuid4(), "slug": f"invalid-{uuid4().hex}"},
             "ck_tenants_status",
         )
+        for invalid_limit in (0, 1_000_001):
+            await _expect_constraint_error(
+                engine,
+                """
+                insert into tenants (
+                    id, slug, name, status, plan_code, data_region, locale, timezone,
+                    active_employee_limit
+                ) values (
+                    :id, :slug, 'Invalid limit tenant', 'active', 'core', 'tr-1',
+                    'tr-TR', 'Europe/Istanbul', :active_employee_limit
+                )
+                """,
+                {
+                    "id": uuid4(),
+                    "slug": f"invalid-limit-{uuid4().hex}",
+                    "active_employee_limit": invalid_limit,
+                },
+                "ck_tenants_active_employee_limit_positive",
+            )
         await _expect_constraint_error(
             engine,
             """
@@ -527,6 +790,25 @@ async def _assert_constraints_reject_invalid_rows(database_url: URL) -> None:
                 ),
                 {"id": valid_tenant_id, "slug": unique_slug},
             )
+
+        await _expect_constraint_error(
+            engine,
+            """
+            insert into tenant_feature_flags (tenant_id, key, enabled)
+            values (:tenant_id, 'payroll', false)
+            """,
+            {"tenant_id": valid_tenant_id},
+            "ck_tenant_feature_flags_key",
+        )
+        await _expect_constraint_error(
+            engine,
+            """
+            insert into tenant_feature_flags (tenant_id, key, enabled)
+            values (:tenant_id, 'organization', false)
+            """,
+            {"tenant_id": uuid4()},
+            "fk_tenant_feature_flags_tenant_id_tenants",
+        )
 
         for week_start_day, date_format, time_format, constraint_name in (
             (

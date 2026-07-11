@@ -43,6 +43,7 @@ PLATFORM_FIELDS = {
     "locale",
     "timezone",
     "health",
+    "limits",
     "created_at",
     "updated_at",
 }

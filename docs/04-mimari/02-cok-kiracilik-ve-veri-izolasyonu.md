@@ -41,6 +41,18 @@ F1A'da `locale` yalnız `tr-TR|en-US`, `timezone` ise geçerli bir IANA timezone
 `week_start_day`, `date_format` ve `time_format` kolonlarını taşır. Feature flag tablosu veya
 `/api/v1/tenant/features` endpoint'i F1A kapsamına dahil değildir.
 
+F1D current ekleri:
+
+- `tenants.active_employee_limit`, nullable configured platform limit metadata'sıdır. API'de
+  `limits.active_employees` olarak görünür; employee tablosundan tüketim/adet ölçmez.
+- `tenant_feature_flags`, `(tenant_id,key)` composite primary key ve tenant-root cascade FK taşır.
+  Key allowlist'i sırayla `organization`, `employees`, `documents`, `leave`, `self_service`,
+  `reporting`, `notifications`; yalnız `employees`, `leave`, `reporting` default açıktır.
+- Effective response her flag için boolean `enabled` ve `default|override` source döndürür.
+  `/api/v1/tenant/features` scope'u yalnız injected tenant principal'dan gelir; tenant ID alanı
+  veya caller header'ı kabul etmez. Platform GET/PATCH feature path'indeki tenant UUID yalnız
+  resource selector'dır ve platform authority sağlamaz.
+
 ## 4. Tenant çözümleme
 
 Tenant şu kaynaklardan çözülür:
@@ -105,7 +117,7 @@ alternatifi değildir.
 
 ## 7. PostgreSQL RLS yaklaşımı
 
-F1C ile mevcut altı tenant-owned tabloda (`users`, `employees`, `leave_requests`,
+F1C historical revision ile o checkpoint'teki altı tenant-owned tabloda (`users`, `employees`, `leave_requests`,
 `leave_balance_summaries`, `command_idempotency`, `tenant_settings`) RLS hem enabled hem forced
 durumdadır. Normal tenant rolünün platform metadata root'u üzerinden başka tenant keşfetmemesi için
 `tenants.id` de aynı transaction tenant'ına scope edilir:
@@ -135,6 +147,9 @@ Kritik noktalar:
   settings SELECT/UPDATE ile `users`, `employees`, leave ve idempotency tablo grant/policy'si
   yoktur. Tenant app, `tenants` üzerinde yalnız locale/timezone ve ORM timestamp kolonlarını update
   edebilir; platform-controlled lifecycle/plan/region/name/slug alanlarını değiştiremez.
+- F1D `tenant_feature_flags` tablosunu ayrıca RLS `ENABLE + FORCE` eder. Tenant app yalnız kendi
+  satırlarını `SELECT`; platform role yalnız `SELECT/INSERT/UPDATE` eder. İki role de feature
+  tablosunda `DELETE` verilmez. Platform role HR tablo grant/policy'si yine almaz.
 - Eksik GUC `NULL`/empty üzerinden policy'yi false yapar; malformed UUID context sorguyu hatayla
   durdurur. Her iki durum da veri göstermeden fail closed olur.
 - Lokal seed/migration gibi tenant'lar arası bootstrap işlemleri HTTP platform session'ını yeniden
@@ -180,9 +195,11 @@ lifecycle'dan türetilir:
 | `offboarding` | GET açık, settings PATCH `423`; export/retention orkestrasyonu F1A dışı | `offboarding` |
 | `closed` | `/tenant` ve settings GET/PATCH `410` | `closed` |
 
-Platform metadata list/detail yalnız tenant metadata, plan, region ve bu lifecycle-derived health'i
-döndürür; employee/leave tablosuna join/count yapmaz ve müşteri HR verisi içermez. Tenant silme,
-audit persistence, support/break-glass, legal entity ve feature rollout bu kesitte yoktur.
+Platform metadata list/detail yalnız tenant metadata, plan, region, configured
+`limits.active_employees` ve bu lifecycle-derived health'i döndürür. Dar platform query service
+yalnız `tenants` kolonlarını explicit project eder; employee/leave/user tablosuna join/count yapmaz
+ve müşteri HR verisi içermez. Tenant silme, audit persistence, support/break-glass ve legal entity
+bu kesitte yoktur. Feature rollout F1D'de yukarıdaki typed/RLS yüzeyle eklenmiştir.
 
 ## 10. Enterprise dedicated opsiyon
 
@@ -214,6 +231,12 @@ Kural: Müşteri bazlı fork yapılmaz; özelleştirme feature flag ve ayarlarla
   request header/body/path bu scope'u override edemez.
 - Platform endpointleri principal injection yokken `403` döner ve tenant metadata response'unda
   employee/leave count veya payload alanı bulunmaz.
+- Yalnız tenant principal enjekte edilmiş caller platform tenant/feature route'larında `403` alır;
+  caller header/path/body platform principal üretemez.
+- Tenant A feature GET'i Tenant B override'ını göstermez; bilinmeyen flag key API ve DB allowlist
+  sınırında reddedilir.
+- PostgreSQL'de app role feature satırlarında cross-tenant read/write yapamaz, platform role HR
+  tablolarını okuyamaz ve hiçbir runtime capability feature satırı DELETE edemez.
 - Tenant settings downgrade custom typed değerleri sessizce atmaz; default dışı satır sayısı ile
   fail eder ve revision/table'ı korur.
 - Uygulama servisleri bypass edilse bile PostgreSQL doğrudan write ile Tenant A child kaydı Tenant B
