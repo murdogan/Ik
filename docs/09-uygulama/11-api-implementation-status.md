@@ -57,12 +57,23 @@ contract work must update that manifest and its migration/deprecation note in th
 
 #### Review-only plan deviations
 
-The enumerated Phase-0 architecture gate below is locally green. Two broader master-plan items are
-still not implemented and require Murat's explicit disposition before Phase 1:
+The enumerated Phase-0 architecture gate below is locally green. The following broader master-plan
+items are incomplete or only partially evidenced and require Murat's explicit disposition before
+Phase 1:
 
 - global request/transaction correlation and PII-safe slow-query logging;
 - active CI workflow activation. The repository contains only
-  `docs/09-uygulama/templates/backend-ci.yml`, not `.github/workflows/*`.
+  `docs/09-uygulama/templates/backend-ci.yml`, not `.github/workflows/*`;
+- HTTP endpoint response-time/p95 characterization. P0F records query counts and PostgreSQL
+  `EXPLAIN (ANALYZE, BUFFERS)` timings, but deliberately does not treat them as an end-to-end
+  response-time profile;
+- migration of one real product module into the target modular-monolith packages. The boundary
+  skeleton and enforcement gate are active, while employee and leave code remain in the documented
+  legacy compatibility area;
+- a combined domain-write plus audit/outbox rollback proof. Current fresh-session tests prove
+  domain write rollback, but no audit/outbox recorder is implemented in Phase 0;
+- an explicit connection-leak stress/regression gate. Lifespan engine disposal and rollback after
+  errors are covered, but leak behavior is not separately load-tested.
 
 The user-email strategy is now decided but intentionally not migrated early: current
 `users(tenant_id, email)` remains case-sensitive; before auth, an explicit
@@ -84,7 +95,7 @@ Final commands and results are recorded here after the complete P0G rerun:
 | Direct-DB tenant negatives | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed, 5 tests covering all current composite tenant relationships and expand-contract behavior |
 | PostgreSQL concurrency | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_command_transactions.py backend/tests/integration/test_postgresql_p0e_concurrency.py` | Passed, 6 tests: duplicate winner/mapping, lock mapping, one terminal decision, same-key replay, retention, downgrade refusal |
 | Query-plan baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p0f_performance.py` | Passed, 1 test with 10k employee/5k leave EXPLAIN assertions |
-| Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 19 P0G files; clean status verified after commit |
+| Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 20 P0G files; clean status verified after commit |
 
 The continuation explicitly reversed the PostgreSQL test-file order to verify that the function-scope
 database isolation does not depend on the normal collection order:
@@ -467,8 +478,10 @@ features are outside P0A.
 
 ## Smoke Coverage
 
-`uv run python scripts/backend_api_smoke.py` runs entirely local/in-memory through ASGI and SQLite.
-It does not use deploy, staging URLs, cron, tokens, credentials, `.env`, or external services.
+The default `uv run python scripts/backend_api_smoke.py` invocation runs locally through ASGI and
+SQLite. The PostgreSQL baseline invokes the same script with `--database-url` against its disposable
+test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
+services.
 
 The script now verifies the documented API surface in four directions:
 

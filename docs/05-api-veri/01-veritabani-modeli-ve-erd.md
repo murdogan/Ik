@@ -91,7 +91,7 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 | `command_idempotency` | `(tenant_id, idempotency_key) unique`, `(tenant_id)` |
 | `employee_assignments` | `(tenant_id, employee_id, valid_from desc)`, `(tenant_id, department_id)` |
 | `employee_documents` | `(tenant_id, employee_id, document_type_id)`, `(tenant_id, valid_until)` |
-| `leave_requests` | `(tenant_id, employee_id, start_date)`, `(tenant_id, status, created_at desc)`, `(tenant_id, created_at desc, start_date asc, id asc)` |
+| `leave_requests` | `(tenant_id, employee_id, start_date)`, `(tenant_id, status, created_at)`, `(tenant_id, created_at desc, start_date asc, id asc)` |
 | `time_clock_events` | `(tenant_id, employee_id, event_at desc)`, `(tenant_id, device_id, event_at)` |
 | `payroll_exports` | `(tenant_id, period, created_at desc)` |
 | `candidates` | `(tenant_id, email_hash)`, search index |
