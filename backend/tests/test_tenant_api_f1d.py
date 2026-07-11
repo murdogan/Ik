@@ -109,6 +109,15 @@ HR_SENTINELS = {
     "annual-sensitive-sentinel",
 }
 FORBIDDEN_HR_FIELDS = {
+    "document_body",
+    "document_count",
+    "document_id",
+    "document_key",
+    "document_name",
+    "document_type",
+    "document_url",
+    "documents",
+    "employee_number",
     "employee_count",
     "employee_id",
     "employees",
@@ -118,6 +127,9 @@ FORBIDDEN_HR_FIELDS = {
     "position",
     "email",
     "leave_count",
+    "leave_type",
+    "leave_balance",
+    "leave_balances",
     "leave_requests",
     "requested_by_user_id",
     "user_id",
@@ -527,6 +539,68 @@ async def test_platform_principal_alone_does_not_grant_current_tenant_features()
 
 
 @pytest.mark.parametrize(
+    ("method", "path", "payload", "expected_code"),
+    [
+        (
+            "POST",
+            "/api/v1/platform/tenants",
+            {"slug": "f1e-must-not-create", "name": "F1E Must Not Create"},
+            "platform_access_denied",
+        ),
+        ("GET", "/api/v1/platform/tenants", None, "platform_access_denied"),
+        (
+            "GET",
+            f"/api/v1/platform/tenants/{TENANT_A_ID}",
+            None,
+            "platform_access_denied",
+        ),
+        (
+            "PATCH",
+            f"/api/v1/platform/tenants/{TENANT_A_ID}",
+            {"name": "F1E Must Not Update"},
+            "platform_access_denied",
+        ),
+        (
+            "GET",
+            f"/api/v1/platform/tenants/{TENANT_A_ID}/features",
+            None,
+            "platform_access_denied",
+        ),
+        (
+            "PATCH",
+            f"/api/v1/platform/tenants/{TENANT_A_ID}/features",
+            {"features": [{"key": "documents", "enabled": True}]},
+            "platform_access_denied",
+        ),
+        ("GET", "/api/v1/tenant", None, "tenant_access_denied"),
+        ("GET", "/api/v1/tenant/settings", None, "tenant_access_denied"),
+        (
+            "PATCH",
+            "/api/v1/tenant/settings",
+            {"locale": "en-US"},
+            "tenant_access_denied",
+        ),
+        ("GET", "/api/v1/tenant/features", None, "tenant_access_denied"),
+    ],
+)
+async def test_every_phase1_operation_denies_without_its_injected_principal(
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None,
+    expected_code: str,
+) -> None:
+    async with _tenant_api() as harness:
+        response = await harness.client.request(
+            method,
+            path,
+            headers=SPOOFED_TENANT_A_HEADERS,
+            json=payload,
+        )
+
+    _assert_error(response, 403, expected_code)
+
+
+@pytest.mark.parametrize(
     ("tenant_status", "expected_status", "expected_code"),
     [
         (TenantStatus.PROVISIONING.value, 423, "tenant_not_ready"),
@@ -766,6 +840,46 @@ async def test_successful_actual_changes_record_all_four_redacted_event_contract
     )
     assert "Never In Event Payload" not in serialized
     assert "event-tenant" not in serialized
+
+
+async def test_unsafe_correlation_inputs_are_replaced_in_recorded_event_fixture() -> None:
+    unsafe_values = {
+        "pii.person@example.test",
+        "header.payload.signature",
+        "raw-trace-secret",
+        "Bearer raw-authorization-secret",
+        "session=raw-cookie-secret",
+    }
+    async with _tenant_api() as harness:
+        recorder = RecordingPlatformEventRecorder()
+        harness.app.dependency_overrides[get_platform_event_recorder] = lambda: recorder
+        _authorize_platform(harness.app)
+
+        response = await harness.client.post(
+            "/api/v1/platform/tenants",
+            headers={
+                "X-Request-Id": "pii.person@example.test",
+                "X-Correlation-Id": "header.payload.signature",
+                "X-Trace-Id": "raw-trace-secret",
+                "Authorization": "Bearer raw-authorization-secret",
+                "Cookie": "session=raw-cookie-secret",
+            },
+            json={"slug": "f1e-safe-event", "name": "F1E Safe Event"},
+        )
+
+    assert response.status_code == 201
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert event.request_id == response.headers["X-Request-Id"]
+    assert event.trace_id == response.headers["X-Trace-Id"]
+    serialized_fixture = json.dumps(
+        {
+            "response": response.json(),
+            "event": event.model_dump(mode="json"),
+        },
+        sort_keys=True,
+    )
+    assert all(value not in serialized_fixture for value in unsafe_values)
 
 
 async def test_failed_platform_command_records_no_event() -> None:

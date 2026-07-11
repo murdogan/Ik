@@ -246,12 +246,19 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
             for operation in TENANT_PRINCIPAL_OPERATIONS
         },
     }
+    expected_principals = {
+        **{operation: "platform" for operation in PLATFORM_TENANT_OPERATIONS},
+        **{operation: "tenant" for operation in TENANT_PRINCIPAL_OPERATIONS},
+    }
 
     for (path, method), (description, code, message) in expected_denials.items():
         operation = paths[path][method]
         denial = operation["responses"]["403"]
         media_type = denial["content"]["application/json"]
 
+        # Phase 1 truthfully documents its injected authorization seam without advertising a
+        # caller-facing bearer/API-key scheme that does not exist until Phase 2.
+        assert operation["x-required-principal"] == expected_principals[(path, method)]
         assert "security" not in operation
         assert denial["description"] == description
         assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
@@ -260,6 +267,8 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
             "message": message,
             "correlation_id": "req_wf_demo_001",
         }
+
+    assert "securitySchemes" not in response.json().get("components", {})
 
 
 def test_phase1_tenant_operations_document_lifecycle_and_resource_errors() -> None:
@@ -348,7 +357,7 @@ def test_platform_and_feature_response_schemas_cannot_reference_hr_schemas() -> 
         assert not {
             reference
             for reference in references
-            if reference.startswith(("Employee", "User", "Leave"))
+            if reference.startswith(("Document", "Employee", "User", "Leave"))
         }
 
 

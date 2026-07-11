@@ -9,6 +9,13 @@ EMPLOYEES_TAG = "Employees"
 LEAVE_BALANCES_TAG = "Leave Balances"
 LEAVE_REQUESTS_TAG = "Leave Requests"
 
+# Phase 1 has no caller-facing credential format: authorization is supplied only by the trusted
+# principal dependency seam and fails closed by default.  A standard OpenAPI security scheme would
+# falsely advertise bearer, API-key, or mutual-TLS behavior that is not implemented until Phase 2.
+# This operation extension records the executable boundary without making that false claim.
+PLATFORM_PRINCIPAL_OPENAPI = {"x-required-principal": "platform"}
+TENANT_PRINCIPAL_OPENAPI = {"x-required-principal": "tenant"}
+
 CORRELATION_RESPONSE_HEADERS = {
     "X-Request-Id": {
         "description": "Validated or server-generated opaque request identifier.",

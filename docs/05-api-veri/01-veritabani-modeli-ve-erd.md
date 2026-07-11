@@ -8,6 +8,8 @@ Ana veri deposu PostgreSQL'dir. Tüm tenant-owned tablolarda `tenant_id` bulunur
 uygulama seviyesinde şifrelenir veya maskelenir. Tenant izolasyonu uygulama guard'ları,
 tenant-owned ilişkilerde composite foreign key'ler ve F1C forced PostgreSQL RLS ile katmanlı
 korunur. SQLite hızlı uyumluluk testidir; RLS kanıtı gerçek PostgreSQL lane'indedir.
+F1E Faz 1 kapanış kapısı yeni tablo, kolon veya Alembic revision eklemez; fiziksel şema tek
+Alembic head olan `0015_f1d_feature_flags` ile aynıdır.
 
 ## 2. Kavramsal ERD
 
@@ -37,7 +39,7 @@ erDiagram
 
 | Domain | Tablolar |
 |---|---|
-| CORE/AUTH/RBAC | F1D current: `tenants`, `tenant_settings`, `tenant_feature_flags`; mevcut foundation: `users`, `command_idempotency`; session/RBAC tabloları Faz 2 |
+| CORE/AUTH/RBAC | Faz 1 final (`0015` head): `tenants`, `tenant_settings`, `tenant_feature_flags`; mevcut foundation: `users`, `command_idempotency`; session/RBAC tabloları Faz 2 |
 | EMP/DOC | `employees`, `employee_profiles`, `employee_employments`, `employee_assignments`, `employee_documents`, `document_types` |
 | ORG | `legal_entities`, `branches`, `departments`, `positions`, `headcount_requests` |
 | LEAVE/TIME | `leave_types`, `leave_balances`, `leave_requests`, `holiday_calendars`, `shift_assignments`, `time_clock_events`, `timesheet_days` |
@@ -85,7 +87,7 @@ F1A tenant/config kuralları:
   `provisioning|healthy|restricted|offboarding|closed` olarak türetilir; employee/leave count veya
   payload platform sorgusuna katılmaz.
 
-F1D rollout/configured-limit kuralları:
+F1D'de uygulanıp F1E Faz 1 final kapısında yeniden doğrulanan rollout/configured-limit kuralları:
 
 - `tenants.active_employee_limit` nullable ve `1..1_000_000` check'li configured platform
   metadata'dır. API alanı `limits.active_employees`'tır; employee usage/count değildir.
@@ -165,7 +167,8 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 ## 8. RLS standardı
 
 F1C historical checkpoint'inde altı tenant-owned tablo RLS enabled/forced durumuna gelmiştir. F1D
-current head `tenant_feature_flags` tablosunu kendi revision'ında aynı standarda ekler. Standart app policy:
+revision'ı `tenant_feature_flags` tablosunu aynı standarda eklemiştir. F1E final kapısında şema
+değişmemiş ve tek head `0015_f1d_feature_flags` olarak doğrulanmıştır. Standart app policy:
 
 ```sql
 CREATE POLICY tenant_isolation_app
@@ -222,7 +225,28 @@ Kurallar:
 - Normal employee archive leave/balance geçmişini korur; doğrudan hard delete history FK'leri
   nedeniyle reddedilir.
 
-## 11. İlgili dokümanlar
+## 11. F1E Faz 1 final şema kanıtı
+
+F1E yalnız güvenlik, ürün sözleşmesi ve doküman kapanış kapısıdır; ERD/model/migration şemasını
+değiştirmez. Final tekrarlar şu gerçek komut sonuçlarını üretmiştir:
+
+- `uv run alembic heads` → tek head `0015_f1d_feature_flags`.
+- `uv run pytest -q backend/tests/test_migrations.py` → `36 passed`; hızlı SQLite hattı zincir,
+  offline DDL, round-trip, downgrade refusal ve metadata drift uyumluluk kanıtıdır.
+- `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` → `30 passed`; tam PostgreSQL 16+ lane'i.
+- Aynı DSN ile `backend/tests/integration/test_postgresql_baseline.py` → `8 passed`; gerçek
+  `base → head → base → head`, F1A/F1D backfill/refusal, autogenerate drift, native
+  catalog/constraint ve migrated API smoke kanıtıdır.
+- Aynı DSN ile `backend/tests/integration/test_postgresql_f1c_rls.py` ve
+  `backend/tests/integration/test_postgresql_tenant_relational_integrity.py` → `12 passed`; RLS
+  catalog/role/ACL, tenant A/B raw SQL, platform-to-HR denial, pool reset, repository/HTTP scope ve
+  composite-FK direct-write saldırı kanıtıdır.
+
+PostgreSQL fixture'ı test başına disposable database kurar; `0014` capability rolleri
+cluster-global oluşturulup bilinçli olarak korunduğu için yönetim DSN'i shared uygulama cluster'ına
+değil, disposable PostgreSQL test cluster'ına ait olmalıdır.
+
+## 12. İlgili dokümanlar
 
 - [Çok Kiracılık ve Veri İzolasyonu](../04-mimari/02-cok-kiracilik-ve-veri-izolasyonu.md)
 - [CORE, AUTH ve RBAC Modülleri](../03-moduller/01-core-auth-rbac.md)

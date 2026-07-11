@@ -100,6 +100,15 @@ FEATURE_DEFAULTS = {
     "notifications": False,
 }
 FORBIDDEN_HR_FIELDS = {
+    "document_body",
+    "document_count",
+    "document_id",
+    "document_key",
+    "document_name",
+    "document_type",
+    "document_url",
+    "documents",
+    "employee_number",
     "employee_count",
     "employee_id",
     "employees",
@@ -109,6 +118,9 @@ FORBIDDEN_HR_FIELDS = {
     "position",
     "email",
     "leave_count",
+    "leave_type",
+    "leave_balance",
+    "leave_balances",
     "leave_requests",
     "requested_by_user_id",
     "user_id",
@@ -156,6 +168,15 @@ PHASE1_SUCCESS_RESPONSES = {
     ("get", "/api/v1/tenant/settings"): "200",
     ("patch", "/api/v1/tenant/settings"): "200",
     ("get", "/api/v1/tenant/features"): "200",
+}
+PHASE1_REQUIRED_PRINCIPALS = {
+    operation: "platform"
+    for operation in PHASE1_SUCCESS_RESPONSES
+    if operation[1].startswith("/api/v1/platform/")
+} | {
+    operation: "tenant"
+    for operation in PHASE1_SUCCESS_RESPONSES
+    if operation[1].startswith("/api/v1/tenant")
 }
 PHASE0_CURSOR_LIST_PATHS = {
     "/api/v1/employees",
@@ -464,7 +485,7 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
         "GET /openapi.json",
     )
     _expect_documented_openapi_operations(openapi)
-    _expect_f1d_openapi_contracts(openapi)
+    _expect_phase1_openapi_contracts(openapi)
 
 
 async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
@@ -800,10 +821,20 @@ def _expect_documented_openapi_operations(openapi: dict[str, Any]) -> None:
         )
 
 
-def _expect_f1d_openapi_contracts(openapi: dict[str, Any]) -> None:
+def _expect_phase1_openapi_contracts(openapi: dict[str, Any]) -> None:
     paths = openapi["paths"]
     for (method, path), status_code in PHASE1_SUCCESS_RESPONSES.items():
-        success_response = paths[path][method]["responses"][status_code]
+        operation = paths[path][method]
+        _assert_equal(
+            operation.get("x-required-principal"),
+            PHASE1_REQUIRED_PRINCIPALS[(method, path)],
+            f"{method.upper()} {path} required principal metadata",
+        )
+        if "security" in operation:
+            raise AssertionError(
+                f"{method.upper()} {path} must not advertise a Phase 2 credential scheme"
+            )
+        success_response = operation["responses"][status_code]
         _assert_equal(
             set(success_response.get("headers", {})),
             set(CORRELATION_RESPONSE_HEADERS),
@@ -862,6 +893,8 @@ def _expect_f1d_openapi_contracts(openapi: dict[str, Any]) -> None:
     )
 
     schemas = openapi["components"]["schemas"]
+    if "securitySchemes" in openapi["components"]:
+        raise AssertionError("Phase 1 must not advertise a caller-facing security scheme")
     _assert_equal(
         schemas["FeatureFlagKey"].get("enum"),
         list(FEATURE_DEFAULTS),

@@ -60,6 +60,9 @@ employee/leave kodu davranış uyumluluğu için flat paketlerde artımlı geçi
 F1D feature-flag katalogunu CORE domain'de, dört redacted tenant platform event sözleşmesini CORE
 application katmanında tutar; `app.platform.events` yalnız framework-neutral audit primitive/port
 ve provider fake/default adapter sınırıdır.
+F1E yeni ürün modülü veya şema eklemeden Faz 1'i security/product/OpenAPI gate'iyle kapatır; exact
+on platform/current-tenant operation'ı `x-required-principal: platform|tenant` metadata'sıyla
+belgeler ve queue'yu Faz 2 öncesi Murat review checkpoint'inde durdurur.
 
 ## Lokal geliştirme
 
@@ -89,11 +92,14 @@ docker compose up -d --wait postgres
 IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
 ```
 
-`IK_TEST_DATABASE_URL` PostgreSQL hattı için zorunludur. Test fixture'ı bu URL'yi yalnızca
-yönetim bağlantısı olarak kullanır, her PostgreSQL testi için benzersiz ve geçici bir test
+`IK_TEST_DATABASE_URL` PostgreSQL hattı için zorunludur ve disposable PostgreSQL test cluster'ındaki
+yönetim bağlantısını göstermelidir. Fixture her PostgreSQL testi için benzersiz/geçici bir test
 veritabanı oluşturur ve test sonunda siler; uygulama veya geliştirici veritabanında
-upgrade/downgrade çalıştırmaz. Test başına izolasyon, retained archive/idempotency verisinin
-migration testlerini collection sırasına bağımlı yapmasını engeller.
+upgrade/downgrade çalıştırmaz. Ancak F1C/F1D migration'ları cluster-global
+`wealthy_falcon_app`/`wealthy_falcon_platform` capability rollerini oluşturup/harden edip
+downgrade'de bilinçli olarak korur. Bu nedenle shared operational cluster kullanılmaz; admin role
+database/role/extension yönetebilmelidir. Test başına database izolasyonu, retained
+archive/idempotency verisinin migration testlerini collection sırasına bağımlı yapmasını engeller.
 Bu hat Alembic upgrade/downgrade ve drift kontrollerini, PostgreSQL'e özgü tip/kısıt
 davranışlarını, 10k employee query planlarını ve mevcut API sözleşmesini gerçek PostgreSQL
 üzerinde doğrular. P0F performans fixture'ını ve machine-readable EXPLAIN kanıtını tek başına
@@ -153,10 +159,15 @@ manifesti yeniden yazılmaz. F1A OpenAPI/metadata testleri ve runtime smoke bu i
 F1B yeni endpoint eklemeden F1A'nın yedi success operation'ını `{data,meta}` zarfına geçirir,
 platform listesini `(created_at asc, id asc)` opaque cursor + bounded `limit` standardına taşır ve
 üç safe correlation response header'ını OpenAPI'de belgeler. Historical Phase-0 employee/leave
-contract'ı ayrı compatibility assertion'larıyla korunur. F1D current contract'ı platform feature
+contract'ı ayrı compatibility assertion'larıyla korunur. Historical F1D contract'ı platform feature
 `GET/PATCH` ve tenant feature `GET` olmak üzere üç additive operation ile 24 generated operation ve
 runtime `/openapi.json` dahil 25 documented endpoint'tir; historical F1A/F1B manifestleri overwrite
-edilmeden ayrı intentional F1D diff/snapshot ve runtime registry ile korunur.
+edilmeden ayrı intentional F1D diff/snapshot ile korunur. F1E operation/schema sayısını değiştirmez;
+exact on Faz 1 operation'ına `x-required-principal: platform|tenant` ekleyen intentional metadata
+diff'i `backend/tests/contracts/f1e_openapi_contract.json` içinde ayrıca dondurulur ve runtime
+registry 25 endpoint olarak kalır. Bu extension injected-principal sınırını belgeler; Faz 2
+authentication/session/RBAC uygulanmadan standard OpenAPI `security` veya sahte bearer scheme
+eklenmez.
 
 P0D ile mevcut tenant-owned parent tablolarından `employees` ve `users` için `(tenant_id, id)`
 candidate key'leri; `leave_requests` ve `leave_balance_summaries` içindeki dört employee/user
@@ -243,6 +254,12 @@ Faz 1 default recorder doğrulanan event'i discard eder ve persistence iddiasın
 aynı portu aynı-session append-only audit recorder ile değiştirecektir. F1D audit tablosu veya audit
 read center eklemez.
 
+F1E Faz 1 kapanışında Alembic şeması değişmez ve tek head `0015_f1d_feature_flags` kalır. Final
+kanıt tekrarları hızlı migration hattında `36 passed`, tam PostgreSQL lane'inde `30 passed`,
+PostgreSQL baseline upgrade/downgrade/drift/smoke hattında `8 passed` ve RLS + direct-DB saldırı
+hattında `12 passed` üretmiştir. Authentication, session, RBAC ve append-only audit persistence Faz
+2 işidir ve bu checkpoint'te başlatılmamıştır.
+
 Veritabanı migration komutları:
 
 ```bash
@@ -327,11 +344,13 @@ F1B smoke aynı 22-row registry'yi korurken bütün response'larda safe correlat
 unsafe inputun yansıtılmamasını, yedi platform/tenant `{data,meta}` response'unu, deterministic
 platform cursor traversal'ını ve employee/leave plain-array compatibility'sini kontrol eder.
 
-F1D current registry 24 generated operation ve `/openapi.json` dahil 25 documented endpoint bekler.
+F1E final registry 24 generated operation ve `/openapi.json` dahil 25 documented endpoint bekler.
 Smoke/contract güncellemesi üç feature operation'ını, fixed flag sırasını/default ve override
-kaynağını, nested configured limit metadata'sını, tenant-principal/platform ayrımını ve no-HR
-response sınırını yürütür. Ruff, pytest, PostgreSQL 17.10 ve 25-endpoint smoke tekrarları geçmiştir;
-exact sonuçlar implementation-status kaydındadır.
+kaynağını, nested configured limit metadata'sını, tenant-principal/platform ayrımını, no-HR/no-
+document-payload response sınırını ve exact on Faz 1 operation'ındaki
+`x-required-principal: platform|tenant` metadata'sını yürütür. Historical F1D snapshot'ı
+değiştirilmez; F1E ayrı snapshot'tır. Ruff, pytest, PostgreSQL ve 25-endpoint smoke tekrarlarının
+exact sonuçları implementation-status kaydındadır.
 
 OpenAPI dokümanı `/docs` altında okunabilir tag gruplarıyla yayınlanır: `System`, `Public`,
 `Platform Tenants`, `Tenant Settings`, `Dashboard`, `Employees`, `Leave Balances`,
@@ -885,13 +904,15 @@ henüz yoktur:
 
 ## Durum
 
-P0A–P0G'nin numaralanmış Faz 0 mimari kapısı yerelde yeşildir; daha geniş master-plan sapmaları
-Murat review kararını bekler. Güncel uygulama yüzeyi, intentional OpenAPI farkları,
-PostgreSQL/SQLite kanıtları ve açık plan sapmaları
+P0A–P0G ile Faz 0 ve F1A–F1D base review branch kapıları tamamlanmıştır; F1E yerel Faz 1 kapanış
+gate'i yeşildir. Güncel uygulama yüzeyi, intentional OpenAPI farkları, PostgreSQL/SQLite kanıtları
+ve açık plan sapmaları
 [API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md) içinde kayıtlıdır.
 
-Queue `STOP — awaiting Murat review` checkpoint'indedir; Faz 1 başlatılmamıştır. Yerel P0G
-commit'lerinin review branch'ine push edilmesi supervisor sorumluluğundadır. Yürütme otoritesi
+Queue `STOP — awaiting Murat review; Phase 1 gate complete` checkpoint'indedir. Faz 2
+authentication/session/RBAC/audit persistence başlatılmamıştır. F1D base commit'i `54a3678` review
+branch'inde pushed durumdadır; F1E commit'inin review branch'ine push edilmesi supervisor
+sorumluluğundadır ve remote sync doğrulanmadan F1E push gate'i tamam sayılmaz. Yürütme otoritesi
 [MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;
 [Implementation Readiness Checklist](docs/09-uygulama/08-implementation-readiness-checklist.md)
 ise uygulama öncesi tarihsel planlama kapısı olarak korunur.

@@ -11,6 +11,7 @@ HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "tra
 F1A_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1a_openapi_contract.json"
 F1B_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1b_openapi_contract.json"
 F1D_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1d_openapi_contract.json"
+F1E_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1e_openapi_contract.json"
 PHASE0_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "phase0_openapi_contract.json"
 F1A_ADDITIVE_OPERATIONS = {
     "GET /api/v1/platform/tenants",
@@ -57,17 +58,31 @@ F1D_ADDITIVE_SCHEMA_COMPONENTS = {
     "TenantLimitsRead",
     "TenantLimitsUpdate",
 }
+F1E_PRINCIPAL_METADATA_MIGRATIONS = {
+    "GET /api/v1/platform/tenants",
+    "GET /api/v1/platform/tenants/{tenant_id}",
+    "GET /api/v1/platform/tenants/{tenant_id}/features",
+    "GET /api/v1/tenant",
+    "GET /api/v1/tenant/features",
+    "GET /api/v1/tenant/settings",
+    "PATCH /api/v1/platform/tenants/{tenant_id}",
+    "PATCH /api/v1/platform/tenants/{tenant_id}/features",
+    "PATCH /api/v1/tenant/settings",
+    "POST /api/v1/platform/tenants",
+}
 
 
-def test_f1d_openapi_contract_matches_review_snapshot() -> None:
-    snapshot = json.loads(F1D_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+def test_f1e_openapi_contract_matches_review_snapshot() -> None:
+    snapshot = json.loads(F1E_SNAPSHOT_PATH.read_text(encoding="utf-8"))
 
     assert snapshot["format_version"] == 1
+    assert snapshot["checkpoint"] == "F1E Phase 1 security gate and review checkpoint"
+    assert snapshot["comparison_base"] == "54a3678"
     assert snapshot["contract"]["operation_count"] == 24
     assert snapshot["contract"] == build_openapi_contract_manifest(create_app().openapi())
 
 
-def test_f1d_contract_preserves_every_phase0_operation_and_component() -> None:
+def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:
     phase0 = _load_contract(PHASE0_SNAPSHOT_PATH)
     current = build_openapi_contract_manifest(create_app().openapi())
 
@@ -138,6 +153,20 @@ def test_f1d_delta_from_f1b_is_additive_features_and_approved_limits_migration()
         if digest != f1d_schemas[component]
     } == F1D_APPROVED_COMPONENT_MIGRATIONS
     assert f1d["top_level_sha256"] != f1b["top_level_sha256"]
+
+
+def test_f1e_delta_from_f1d_is_only_required_principal_metadata() -> None:
+    f1d = _load_contract(F1D_SNAPSHOT_PATH)
+    f1e = _load_contract(F1E_SNAPSHOT_PATH)
+
+    assert set(f1e["operations"]) == set(f1d["operations"])
+    assert {
+        operation
+        for operation, digest in f1e["operations"].items()
+        if digest != f1d["operations"][operation]
+    } == F1E_PRINCIPAL_METADATA_MIGRATIONS
+    assert f1e["components"] == f1d["components"]
+    assert f1e["top_level_sha256"] == f1d["top_level_sha256"]
 
 
 def build_openapi_contract_manifest(openapi: dict[str, Any]) -> dict[str, Any]:

@@ -2,14 +2,38 @@
 
 Date: 2026-07-11
 Branch: `codex/mvp-phase1-until-20260712-0900`
-Task: `F1D feature flags, platform tenant operations hardening and platform audit contracts`
-Review checkpoint: `F1D required local and PostgreSQL gates passed`
-Review decision: `Ready for supervisor review; no push, merge or deploy`
-Push state: `Local work only; no push, merge or deploy`
+Task: `F1E Phase 1 security gate, OpenAPI evidence and review checkpoint`
+Review checkpoint: `STOP — awaiting Murat review`
+Review decision: `Phase 1 gate passed; Phase 2 authentication/RBAC/audit persistence not started`
+Push state: `F1D base 54a3678 is pushed; the final F1E commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### F1D typed rollout, platform metadata hardening and event contracts
+### F1E Phase 1 security, product and contract closure
+
+- Closes Phase 1 without adding a route, response field, database revision, authentication/RBAC
+  implementation or persistent audit store. The current surface remains 24 generated OpenAPI
+  operations and a 25-row documented/smoke registry including runtime `/openapi.json`.
+- All ten Phase 1 platform/tenant operations now carry exact
+  `x-required-principal=platform|tenant` OpenAPI metadata matching their executable injected
+  principal dependency. They retain documented `403` fail-closed responses. Phase 1 deliberately
+  advertises no bearer/API-key scheme or standard OpenAPI `security` entry because caller-facing
+  authentication begins only in Phase 2.
+- One authorization matrix proves every Phase 1 operation denies absent or spoofed caller context;
+  authorized dependency overrides execute the same operations in API tests and the 25-endpoint
+  smoke. Tenant A/B API, service, cache-helper and worker-fake isolation remains covered, while the
+  PostgreSQL lane proves catalog, repository, raw-SQL, relationship and platform-to-HR negatives.
+- Platform response and OpenAPI assertions exclude document, employee, user and leave payload
+  schemas/fields. `limits.active_employees` remains nullable configured tenant metadata and is not
+  an employee record, usage value or count.
+- Unsafe caller correlation values are regenerated and excluded from response/error, structured-log
+  and recorded-event fixtures. Events retain only validated request/trace identifiers and the
+  closed redacted Phase 1 contracts; no audit persistence claim is introduced.
+- The complete PostgreSQL 17.10 lane, focused Alembic upgrade/downgrade/drift baseline, RLS/direct-DB
+  attacks, fast suite, OpenAPI contract, smoke and sole-head checks passed with the exact commands
+  recorded below. The queue stops here for Murat review and must not begin Phase 2 automatically.
+
+### Historical F1D typed rollout, platform metadata hardening and event contracts
 
 - Adds three visible operations:
   `GET/PATCH /api/v1/platform/tenants/{tenant_id}/features` and
@@ -633,11 +657,13 @@ the expected local commits ahead of the review-branch remote after the final com
   `Employees`, `Leave Balances`, and `Leave Requests`. F1B adds no operation; it documents the
   seven envelopes, safe response headers, platform cursor contract and explicit Phase-0 adapters.
   F1D reuses the two tenant/platform tags and adds three feature operations without an audit-center
-  tag.
+  tag. F1E keeps that operation set and adds required principal metadata to the ten Phase 1
+  operations only.
 - Historical W4C6 was a report and smoke-governance refresh only. At that checkpoint the
   implementation report, endpoint draft and smoke agreed on 15 documented endpoints. Historical
-  F1A target was 21 generated operations plus runtime `/openapi.json`; current F1D target is 24
-  generated and 25 documented. Neither rewrites the earlier checkpoint evidence.
+  F1A target was 21 generated operations plus runtime `/openapi.json`; historical F1D and current
+  F1E both have 24 generated and 25 documented endpoints. Neither rewrites the earlier checkpoint
+  evidence.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -780,11 +806,12 @@ SQLite. The PostgreSQL baseline invokes the same script with `--database-url` ag
 test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
 services.
 
-Current F1D documentation expects the registry to contain 25 rows: 24 generated operations plus
+Current F1E documentation expects the registry to contain 25 rows: 24 generated operations plus
 runtime `/openapi.json`. Smoke must execute all ten platform/tenant operations with dependency
 overrides, prove default and tenant-principal-on-platform denial, inspect exact projected
-metadata/configured-limit/no-HR boundaries, and verify feature defaults/overrides/tenant isolation
-alongside F1B correlation, `{data,meta}`, unsafe-ID non-reflection and deterministic cursor behavior.
+metadata/configured-limit/no-HR boundaries, verify the exact `x-required-principal` matrix, and
+verify feature defaults/overrides/tenant isolation alongside F1B correlation, `{data,meta}`, unsafe-ID
+non-reflection and deterministic cursor behavior.
 Historical Phase-0/F1A/F1B smoke evidence below remains unchanged.
 
 The script now verifies the documented API surface in four directions:
@@ -830,6 +857,27 @@ on no-op/failure. The synchronized script/registry provides the final 25-endpoin
 the full required command results are recorded below.
 
 ## Verification
+
+### F1E Phase 1 closure gates — passed
+
+| Gate | Command | Current evidence state |
+|---|---|---|
+| Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
+| Fast suite | `uv run pytest -q` | Passed: 753 passed, 30 deselected, 1 warning |
+| OpenAPI contract/security metadata | `uv run pytest -q backend/tests/test_openapi_metadata.py backend/tests/test_openapi_contract.py` | Passed: 26 tests, 1 warning; exact F1E snapshot and F1D-to-F1E principal-metadata-only diff |
+| Focused Phase 1 security | `uv run pytest -q backend/tests/test_tenant_api_f1a.py backend/tests/test_tenant_api_f1d.py backend/tests/test_platform_tenant_queries.py backend/tests/test_tenancy.py backend/tests/test_worker_queue.py backend/tests/test_request_context.py backend/tests/test_correlation_middleware.py backend/tests/test_platform_events.py` | Passed: 238 tests; all ten operation denials, A/B API/cache/worker boundaries, no-HR platform fields and redacted correlation/event fixtures |
+| Migration suite | `uv run pytest -q backend/tests/test_migrations.py` | Passed: 36 tests; upgrade/downgrade guards, offline security DDL and portable drift/round-trip coverage |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0015_f1d_feature_flags` |
+| PostgreSQL full lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed on PostgreSQL 17.10: 30 passed, 753 deselected, 1 warning |
+| PostgreSQL migration/runtime baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_baseline.py` | Passed: 8 tests; real `base → head → base → head`, downgrade refusal, native catalog, zero autogenerate drift and migrated API smoke |
+| PostgreSQL RLS/direct-DB attacks | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_f1c_rls.py backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed: 12 tests; catalog/FORCE/role checks, raw A/B denial, repository and pool binding, platform-HR denial and every composite relationship negative |
+| Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 25 documented endpoints executed and Phase 1 principal metadata checked |
+| Git hygiene | `git diff --check`; restricted-path/secret-pattern scan from `54a3678`; `git status --short --branch`; upstream count | Passed: no whitespace, forbidden path or credential-pattern match across the 18 F1E files; expected pre-commit changes only and upstream `0 0`. Final clean/ahead state is verified after the F1E commit in the handoff. |
+
+The F1A-F1D implementation base was already pushed on the review branch before this closure block.
+Per task authority, the final F1E commit is intentionally not pushed by Codex; the supervisor owns
+that push. The queue remains at `STOP — awaiting Murat review`, and no Phase 2 authentication,
+session, RBAC, permission enforcement or audit persistence work has started.
 
 ### F1D required gates — passed
 
@@ -1030,11 +1078,14 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Post-F1D Backend Backlog
+## Post-Phase-1 Backend Backlog
+
+The items below remain queued behind Murat's explicit review. F1E does not authorize beginning any
+of them automatically.
 
 - Auth/session/RBAC dependencies, permission enforcement, current-user context and persistent
-  append-only audit recorder/read policy remain Phase 2. F1D provides only redacted event contracts
-  plus the default-discard replaceable port; it does not fabricate an audit center.
+  append-only audit recorder/read policy remain Phase 2. Phase 1 provides only redacted event
+  contracts plus the default-discard replaceable port; it does not fabricate an audit center.
 - Global sort controls and validation/error normalization beyond the endpoint families already
   covered. Immutable `RequestContext`, global correlation middleware and the new Phase-1
   `{data,meta}` standard are implemented; remaining Phase-0 envelope migrations require an explicit

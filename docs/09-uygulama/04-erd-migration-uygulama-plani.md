@@ -16,6 +16,8 @@ Bu doküman, foundation ERD dokümanını implementasyon sırasına indirger. Am
 - Tenant guard testleri Faz 0/F1A'da başlar; F1C catalog/policy testleri her non-null `tenant_id`
   tablosunun PostgreSQL RLS enabled/forced ve app policy kapsamlı olmasını zorunlu kılar. F1D yeni
   tenant-owned feature tablosunu kendi frozen revision inventory/policy/grant sözleşmesiyle ekler.
+- F1E final Faz 1 kapısı yeni schema DDL veya revision eklemez; Alembic zincirinin tek head'i
+  `0015_f1d_feature_flags` olarak kalır.
 
 ### 1.1 Uygulanan P0D geçişi
 
@@ -25,7 +27,8 @@ ekler. PostgreSQL'de yeni foreign key'ler `NOT VALID` olarak yeni write'ları he
 lock'ları bırakılmadan tekrarlanan preflight concurrent-index penceresindeki write yarışını kapatır.
 `0010_contract_tenant_relational_integrity` bunları validate eder ve yalnız eski tenant-owned
 employee/user scalar foreign key'lerini kaldırır. Downgrade sırası önce eski constraint'leri geri
-getirip validate eder. RLS bu geçişe dahil değildir; Faz 1 işidir.
+getirip validate eder. RLS bu historical geçişe dahil değildir; daha sonra Faz 1'de
+`0014_f1c_postgresql_rls` ile uygulanmıştır.
 
 ### 1.2 Uygulanan P0E concurrency, idempotency ve archive geçişi
 
@@ -128,6 +131,23 @@ metadata'sını additive genişletir:
 
 Bu revision audit persistence tablosu eklemez. F1D event contract recorder seam'i application
 transaction'ındadır; append-only `audit_events` migration'ı Faz 2'dir.
+
+### 1.7 F1E Faz 1 final migration kapısı
+
+F1E yeni tablo, kolon, constraint, policy veya Alembic revision eklemez. Final migration yüzeyi
+tek head `0015_f1d_feature_flags`'tır. Kapanış kanıtı:
+
+- `uv run pytest -q backend/tests/test_migrations.py` → `36 passed`.
+- `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` → `30 passed`.
+- Aynı DSN ile `backend/tests/integration/test_postgresql_baseline.py` → `8 passed`; gerçek
+  upgrade/downgrade/re-upgrade, backfill/refusal, drift ve PostgreSQL API smoke.
+- Aynı DSN ile `backend/tests/integration/test_postgresql_f1c_rls.py` ile
+  `backend/tests/integration/test_postgresql_tenant_relational_integrity.py` → `12 passed`; catalog,
+  role/ACL, tenant A/B RLS, platform-to-HR denial ve direct-DB composite-FK saldırıları.
+
+Test fixture'ı unique disposable database'ler oluştursa da capability rolleri PostgreSQL cluster
+scope'undadır ve downgrade'de bilinçli olarak düşürülmez. Bu yüzden tam lane yalnız disposable test
+cluster'ında ve database/role/extension yönetebilen admin DSN ile çalıştırılır.
 
 ## 2. Migration sırası
 
@@ -343,7 +363,7 @@ PostgreSQL catalog discovery testini günceller. SQLite bu standardın güvenlik
 | Feature catalog/backfill | Existing tenant başına ordered yedi default row ve exact key/enabled check var mı |
 | Feature downgrade refusal | Override/configured limit varken sayılı preflight veri kaybından önce duruyor mu |
 | RLS catalog test | Tenant tablolarında RLS açık mı |
-| F1D feature privilege | Tenant yalnız kendi SELECT; platform SELECT/INSERT/UPDATE; iki role de DELETE yok mu |
+| Faz 1 feature privilege | Tenant yalnız kendi SELECT; platform SELECT/INSERT/UPDATE; iki role de DELETE yok mu |
 | Cross-tenant query | Tenant A verisi Tenant B'den görünmüyor mu |
 | Platform-to-HR negative | Metadata/feature platform capability'si HR tablo/query/schema erişimi alamıyor mu |
 | Relational preflight | Orphan ve cross-tenant satırlar constraint DDL'den önce raporlanıyor mu |
@@ -373,27 +393,28 @@ kişisel veri içermemelidir.
 - Migration sırası küçük ve anlaşılırdır.
 - Tenant ve user sonrası RBAC ve employee sırası nettir.
 - Hassas alanlar encryption kararı olmadan rastgele eklenmez.
-- RLS testleri planlanmıştır.
+- RLS catalog, role/ACL, tenant A/B raw-SQL ve platform-to-HR negatifleri gerçek PostgreSQL'de
+  geçmiştir; SQLite bu iddianın kanıtı değildir.
 - Seed verisi sentetik olacaktır.
 - Employee normal DELETE archive eder; history ve employee number korunur.
 - Leave kararları PostgreSQL row lock ile one-winner'dır.
 - Desteklenen keyed komutlar tenant-global receipt ile ilk başarılı snapshot'ı replay eder.
 - P0E receipt TTL/cleanup ve employee purge HTTP endpointi eklemez.
-- F1D feature katalog/backfill/API sırası birebir uyumludur; tenant A/B ve platform-to-HR
+- Faz 1 final feature katalog/backfill/API sırası birebir uyumludur; tenant A/B ve platform-to-HR
   PostgreSQL negatifleri gerçek role'lerle doğrulanır.
 - Configured `limits.active_employees` hiçbir platform query'sinde employee count/usage'a
   dönüştürülmez.
 - F1D event contracts audit persistence tablosu veya audit read endpoint'i eklemez.
 
-## 10. Faz 0 karar ve uygulama durumu
+## 10. Faz 0/Faz 1 karar ve uygulama durumu
 
 | Konu | Karar / mevcut durum | Uygulama zamanı |
 |---|---|---|
 | UUID | Public ID'ler uygulama tarafında `uuid4` ile üretilir; DB server default eklenmez | Uygulandı |
 | User email canonicalization | Mevcut `(tenant_id, email)` unique davranışı case-sensitive kalır; auth öncesi explicit `lower(btrim(email))` normalize kolon/index kullanılır, `citext` kullanılmaz | Phase 2 auth migration'ından önce |
-| RLS | Faz 0 composite FK + app guard üzerinde `0014` forced RLS, app/platform capability rolleri ve transaction-local tenant context uygulanır | F1C; SQLite compatibility + PostgreSQL 16.4 security gate passed |
+| RLS | Faz 0 composite FK + app guard üzerinde `0014` forced RLS, app/platform capability rolleri ve transaction-local tenant context uygulanır | F1E final tekrar: tam PostgreSQL `30`, RLS + direct attack `12` passed |
 | F1A tenant settings | `0013` fixed-column settings check'leri, existing-tenant backfill ve custom-settings downgrade refusal ekler; tenant plan/region/locale input allowlist'i API/domain'dedir; arbitrary JSON/features/legal entity yoktur | F1A; SQLite + PostgreSQL 17.10 gate passed |
-| F1D feature/limit metadata | `0015` fixed feature table/backfill, nullable configured active employee limit, FORCE RLS ve exact tenant/platform/no-DELETE grants ekler; downgrade override/limit kaybını reddeder | Uygulandı; SQLite compatibility, PostgreSQL 17.10 RLS/ACL/migration-owner ve smoke gate'leri geçti |
+| Faz 1 feature/limit metadata | `0015` fixed feature table/backfill, nullable configured active employee limit, FORCE RLS ve exact tenant/platform/no-DELETE grants ekler; downgrade override/limit kaybını reddeder | F1E final; sole head `0015`, fast migration `36`, PostgreSQL baseline `8` passed |
 | Hassas alan encryption | Key/provider ve envelope encryption kararı olmadan TCKN, IBAN, ücret veya sağlık kolonları eklenmez | İlgili employee/security fazı öncesi Murat kararı |
 | Audit immutability | Audit aynı PostgreSQL DB'de append-only write modelidir; runtime role update/delete engeli ve recorder Faz 2'de birlikte uygulanır | Faz 2 |
 

@@ -26,6 +26,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-018 | Request context ve API contract standardı | Immutable context, güvenli correlation middleware, yeni Faz-1 `{data, meta}` ve explicit Faz-0 adapter'ları | Kabul |
 | ADR-019 | PostgreSQL tenant RLS ve DB capability yolları | Forced RLS, transaction-local tenant binding, HR'sız platform role | Kabul |
 | ADR-020 | Typed tenant rollout ve platform event contracts | Allowlisted per-tenant flags, configured-limit-only queries, redacted UoW event seam | Kabul |
+| ADR-021 | Phase-1 OpenAPI principal metadata ve review checkpoint | Truthful `x-required-principal`, credential şeması yok, Phase 2 öncesi insan review stop'u | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -801,7 +802,66 @@ Sonuç:
   Final Ruff/pytest/PostgreSQL/smoke ve exact OpenAPI snapshot sonuçları implementation-status
   belgesine yalnız çalıştırıldıktan sonra yazılır.
 
-## 22. Ertelenen kararlar
+## 22. ADR-021 Phase-1 OpenAPI principal metadata ve review checkpoint
+
+Bağlam:
+
+- F1A-F1D sonunda altı platform ve dört current-tenant operation default-deny injected principal
+  dependency'siyle korunuyordu. Generated OpenAPI `403` sözleşmesini açıklasa da hangi trusted
+  principal türünün gerektiğini makine-okunur operation metadata'sıyla göstermiyordu.
+- Faz 1'de request'ten doğrulanan token, session veya başka caller credential yoktur. Standard
+  OpenAPI `security` alanı ancak gerçek bir `securityScheme` ve transport credential davranışıyla
+  anlamlıdır; sahte bearer/OAuth şeması Phase-2 authentication uygulanmış gibi yanlış sözleşme
+  üretirdi.
+- Phase-1 gate'i endpoint görünürlüğünün yanında authorization denial, PostgreSQL RLS/direct-DB
+  izolasyonu, platform payload minimizasyonu, correlation redaction ve exact contract evidence'ını
+  birlikte kapatmalı; ardından Phase 2 otomatik başlamamalıdır.
+
+Karar:
+
+- Mevcut on Faz-1 operation generated OpenAPI'de required `x-required-principal` vendor extension'ı
+  taşır. `POST/GET /api/v1/platform/tenants`, platform tenant detail `GET/PATCH` ve platform feature
+  `GET/PATCH` için değer `platform`; current tenant `GET`, settings `GET/PATCH` ve feature `GET` için
+  değer `tenant`tır.
+- Extension yalnız trusted dependency seam'inin beklediği principal sınıfını belgeler. Header, path,
+  query veya body içindeki tenant/user değeri authorization değildir; extension da caller'a yeni
+  credential veya permission vermez. Runtime default dependencies principal olmadan fail closed
+  kalır ve ters principal türü diğer yüzeyi açmaz.
+- Gerçek authentication Phase 2'ye ait olduğu için bu on operation standard OpenAPI `security`
+  alanı taşımaz ve schema top-level `components.securitySchemes` içermez. Faz 2 gerçek credential
+  transport'u ve permission catalogunu uyguladığında standard security metadata'sını ayrı,
+  intentional contract migration ile ekleyecektir; `x-required-principal` buna vekil sayılmaz.
+- F1E OpenAPI snapshot'ı operation sayısını veya path setini değiştirmez; yalnız bu on operation'ın
+  documentation digest'i değişir. Historical Phase-0/F1A/F1B/F1D snapshotları immutable kalır;
+  F1D schema components ve OpenAPI top-level digest'i F1E'de birebir korunur.
+- Contract/runtime testleri tam on-operation metadata matrisini, authorized test context'te
+  çalışabilirliği, principal yokluğunda default denial'ı, tenant/platform principal ayrımını ve
+  spoofed caller identity'nin etkisizliğini birlikte kanıtlar.
+- Platform operation response'ları yalnız allowlisted tenant lifecycle/plan/region/locale/timezone,
+  configured limit ve typed rollout metadata'sı taşır. Employee, leave ve document payload alanı,
+  customer record/schema/count/usage veya document content alanı sıfırdır. Rollout anahtar adı ve
+  configured `limits.active_employees` HR payload'u veya kullanım sayacı olarak yorumlanmaz.
+- Error fixture'ları safe correlation alias'ını, completion log fixture'ları safe request/trace
+  alanlarını ve frozen platform event fixture'ları doğrulanmış request/trace alanlarını taşır. Event
+  contract'ı arbitrary payload/metadata/before/after, credential, PII ve employee/leave/document
+  alanlarını yapısal olarak reddeder; Phase 1 default recorder discard etmeye devam eder.
+- F1E gate'inin çalıştırılmış exact Ruff, fast/PostgreSQL, Alembic round-trip/drift, RLS/direct-DB,
+  OpenAPI, smoke ve git-hygiene komut sonuçlarının tek kanonik kaydı
+  [API Implementation Status](../09-uygulama/11-api-implementation-status.md) belgesidir. ADR içine
+  sayı veya geçici command çıktısı kopyalanmaz.
+- Bu karar authentication/session, RBAC/permission enforcement, persistent audit/outbox, audit read
+  API'si, support/break-glass veya yeni business module eklemez. F1E Phase-1 review checkpoint'inde
+  durur; Murat review ve supervisor push sonrasında ayrıca yetkilendirilmeden Phase 2 başlamaz.
+
+Sonuç:
+
+- İnsan reviewer ve tooling, uygulanmamış credential davranışını varsaymadan platform/tenant
+  principal gereksinimini generated contract'tan okuyabilir.
+- Phase-1 endpoint seti ve response compatibility korunur; security documentation değişikliği exact
+  snapshot diff'iyle görünürdür.
+- Phase 1, güvenlik ve ürün gate'i tamamlandıktan sonra açık bir insan-review sınırında bekler.
+
+## 23. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -811,7 +871,7 @@ Sonuç:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 23. İlgili dokümanlar
+## 24. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

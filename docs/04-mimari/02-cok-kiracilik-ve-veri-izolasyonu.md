@@ -41,7 +41,7 @@ F1A'da `locale` yalnız `tr-TR|en-US`, `timezone` ise geçerli bir IANA timezone
 `week_start_day`, `date_format` ve `time_format` kolonlarını taşır. Feature flag tablosu veya
 `/api/v1/tenant/features` endpoint'i F1A kapsamına dahil değildir.
 
-F1D current ekleri:
+F1D'de uygulanıp F1E final Faz 1 kapısında doğrulanan ekler:
 
 - `tenants.active_employee_limit`, nullable configured platform limit metadata'sıdır. API'de
   `limits.active_employees` olarak görünür; employee tablosundan tüketim/adet ölçmez.
@@ -52,6 +52,9 @@ F1D current ekleri:
   `/api/v1/tenant/features` scope'u yalnız injected tenant principal'dan gelir; tenant ID alanı
   veya caller header'ı kabul etmez. Platform GET/PATCH feature path'indeki tenant UUID yalnız
   resource selector'dır ve platform authority sağlamaz.
+- Exact on Faz 1 platform/current-tenant operation'ı required principal türünü
+  `x-required-principal: platform|tenant` ile belgeler. Bu extension caller identity veya
+  credential değildir; standard authentication security scheme'i Faz 2'ye aittir.
 
 ## 4. Tenant çözümleme
 

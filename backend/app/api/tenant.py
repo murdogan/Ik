@@ -17,7 +17,11 @@ from app.api.errors import (
     TENANT_SETTINGS_WRITE_LOCKED_RESPONSES,
     UNEXPECTED_ERROR_RESPONSES,
 )
-from app.api.openapi import TENANT_SETTINGS_TAG, with_correlation_response_headers
+from app.api.openapi import (
+    TENANT_PRINCIPAL_OPENAPI,
+    TENANT_SETTINGS_TAG,
+    with_correlation_response_headers,
+)
 from app.models.tenant import Tenant
 from app.platform.request_context import RequestContext
 from app.platform.responses import DataEnvelope, data_envelope
@@ -49,6 +53,7 @@ router = APIRouter(
 
 @router.get(
     "",
+    openapi_extra=TENANT_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantRead],
     summary="Read current tenant metadata",
     description=(
@@ -78,6 +83,7 @@ async def get_current_tenant(
 
 @router.get(
     "/settings",
+    openapi_extra=TENANT_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantSettingsRead],
     summary="Read typed tenant settings",
     description=(
@@ -108,6 +114,7 @@ async def get_current_tenant_settings(
 
 @router.patch(
     "/settings",
+    openapi_extra=TENANT_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantSettingsRead],
     summary="Update typed tenant settings",
     description=(
@@ -144,6 +151,7 @@ async def update_current_tenant_settings(
 
 @router.get(
     "/features",
+    openapi_extra=TENANT_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantFeaturesRead],
     summary="Read current tenant feature flags",
     description=(

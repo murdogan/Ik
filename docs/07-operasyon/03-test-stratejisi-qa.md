@@ -24,18 +24,26 @@ bağlantısı gerektiren testler `postgres` marker'ıyla opt-in tutulur:
 uv run pytest -q
 ```
 
-Gerçek PostgreSQL 16 hattı lokal Docker'da şöyle çalışır:
+Gerçek PostgreSQL 16+ hattının komutu şöyledir; yönetim DSN'i disposable bir test cluster'ına ait
+olmalıdır:
 
 ```bash
 docker compose up -d --wait postgres
 IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
 ```
 
+`docker compose` satırı yalnız local service başlangıç örneğidir. Tam lane F1C/F1D capability
+rollerini cluster-global oluşturup/harden eder ve password saklamayan geçici migration-owner login'i
+ile bağlanır; bu nedenle test cluster'ının host authentication'ı bu geçici role izin vermelidir.
+Shared/operational cluster kullanılmaz ve örnek service bu koşul doğrulanmadan tam lane kanıtı
+sayılmaz. F1E recorded gate'i disposable, local-trust PostgreSQL 17.10 cluster'ında çalıştırılmıştır.
+
 `IK_TEST_DATABASE_URL` bu hat için zorunludur. Fixture verilen yönetim URL'si üzerinden her
 PostgreSQL testi için izole ve benzersiz bir geçici veritabanı oluşturur, Alembic ve API testini
 orada çalıştırır ve sonunda veritabanını siler. Bu function-scope izolasyon, retained archive veya
 idempotency verisinin sonraki destructive migration testini collection sırasına bağlı biçimde
-bozmasını engeller. PostgreSQL hattı en az şunları kanıtlar:
+bozmasını engeller. Capability rolleri downgrade'de bilinçli olarak korunduğu için database
+izolasyonu cluster izolasyonunun yerine geçmez. PostgreSQL hattı en az şunları kanıtlar:
 
 - Alembic `base → head → base` upgrade/downgrade ve model metadata drift kontrolü.
 - PostgreSQL UUID/timestamp tipleri ile index, unique, foreign-key ve check constraint davranışları.
@@ -67,11 +75,13 @@ sunulmaz. Workflow aktivasyonu repo yönetimi/supervisor işidir.
 Historical Phase-0 OpenAPI gate'i `backend/tests/contracts/phase0_openapi_contract.json`, F1A gate'i
 `backend/tests/contracts/f1a_openapi_contract.json` manifestinde top-level metadata, her operasyon
 ve her component schema için canonical SHA-256 snapshot tutar. F1B historical envelope diff'i ve
-F1D current additive diff'i ayrı snapshot/assertion olarak korunur; önceki manifestler overwrite
-edilmez. F1D metadata assertions, 24 generated path/method operation registry kontrolü, iki
-doküman tablosu ve runtime `/openapi.json` dahil 25 endpoint smoke coverage ile tamamlanır.
+historical F1D additive diff'i ayrı snapshot/assertion olarak korunur; önceki manifestler overwrite
+edilmez. F1E snapshot'ı yalnız exact on Faz 1 operation'ındaki
+`x-required-principal: platform|tenant` metadata diff'ini ekler; component ve top-level digest'leri
+korur. Current assertions 24 generated path/method operation registry kontrolü, iki doküman tablosu
+ve runtime `/openapi.json` dahil 25 endpoint smoke coverage ile tamamlanır.
 Contract değişikliği ancak intentional diff ve aynı commit'teki snapshot/doküman güncellemesiyle
-kabul edilir. F1D sonucu final contract/smoke komutları çalışmadan `passed` sayılmaz.
+kabul edilir. F1E sonucu final contract/security/smoke komutları çalışmadan `passed` sayılmaz.
 
 P0F query-plan prosedürünü kanıt satırıyla tek başına çalıştırmak için:
 

@@ -5,7 +5,10 @@
 > [MVP First Release Master Development Plan](../../.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)
 > ile verilmiş, P0A–P0G'nin enumerated Faz 0 kapısı yerelde yeşil olmuştur. Güncel durum ve
 > açık review sapmaları [API Implementation Status Report](11-api-implementation-status.md)
-> içindedir. Aktif checkpoint `STOP — awaiting Murat review`; Faz 1 başlatılmamıştır.
+> içindedir. F1A–F1E Faz 1 foundation kapısı tamamlanmış, aktif checkpoint
+> `STOP — awaiting Murat review; Phase 1 gate complete` olmuştur. Faz 2
+> authentication/session/RBAC/audit persistence başlatılmamıştır. F1D base `54a3678` review
+> branch'ine pushed durumdadır; F1E commit/push adımı supervisor sorumluluğunda bekler.
 
 Bu doküman, planın gerçekten tamam sayılması için son kontrol listesidir. Kodlamaya tekrar geçmeden önce bu listedeki maddeler ya tamamlanmalı ya da bilinçli istisna olarak işaretlenmelidir.
 

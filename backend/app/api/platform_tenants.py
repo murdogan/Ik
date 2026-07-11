@@ -19,7 +19,11 @@ from app.api.errors import (
     UNEXPECTED_ERROR_RESPONSES,
     platform_tenant_pagination_validation_error,
 )
-from app.api.openapi import PLATFORM_TENANTS_TAG, with_correlation_response_headers
+from app.api.openapi import (
+    PLATFORM_PRINCIPAL_OPENAPI,
+    PLATFORM_TENANTS_TAG,
+    with_correlation_response_headers,
+)
 from app.models.tenant import Tenant
 from app.modules.core.domain.tenant import health_for_status
 from app.platform.pagination import MAX_CURSOR_LENGTH, InvalidCursorError
@@ -66,6 +70,7 @@ router = APIRouter(
 
 @router.post(
     "",
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantPlatformRead],
     status_code=status.HTTP_201_CREATED,
     summary="Provision platform tenant",
@@ -129,6 +134,7 @@ def get_platform_tenant_list_pagination(
 
 @router.get(
     "",
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=ListEnvelope[TenantPlatformRead],
     summary="List platform tenant metadata",
     description=(
@@ -163,6 +169,7 @@ async def list_platform_tenants(
 
 @router.get(
     "/{tenant_id}",
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantPlatformRead],
     summary="Read platform tenant metadata",
     description=(
@@ -193,6 +200,7 @@ async def get_platform_tenant(
 
 @router.patch(
     "/{tenant_id}",
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantPlatformRead],
     summary="Update platform tenant lifecycle",
     description=(
@@ -228,6 +236,7 @@ async def update_platform_tenant(
 
 @router.get(
     "/{tenant_id}/features",
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantFeaturesRead],
     summary="Read platform tenant feature flags",
     description=(
@@ -258,6 +267,7 @@ async def get_platform_tenant_features(
 
 @router.patch(
     "/{tenant_id}/features",
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantFeaturesRead],
     summary="Update platform tenant feature flags",
     description=(
