@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import SimpleNamespace
+from typing import cast
 from uuid import UUID
 
 import pytest
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
-from app.platform.workers import JobQueue, JobSpec
+from app.platform.workers import JobOrigin, JobQueue, JobSpec
 from app.platform.workers.fake import RecordingJobQueue
 
 TENANT_ID = UUID("10000000-0000-4000-8000-000000000001")
 OTHER_TENANT_ID = UUID("10000000-0000-4000-8000-000000000002")
 TRACE_ID = "0123456789abcdef0123456789abcdef"
+
+
+def _worker_request_context(tenant_id: UUID = TENANT_ID) -> dict[str, object]:
+    return RequestContext(
+        request_id="request-001",
+        trace_id=TRACE_ID,
+        tenant=TenantContext(tenant_id=tenant_id, slug="worker-test"),
+    ).serialize_for_worker()
 
 
 async def test_recording_job_queue_preserves_tenant_and_operational_controls() -> None:
@@ -22,12 +32,14 @@ async def test_recording_job_queue_preserves_tenant_and_operational_controls() -
     job = JobSpec(
         task_name="employees.export",
         tenant_id=TENANT_ID,
+        origin=JobOrigin.REQUEST,
         idempotency_key="export-request-001",
         payload=payload,
         timeout_seconds=120,
         max_attempts=3,
         queue="exports",
         correlation_id="request-001",
+        request_context=_worker_request_context(),
     )
     payload["employee"]["id"] = "changed-after-construction"
     payload["fields"].append("email")
@@ -40,7 +52,10 @@ async def test_recording_job_queue_preserves_tenant_and_operational_controls() -
     assert isinstance(queue, RecordingJobQueue)
     assert queue.jobs == (job,)
     assert queue.jobs[0].tenant_id == TENANT_ID
-    assert queue.jobs[0].request_context_for_transport() is None
+    assert queue.jobs[0].origin is JobOrigin.REQUEST
+    recorded_context = queue.jobs[0].request_context_for_transport()
+    assert recorded_context is not None
+    assert recorded_context["tenant_id"] == str(TENANT_ID)
     assert queue.jobs[0].payload == {
         "employee": {"id": "20000000-0000-4000-8000-000000000001"},
         "fields": ("id",),
@@ -63,6 +78,18 @@ async def test_recording_job_queue_supports_injected_deterministic_ids() -> None
     queued = await queue.enqueue(_valid_job())
 
     assert queued.id == "provider-job-001"
+    assert queue.jobs[0].origin is JobOrigin.SYSTEM
+    assert queue.jobs[0].request_context_for_transport() is None
+
+
+async def test_recording_job_queue_rejects_structural_job_lookalike() -> None:
+    queue = RecordingJobQueue()
+    lookalike = cast(JobSpec, SimpleNamespace(queue="default"))
+
+    with pytest.raises(TypeError, match="validated JobSpec"):
+        await queue.enqueue(lookalike)
+
+    assert queue.jobs == ()
 
 
 async def test_recording_job_queue_receives_immutable_serialized_safe_context() -> None:
@@ -75,6 +102,7 @@ async def test_recording_job_queue_receives_immutable_serialized_safe_context() 
     job = JobSpec(
         task_name="employees.export",
         tenant_id=TENANT_ID,
+        origin=JobOrigin.REQUEST,
         idempotency_key="export-request-001",
         payload={},
         timeout_seconds=120,
@@ -127,6 +155,7 @@ def test_job_spec_rejects_unsafe_or_cross_tenant_serialized_context(
         JobSpec(
             task_name="employees.export",
             tenant_id=TENANT_ID,
+            origin=JobOrigin.REQUEST,
             idempotency_key="export-request-001",
             payload={},
             timeout_seconds=120,
@@ -135,21 +164,62 @@ def test_job_spec_rejects_unsafe_or_cross_tenant_serialized_context(
         )
 
 
-def test_recording_job_queue_rejects_tenant_a_context_for_tenant_b_before_enqueue() -> None:
+@pytest.mark.parametrize(
+    ("context_tenant_id", "job_tenant_id"),
+    [
+        (TENANT_ID, OTHER_TENANT_ID),
+        (OTHER_TENANT_ID, TENANT_ID),
+    ],
+)
+def test_recording_job_queue_rejects_cross_tenant_request_context_before_enqueue(
+    context_tenant_id: UUID,
+    job_tenant_id: UUID,
+) -> None:
     queue = RecordingJobQueue()
 
     with pytest.raises(ValueError, match="request_context tenant_id must match"):
         JobSpec(
             task_name="employees.export",
-            tenant_id=OTHER_TENANT_ID,
+            tenant_id=job_tenant_id,
+            origin=JobOrigin.REQUEST,
             idempotency_key="export-request-001",
             payload={},
             timeout_seconds=120,
             max_attempts=3,
-            request_context=_worker_request_context(),
+            request_context=_worker_request_context(context_tenant_id),
         )
 
     assert queue.jobs == ()
+
+
+@pytest.mark.parametrize(
+    ("origin", "request_context", "message"),
+    [
+        (JobOrigin.REQUEST, None, "request-originated jobs require request_context"),
+        (
+            JobOrigin.SYSTEM,
+            _worker_request_context(),
+            "system jobs must not carry request_context",
+        ),
+        ("request", None, "origin must be a JobOrigin"),
+    ],
+)
+def test_job_spec_requires_explicit_consistent_origin(
+    origin: object,
+    request_context: dict[str, object] | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        JobSpec(
+            task_name="tenant.background-task",
+            tenant_id=TENANT_ID,
+            origin=origin,  # type: ignore[arg-type]
+            idempotency_key="background-task-001",
+            payload={},
+            timeout_seconds=120,
+            max_attempts=3,
+            request_context=request_context,
+        )
 
 
 @pytest.mark.parametrize(
@@ -175,6 +245,7 @@ def test_job_spec_fails_closed_without_required_safeguards(
     values: dict[str, object] = {
         "task_name": "employees.export",
         "tenant_id": TENANT_ID,
+        "origin": JobOrigin.SYSTEM,
         "idempotency_key": "export-request-001",
         "payload": {"employee_id": "20000000-0000-4000-8000-000000000001"},
         "timeout_seconds": 120,
@@ -190,19 +261,12 @@ def test_job_spec_fails_closed_without_required_safeguards(
 
 def _valid_job() -> JobSpec:
     return JobSpec(
-        task_name="employees.export",
+        task_name="tenant.outbox.dispatch",
         tenant_id=TENANT_ID,
-        idempotency_key="export-request-001",
+        origin=JobOrigin.SYSTEM,
+        idempotency_key="outbox-event-001",
         payload={},
         timeout_seconds=120,
         max_attempts=3,
         queue="exports",
     )
-
-
-def _worker_request_context() -> dict[str, object]:
-    return RequestContext(
-        request_id="request-001",
-        trace_id=TRACE_ID,
-        tenant=TenantContext(tenant_id=TENANT_ID, slug="worker-test"),
-    ).serialize_for_worker()

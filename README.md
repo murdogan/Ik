@@ -60,9 +60,10 @@ employee/leave kodu davranış uyumluluğu için flat paketlerde artımlı geçi
 F1D feature-flag katalogunu CORE domain'de, dört redacted tenant platform event sözleşmesini CORE
 application katmanında tutar; `app.platform.events` yalnız framework-neutral audit primitive/port
 ve provider fake/default adapter sınırıdır.
-F1E yeni ürün modülü veya şema eklemeden Faz 1'i security/product/OpenAPI gate'iyle kapatır; exact
-on platform/current-tenant operation'ı `x-required-principal: platform|tenant` metadata'sıyla
-belgeler ve queue'yu Faz 2 öncesi Murat review checkpoint'inde durdurur.
+F1E yeni ürün modülü veya şema eklemeden yerel Faz 1 security/product/OpenAPI teknik gate'ini
+tamamlar; exact on platform/current-tenant operation'ı
+`x-required-principal: platform|tenant` metadata'sıyla belgeler ve queue'yu supervisor push +
+Murat review checkpoint'inde durdurur.
 
 ## Lokal geliştirme
 
@@ -85,12 +86,18 @@ uv run pytest -q
 unit/API/migration testlerini çalıştırır; `postgres` işaretli entegrasyon testleri ayrı ve
 opt-in'dir.
 
-Gerçek PostgreSQL 16 entegrasyon, API ve migration hattını lokal Docker ile çalıştırmak için:
+PostgreSQL 16+ test servisini lokal Docker ile başlatıp opt-in hattı çalıştırmak için:
 
 ```bash
 docker compose up -d --wait postgres
 IK_TEST_DATABASE_URL=postgresql+asyncpg://ik:ik@127.0.0.1:5432/postgres uv run pytest -q -m postgres
 ```
+
+`docker compose` satırı yalnız local service başlangıç örneğidir. Tam lane, password saklamayan
+geçici bir `LOGIN NOSUPERUSER NOBYPASSRLS` migration-owner rolüyle yeniden bağlanır; bu nedenle
+disposable test cluster'ının host authentication'ı bu geçici role izin vermelidir. Stock service bu
+koşul ayrıca sağlanmadan tam-lane kanıtı sayılmaz. F1E gate'i bu gereksinimi karşılayan disposable,
+local-trust PostgreSQL 17.10 cluster'ında çalıştırılmıştır.
 
 `IK_TEST_DATABASE_URL` PostgreSQL hattı için zorunludur ve disposable PostgreSQL test cluster'ındaki
 yönetim bağlantısını göstermelidir. Fixture her PostgreSQL testi için benzersiz/geçici bir test
@@ -143,14 +150,15 @@ adımlarının tamamı için tek dış commit/rollback sahibidir. AST architectu
 Faz 0 worker spike'ı ADR-008'de Dramatiq 2.2 + Redis'i hedef adapter olarak seçer. Runtime provider
 ve broker kurulmamıştır. `app.platform.workers` yalnız non-zero tenant, idempotency key, JSON
 payload, timeout ve attempt sınırı isteyen dar `JobQueue`/`JobSpec` portu ile deterministik test
-fake'ini içerir. F1B optional worker request context'ini fixed JSON-safe allowlist ile doğrular:
+fake'ini içerir. F1B worker request context'ini fixed JSON-safe allowlist ile doğrular:
 safe request/trace, job ile aynı tenant, optional actor/session ve support UUID placeholder'ları ile
 authentication strength. Extra/free-text metadata, tenant slug, PII ve raw auth materyali kabul
 edilmez; tenantless request context serialize edilemez. F1E worker-fake gate'inde `tenant_id` her
-job için zorunlu kalır; request kaynaklı context sağlanırsa job tenant'ıyla exact eşleşir ve A
-context'iyle B job'u enqueue edilmeden reddedilir. `request_context=None` yalnız zaten açıkça
-tenant-scoped system/outbox işi anlamındadır; gerçek provider ayrıca authenticated transport ve
-transaction-local DB tenant binding uygulamadan HR verisi çalıştıramaz.
+job için zorunlu kalır ve `JobOrigin.REQUEST|SYSTEM` provenance'ı explicit olmak zorundadır.
+Request-origin job context'siz kurulamaz; context tenant'ı job tenant'ıyla exact eşleşir ve A↔B
+uyuşmazlığı enqueue edilmeden reddedilir. System/outbox job'u yalnız explicit `SYSTEM` origin ile
+context'siz kurulabilir ve request context taşıyamaz. Gerçek provider ayrıca authenticated
+transport ve transaction-local DB tenant binding uygulamadan HR verisi çalıştıramaz.
 
 Historical Phase 0 OpenAPI contract'ı
 `backend/tests/contracts/phase0_openapi_contract.json` içinde operation/component bazlı canonical

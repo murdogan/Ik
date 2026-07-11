@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 from uuid import UUID
@@ -26,12 +27,20 @@ type FrozenJsonValue = (
 )
 
 
+class JobOrigin(StrEnum):
+    """Closed provenance categories for tenant-scoped background work."""
+
+    REQUEST = "request"
+    SYSTEM = "system"
+
+
 @dataclass(frozen=True, slots=True)
 class JobSpec:
     """Provider-neutral job envelope with mandatory operational safeguards."""
 
     task_name: str
     tenant_id: UUID
+    origin: JobOrigin
     idempotency_key: str
     payload: Mapping[str, JsonValue]
     timeout_seconds: int
@@ -48,6 +57,12 @@ class JobSpec:
         _require_token("idempotency_key", self.idempotency_key, maximum_length=128)
         if not isinstance(self.tenant_id, UUID) or self.tenant_id.int == 0:
             raise ValueError("tenant_id must be a non-zero UUID")
+        if not isinstance(self.origin, JobOrigin):
+            raise ValueError("origin must be a JobOrigin")
+        if self.origin is JobOrigin.REQUEST and self.request_context is None:
+            raise ValueError("request-originated jobs require request_context")
+        if self.origin is JobOrigin.SYSTEM and self.request_context is not None:
+            raise ValueError("system jobs must not carry request_context")
         if (
             not isinstance(self.timeout_seconds, int)
             or isinstance(self.timeout_seconds, bool)

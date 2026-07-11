@@ -220,7 +220,7 @@ async def main(database_url: str | None = None) -> None:
             base_url="http://backend-smoke.local",
         ) as client:
             await _smoke_correlation_middleware(client)
-            await _smoke_principal_default_denials(client)
+            await _smoke_principal_default_denials(app, client)
             tenant_principal_scope = _install_test_principal_overrides(app)
             await _smoke_system_endpoints(client)
             _smoke_documented_endpoint_tables()
@@ -255,7 +255,8 @@ async def main(database_url: str | None = None) -> None:
         "BACKEND_SMOKE_OK "
         f"tenant_id={TENANT_ID} "
         f"documented_endpoints={len(DOCUMENTED_SMOKE_ENDPOINTS)} "
-        "checked=health,landing,openapi,documented_endpoint_tables,principal_default_denial,"
+        "checked=health,landing,openapi,documented_endpoint_tables,"
+        "principal_default_and_opposite_denial,"
         "correlation_middleware,phase1_envelopes,platform_cursor_pagination,platform_tenants,"
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
         "phase0_contract_compatibility,"
@@ -411,7 +412,7 @@ async def _smoke_correlation_middleware(client: AsyncClient) -> None:
         raise AssertionError("generated trace IDs were unexpectedly reused")
 
 
-async def _smoke_principal_default_denials(client: AsyncClient) -> None:
+async def _smoke_principal_default_denials(app: Any, client: AsyncClient) -> None:
     _expect_phase1_error_code(
         await client.get(
             "/api/v1/platform/tenants",
@@ -448,6 +449,33 @@ async def _smoke_principal_default_denials(client: AsyncClient) -> None:
         "tenant_access_denied",
         "GET tenant features without injected tenant principal",
     )
+
+    app.dependency_overrides[get_tenant_principal] = lambda: TenantPrincipal(
+        tenant_id=TENANT_ID,
+        source="backend-api-smoke-opposite-principal",
+    )
+    try:
+        _expect_phase1_error_code(
+            await client.get(f"/api/v1/platform/tenants/{TENANT_ID}/features"),
+            403,
+            "platform_access_denied",
+            "tenant principal must not authorize the platform surface",
+        )
+    finally:
+        app.dependency_overrides.pop(get_tenant_principal, None)
+
+    app.dependency_overrides[get_platform_principal] = lambda: PlatformPrincipal(
+        source="backend-api-smoke-opposite-principal"
+    )
+    try:
+        _expect_phase1_error_code(
+            await client.get("/api/v1/tenant"),
+            403,
+            "tenant_access_denied",
+            "platform principal must not authorize the tenant surface",
+        )
+    finally:
+        app.dependency_overrides.pop(get_platform_principal, None)
 
 
 def _install_test_principal_overrides(app: Any) -> dict[str, UUID]:

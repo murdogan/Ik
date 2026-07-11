@@ -17,6 +17,8 @@ class RecordingJobQueue:
         return tuple(self._jobs)
 
     async def enqueue(self, job: JobSpec, /) -> QueuedJob:
+        if type(job) is not JobSpec:
+            raise TypeError("RecordingJobQueue accepts only a validated JobSpec")
         self._jobs.append(job)
         job_id = (
             self._id_factory()

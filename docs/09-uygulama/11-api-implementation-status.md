@@ -9,11 +9,12 @@ Push state: `F1D base 54a3678 is pushed; F1E HEAD is intentionally left unpushed
 
 ## Scope
 
-### F1E Phase 1 security, product and contract closure
+### F1E local Phase 1 security, product and contract closure
 
-- Closes Phase 1 without adding a route, response field, database revision, authentication/RBAC
-  implementation or persistent audit store. The current surface remains 24 generated OpenAPI
-  operations and a 25-row documented/smoke registry including runtime `/openapi.json`.
+- Completes the local Phase 1 technical gate without adding a route, response field, database
+  revision, authentication/RBAC implementation or persistent audit store. Final closure remains
+  pending the supervisor-owned push and Murat review. The current surface remains 24 generated
+  OpenAPI operations and a 25-row documented/smoke registry including runtime `/openapi.json`.
 - All ten Phase 1 platform/tenant operations now carry exact
   `x-required-principal=platform|tenant` OpenAPI metadata matching their executable injected
   principal dependency. They retain documented `403` fail-closed responses. Phase 1 deliberately
@@ -22,9 +23,10 @@ Push state: `F1D base 54a3678 is pushed; F1E HEAD is intentionally left unpushed
 - One authorization matrix proves every Phase 1 operation denies absent or spoofed caller context;
   authorized dependency overrides execute the same operations in API tests and the 25-endpoint
   smoke. Tenant A/B API, service and cache-helper isolation remains covered. Every worker job has a
-  non-zero tenant; optional request-derived context must match it, so an A-context/B-job envelope is
-  rejected before the recording fake can enqueue. The PostgreSQL lane proves catalog, repository,
-  raw-SQL, relationship and platform-to-HR negatives.
+  non-zero tenant and explicit `REQUEST|SYSTEM` origin. Request jobs require matching context, so
+  A→B and B→A envelopes are rejected before the recording fake can enqueue; system jobs explicitly
+  reject request context. The PostgreSQL lane proves catalog, repository, raw-SQL, relationship and
+  platform-to-HR negatives.
 - Platform response and OpenAPI assertions exclude document, employee, user and leave payload
   schemas/fields. `limits.active_employees` remains nullable configured tenant metadata and is not
   an employee record, usage value or count.
@@ -147,9 +149,10 @@ Push state: `F1D base 54a3678 is pushed; F1E HEAD is intentionally left unpushed
   compatibility is also explicit while safe canonical response headers are universal.
 - F1B introduced optional request-derived worker propagation with a fixed JSON-safe allowlist and
   validates request/trace, tenant/job equality, UUID placeholders and authentication strength.
-  Every job tenant remains mandatory; F1E makes both A→B and B→A mismatch evidence explicit without
-  claiming that the recording fake is a broker or authorization adapter. Extra/free-text metadata,
-  tenant slug and raw auth material cannot enter the serialized context.
+  Every job tenant remains mandatory; F1E adds explicit `JobOrigin.REQUEST|SYSTEM`, requires context
+  for request-origin jobs, forbids it for system jobs, and makes both A→B and B→A mismatch evidence
+  explicit without claiming that the recording fake is a broker or authorization adapter.
+  Extra/free-text metadata, tenant slug and raw auth material cannot enter serialized context.
 - Generated OpenAPI documents the seven envelopes, correlation response headers, cursor-only
   platform list and Phase-0 compatibility/deprecation behavior. Smoke covers header propagation,
   unsafe-input non-reflection, envelope/meta equality, deterministic platform cursor traversal and
@@ -812,7 +815,7 @@ services.
 
 Current F1E documentation expects the registry to contain 25 rows: 24 generated operations plus
 runtime `/openapi.json`. Smoke must execute all ten platform/tenant operations with dependency
-overrides, prove default and tenant-principal-on-platform denial, inspect exact projected
+overrides, prove representative missing- and opposite-principal denial, inspect exact projected
 metadata/configured-limit/no-HR boundaries, verify the exact `x-required-principal` matrix, and
 verify feature defaults/overrides/tenant isolation alongside F1B correlation, `{data,meta}`, unsafe-ID
 non-reflection and deterministic cursor behavior.
@@ -867,13 +870,13 @@ the full required command results are recorded below.
 | Gate | Command | Current evidence state |
 |---|---|---|
 | Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
-| Fast suite | `uv run pytest -q` | Passed: 754 passed, 30 deselected, 1 warning |
+| Fast suite | `uv run pytest -q` | Passed: 759 passed, 30 deselected, 1 warning |
 | OpenAPI contract/security metadata | `uv run pytest -q backend/tests/test_openapi_metadata.py backend/tests/test_openapi_contract.py` | Passed: 26 tests, 1 warning; exact F1E snapshot and F1D-to-F1E principal-metadata-only diff |
-| Focused Phase 1 security | `uv run pytest -q backend/tests/test_tenant_api_f1a.py backend/tests/test_tenant_api_f1d.py backend/tests/test_platform_tenant_queries.py backend/tests/test_tenancy.py backend/tests/test_worker_queue.py backend/tests/test_request_context.py backend/tests/test_correlation_middleware.py backend/tests/test_platform_events.py` | Passed: 239 tests; all ten operation denials, A/B API/cache/worker boundaries, no-HR platform fields and redacted correlation/event fixtures |
+| Focused Phase 1 security | `uv run pytest -q backend/tests/test_tenant_api_f1a.py backend/tests/test_tenant_api_f1d.py backend/tests/test_platform_tenant_queries.py backend/tests/test_tenancy.py backend/tests/test_worker_queue.py backend/tests/test_request_context.py backend/tests/test_correlation_middleware.py backend/tests/test_platform_events.py` | Passed: 244 tests; all ten operation denials, A/B API/cache/explicit-origin worker boundaries, fake lookalike rejection, no-HR platform fields and redacted correlation/event fixtures |
 | Service-layer tenant isolation | `uv run pytest -q backend/tests/test_employee_service.py backend/tests/test_leave_request_service.py` | Passed: 44 tests; employee/leave list, get, mutation and relationship guards remain tenant-scoped without relying on API routing |
 | Migration suite | `uv run pytest -q backend/tests/test_migrations.py` | Passed: 36 tests; upgrade/downgrade guards, offline security DDL and portable drift/round-trip coverage |
 | Alembic head | `uv run alembic heads` | Passed: sole head `0015_f1d_feature_flags` |
-| PostgreSQL full lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed on PostgreSQL 17.10: 30 passed, 754 deselected, 1 warning |
+| PostgreSQL full lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed on PostgreSQL 17.10: 30 passed, 759 deselected, 1 warning |
 | PostgreSQL migration/runtime baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_baseline.py` | Passed: 8 tests; real `base → head → base → head`, downgrade refusal, native catalog, zero autogenerate drift and migrated API smoke |
 | PostgreSQL RLS/direct-DB attacks | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_f1c_rls.py backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed: 12 tests; catalog/FORCE/role checks, raw A/B denial, repository and pool binding, platform-HR denial and every composite relationship negative |
 | Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 25 documented endpoints executed and Phase 1 principal metadata checked |

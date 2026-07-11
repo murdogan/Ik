@@ -198,13 +198,14 @@ Karar:
   worker process'i ve deploy tanımı Faz 0'da eklenmez; ilk gerçek adapter ihtiyaç duyulan vertical
   phase'de aynı ADR'nin operasyon kontrolleriyle uygulanır.
 - Application kodu yalnız dar `JobQueue.enqueue(JobSpec)` portuna bağımlıdır. `JobSpec`, non-zero
-  `tenant_id`, `idempotency_key`, finite JSON payload, pozitif timeout ve bounded-attempt niyetini
-  zorunlu kılar. Queue provider idempotency'nin kayıt sistemi değildir; business/outbox kuralı
-  ayrıca authoritative olmalıdır.
+  `tenant_id`, closed `JobOrigin.REQUEST|SYSTEM`, `idempotency_key`, finite JSON payload, pozitif
+  timeout ve bounded-attempt niyetini zorunlu kılar. Queue provider idempotency'nin kayıt sistemi
+  değildir; business/outbox kuralı ayrıca authoritative olmalıdır.
 - `RecordingJobQueue` deterministik test fake'idir. Üretim davranışı veya in-process worker gibi
-  sunulmaz. Her `JobSpec` non-zero tenant taşır; HTTP request'ten türetilmiş operational context
-  system/outbox işleri için optional kalır, fakat sağlandığında job tenant'ıyla exact eşleşir.
-  Gerçek adapter transport tenant authority'sini doğrulayıp DB transaction'ına bind etmelidir.
+  sunulmaz. Request-origin job operational context olmadan kurulamaz ve context tenant'ı job
+  tenant'ıyla exact eşleşir. System/outbox job'u explicit `SYSTEM` origin ile context'siz kurulur;
+  request context taşıyamaz. Gerçek adapter transport tenant authority'sini doğrulayıp DB
+  transaction'ına bind etmelidir.
 - Import/export, bildirim ve rapor işleri background worker ile çalışacaktır. Bordro ve AI ürün
   işleri MVP dışıdır; portta var olmaları veya Faz 0'da task tanımlanmaları gerekmez.
 
@@ -625,13 +626,14 @@ Karar:
   plain array + `X-Next-Cursor` döndürmeye devam eder. Bounded `offset` yalnız bu compatibility
   yolunda deprecated olarak kalır. Faz-0 error body correlation davranışı da ayrı compatibility
   seçimiyle korunur; bu sözleşmeler version/deprecation kararı olmadan zarf içine alınmaz.
-- HTTP request kaynaklı tenant-scoped background context'i optional fixed JSON allowlist ile
-  serialize edilir:
+- HTTP request kaynaklı tenant-scoped background context'i fixed JSON allowlist ile serialize
+  edilir:
   `request_id`, `trace_id`, `tenant_id`, optional actor/session UUID'leri, authentication strength
   ve optional support-session/operator UUID'leri. Tenantless context fail closed olur; job tenant
   ID'si context tenant ID'siyle, legacy `correlation_id` ise request ID ile eşleşmek zorundadır.
-  Extra/free-text key, tenant slug, token veya credential kabul edilmez. System/outbox job'u bu
-  request provenance'ını taşımayabilir fakat non-zero job tenant ID'sini hiçbir zaman atlayamaz.
+  Extra/free-text key, tenant slug, token veya credential kabul edilmez. F1E'de explicit
+  `JobOrigin.REQUEST` bu context'i zorunlu kılar; `JobOrigin.SYSTEM` ise request context'i reddeder
+  fakat non-zero job tenant ID'sini hiçbir zaman atlayamaz.
 - Generated OpenAPI yeni success envelope modellerini, üç safe response header'ını, platform
   listenin cursor-only query'sini ve Faz-0 listelerinin explicit deprecated compatibility
   sözleşmesini gösterir. Smoke aynı header/body correlation'ını, deterministic cursor traversal'ı,
@@ -841,10 +843,12 @@ Karar:
 - Contract/runtime testleri tam on-operation metadata matrisini, authorized test context'te
   çalışabilirliği, principal yokluğunda default denial'ı, tenant/platform principal ayrımını ve
   spoofed caller identity'nin etkisizliğini birlikte kanıtlar.
-- Worker-fake gate'i mandatory job tenant scope'unu korur; request-derived A tenant context'iyle B
-  tenant job'u oluşturmayı fake enqueue öncesinde reddeder. Context'siz job yalnız açıkça
-  tenant-scoped system/outbox işidir. Bu kanıt gerçek broker, credential/signature veya worker DB
-  adapter'ı varmış gibi sunulmaz; onlar ilgili vertical/provider fazının fail-closed yükümlülüğüdür.
+- Worker-fake gate'i mandatory job tenant scope'u ve closed `JobOrigin.REQUEST|SYSTEM`
+  provenance'ını korur. Request-origin job context'siz kurulamaz; request-derived A tenant
+  context'iyle B tenant job'u ve ters yön fake enqueue öncesinde reddedilir. Context'siz job yalnız
+  explicit `SYSTEM` origin ile kurulabilir ve request context taşıyamaz. Bu kanıt gerçek broker,
+  credential/signature veya worker DB adapter'ı varmış gibi sunulmaz; onlar ilgili
+  vertical/provider fazının fail-closed yükümlülüğüdür.
 - Platform operation response'ları yalnız allowlisted tenant lifecycle/plan/region/locale/timezone,
   configured limit ve typed rollout metadata'sı taşır. Employee, leave ve document payload alanı,
   customer record/schema/count/usage veya document content alanı sıfırdır. Rollout anahtar adı ve
@@ -867,7 +871,8 @@ Sonuç:
   principal gereksinimini generated contract'tan okuyabilir.
 - Phase-1 endpoint seti ve response compatibility korunur; security documentation değişikliği exact
   snapshot diff'iyle görünürdür.
-- Phase 1, güvenlik ve ürün gate'i tamamlandıktan sonra açık bir insan-review sınırında bekler.
+- Yerel Phase-1 teknik gate'i tamamlanmıştır; final gate supervisor push ve Murat review için açık
+  insan-review sınırında bekler.
 
 ## 23. Ertelenen kararlar
 

@@ -243,10 +243,11 @@ alabilir: request/trace, zorunlu ve job ile aynı tenant ID, optional actor/sess
 authentication strength ve optional support-session/operator UUID'leri. Extra/free-text alan,
 tenant slug, PII, raw auth veya token kabul edilmez. Tenantless `RequestContext` worker payload'ına
 serialize edilemez; legacy job `correlation_id` verilirse context `request_id` ile aynı olmalıdır.
-F1E, mandatory `JobSpec.tenant_id` ile optional request-derived context ayrımını korur: system/outbox
-job'u tenant ID'siz kurulamaz, request-scoped job'da context A ile job B uyuşmazlığı fake enqueue
-öncesinde reddedilir. Gerçek provider transport authority'sini doğrulayıp aynı tenant'ı DB
-transaction'ına bind etmeden HR sorgusu çalıştıramaz.
+F1E, mandatory `JobSpec.tenant_id` yanında closed `JobOrigin.REQUEST|SYSTEM` provenance'ını zorunlu
+kılar. Request-origin job request context olmadan kurulamaz; context tenant'ı job tenant'ıyla exact
+eşleşir ve A↔B uyuşmazlığı fake enqueue öncesinde reddedilir. System/outbox job'u explicit `SYSTEM`
+origin ile context'sizdir ve request context kabul etmez. Gerçek provider transport authority'sini
+doğrulayıp aynı tenant'ı DB transaction'ına bind etmeden HR sorgusu çalıştıramaz.
 
 | Kuyruk | İşler |
 |---|---|

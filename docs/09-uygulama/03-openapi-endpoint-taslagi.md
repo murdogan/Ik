@@ -60,8 +60,8 @@ Geçerli uygulama notları:
 - Historical F1D üç additive operation ekler: platform tenant feature `GET/PATCH` ve current tenant
   feature `GET`. F1E operation sayısını değiştirmez: final registry 24 generated operation ve
   runtime `/openapi.json` dahil 25 endpoint'tir. Historical Phase-0/F1A/F1B/F1D snapshotları
-  overwrite edilmez; F1E exact principal-metadata diff'i ve 25-endpoint runtime smoke kanıtı ayrı
-  snapshot'ta tutulur.
+  overwrite edilmez; F1E exact principal-metadata diff'i ayrı snapshot'ta, 25-endpoint runtime smoke
+  sonucu ise implementation-status gate kaydında tutulur.
 - Exact on Faz 1 operation'ının altı platform route'u `x-required-principal: platform`, dört current
   tenant route'u `x-required-principal: tenant` taşır. Bu vendor extension uygulanmış injected
   principal sınırını dürüstçe belgeler; Faz 2 authentication/session/RBAC gelmeden standard

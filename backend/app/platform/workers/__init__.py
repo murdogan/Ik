@@ -1,5 +1,5 @@
 """Provider-neutral background-work contracts and test adapters."""
 
-from app.platform.workers.contracts import JobQueue, JobSpec, QueuedJob
+from app.platform.workers.contracts import JobOrigin, JobQueue, JobSpec, QueuedJob
 
-__all__ = ["JobQueue", "JobSpec", "QueuedJob"]
+__all__ = ["JobOrigin", "JobQueue", "JobSpec", "QueuedJob"]
