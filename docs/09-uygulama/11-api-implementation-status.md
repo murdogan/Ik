@@ -218,9 +218,11 @@ the expected local commits ahead of the review-branch remote after the final com
 
 ### P0D tenant relational integrity
 
-- Inventoried every currently implemented foreign key. Root ownership references from
-  `users`, `employees`, `leave_requests`, and `leave_balance_summaries` to `tenants.id` remain
+- At the P0D checkpoint, inventoried every then-implemented foreign key. Root ownership references
+  from `users`, `employees`, `leave_requests`, and `leave_balance_summaries` to `tenants.id` remain
   scalar; the four employee/user references owned by leave tables now include the child tenant.
+  P0E later added `command_idempotency.tenant_id → tenants.id` as another scalar root-ownership
+  relationship; it does not reference a tenant-owned child resource.
 - Added `(tenant_id, id)` candidate keys to the only currently referenced tenant-owned parents,
   `employees` and `users`.
 - Replaced tenant-owned scalar references with named composite foreign keys for leave request
