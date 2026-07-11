@@ -379,8 +379,10 @@ Karar:
   unique constraint'i aynı tenant içinde command'lar arasında da tek sahip seçer.
 - İlk başarılı komut `command_idempotency` tablosunda command adı, canonical request fingerprint,
   resource id, tamamlanma zamanı ve response snapshot'ını domain write ile aynı Unit of Work
-  transaction'ında saklar. Aynı key + aynı command/body snapshot'tan eşdeğer yanıtı replay eder;
-  aynı key + farklı command/body DB ayrıntısı sızdırmadan `409 idempotency_key_mismatch` döner.
+  transaction'ında saklar. Aynı key + aynı canonical command/target/body fingerprint'i
+  snapshot'tan eşdeğer yanıtı replay eder; aynı key + farklı command, hedef resource veya body
+  DB ayrıntısı sızdırmadan `409 idempotency_key_mismatch` döner. Create komutlarında ayrı
+  target yoktur; leave decision fingerprint'i body yanında `leave_request_id` hedefini içerir.
 - Receipt'ler için TTL/cleanup job henüz yoktur. Süreli silme davranışı ayrıca retention kararı ve
   güvenli worker uygulaması olmadan varsayılmaz.
 - Normal employee DELETE compatibility route'u fiziksel delete yerine `employees.archived_at`

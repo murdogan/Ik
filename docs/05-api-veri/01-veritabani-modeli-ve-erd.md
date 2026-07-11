@@ -78,8 +78,10 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 - Public employee purge yolu yoktur. Root tenant cascade yalnız kısıtlı operatör
   retention/offboarding prosedürü içindir.
 - `command_idempotency` tenant-genel key namespace'inde command adı, request fingerprint, resource
-  id, tamamlanma zamanı ve response snapshot saklar. Aynı key/istek replay edilir; farklı
-  command/body `409 idempotency_key_mismatch` üretir. Receipt TTL/cleanup henüz uygulanmamıştır.
+  id, tamamlanma zamanı ve response snapshot saklar. Aynı key ve aynı canonical
+  command/target/body fingerprint'i replay edilir; farklı command, hedef resource veya body
+  `409 idempotency_key_mismatch` üretir. Leave decision fingerprint'i `leave_request_id` hedefini
+  de içerir. Receipt TTL/cleanup henüz uygulanmamıştır.
 - Leave terminal kararları `(tenant_id, id)` ile seçilen blocking PostgreSQL row lock altında
   verilir; yalnız bir pending transition kazanır.
 

@@ -42,15 +42,21 @@ docs/
 ```text
 backend/
 ├── app/
-│   ├── api/               # API router'ları
-│   ├── core/              # Config, tenancy ve ortak altyapı
+│   ├── platform/          # Canonical cross-cutting port ve altyapı sınırları
+│   ├── modules/           # Canonical ürün modülü sahiplik sınırları
+│   ├── api/               # Geçiş alanındaki API router'ları
+│   ├── core/              # Geçiş uyumluluk config/tenancy paketi
 │   ├── db/                # SQLAlchemy session ve declarative base
-│   ├── models/            # Tenant-scoped ORM modelleri
-│   ├── schemas/           # Pydantic request/response şemaları
-│   ├── services/          # Küçük domain servisleri
+│   ├── models/            # Geçiş alanındaki tenant-scoped ORM modelleri
+│   ├── schemas/           # Geçiş alanındaki Pydantic şemaları
+│   ├── services/          # Geçiş alanındaki uygulama/domain servisleri
 │   └── main.py            # FastAPI app factory
 └── tests/                 # Pytest testleri
 ```
+
+`platform/` ve `modules/` Faz 0'da import-boundary testleriyle korunan canonical hedeftir.
+Mevcut employee/leave kodu davranış uyumluluğu için flat paketlerde artımlı geçiş alanı
+olarak kalır; gerçek bir ürün modülünün taşınması Murat review sapmaları arasındadır.
 
 ## Lokal geliştirme
 

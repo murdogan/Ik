@@ -2,6 +2,12 @@
 
 Bu doküman, IK Platform foundation dokümantasyon setinin açık risklerini, karar backlog'unu ve implementasyona geçmeden önce tamamlanması gereken final kontrol listesini tanımlar.
 
+> **Arşiv notu — 2026-07-11:** Bu liste uygulama öncesi hedef kontrolünü tarihsel olarak
+> korur; güncel yürütme durumu için
+> [API Implementation Status Report](../09-uygulama/11-api-implementation-status.md) esastır.
+> CI tanımı yalnız `docs/09-uygulama/templates/backend-ci.yml` şablonundadır; repoda aktif
+> `.github/workflows` hattı yoktur ve aktivasyon Murat review sapması olarak açıktır.
+
 ## 1. Amaç
 
 Bu dosya, strateji/ürün/mimari/güvenlik/operasyon dokümanlarının sonunda tek bir kontrol noktasıdır. Kodlamaya geçmeden önce belirsizliklerin bilinçli şekilde kabul edilmesini veya kapatılmasını sağlar.
@@ -37,7 +43,7 @@ Bu dosya, strateji/ürün/mimari/güvenlik/operasyon dokümanlarının sonunda t
 ## 4. Kodlamaya geçiş checklist'i
 
 - Repo iskeleti oluşturuldu.
-- CI temel pipeline çalışıyor.
+- CI temel pipeline şablonu hazır; aktif workflow henüz yok.
 - DB migration altyapısı seçildi.
 - Tenant model ve RLS/guard kararı uygulandı.
 - Auth/session yaklaşımı netleşti.

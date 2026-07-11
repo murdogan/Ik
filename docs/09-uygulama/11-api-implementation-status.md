@@ -32,6 +32,9 @@ Push state: `P0A–P0F are synchronized at 585fa0a; the supervisor must push the
   operation, every component schema and top-level metadata, while existing tests/smoke continue to
   lock readable metadata, the exact operation registry, documentation-table parity and runtime
   endpoint execution.
+- The final documentation audit synchronized ADR-015 and the ERD with the implemented
+  command/target/body idempotency fingerprint, exposed the canonical `platform/` and `modules/`
+  skeleton in README, and corrected the historical risk checklist to say CI is template-only.
 - No Phase-1 API, auth, RBAC, RLS, audit/outbox, new product module, payroll, SGK, banking, PDKS,
   AI, external integration, deploy, staging or cron behavior was started.
 
@@ -119,7 +122,7 @@ Final commands and results are recorded here after the complete P0G rerun:
 | Direct-DB tenant negatives | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_tenant_relational_integrity.py` | Passed, 5 tests covering all current composite tenant relationships and expand-contract behavior |
 | PostgreSQL concurrency | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_command_transactions.py backend/tests/integration/test_postgresql_p0e_concurrency.py` | Passed, 6 tests: duplicate winner/mapping, lock mapping, one terminal decision, same-key replay, retention, downgrade refusal |
 | Query-plan baseline | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p0f_performance.py` | Passed, 1 test with 10k employee/5k leave EXPLAIN assertions |
-| Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 22 P0G files; clean status verified after commit |
+| Git hygiene | Exact commands below | Passed: no whitespace errors, prohibited path changes or secret-pattern matches across 23 P0G files; clean status verified after commit |
 
 The final continuation resumed from clean checkpoint `c9c99c9` and reproduced the matrix before
 this documentation-only sync: the fast lane passed 436 tests with 17 deselected; the complete
