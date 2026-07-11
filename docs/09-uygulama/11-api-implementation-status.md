@@ -549,7 +549,10 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact five-key typed settings view and tenant isolation |
 | PATCH | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact allowlist update and suspended/offboarding read-only guard |
 | GET | `/api/v1/tenant/features` | Implemented and verified | Current-principal-only ordered effective flags; no tenant selector or mutation |
-| POST | `/api/v1/auth/login` | Implemented for F2A | Tenant-slug discovery, generic credential errors, Argon2id verification and short-lived bearer response |
+| POST | `/api/v1/auth/login` | Implemented for F2B | Tenant-aware credential verification, short-lived bearer response, and hashed server-side refresh family with HttpOnly cookie |
+| POST | `/api/v1/auth/refresh` | Implemented for F2B | Single-use rotation, retained token history, reuse-triggered family revoke, and rotated HttpOnly cookie |
+| POST | `/api/v1/auth/logout` | Implemented for F2B | Idempotent family revoke and exact-policy refresh-cookie deletion |
+| GET | `/api/v1/me` | Implemented for F2B | Bearer plus active server-session validation; current user and tenant derived without caller tenant selectors |
 | POST | `/api/v1/auth/activate` | Implemented for F2A | Hashed expiring invitation credential, atomic single-use consumption and Argon2id password setup |
 | POST | `/api/v1/users/invitations` | Implemented for F2A | Bearer-derived actor/tenant, invite capability check and header/payload tenant-spoof resistance |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
@@ -565,10 +568,10 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 
-F2A adds three generated operations to the historical 24-operation F1E surface. The executable
-smoke now logs in an invite-capable local fixture, invites under bearer-derived tenant scope,
-activates exactly once, rejects reuse, and logs in the activated user without printing credentials
-or activation material.
+F2A adds three generated operations to the historical 24-operation F1E surface; F2B adds refresh,
+logout and `/api/v1/me`, for 30 generated operations. The executable smoke now completes
+login → current user → refresh rotation → logout and proves the logged-out session is rejected,
+without printing credential or activation material.
 
 ## Current Behavior Notes
 
@@ -579,6 +582,10 @@ or activation material.
 - Request-context error metadata is limited to request/trace. Completion-log metadata excludes
   actor/session/support-operator IDs, tenant slug, raw auth, tokens, secrets and PII. Authentication
   strength and identity/support fields remain typed placeholders, not an auth/RBAC implementation.
+- F2B access credentials are short-lived and session-bound. Refresh credentials exist only in a
+  host-only HttpOnly cookie and as SHA-256 hashes in tenant-RLS tables. Rotation consumes one token;
+  presenting it again commits revocation of its entire fixed-expiry family. Logout revokes that
+  family, and `/api/v1/me` revalidates family, user and tenant state rather than trusting headers.
 - F1A platform and tenant dependencies deny by default: absent injected context returns
   `403 platform_access_denied` or `403 tenant_access_denied`. Tests inject principals by dependency
   override; no HTTP header/body/path/query field constructs platform authority or chooses the

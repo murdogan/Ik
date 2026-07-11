@@ -1,4 +1,4 @@
-"""Short-lived signed access credentials for the F2A login slice."""
+"""Short-lived signed access credentials bound to a server-side session family."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ class AccessPrincipal:
     user_id: UUID
     tenant_id: UUID
     tenant_slug: str
+    session_family_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,18 +46,20 @@ class AccessTokenCodec:
     def issue(self, principal: AccessPrincipal) -> IssuedAccessToken:
         now = datetime.now(UTC)
         expires_at = now + self._ttl
+        claims = {
+            "iss": ACCESS_TOKEN_ISSUER,
+            "aud": ACCESS_TOKEN_AUDIENCE,
+            "typ": "access",
+            "sub": str(principal.user_id),
+            "tenant_id": str(principal.tenant_id),
+            "tenant_slug": principal.tenant_slug,
+            "jti": str(uuid4()),
+            "iat": now,
+            "exp": expires_at,
+        }
+        claims["sid"] = str(principal.session_family_id)
         token = jwt.encode(
-            {
-                "iss": ACCESS_TOKEN_ISSUER,
-                "aud": ACCESS_TOKEN_AUDIENCE,
-                "typ": "access",
-                "sub": str(principal.user_id),
-                "tenant_id": str(principal.tenant_id),
-                "tenant_slug": principal.tenant_slug,
-                "jti": str(uuid4()),
-                "iat": now,
-                "exp": expires_at,
-            },
+            claims,
             self._signing_key,
             algorithm="HS256",
         )
@@ -80,6 +83,7 @@ class AccessTokenCodec:
                         "sub",
                         "tenant_id",
                         "tenant_slug",
+                        "sid",
                         "jti",
                         "iat",
                         "exp",
@@ -93,12 +97,14 @@ class AccessTokenCodec:
             tenant_slug = claims["tenant_slug"]
             if not isinstance(tenant_slug, str) or not tenant_slug.strip():
                 raise InvalidAccessTokenError("Access token is invalid")
+            session_family_id = _canonical_uuid(claims["sid"])
         except (jwt.PyJWTError, KeyError, TypeError, InvalidAccessTokenError) as exc:
             raise InvalidAccessTokenError("Access token is invalid") from exc
         return AccessPrincipal(
             user_id=user_id,
             tenant_id=tenant_id,
             tenant_slug=tenant_slug,
+            session_family_id=session_family_id,
         )
 
 

@@ -124,6 +124,12 @@ class ActivationRead(BaseModel):
     user: AuthUserRead
 
 
+class MeRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user: AuthUserRead
+
+
 class InvitationUserRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -151,5 +157,6 @@ __all__ = [
     "InvitationUserRead",
     "LoginRead",
     "LoginRequest",
+    "MeRead",
     "normalize_email",
 ]

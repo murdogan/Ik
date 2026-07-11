@@ -1,0 +1,207 @@
+import type {
+  AuthUser,
+  LoginResponseData,
+  MeResponseData,
+  RefreshResponseData,
+} from "./auth-contracts";
+import {
+  ApiClientError,
+  type ApiRequestOptions,
+  requestApi,
+  requestApiNoContent,
+} from "./api-client";
+
+const REFRESH_PATH = "/api/v1/auth/refresh" as const;
+const LOGOUT_PATH = "/api/v1/auth/logout" as const;
+const ME_PATH = "/api/v1/me" as const;
+
+let accessToken: string | null = null;
+let sessionGeneration = 0;
+let refreshInFlight: Promise<RefreshResponseData> | null = null;
+let restoreInFlight: Promise<AuthUser> | null = null;
+
+class SessionSupersededError extends Error {
+  constructor() {
+    super("Session changed while the request was in flight");
+    this.name = "SessionSupersededError";
+  }
+}
+
+function applySession(data: LoginResponseData): void {
+  accessToken = data.access_token;
+}
+
+function invalidateSession(): void {
+  sessionGeneration += 1;
+  accessToken = null;
+  restoreInFlight = null;
+}
+
+export function establishSession(data: LoginResponseData): void {
+  sessionGeneration += 1;
+  applySession(data);
+  restoreInFlight = null;
+}
+
+async function performRefresh(generation: number): Promise<RefreshResponseData> {
+  try {
+    const data = await requestApi<RefreshResponseData>(REFRESH_PATH, {
+      method: "POST",
+    });
+    if (generation !== sessionGeneration) {
+      throw new SessionSupersededError();
+    }
+    applySession(data);
+    return data;
+  } catch (cause) {
+    if (generation === sessionGeneration) {
+      invalidateSession();
+    }
+    throw cause;
+  }
+}
+
+export function refreshSession(): Promise<RefreshResponseData> {
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+
+  const generation = sessionGeneration;
+  const pending = performRefresh(generation);
+  refreshInFlight = pending;
+  pending.then(
+    () => {
+      if (refreshInFlight === pending) {
+        refreshInFlight = null;
+      }
+    },
+    () => {
+      if (refreshInFlight === pending) {
+        refreshInFlight = null;
+      }
+    },
+  );
+  return pending;
+}
+
+type AuthenticatedRequestOptions = Omit<ApiRequestOptions, "accessToken">;
+
+export async function requestAuthenticatedApi<TResponse>(
+  path: `/api/${string}`,
+  options: AuthenticatedRequestOptions = {},
+): Promise<TResponse> {
+  const requestGeneration = sessionGeneration;
+  if (!accessToken) {
+    await refreshSession();
+  }
+
+  if (requestGeneration !== sessionGeneration) {
+    throw new SessionSupersededError();
+  }
+
+  const attemptedToken = accessToken;
+  if (!attemptedToken) {
+    throw new SessionSupersededError();
+  }
+
+  try {
+    const data = await requestApi<TResponse>(path, {
+      ...options,
+      accessToken: attemptedToken,
+    });
+    if (requestGeneration !== sessionGeneration) {
+      throw new SessionSupersededError();
+    }
+    return data;
+  } catch (cause) {
+    if (!(cause instanceof ApiClientError) || cause.status !== 401) {
+      throw cause;
+    }
+  }
+
+  if (requestGeneration !== sessionGeneration) {
+    throw new SessionSupersededError();
+  }
+
+  if (!accessToken || accessToken === attemptedToken) {
+    await refreshSession();
+  }
+
+  const retryToken = accessToken;
+  if (!retryToken) {
+    throw new SessionSupersededError();
+  }
+
+  try {
+    const data = await requestApi<TResponse>(path, {
+      ...options,
+      accessToken: retryToken,
+    });
+    if (requestGeneration !== sessionGeneration) {
+      throw new SessionSupersededError();
+    }
+    return data;
+  } catch (cause) {
+    if (
+      cause instanceof ApiClientError &&
+      cause.status === 401 &&
+      requestGeneration === sessionGeneration
+    ) {
+      invalidateSession();
+    }
+    throw cause;
+  }
+}
+
+async function performRestore(): Promise<AuthUser> {
+  if (!accessToken) {
+    await refreshSession();
+  }
+  const data = await requestAuthenticatedApi<MeResponseData>(ME_PATH);
+  return data.user;
+}
+
+export function restoreSession(): Promise<AuthUser> {
+  if (restoreInFlight) {
+    return restoreInFlight;
+  }
+
+  const pending = performRestore();
+  restoreInFlight = pending;
+  pending.then(
+    () => {
+      if (restoreInFlight === pending) {
+        restoreInFlight = null;
+      }
+    },
+    () => {
+      if (restoreInFlight === pending) {
+        restoreInFlight = null;
+      }
+    },
+  );
+  return pending;
+}
+
+export async function logoutSession(): Promise<void> {
+  const pendingRefresh = refreshInFlight;
+  const logoutAccessToken = accessToken;
+  invalidateSession();
+
+  if (pendingRefresh) {
+    try {
+      await pendingRefresh;
+    } catch {
+      // A superseded or failed refresh must not prevent the cookie-backed logout attempt.
+    }
+  }
+
+  try {
+    await requestApiNoContent(LOGOUT_PATH, {
+      method: "POST",
+      accessToken: logoutAccessToken ?? undefined,
+    });
+  } finally {
+    accessToken = null;
+  }
+}

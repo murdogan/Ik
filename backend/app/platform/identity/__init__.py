@@ -13,6 +13,13 @@ from app.platform.identity.activation_tokens import (
     parse_activation_token,
 )
 from app.platform.identity.passwords import PasswordManager
+from app.platform.identity.refresh_tokens import (
+    InvalidRefreshTokenFormatError,
+    RefreshTokenMaterial,
+    hash_refresh_token,
+    issue_refresh_token,
+    parse_refresh_token,
+)
 
 __all__ = [
     "AccessPrincipal",
@@ -20,9 +27,14 @@ __all__ = [
     "ActivationTokenMaterial",
     "InvalidAccessTokenError",
     "InvalidActivationTokenFormatError",
+    "InvalidRefreshTokenFormatError",
     "IssuedAccessToken",
     "PasswordManager",
+    "RefreshTokenMaterial",
     "hash_activation_token",
+    "hash_refresh_token",
     "issue_activation_token",
+    "issue_refresh_token",
     "parse_activation_token",
+    "parse_refresh_token",
 ]

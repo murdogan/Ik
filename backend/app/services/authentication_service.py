@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, select
@@ -19,16 +19,22 @@ from app.platform.db import (
 )
 from app.platform.errors.application import ApplicationError
 from app.platform.identity import (
-    AccessPrincipal,
     AccessTokenCodec,
     InvalidActivationTokenFormatError,
     PasswordManager,
     parse_activation_token,
 )
+from app.services.auth_session_service import (
+    AuthenticatedUser,
+    AuthSessionService,
+    InvalidSessionError,
+    SessionGrant,
+)
 
 _LOGIN_TENANT_STATUSES = frozenset(
     {TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value}
 )
+LoginResult = SessionGrant
 
 
 class InvalidCredentialsError(ApplicationError):
@@ -37,23 +43,6 @@ class InvalidCredentialsError(ApplicationError):
 
 class InvalidActivationError(ApplicationError):
     pass
-
-
-@dataclass(frozen=True, slots=True)
-class AuthenticatedUser:
-    id: UUID
-    tenant_id: UUID
-    email: str
-    full_name: str
-    tenant_slug: str
-    tenant_name: str
-
-
-@dataclass(frozen=True, slots=True)
-class LoginResult:
-    access_token: str
-    expires_in: int
-    user: AuthenticatedUser
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,12 +60,17 @@ class AuthenticationService:
         session_factory: async_sessionmaker[AsyncSession],
         password_manager: PasswordManager,
         access_tokens: AccessTokenCodec,
+        refresh_ttl: timedelta = timedelta(days=14),
     ) -> None:
         self._session_factory = session_factory
         self._password_manager = password_manager
-        self._access_tokens = access_tokens
+        self._sessions = AuthSessionService(
+            session_factory=session_factory,
+            access_tokens=access_tokens,
+            refresh_ttl=refresh_ttl,
+        )
 
-    async def login(self, *, tenant_slug: str, email: str, password: str) -> LoginResult:
+    async def login(self, *, tenant_slug: str, email: str, password: str) -> SessionGrant:
         tenant = await self._discover_tenant(tenant_slug)
         if tenant is None or tenant.status not in _LOGIN_TENANT_STATUSES:
             await self._password_manager.verify_async(password, None)
@@ -92,24 +86,16 @@ class AuthenticationService:
         ):
             raise InvalidCredentialsError()
 
-        principal = AccessPrincipal(
-            user_id=user.id,
-            tenant_id=tenant.id,
-            tenant_slug=tenant.slug,
-        )
-        issued = self._access_tokens.issue(principal)
-        return LoginResult(
-            access_token=issued.token,
-            expires_in=self._access_tokens.expires_in_seconds,
-            user=AuthenticatedUser(
-                id=user.id,
-                tenant_id=user.tenant_id,
-                email=user.email,
-                full_name=user.full_name,
+        try:
+            return await self._sessions.start_session(
+                tenant_id=tenant.id,
                 tenant_slug=tenant.slug,
-                tenant_name=tenant.name,
-            ),
-        )
+                user_id=user.id,
+            )
+        except InvalidSessionError as exc:
+            # Preserve login's one generic credential/account failure contract even if account
+            # state changes between password verification and transactional session creation.
+            raise InvalidCredentialsError() from exc
 
     async def activate(self, *, raw_token: str, password: str) -> AuthenticatedUser:
         try:
@@ -209,4 +195,5 @@ __all__ = [
     "InvalidActivationError",
     "InvalidCredentialsError",
     "LoginResult",
+    "SessionGrant",
 ]

@@ -1,4 +1,6 @@
-"""Application-owned composition for password and short-lived access credential adapters."""
+"""Application-owned composition for password and session credential adapters."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
@@ -14,6 +16,18 @@ AUTH_RUNTIME_STATE_KEY = "auth_runtime"
 class AuthRuntime:
     access_tokens: AccessTokenCodec
     password_manager: PasswordManager
+    refresh_ttl: timedelta
+    refresh_cookie: RefreshCookiePolicy
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshCookiePolicy:
+    """Host-only browser policy; production uses the enforced ``__Host-`` contract."""
+
+    name: str
+    secure: bool
+    path: str = "/"
+    same_site: str = "lax"
 
 
 def create_auth_runtime(settings: Settings) -> AuthRuntime:
@@ -32,6 +46,7 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
     ):
         raise RuntimeError("IK_FRONTEND_BASE_URL must use HTTPS in staging and production")
 
+    secure_cookie = settings.environment in {"staging", "prod"}
     return AuthRuntime(
         access_tokens=AccessTokenCodec(
             signing_key,
@@ -40,7 +55,17 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
         password_manager=PasswordManager(
             max_concurrent_operations=settings.auth_argon2_max_concurrency
         ),
+        refresh_ttl=timedelta(days=settings.auth_refresh_token_ttl_days),
+        refresh_cookie=RefreshCookiePolicy(
+            name="__Host-wf_refresh" if secure_cookie else "wf_refresh",
+            secure=secure_cookie,
+        ),
     )
 
 
-__all__ = ["AUTH_RUNTIME_STATE_KEY", "AuthRuntime", "create_auth_runtime"]
+__all__ = [
+    "AUTH_RUNTIME_STATE_KEY",
+    "AuthRuntime",
+    "RefreshCookiePolicy",
+    "create_auth_runtime",
+]

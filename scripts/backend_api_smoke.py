@@ -137,6 +137,9 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/health"),
     ("post", "/api/v1/auth/activate"),
     ("post", "/api/v1/auth/login"),
+    ("post", "/api/v1/auth/logout"),
+    ("post", "/api/v1/auth/refresh"),
+    ("get", "/api/v1/me"),
     ("post", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants/{tenant_id}"),
@@ -645,6 +648,48 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         invitation["user"]["id"],
         "activated login user",
     )
+    activated_access = activated_login["access_token"]
+    current_user = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {activated_access}"},
+        ),
+        200,
+        "GET /api/v1/me before refresh",
+        {"user"},
+    )
+    _assert_equal(current_user["user"], activated_login["user"], "session current user")
+
+    refreshed = _expect_phase1_data(
+        await _request_documented(client, "post", "/api/v1/auth/refresh"),
+        200,
+        "POST /api/v1/auth/refresh",
+        {"access_token", "token_type", "expires_in", "user"},
+    )
+    _assert_equal(refreshed["user"], activated_login["user"], "refreshed user")
+    refreshed_access = refreshed["access_token"]
+    _expect_status(
+        await _request_documented(client, "post", "/api/v1/auth/logout"),
+        204,
+        "POST /api/v1/auth/logout",
+    )
+    _expect_phase1_error_code(
+        await client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {refreshed_access}"},
+        ),
+        401,
+        "session_invalid",
+        "GET /api/v1/me after logout",
+    )
+    _expect_phase1_error_code(
+        await client.post("/api/v1/auth/refresh"),
+        401,
+        "session_invalid",
+        "POST /api/v1/auth/refresh after logout",
+    )
 
 
 async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
@@ -1115,9 +1160,14 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
     login = paths["/api/v1/auth/login"]["post"]
     activation = paths["/api/v1/auth/activate"]["post"]
     invitation = paths["/api/v1/users/invitations"]["post"]
+    refresh = paths["/api/v1/auth/refresh"]["post"]
+    logout = paths["/api/v1/auth/logout"]["post"]
+    me = paths["/api/v1/me"]["get"]
     for operation, label in (
         (login, "F2A login"),
         (activation, "F2A activation"),
+        (refresh, "F2B refresh"),
+        (logout, "F2B logout"),
     ):
         if "security" in operation:
             raise AssertionError(f"{label} must remain a public credential endpoint")
@@ -1126,11 +1176,14 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
         [{"BearerAuth": []}],
         "F2A invitation bearer requirement",
     )
+    _assert_equal(me.get("security"), [{"BearerAuth": []}], "F2B me bearer requirement")
 
     for operation, success_status, label in (
         (login, "200", "F2A login"),
         (activation, "200", "F2A activation"),
         (invitation, "201", "F2A invitation"),
+        (refresh, "200", "F2B refresh"),
+        (me, "200", "F2B me"),
     ):
         success_response = operation["responses"][success_status]
         _assert_equal(
@@ -1147,6 +1200,11 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
             {"data", "meta"},
             f"{label} success envelope",
         )
+    _assert_equal(
+        set(logout["responses"]["204"].get("headers", {})),
+        set(CORRELATION_RESPONSE_HEADERS),
+        "F2B logout documented correlation headers",
+    )
 
 
 def _resolve_openapi_schema(

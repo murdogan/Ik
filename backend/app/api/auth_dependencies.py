@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated
 
@@ -14,6 +15,7 @@ from app.platform.identity import AccessPrincipal, InvalidAccessTokenError
 from app.platform.observability.correlation import replace_request_context
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
+from app.services.auth_session_service import AuthenticatedUser, AuthSessionService
 from app.services.authentication_service import AuthenticationService
 from app.services.user_invitation_service import UserInvitationService
 
@@ -53,6 +55,18 @@ def get_authentication_service(
         session_factory=database_runtime.session_factory,
         password_manager=auth_runtime.password_manager,
         access_tokens=auth_runtime.access_tokens,
+        refresh_ttl=auth_runtime.refresh_ttl,
+    )
+
+
+def get_auth_session_service(
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+    database_runtime: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+) -> AuthSessionService:
+    return AuthSessionService(
+        session_factory=database_runtime.session_factory,
+        access_tokens=auth_runtime.access_tokens,
+        refresh_ttl=auth_runtime.refresh_ttl,
     )
 
 
@@ -67,7 +81,7 @@ def get_user_invitation_service(
     )
 
 
-def require_invitation_principal(
+def require_access_principal(
     request: Request,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
@@ -93,14 +107,43 @@ def require_invitation_principal(
                 slug=principal.tenant_slug,
             ),
             actor_id=principal.user_id,
+            session_id=principal.session_family_id,
             authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
         )
         replace_request_context(request, enriched)
     return principal
 
 
+@dataclass(frozen=True, slots=True)
+class AuthenticatedSession:
+    principal: AccessPrincipal
+    user: AuthenticatedUser
+
+
+async def require_authenticated_session(
+    principal: Annotated[AccessPrincipal, Depends(require_access_principal)],
+    service: Annotated[AuthSessionService, Depends(get_auth_session_service)],
+) -> AuthenticatedSession:
+    return AuthenticatedSession(
+        principal=principal,
+        user=await service.current_user(principal),
+    )
+
+
+async def require_invitation_principal(
+    principal: Annotated[AccessPrincipal, Depends(require_access_principal)],
+    service: Annotated[AuthSessionService, Depends(get_auth_session_service)],
+) -> AccessPrincipal:
+    await service.current_user(principal)
+    return principal
+
+
 __all__ = [
+    "AuthenticatedSession",
+    "get_auth_session_service",
     "get_authentication_service",
     "get_user_invitation_service",
+    "require_access_principal",
+    "require_authenticated_session",
     "require_invitation_principal",
 ]

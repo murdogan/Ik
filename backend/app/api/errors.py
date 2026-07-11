@@ -34,6 +34,7 @@ from app.platform.idempotency import (
     IdempotencyKeyMismatchError,
     IdempotencyReplayUnavailableError,
 )
+from app.services.auth_session_service import InvalidSessionError
 from app.services.authentication_service import (
     InvalidActivationError,
     InvalidCredentialsError,
@@ -137,6 +138,8 @@ INVALID_ACTIVATION_ERROR_MESSAGE = (
 )
 AUTHENTICATION_REQUIRED_ERROR_CODE = "authentication_required"
 AUTHENTICATION_REQUIRED_ERROR_MESSAGE = "A valid access credential is required"
+SESSION_INVALID_ERROR_CODE = "session_invalid"
+SESSION_INVALID_ERROR_MESSAGE = "The session is invalid, expired, or revoked"
 INVITATION_ACCESS_DENIED_ERROR_CODE = "invitation_access_denied"
 INVITATION_ACCESS_DENIED_ERROR_MESSAGE = "You do not have permission to invite users"
 INVITATION_CONFLICT_ERROR_CODE = "invitation_conflict"
@@ -507,6 +510,8 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return invalid_credentials_error()
     if isinstance(exc, InvalidActivationError):
         return invalid_activation_error()
+    if isinstance(exc, InvalidSessionError):
+        return session_invalid_error()
     if isinstance(exc, InvitationAccessDeniedError):
         return invitation_access_denied_error()
     if isinstance(exc, InvitationConflictError):
@@ -677,6 +682,14 @@ def authentication_required_error() -> ApiError:
         status_code=status.HTTP_401_UNAUTHORIZED,
         code=AUTHENTICATION_REQUIRED_ERROR_CODE,
         message=AUTHENTICATION_REQUIRED_ERROR_MESSAGE,
+    )
+
+
+def session_invalid_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        code=SESSION_INVALID_ERROR_CODE,
+        message=SESSION_INVALID_ERROR_MESSAGE,
     )
 
 

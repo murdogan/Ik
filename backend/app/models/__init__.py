@@ -1,6 +1,10 @@
 """Database models."""
 
-from app.models.auth import UserActivationToken
+from app.models.auth import (
+    RefreshSessionFamily,
+    RefreshSessionToken,
+    UserActivationToken,
+)
 from app.models.command_idempotency import CommandIdempotency
 from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_balance_summary import LeaveBalanceSummary
@@ -15,6 +19,8 @@ __all__ = [
     "LeaveBalanceSummary",
     "LeaveRequest",
     "LeaveRequestStatus",
+    "RefreshSessionFamily",
+    "RefreshSessionToken",
     "Tenant",
     "TenantFeatureFlag",
     "TenantSettings",

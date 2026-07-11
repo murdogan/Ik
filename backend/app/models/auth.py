@@ -86,3 +86,106 @@ class UserActivationToken(Base, TimestampMixin):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class RefreshSessionFamily(Base, TimestampMixin):
+    """Server-side lifetime and revocation state shared by rotated credentials."""
+
+    __tablename__ = "refresh_session_families"
+    __table_args__ = (
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_refresh_session_families_expiry_order",
+        ),
+        CheckConstraint(
+            "revoked_at is null or revoked_at >= created_at",
+            name="ck_refresh_session_families_revoked_order",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_refresh_session_families_tenant_id_id",
+        ),
+        Index(
+            "ix_refresh_session_families_tenant_user_expires_at",
+            "tenant_id",
+            "user_id",
+            "expires_at",
+        ),
+        Index(
+            "ix_refresh_session_families_expires_at",
+            "expires_at",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_refresh_session_families_tenant_user_id_users",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "tenants.id",
+            name="fk_refresh_session_families_tenant_id_tenants",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class RefreshSessionToken(Base, TimestampMixin):
+    """Hashed refresh-token history retained for rotation reuse detection."""
+
+    __tablename__ = "refresh_session_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "length(token_hash) = 64",
+            name="ck_refresh_session_tokens_hash_length",
+        ),
+        CheckConstraint(
+            "consumed_at is null or consumed_at >= created_at",
+            name="ck_refresh_session_tokens_consumed_order",
+        ),
+        UniqueConstraint(
+            "token_hash",
+            name="uq_refresh_session_tokens_token_hash",
+        ),
+        Index(
+            "ix_refresh_session_tokens_tenant_family_created_at",
+            "tenant_id",
+            "family_id",
+            "created_at",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "family_id"],
+            ["refresh_session_families.tenant_id", "refresh_session_families.id"],
+            name="fk_refresh_session_tokens_tenant_family_id_families",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "tenants.id",
+            name="fk_refresh_session_tokens_tenant_id_tenants",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    family_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )

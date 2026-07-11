@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     database_idle_transaction_timeout_ms: int = Field(default=60_000, ge=0)
     auth_signing_key: SecretStr | None = None
     auth_access_token_ttl_minutes: int = Field(default=15, ge=1, le=60)
+    auth_refresh_token_ttl_days: int = Field(default=14, ge=7, le=30)
     auth_activation_token_ttl_hours: int = Field(default=48, ge=1, le=168)
     auth_argon2_max_concurrency: int = Field(default=2, ge=1, le=8)
     frontend_base_url: str = "http://localhost:3000"

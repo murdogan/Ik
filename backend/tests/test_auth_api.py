@@ -12,10 +12,19 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
 from app.main import create_app
-from app.models.auth import UserActivationToken
+from app.models.auth import (
+    RefreshSessionFamily,
+    RefreshSessionToken,
+    UserActivationToken,
+)
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
-from app.platform.identity import AccessPrincipal, PasswordManager, hash_activation_token
+from app.platform.identity import (
+    AccessPrincipal,
+    PasswordManager,
+    hash_activation_token,
+    hash_refresh_token,
+)
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -27,6 +36,7 @@ ADMIN_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 NON_CAPABLE_USER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 OTHER_TENANT_ACTIVE_USER_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 OTHER_TENANT_INVITED_USER_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+FORGED_SESSION_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 
 TENANT_SLUG = "wealthy-falcon"
 OTHER_TENANT_SLUG = "other-falcon"
@@ -49,13 +59,17 @@ class AuthApiHarness:
 
 
 @asynccontextmanager
-async def _auth_api() -> AsyncIterator[AuthApiHarness]:
+async def _auth_api(
+    *,
+    environment: str = "test",
+    frontend_base_url: str = "http://frontend.test",
+) -> AsyncIterator[AuthApiHarness]:
     settings = Settings(
         _env_file=None,
-        environment="test",
+        environment=environment,
         database_url="sqlite+aiosqlite:///:memory:",
         auth_signing_key="f2a-test-signing-key-material-that-is-not-a-real-secret",
-        frontend_base_url="http://frontend.test",
+        frontend_base_url=frontend_base_url,
     )
     app = create_app(settings=settings)
 
@@ -419,6 +433,7 @@ async def test_application_filters_tenant_for_login_inviter_and_invitation_targe
                 user_id=OTHER_TENANT_ACTIVE_USER_ID,
                 tenant_id=TENANT_ID,
                 tenant_slug=OTHER_TENANT_SLUG,
+                session_family_id=FORGED_SESSION_ID,
             )
         ).token
         forged_invitation = await harness.client.post(
@@ -429,8 +444,8 @@ async def test_application_filters_tenant_for_login_inviter_and_invitation_targe
                 "full_name": "Must Not Cross Tenants",
             },
         )
-        assert forged_invitation.status_code == 403
-        assert forged_invitation.json()["error"]["code"] == "invitation_access_denied"
+        assert forged_invitation.status_code == 401
+        assert forged_invitation.json()["error"]["code"] == "session_invalid"
 
         async with harness.session_factory() as session:
             forbidden_user = await session.scalar(
@@ -514,3 +529,238 @@ async def test_expired_activation_is_rejected_without_changing_user_credentials(
             assert invited_user.password_hash is None
             assert activation is not None
             assert activation.consumed_at is None
+
+
+async def test_login_refresh_me_logout_session_flow_uses_only_httponly_cookie() -> None:
+    async with _auth_api() as harness:
+        tenant_header_only = await harness.client.get(
+            "/api/v1/me",
+            headers={
+                "X-Tenant-Id": str(TENANT_ID),
+                "X-Tenant-Slug": TENANT_SLUG,
+            },
+        )
+        assert tenant_header_only.status_code == 401
+        assert tenant_header_only.json()["error"]["code"] == "authentication_required"
+
+        access_token, login_response = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+
+        refresh_cookie = login_response.cookies.get("wf_refresh")
+        assert refresh_cookie is not None
+        assert refresh_cookie not in login_response.text
+        set_cookie = login_response.headers["set-cookie"]
+        assert "wf_refresh=" in set_cookie
+        assert "HttpOnly" in set_cookie
+        assert "SameSite=lax" in set_cookie
+        assert "Path=/" in set_cookie
+        assert "Secure" not in set_cookie
+
+        auth_runtime = getattr(harness.app.state, AUTH_RUNTIME_STATE_KEY)
+        assert isinstance(auth_runtime, AuthRuntime)
+        principal = auth_runtime.access_tokens.decode(access_token)
+        assert principal.session_family_id is not None
+
+        async with harness.session_factory() as session:
+            family = await session.get(RefreshSessionFamily, principal.session_family_id)
+            token_row = await session.scalar(
+                select(RefreshSessionToken).where(
+                    RefreshSessionToken.family_id == principal.session_family_id
+                )
+            )
+            assert family is not None
+            assert family.tenant_id == TENANT_ID
+            assert family.user_id == ADMIN_ID
+            assert family.revoked_at is None
+            assert token_row is not None
+            assert token_row.token_hash == hash_refresh_token(refresh_cookie)
+            assert token_row.token_hash != refresh_cookie
+
+        me = await harness.client.get(
+            "/api/v1/me",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "X-Tenant-Id": str(OTHER_TENANT_ID),
+                "X-Tenant-Slug": OTHER_TENANT_SLUG,
+            },
+        )
+        assert me.status_code == 200
+        assert me.headers["Cache-Control"] == "no-store"
+        assert me.json()["data"]["user"]["tenant_id"] == str(TENANT_ID)
+
+        refreshed = await harness.client.post("/api/v1/auth/refresh")
+        assert refreshed.status_code == 200
+        assert refreshed.headers["Cache-Control"] == "no-store"
+        rotated_cookie = refreshed.cookies.get("wf_refresh")
+        assert rotated_cookie is not None
+        assert rotated_cookie != refresh_cookie
+        assert rotated_cookie not in refreshed.text
+        refreshed_access = refreshed.json()["data"]["access_token"]
+
+        async with harness.session_factory() as session:
+            family_tokens = list(
+                await session.scalars(
+                    select(RefreshSessionToken)
+                    .where(RefreshSessionToken.family_id == principal.session_family_id)
+                    .order_by(RefreshSessionToken.created_at, RefreshSessionToken.id)
+                )
+            )
+            assert len(family_tokens) == 2
+            assert sum(token.consumed_at is not None for token in family_tokens) == 1
+            assert {token.token_hash for token in family_tokens} == {
+                hash_refresh_token(refresh_cookie),
+                hash_refresh_token(rotated_cookie),
+            }
+
+        logout = await harness.client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {refreshed_access}"},
+        )
+        assert logout.status_code == 204
+        assert logout.content == b""
+        assert logout.headers["Cache-Control"] == "no-store"
+        assert "Max-Age=0" in logout.headers["set-cookie"]
+        assert harness.client.cookies.get("wf_refresh") is None
+
+        logged_out_me = await harness.client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {refreshed_access}"},
+        )
+        assert logged_out_me.status_code == 401
+        assert logged_out_me.json()["error"]["code"] == "session_invalid"
+
+        no_cookie_refresh = await harness.client.post("/api/v1/auth/refresh")
+        assert no_cookie_refresh.status_code == 401
+        assert no_cookie_refresh.json()["error"]["code"] == "session_invalid"
+        assert no_cookie_refresh.headers["Cache-Control"] == "no-store"
+        assert "Max-Age=0" in no_cookie_refresh.headers["set-cookie"]
+
+
+async def test_reused_refresh_credential_commits_family_revoke_and_kills_successor() -> None:
+    async with _auth_api() as harness:
+        _access_token, login_response = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+        original_cookie = login_response.cookies.get("wf_refresh")
+        assert original_cookie is not None
+
+        rotated = await harness.client.post("/api/v1/auth/refresh")
+        assert rotated.status_code == 200
+        successor_cookie = rotated.cookies.get("wf_refresh")
+        successor_access = rotated.json()["data"]["access_token"]
+        assert successor_cookie is not None
+
+        async with AsyncClient(
+            transport=ASGITransport(app=harness.app),
+            base_url="http://testserver",
+        ) as replay_client:
+            replay = await replay_client.post(
+                "/api/v1/auth/refresh",
+                headers={"Cookie": f"wf_refresh={original_cookie}"},
+            )
+
+        assert replay.status_code == 401
+        assert replay.json()["error"]["code"] == "session_invalid"
+
+        auth_runtime = getattr(harness.app.state, AUTH_RUNTIME_STATE_KEY)
+        assert isinstance(auth_runtime, AuthRuntime)
+        family_id = auth_runtime.access_tokens.decode(successor_access).session_family_id
+        assert family_id is not None
+        async with harness.session_factory() as session:
+            family = await session.get(RefreshSessionFamily, family_id)
+            assert family is not None
+            assert family.revoked_at is not None
+
+        successor_refresh = await harness.client.post("/api/v1/auth/refresh")
+        assert successor_refresh.status_code == 401
+        assert successor_refresh.json()["error"]["code"] == "session_invalid"
+        assert "Max-Age=0" in successor_refresh.headers["set-cookie"]
+        assert harness.client.cookies.get("wf_refresh") is None
+
+        successor_me = await harness.client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {successor_access}"},
+        )
+        assert successor_me.status_code == 401
+        assert successor_me.json()["error"]["code"] == "session_invalid"
+
+
+async def test_logout_without_cookie_revokes_family_selected_by_bearer() -> None:
+    async with _auth_api() as harness:
+        access_token, _login_response = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+        harness.client.cookies.delete("wf_refresh")
+
+        logout = await harness.client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert logout.status_code == 204
+
+        auth_runtime = getattr(harness.app.state, AUTH_RUNTIME_STATE_KEY)
+        assert isinstance(auth_runtime, AuthRuntime)
+        family_id = auth_runtime.access_tokens.decode(access_token).session_family_id
+        async with harness.session_factory() as session:
+            family = await session.get(RefreshSessionFamily, family_id)
+            assert family is not None
+            assert family.revoked_at is not None
+
+        revoked_me = await harness.client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert revoked_me.status_code == 401
+        assert revoked_me.json()["error"]["code"] == "session_invalid"
+
+
+async def test_cross_site_refresh_is_rejected_without_consuming_cookie() -> None:
+    async with _auth_api() as harness:
+        _access_token, _response = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+
+        rejected = await harness.client.post(
+            "/api/v1/auth/refresh",
+            headers={
+                "Origin": "https://attacker.example",
+                "Sec-Fetch-Site": "cross-site",
+            },
+        )
+        assert rejected.status_code == 401
+        assert rejected.json()["error"]["code"] == "authentication_required"
+
+        accepted = await harness.client.post(
+            "/api/v1/auth/refresh",
+            headers={"Origin": "http://frontend.test"},
+        )
+        assert accepted.status_code == 200
+
+
+async def test_staging_refresh_cookie_forces_secure_host_only_policy() -> None:
+    async with _auth_api(
+        environment="staging",
+        frontend_base_url="https://staging.wealthy-falcon.test",
+    ) as harness:
+        _access_token, response = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+
+        set_cookie = response.headers["set-cookie"]
+        assert set_cookie.startswith("__Host-wf_refresh=")
+        assert "HttpOnly" in set_cookie
+        assert "Secure" in set_cookie
+        assert "SameSite=lax" in set_cookie
+        assert "Path=/" in set_cookie
+        assert "Domain=" not in set_cookie

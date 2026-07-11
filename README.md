@@ -880,7 +880,7 @@ Beklenen sonuç:
 - Backend API smoke testi `BACKEND_SMOKE_OK` çıktısı verir.
 - Opsiyonel HTTP landing/health smoke testi `SMOKE_OK` çıktısı verir.
 
-## F2A invitation → activation → login demo
+## F2A/F2B invitation → activation → secure session demo
 
 The local bootstrap creates no committed password or token. It resets only the synthetic demo
 admin and prints one short-lived activation URL to the current terminal:
@@ -901,12 +901,16 @@ npm --prefix frontend run dev
 
 Open the printed `DEMO_AUTH_ACTIVATION_URL`, choose a password of at least 12 characters, then log
 in at `http://localhost:3000/login` with organization code `wealthy-falcon-demo` and email
-`admin@wealthyfalcon.demo`.
+`admin@wealthyfalcon.demo`. Login opens the protected `/dashboard` tenant shell. Reloading the
+page rotates the HttpOnly refresh credential and restores the in-memory access credential; **Çıkış
+yap** revokes the server-side session family and returns to login.
 
 An API client can use that login response's short-lived `data.access_token` as
 `Authorization: Bearer <token>` when calling `POST /api/v1/users/invitations`; the response returns
 the new user's fragment-based activation URL once. Caller-supplied tenant headers and body fields
-do not select the invitation tenant.
+do not select the invitation tenant. The refresh credential is never returned in JSON or stored in
+browser local storage: same-origin web requests use the host-only HttpOnly cookie for
+`POST /api/v1/auth/refresh`, while `GET /api/v1/me` validates both bearer and live server session.
 
 Local/dev uses a process-local random signing key. Staging/production deliberately refuses to
 start without `IK_AUTH_SIGNING_KEY` supplied out of band and an HTTPS `IK_FRONTEND_BASE_URL`; no
@@ -957,7 +961,8 @@ ve açık plan sapmaları
 
 Queue `STOP — supervisor F1E push pending; awaiting Murat review` checkpoint'indedir. Yerel Phase 1
 teknik gate'leri geçmiştir; Faz 2
-authentication/session/RBAC/audit persistence başlatılmamıştır. F1D base commit'i `54a3678` review
+F2A identity and F2B secure-session product slices are implemented; later RBAC/audit persistence
+has not started. F1D base commit'i `54a3678` review
 branch'inde pushed durumdadır; F1E HEAD'inin review branch'ine push edilmesi supervisor
 sorumluluğundadır ve remote sync doğrulanmadan F1E push gate'i tamam sayılmaz. Yürütme otoritesi
 [MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;

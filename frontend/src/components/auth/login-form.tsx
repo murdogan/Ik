@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
 import {
@@ -7,26 +8,21 @@ import {
   loginErrorPresentation,
 } from "@/lib/auth-contracts";
 import { postApi } from "@/lib/api-client";
+import { establishSession } from "@/lib/session";
 
 import styles from "./auth.module.css";
 import { FormAlert } from "./form-alert";
-
-interface LoginSuccess {
-  displayName: string;
-  tenantName: string;
-}
 
 interface LoginFormProps {
   initialTenantSlug?: string;
 }
 
 export function LoginForm({ initialTenantSlug = "" }: LoginFormProps) {
+  const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<ReturnType<typeof loginErrorPresentation> | null>(
     null,
   );
-  const [success, setSuccess] = useState<LoginSuccess | null>(null);
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -51,34 +47,13 @@ export function LoginForm({ initialTenantSlug = "" }: LoginFormProps) {
       });
 
       form.reset();
-      setSuccess({
-        displayName: data.user.full_name?.trim() || data.user.email,
-        tenantName: data.user.tenant.name,
-      });
+      establishSession(data);
+      router.replace("/dashboard");
     } catch (cause) {
       setError(loginErrorPresentation(cause));
     } finally {
       setIsSubmitting(false);
     }
-  }
-
-  if (success) {
-    return (
-      <div className={styles.resultPanel}>
-        <FormAlert
-          tone="success"
-          title="Giriş başarılı"
-          message={`${success.displayName}, ${success.tenantName} çalışma alanına güvenli biçimde giriş yaptınız.`}
-        />
-        <button
-          className={styles.secondaryButton}
-          type="button"
-          onClick={() => setSuccess(null)}
-        >
-          Başka bir hesapla giriş yap
-        </button>
-      </div>
-    );
   }
 
   return (

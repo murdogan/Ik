@@ -20,6 +20,8 @@ from app.models import (  # noqa: F401
     Employee,
     LeaveBalanceSummary,
     LeaveRequest,
+    RefreshSessionFamily,
+    RefreshSessionToken,
     Tenant,
     TenantFeatureFlag,
     TenantSettings,
@@ -60,6 +62,12 @@ EXPECTED_UUID_COLUMNS = {
     ("user_activation_tokens", "id"),
     ("user_activation_tokens", "tenant_id"),
     ("user_activation_tokens", "user_id"),
+    ("refresh_session_families", "id"),
+    ("refresh_session_families", "tenant_id"),
+    ("refresh_session_families", "user_id"),
+    ("refresh_session_tokens", "id"),
+    ("refresh_session_tokens", "tenant_id"),
+    ("refresh_session_tokens", "family_id"),
 }
 EXPECTED_TIMESTAMP_COLUMNS = {
     (table_name, column_name)
@@ -72,6 +80,8 @@ EXPECTED_TIMESTAMP_COLUMNS = {
         "tenant_feature_flags",
         "users",
         "user_activation_tokens",
+        "refresh_session_families",
+        "refresh_session_tokens",
     }
     for column_name in {"created_at", "updated_at"}
 } | {
@@ -81,6 +91,9 @@ EXPECTED_TIMESTAMP_COLUMNS = {
     ("user_activation_tokens", "expires_at"),
     ("user_activation_tokens", "consumed_at"),
     ("user_activation_tokens", "revoked_at"),
+    ("refresh_session_families", "expires_at"),
+    ("refresh_session_families", "revoked_at"),
+    ("refresh_session_tokens", "consumed_at"),
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     "ck_command_idempotency_completion",
@@ -107,6 +120,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_user_activation_tokens_consumed_order",
     "ck_user_activation_tokens_revoked_order",
     "ck_user_activation_tokens_terminal_state",
+    "ck_refresh_session_families_expiry_order",
+    "ck_refresh_session_families_revoked_order",
+    "ck_refresh_session_tokens_hash_length",
+    "ck_refresh_session_tokens_consumed_order",
 }
 EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_command_idempotency_tenant_key",
@@ -117,6 +134,8 @@ EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_users_tenant_email",
     "uq_users_tenant_email_normalized",
     "uq_user_activation_tokens_token_hash",
+    "uq_refresh_session_families_tenant_id_id",
+    "uq_refresh_session_tokens_token_hash",
 }
 EXPECTED_FOREIGN_KEY_COUNTS = {
     "command_idempotency": 1,
@@ -127,6 +146,8 @@ EXPECTED_FOREIGN_KEY_COUNTS = {
     "tenant_feature_flags": 1,
     "users": 1,
     "user_activation_tokens": 2,
+    "refresh_session_families": 2,
+    "refresh_session_tokens": 2,
 }
 
 
@@ -327,7 +348,7 @@ def test_full_api_smoke_uses_alembic_migrated_postgresql(
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     assert result.returncode == 0, output
     assert "BACKEND_SMOKE_OK" in result.stdout
-    assert "documented_endpoints=28" in result.stdout
+    assert "documented_endpoints=31" in result.stdout
 
 
 def _alembic_config(database_url: URL) -> Config:

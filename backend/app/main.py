@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
+from app.api.auth import me_router
 from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.employees import router as employees_router
@@ -65,6 +66,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(Exception, unexpected_error_handler)
     app.include_router(platform_tenants_router)
     app.include_router(auth_router)
+    app.include_router(me_router)
     app.include_router(user_invitations_router)
     app.include_router(tenant_router)
     app.include_router(dashboard_router)

@@ -38,7 +38,10 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | GET | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; `{data,meta}`; beş typed/allowlisted current-tenant setting |
 | PATCH | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; `{data,meta}`; extra key reddi ve lifecycle read-only guard |
 | GET | `/api/v1/tenant/features` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; selector kabul etmeden injected current tenant effective flag catalogu |
-| POST | `/api/v1/auth/login` | F2A uygulandı | Kurum kodu discovery, generic credential hatası, Argon2id doğrulama ve kısa ömürlü bearer response |
+| POST | `/api/v1/auth/login` | F2B uygulandı | Tenant-aware doğrulama, kısa ömürlü bearer ve HttpOnly cookie üzerinden hashli server session family |
+| POST | `/api/v1/auth/refresh` | F2B uygulandı | Tek kullanımlık rotation; reuse bütün session family'yi revoke eder |
+| POST | `/api/v1/auth/logout` | F2B uygulandı | Session family revoke ve refresh cookie temizleme |
+| GET | `/api/v1/me` | F2B uygulandı | Bearer + aktif server session doğrulamasıyla current user/tenant |
 | POST | `/api/v1/auth/activate` | F2A uygulandı | Hashli/süreli aktivasyon credential'ı, atomik tek kullanım ve Argon2id parola kurulumu |
 | POST | `/api/v1/users/invitations` | F2A uygulandı | Bearer actor/tenant scope, invite capability ve header/payload tenant spoof reddi |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
@@ -54,10 +57,10 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note, row-lock one-winner ve opsiyonel idempotency |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
 
-F2A historical F1E yüzeyine üç generated operation ekler. Lokal executable smoke, invite-capable
-fixture ile login → bearer davet → tek kullanımlık aktivasyon → yeniden login akışını çalıştırır;
-spoofed tenant header'larının bearer scope'unu değiştiremediğini doğrular ve credential/token
-değerlerini çıktıya yazmaz.
+F2A historical F1E yüzeyine üç, F2B refresh/logout/me ile üç generated operation daha ekler. Lokal
+executable smoke, invite/aktivasyon sonrasında login → me → refresh rotation → logout akışını
+çalıştırır; tenant header spoof'un scope'u değiştiremediğini ve revoke edilen session'ın yeniden
+kullanılamadığını doğrular, credential/token değerlerini çıktıya yazmaz.
 
 Geçerli uygulama notları:
 
@@ -376,19 +379,22 @@ Response:
 {
   "data": {
     "access_token": "jwt",
-    "refresh_token": "opaque",
+    "token_type": "bearer",
     "expires_in": 900,
     "user": {
       "id": "uuid",
       "tenant_id": "uuid",
       "email": "ayse@example.com",
       "full_name": "Ayşe Yılmaz",
-      "roles": ["hr_specialist"]
+      "tenant": { "slug": "acme", "name": "Acme" }
     }
   },
   "meta": { "correlation_id": "req_..." }
 }
 ```
+
+Refresh credential JSON'a girmez; `HttpOnly`, host-only, `SameSite=Lax`, `Path=/` cookie olarak
+verilir ve staging/production'da `Secure` + `__Host-` policy zorunludur.
 
 Hatalar:
 
@@ -398,11 +404,7 @@ Hatalar:
 
 ### `POST /api/v1/auth/refresh`
 
-Request:
-
-```json
-{ "refresh_token": "opaque" }
-```
+Request body yoktur; browser/BFF HttpOnly refresh cookie'yi gönderir.
 
 Davranış:
 
@@ -415,11 +417,12 @@ Yetki: authenticated.
 
 Davranış: aktif session ve refresh token revoke edilir.
 
-### `GET /api/v1/auth/me`
+### `GET /api/v1/me`
 
 Yetki: authenticated.
 
-Response kullanıcı, roller, permission özeti ve tenant bilgisini döner.
+Response mevcut F2B kapsamında doğrulanmış kullanıcı ve tenant bilgisini döner. Rol ve permission
+özeti sonraki RBAC bloğundadır.
 
 ## 5. Platform ve tenant endpointleri — F1E final Faz 1 yüzeyi
 

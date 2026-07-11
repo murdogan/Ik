@@ -11,6 +11,12 @@ interface ApiSuccessEnvelope<TResponse> {
   data: TResponse;
 }
 
+export interface ApiRequestOptions {
+  method?: "GET" | "POST";
+  body?: object;
+  accessToken?: string;
+}
+
 export class ApiClientError extends Error {
   readonly status: number | null;
   readonly code: string;
@@ -66,22 +72,26 @@ async function responsePayload(response: Response): Promise<unknown> {
   }
 }
 
-export async function postApi<TRequest extends object, TResponse>(
+async function sendApiRequest(
   path: `/api/${string}`,
-  body: TRequest,
-): Promise<TResponse> {
-  let response: Response;
+  { method = "GET", body, accessToken }: ApiRequestOptions,
+): Promise<{ payload: unknown; response: Response }> {
+  const headers = new Headers({ Accept: "application/json" });
+  if (body !== undefined) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
 
+  let response: Response;
   try {
     response = await fetch(path, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
+      method,
+      headers,
       credentials: "same-origin",
       cache: "no-store",
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiClientError({
@@ -100,6 +110,15 @@ export async function postApi<TRequest extends object, TResponse>(
     });
   }
 
+  return { payload, response };
+}
+
+export async function requestApi<TResponse>(
+  path: `/api/${string}`,
+  options: ApiRequestOptions = {},
+): Promise<TResponse> {
+  const { payload, response } = await sendApiRequest(path, options);
+
   if (!isRecord(payload) || !("data" in payload)) {
     throw new ApiClientError({
       status: response.status,
@@ -109,4 +128,26 @@ export async function postApi<TRequest extends object, TResponse>(
   }
 
   return (payload as unknown as ApiSuccessEnvelope<TResponse>).data;
+}
+
+export async function requestApiNoContent(
+  path: `/api/${string}`,
+  options: ApiRequestOptions,
+): Promise<void> {
+  const { payload, response } = await sendApiRequest(path, options);
+
+  if (response.status !== 204 || payload !== null) {
+    throw new ApiClientError({
+      status: response.status,
+      code: "invalid_response",
+      correlationId: response.headers.get("x-request-id"),
+    });
+  }
+}
+
+export async function postApi<TRequest extends object, TResponse>(
+  path: `/api/${string}`,
+  body: TRequest,
+): Promise<TResponse> {
+  return requestApi<TResponse>(path, { method: "POST", body });
 }

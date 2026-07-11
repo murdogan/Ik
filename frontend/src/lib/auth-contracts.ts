@@ -20,6 +20,12 @@ export interface LoginResponseData {
   user: AuthUser;
 }
 
+export type RefreshResponseData = LoginResponseData;
+
+export interface MeResponseData {
+  user: AuthUser;
+}
+
 export interface ActivationResponseData {
   user: AuthUser;
 }
