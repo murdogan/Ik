@@ -475,21 +475,44 @@ async def test_tenant_feature_scope_ignores_spoofed_headers_and_isolates_tenants
     assert _feature_data(tenant_b_response) == {"features": _expected_features()}
 
 
-async def test_tenant_principal_alone_cannot_call_platform_feature_routes() -> None:
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        (
+            "POST",
+            "/api/v1/platform/tenants",
+            {"slug": "must-not-create", "name": "Must Not Create"},
+        ),
+        ("GET", "/api/v1/platform/tenants", None),
+        ("GET", f"/api/v1/platform/tenants/{TENANT_A_ID}", None),
+        (
+            "PATCH",
+            f"/api/v1/platform/tenants/{TENANT_A_ID}",
+            {"name": "Must Not Change"},
+        ),
+        ("GET", f"/api/v1/platform/tenants/{TENANT_A_ID}/features", None),
+        (
+            "PATCH",
+            f"/api/v1/platform/tenants/{TENANT_A_ID}/features",
+            {"features": [{"key": "documents", "enabled": True}]},
+        ),
+    ],
+)
+async def test_tenant_principal_alone_cannot_call_any_platform_route(
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None,
+) -> None:
     async with _tenant_api() as harness:
         _authorize_tenant(harness.app, TENANT_A_ID)
-        get_response = await harness.client.get(
-            f"/api/v1/platform/tenants/{TENANT_A_ID}/features",
+        response = await harness.client.request(
+            method,
+            path,
             headers=SPOOFED_TENANT_A_HEADERS,
-        )
-        patch_response = await harness.client.patch(
-            f"/api/v1/platform/tenants/{TENANT_A_ID}/features",
-            headers=SPOOFED_TENANT_A_HEADERS,
-            json={"features": [{"key": "documents", "enabled": True}]},
+            json=payload,
         )
 
-    _assert_error(get_response, 403, "platform_access_denied")
-    _assert_error(patch_response, 403, "platform_access_denied")
+    _assert_error(response, 403, "platform_access_denied")
 
 
 async def test_platform_principal_alone_does_not_grant_current_tenant_features() -> None:
@@ -743,6 +766,21 @@ async def test_successful_actual_changes_record_all_four_redacted_event_contract
     )
     assert "Never In Event Payload" not in serialized
     assert "event-tenant" not in serialized
+
+
+async def test_failed_platform_command_records_no_event() -> None:
+    async with _tenant_api() as harness:
+        recorder = RecordingPlatformEventRecorder()
+        harness.app.dependency_overrides[get_platform_event_recorder] = lambda: recorder
+        _authorize_platform(harness.app)
+
+        response = await harness.client.patch(
+            f"/api/v1/platform/tenants/{TENANT_A_ID}",
+            json={"status": TenantStatus.PROVISIONING.value},
+        )
+
+        _assert_error(response, 409, "tenant_lifecycle_conflict")
+        assert recorder.events == ()
 
 
 async def test_event_recorder_failure_rolls_back_platform_metadata_change() -> None:

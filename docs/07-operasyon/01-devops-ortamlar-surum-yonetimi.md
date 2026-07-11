@@ -97,8 +97,9 @@ uv run python scripts/backend_api_smoke.py
 ```
 
 Bu komut server, lokal PostgreSQL, deploy, cron, token veya `.env` gerektirmez. In-memory
-SQLite ile health, landing, OpenAPI, dashboard summary, employee CRUD ve leave request workflow
-endpointlerini ASGI üzerinden doğrular.
+SQLite ile health, landing, OpenAPI, platform tenant lifecycle/metadata/limit/feature işlemleri,
+current tenant settings/features, principal-denial sınırları, dashboard summary, employee CRUD ve
+leave request workflow endpointlerini ASGI üzerinden doğrular.
 
 Opsiyonel lokal HTTP landing/health smoke testi:
 

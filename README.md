@@ -295,8 +295,12 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
 - `/api/v1/platform/tenants` platform-principal provisioning ve `{data,meta}` içinde bounded,
   deterministic opaque-cursor metadata-only liste
 - `/api/v1/platform/tenants/{tenant_id}` platform-safe detail ve explicit lifecycle PATCH
+- `/api/v1/platform/tenants/{tenant_id}/features` yedi-key typed rollout GET/PATCH, configured
+  override kaynağı, tenant-principal denial ve HR verisi içermeyen platform metadata sınırı
 - `/api/v1/tenant` injected tenant-principal current metadata
 - `/api/v1/tenant/settings` beş-key typed/allowlisted GET/PATCH
+- `/api/v1/tenant/features` injected tenant-principal scope'undan yedi effective flag GET ve
+  tenant A/B izolasyonu
 - `/api/v1/dashboard/summary` active employee count, pending leave count, this-month
   starters, department distribution and recent activity
 - `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, deterministic
@@ -316,8 +320,8 @@ fail olur.
 
 F1A smoke/contract gate'i lifecycle, default-deny principals, typed extra-key rejection,
 cross-tenant principal isolation ve platform response'unda HR alanı bulunmamasını da kanıtlamalıdır;
-güncel gate `BACKEND_SMOKE_OK` ile 22 documented endpoint'i çalıştırmış ve F1A OpenAPI snapshot'ını
-21 generated operation için doğrulamıştır.
+historical F1A gate `BACKEND_SMOKE_OK` ile 22 documented endpoint'i çalıştırmış ve F1A OpenAPI
+snapshot'ını 21 generated operation için doğrulamıştır.
 
 F1B smoke aynı 22-row registry'yi korurken bütün response'larda safe correlation header'larını,
 unsafe inputun yansıtılmamasını, yedi platform/tenant `{data,meta}` response'unu, deterministic

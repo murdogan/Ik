@@ -822,11 +822,12 @@ allowlists, canonical/malformed/duplicate/conflicting correlation inputs, worker
 seven Phase-1 envelopes, cursor-only platform pagination, and unchanged Phase-0 employee/leave
 plain-array contracts.
 
-F1D scenarios must additionally verify three feature operations, exact seven-key ordering and
+F1D API/event tests additionally verify three feature operations, exact seven-key ordering and
 defaults, default/override source transitions, strict/unknown/duplicate input rejection, tenant A/B
-isolation, tenant-principal platform denial, configured limit propagation without HR count, terminal
-lifecycle hardening, four redacted event shapes and no event on no-op/failure. Final smoke evidence
-is pending until the synchronized script/registry and full required commands complete.
+isolation, tenant-principal denial across every platform tenant operation, configured limit
+propagation without HR count, terminal lifecycle hardening, four redacted event shapes and no event
+on no-op/failure. The synchronized script/registry provides the final 25-endpoint F1D smoke evidence;
+the full required command results are recorded below.
 
 ## Verification
 
@@ -835,12 +836,16 @@ is pending until the synchronized script/registry and full required commands com
 | Gate | Command | Current evidence state |
 |---|---|---|
 | Ruff | `uv run ruff check backend` | Passed |
-| Fast suite | `uv run pytest -q` | Passed: 735 passed, 30 deselected; one known Starlette/httpx deprecation warning |
+| Fast suite | `uv run pytest -q` | Passed: 741 passed, 30 deselected; one known Starlette/httpx deprecation warning |
 | Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`, 25/25 documented endpoint coverage |
 | OpenAPI contract | `uv run pytest -q backend/tests/test_openapi_metadata.py backend/tests/test_openapi_contract.py` | Passed; exact 24-operation F1D snapshot and historical subset/diff assertions |
 | SQLite migration/API/event focus | `uv run pytest -q backend/tests/test_migrations.py backend/tests/test_tenant_api_f1d.py backend/tests/test_platform_events.py` | Passed in focused and full suites; SQLite remains compatibility evidence only |
 | PostgreSQL full lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed on PostgreSQL 17.10: 30 passed, 735 deselected; one known deprecation warning |
 | PostgreSQL F1D security | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed current-head catalog, A/B flag RLS, exact/no-DELETE ACLs, platform-HR denial, non-BYPASS owner backfill/refusal/restoration and migrated API smoke |
+
+The continuation adds six fast authorization/event proof cases and documentation corrections only;
+runtime, migration and PostgreSQL test code remain identical to the recorded 30-test PostgreSQL
+17.10 lane. A PostgreSQL admin DSN was not available for a fresh continuation rerun.
 
 The F1D commit SHA is reported through Git history and the final handoff rather than embedded as
 self-referential document content. The historical passed
