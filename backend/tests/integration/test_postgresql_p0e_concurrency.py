@@ -18,6 +18,7 @@ from app.models.tenant import Tenant
 from app.platform.db import (
     PersistenceConcurrencyError,
     SqlAlchemyUnitOfWork,
+    configure_tenant_database_access,
     constraint_name_from_error,
     sqlstate_from_error,
 )
@@ -112,6 +113,7 @@ async def _assert_concurrent_decision_winner(database_url: URL) -> None:
 
         async def decide(*, approve: bool):
             async with session_factory() as session:
+                configure_tenant_database_access(session, seed.tenant_id)
                 handler = LeaveRequestCommandHandler(
                     service=_DecisionBarrierLeaveRequestService(session, barrier),
                     unit_of_work=SqlAlchemyUnitOfWork(session),
@@ -198,6 +200,7 @@ async def _assert_decision_lock_is_acquired_during_read(
             )
 
             async with session_factory() as competing_session:
+                configure_tenant_database_access(competing_session, seed.tenant_id)
                 service = _LockTimeoutLeaveRequestService(competing_session)
                 handler = LeaveRequestCommandHandler(
                     service=service,
@@ -239,6 +242,7 @@ async def _assert_concurrent_idempotent_leave_create(database_url: URL) -> None:
 
         async def create_leave_request():
             async with session_factory() as session:
+                configure_tenant_database_access(session, seed.tenant_id)
                 handler = LeaveRequestCommandHandler(
                     service=LeaveRequestService(session),
                     unit_of_work=SqlAlchemyUnitOfWork(session),
@@ -302,6 +306,7 @@ async def _assert_employee_archive_retention(database_url: URL) -> None:
         )
 
         async with session_factory() as wrong_tenant_session:
+            configure_tenant_database_access(wrong_tenant_session, seed.tenant_id)
             wrong_tenant_handler = EmployeeCommandHandler(
                 service=EmployeeService(wrong_tenant_session),
                 unit_of_work=SqlAlchemyUnitOfWork(wrong_tenant_session),
@@ -313,6 +318,7 @@ async def _assert_employee_archive_retention(database_url: URL) -> None:
                 )
 
         async with session_factory() as archive_session:
+            configure_tenant_database_access(archive_session, seed.tenant_id)
             archive_handler = EmployeeCommandHandler(
                 service=EmployeeService(archive_session),
                 unit_of_work=SqlAlchemyUnitOfWork(archive_session),

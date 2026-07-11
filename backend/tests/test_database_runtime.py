@@ -9,6 +9,7 @@ from app.db.session import (
     get_session,
 )
 from app.main import create_app
+from app.platform.db.tenant_access import MANAGED_DATABASE_SESSION_KEY
 from fastapi import Depends, HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
@@ -143,3 +144,14 @@ async def test_database_runtime_can_be_disposed_more_than_once_safely() -> None:
 
     await runtime.dispose()
     await runtime.dispose()
+
+
+async def test_runtime_sessions_are_marked_for_fail_closed_database_access() -> None:
+    runtime = create_database_runtime(
+        _settings(database_url="sqlite+aiosqlite:///:memory:")
+    )
+    try:
+        async with runtime.session_factory() as session:
+            assert session.sync_session.info[MANAGED_DATABASE_SESSION_KEY] is True
+    finally:
+        await runtime.dispose()

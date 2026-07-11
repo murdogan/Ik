@@ -2,14 +2,59 @@
 
 Date: 2026-07-11
 Branch: `codex/mvp-phase1-until-20260712-0900`
-Task: `F1B Immutable RequestContext, correlation middleware and API contract standards`
-Review checkpoint: `F1B required local gates passed; commit SHA recorded in repository history`
+Task: `F1C PostgreSQL RLS foundation and transaction tenant binding`
+Review checkpoint: `F1C required local and PostgreSQL gates passed; commit recorded in history`
 Review decision: `Ready for supervisor review; no push, merge or deploy performed`
 Push state: `Local work only; no push, merge or deploy`
 
 ## Scope
 
-### F1B immutable request context, correlation and API contract standards
+### F1C PostgreSQL RLS foundation and transaction tenant binding
+
+- Migration `0014_f1c_postgresql_rls` enables and forces RLS on every current tenant-owned table:
+  `users`, `employees`, `leave_requests`, `leave_balance_summaries`, `command_idempotency` and
+  `tenant_settings`. It also scopes the `tenants` metadata root by `id` for the normal app role.
+  The migration inventory is frozen; an independent catalog test discovers every public non-null
+  `tenant_id` table and fails on inventory, policy or FORCE drift.
+- Normal database capability role `wealthy_falcon_app` and separate metadata-only capability role
+  `wealthy_falcon_platform` are `NOLOGIN`, `NOINHERIT`, `NOSUPERUSER` and `NOBYPASSRLS`. The app
+  role receives only current product tenant-table privileges; tenant-root updates are column-bound
+  to locale/timezone plus ORM timestamp. Platform receives tenant metadata DML and provisioning-only
+  settings INSERT, but no settings SELECT/UPDATE or HR-table privilege. Actual forbidden raw SQL
+  fails with PostgreSQL `42501`.
+- App policies use both `USING` and `WITH CHECK` against
+  `nullif(current_setting('app.tenant_id', true), '')::uuid`. Missing/empty context exposes zero
+  rows, malformed UUID context aborts, and cross-tenant raw INSERT/UPDATE is rejected. Tenant root
+  metadata is subject to the same scope.
+- HTTP request dependencies select one immutable database path per session. Tenant transactions
+  execute `SET LOCAL ROLE wealthy_falcon_app` and `SET LOCAL app.tenant_id`; platform transactions
+  execute only their separate local role. Command UoW materializes that binding before the
+  operation, while read-only SQLAlchemy autobegin transactions use the same `after_begin` seam.
+- Both role and tenant setting are transaction-local. A pool-size-one PostgreSQL test proves the
+  same backend PID resets after commit and rollback, does not expose a missing-context tenant, and
+  rebinds A/B plus repeated UoW transactions safely.
+- Real PostgreSQL tests prove app-role raw SQL and repository negatives, platform HR denial,
+  catalog/role attributes, missing/invalid context and pool reuse. The migrated PostgreSQL API
+  smoke executes existing API cross-tenant negatives; a test-only HTTP probe also asserts the
+  request resolver's effective `current_user`, GUC and unfiltered RLS result for both tenants.
+  Existing fast tests retain cache-prefix and worker-fake tenant/context mismatch denial. SQLite
+  remains a useful no-op compatibility lane but is not accepted as RLS evidence.
+- `TenantContext`, trusted tenant principal and legacy tenant-header parsing now reject zero UUIDs.
+  F1C changes no route, OpenAPI operation, response model, auth/RBAC/audit contract, worker provider
+  or business module.
+
+#### F1C role provisioning contract
+
+- Runtime must connect as a non-owner, `NOINHERIT` gateway login allowed to assume only the two
+  capability roles. Migration/table-owner credentials are not an HTTP runtime path.
+- Alembic creates or hardens the cluster-global NOLOGIN capability roles idempotently. Downgrade
+  removes this database's grants, policies and RLS flags but intentionally retains shared roles.
+  A reused capability that is itself member of any parent role fails upgrade preflight, preventing
+  an inherited or `SET ROLE` path to broader database privileges.
+- Local demo/smoke cross-tenant fixture setup is an explicit test/bootstrap admin connection; it
+  never reuses the platform request session as an HR bypass.
+
+### Historical F1B immutable request context, correlation and API contract standards
 
 - Adds a canonical `frozen=True, slots=True` `RequestContext` carrying validated request/trace IDs,
   optional immutable tenant, actor/session placeholders, typed authentication strength and optional
@@ -343,8 +388,9 @@ the expected local commits ahead of the review-branch remote after the final com
   to reject every cross-tenant relationship by its named composite constraint.
 - Kept SQLite as fast model/migration/API compatibility coverage only; it is not evidence for
   PostgreSQL concurrent index, `NOT VALID`, validation, or direct-write behavior.
-- P0D changes no endpoint, OpenAPI schema, response/error contract, auth/RBAC behavior, or product
-  feature. Existing application tenant guards remain; PostgreSQL RLS remains Phase 1.
+- P0D changed no endpoint, OpenAPI schema, response/error contract, auth/RBAC behavior, or product
+  feature. Existing application tenant guards remain; F1C later adds PostgreSQL RLS without
+  rewriting this historical composite-FK migration.
 
 ### Historical P0C transaction and error boundary
 
@@ -592,8 +638,9 @@ one `upgrade head` command rather than running the two revisions separately.
 
 The SQLite migration branch rebuilds tables only to preserve the fast migration-chain and metadata
 checks. P0D enforcement evidence lives exclusively in the `postgres`-marked integration tests.
-Existing API/service tenant checks remain defense-in-depth. F1A adds principal-scoped current tenant
-settings but intentionally does not add RLS; the RLS rollout remains a later separate Phase 1 task.
+Existing API/service tenant checks remain defense-in-depth. Historical F1A added principal-scoped
+current tenant settings without RLS; F1C now completes the separate PostgreSQL forced-RLS rollout
+through revision `0014_f1c_postgresql_rls`.
 
 Revision `0013_tenant_settings` adds the root settings FK after the P0D expand/contract chain, so it
 does not alter the historical four-relationship P0D preflight. Its upgrade backfills one fixed
@@ -705,6 +752,22 @@ seven Phase-1 envelopes, cursor-only platform pagination, and unchanged Phase-0 
 plain-array contracts.
 
 ## Verification
+
+### F1C required gates — passed
+
+| Gate | Command | Result |
+|---|---|---|
+| Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
+| Fast SQLite | `uv run pytest -q` | Passed, 609 tests; 28 PostgreSQL tests deselected; one known Starlette warning |
+| PostgreSQL 16.4 | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed, 28 tests; 609 fast tests deselected; fresh disposable database per test |
+| F1C PostgreSQL security | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_f1c_rls.py` | Passed, 6 tests; catalog, roles, raw SQL, HTTP binding, platform denial, pool reset, UoW and repository proof |
+| Migration round-trip | PostgreSQL baseline + `uv run pytest -q backend/tests/test_migrations.py` | Passed, real `base → head → base → head` and 30 fast migration tests |
+| Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed, `BACKEND_SMOKE_OK`; all 22 documented endpoints executed |
+| PostgreSQL API smoke | Baseline `test_full_api_smoke_uses_alembic_migrated_postgresql` | Passed against Alembic head with runtime app/platform role binding |
+
+The PostgreSQL lane used a local user-space PostgreSQL 16.4 server only to create disposable test
+databases. No staging/production database, deployment, credential file, auth file, `.env`, secret,
+push, merge or deploy was changed. Endpoint and generated OpenAPI operation counts remain unchanged.
 
 ### F1B required gates — passed
 
@@ -869,15 +932,13 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Post-F1B Backend Backlog
+## Post-F1C Backend Backlog
 
 - Auth/session/RBAC dependencies, permission enforcement, and current-user context.
 - Global sort controls and validation/error normalization beyond the endpoint families already
   covered. Immutable `RequestContext`, global correlation middleware and the new Phase-1
   `{data,meta}` standard are implemented; remaining Phase-0 envelope migrations require an explicit
   version/deprecation decision.
-- PostgreSQL RLS helpers/catalog policies, transaction-local tenant context and no-`BYPASSRLS`
-  runtime-role evidence in a separate Phase 1 slice.
 - Internal feature flag model/rollout surface; F1A intentionally has no
   `/api/v1/tenant/features`. User/role management remains Phase 2.
 - Idempotency receipt TTL/cleanup policy and expansion beyond the current employee-create and

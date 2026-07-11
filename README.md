@@ -161,8 +161,8 @@ olarak eski scalar foreign key'lerle birlikte devreye alır ve concurrent-index 
 için preflight'ı constraint lock'ları altında yeniden çalıştırır. `0010` contract migration'ı yeni
 foreign key'leri validate ettikten sonra yalnız eski employee/user scalar foreign key'lerini
 kaldırır. Böylece doğrudan DB write yolu tenant'lar arası employee/user bağlantısı kuramaz;
-tenant root foreign key'leri ve mevcut servis guard'ları korunur. RLS bu değişikliğin parçası
-değildir; F1A da RLS eklemez ve rollout daha sonraki ayrı Faz 1 taskıdır.
+tenant root foreign key'leri ve mevcut servis guard'ları korunur. RLS bu historical P0D/F1A
+değişikliklerinin parçası değildir; ayrı F1C rollout'u aşağıda bu katmanların üzerine eklenmiştir.
 
 P0E ile kritik create/decision POST komutları opsiyonel canonical `X-Idempotency-Key` destekler.
 Key tenant genelinde unique'tir; aynı tenant/key ve aynı semantik request ilk başarılı
@@ -197,6 +197,19 @@ instance üretir. Invalid, duplicate, conflicting, e-posta/PII veya JWT biçimli
 yeniden üretilir ve yansıtılmaz/loglanmaz. Her HTTP response `X-Request-Id`, `X-Trace-Id` ve
 deprecated request-ID alias'ı `X-Correlation-Id` taşır. Bu context auth, RBAC veya audit persistence
 uygulamaz ve F1B herhangi bir Alembic migration eklemez.
+
+F1C `0014_f1c_postgresql_rls` ile mevcut altı tenant-owned tabloyu ve normal app rolünün metadata
+görünürlüğü için `tenants` root'unu PostgreSQL RLS `ENABLE + FORCE` korumasına alır. Normal
+`wealthy_falcon_app` capability rolü her transaction'da `SET LOCAL app.tenant_id` ile scope edilir;
+eksik/invalid context fail closed olur ve commit/rollback sonrası pool state'i taşımaz. Ayrı
+`wealthy_falcon_platform` rolü tenant metadata DML ve provisioning-only typed-settings INSERT alır;
+settings read/update veya HR tablo grant/policy'si almaz. Tenant app root update'i locale/timezone
+ve ORM timestamp kolonlarıyla sınırlıdır. İki rol de `NOLOGIN`, `NOINHERIT`, `NOSUPERUSER`,
+`NOBYPASSRLS`'dir; production runtime login'i table owner olmamalı, `NOINHERIT` gateway olarak
+yalnız bu rolleri explicit
+`SET LOCAL ROLE` ile kullanmalıdır. SQLite hızlı uyumluluk lane'i olmaya devam eder; catalog,
+raw-SQL, role ve pool-reuse kanıtı `-m postgres` integration lane'indedir. Endpoint/OpenAPI contract
+sayısı F1C'de değişmez.
 
 Veritabanı migration komutları:
 

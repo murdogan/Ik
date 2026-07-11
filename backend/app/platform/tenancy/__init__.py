@@ -10,6 +10,8 @@ class TenantContext:
     slug: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.tenant_id, UUID) or self.tenant_id.int == 0:
+            raise ValueError("Tenant ID must be a non-zero UUID")
         if not self.slug.strip():
             raise ValueError("Tenant slug is required")
 

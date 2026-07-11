@@ -13,8 +13,8 @@ Bu doküman, foundation ERD dokümanını implementasyon sırasına indirger. Am
 - Constraint expand adımından önce orphan/cross-tenant preflight çalışır; contract ancak yeni
   constraint validate edildikten sonra eski constraint'i kaldırır.
 - Migration testleri model metadata ve migration dosyası varlığını doğrular.
-- Tenant guard testleri Faz 0/F1A'da; RLS catalog/policy testleri daha sonraki ayrı Faz 1
-  rollout'unda zorunludur. F1A RLS uygulamaz.
+- Tenant guard testleri Faz 0/F1A'da başlar; F1C catalog/policy testleri her non-null `tenant_id`
+  tablosunun PostgreSQL RLS enabled/forced ve app policy kapsamlı olmasını zorunlu kılar.
 
 ### 1.1 Uygulanan P0D geçişi
 
@@ -91,10 +91,20 @@ F1A migration gate'i SQLite ve PostgreSQL 17.10 üzerinde backfill, metadata/sch
 `0012 → head → 0012 → head` round-trip, custom-settings downgrade refusal ve tenant-root foreign
 key reddini doğrular.
 
+### 1.5 Uygulanan F1C PostgreSQL RLS geçişi
+
+`0014_f1c_postgresql_rls`, P0D/P0E ilişkisel bütünlük zincirinden ayrı olarak altı mevcut
+tenant-owned tabloyu ve normal app metadata görünürlüğü için `tenants` root'unu RLS
+`ENABLE + FORCE` korumasına alır. Frozen migration inventory'si stable helper ile role, policy ve
+least-privilege grant'leri kurar; bağımsız PostgreSQL catalog testi yeni tenant tablosunun policy'siz
+eklenmesini reddeder. SQLite branch schema DDL eklemez. Downgrade database-local policy/grant/RLS
+nesnelerini kaldırır, başka disposable/operational database'in de kullanabileceği cluster-global
+NOLOGIN capability rollerini düşürmez.
+
 ## 2. Migration sırası
 
 Bu tablo ilk ürün planındaki kavramsal uygulama sırasıdır; `Plan` değerleri yayınlanmış Alembic
-revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1/1.2/1.3 bölümleri,
+revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1–1.5 bölümleri,
 migration history'si ve Alembic head otoritatiftir.
 
 | Plan | Tablo/alan | Faz | Gerekçe |
@@ -274,19 +284,21 @@ key receipt kaldığı sürece rezerve kalır.
   retention/onay politikasına bağlı, kısıtlı tenant-root offboarding operasyonunda kullanılabilir.
   Normal employee komutu veya kullanıcı yetkisi değildir.
 
-## 6. RLS/tenant guard planı
+## 6. RLS/tenant guard standardı
 
-PostgreSQL RLS uygulanacaksa tenant-owned tablolar için standart:
+F1C ile uygulanan tenant-owned tablo standardı:
 
 ```sql
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employees FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON employees
-USING (tenant_id = current_setting('app.tenant_id')::uuid)
-WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
+CREATE POLICY tenant_isolation_app ON employees
+TO wealthy_falcon_app
+USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 ```
 
-İlk aşamada RLS migration'ları ayrı ve test edilebilir tutulmalıdır.
+Her sonraki tenant-owned tablo RLS migration'ını ayrı/frozen inventory ile ekler ve independent
+PostgreSQL catalog discovery testini günceller. SQLite bu standardın güvenlik kanıtı değildir.
 
 ## 7. Test planı
 
@@ -342,7 +354,7 @@ kişisel veri içermemelidir.
 |---|---|---|
 | UUID | Public ID'ler uygulama tarafında `uuid4` ile üretilir; DB server default eklenmez | Uygulandı |
 | User email canonicalization | Mevcut `(tenant_id, email)` unique davranışı case-sensitive kalır; auth öncesi explicit `lower(btrim(email))` normalize kolon/index kullanılır, `citext` kullanılmaz | Phase 2 auth migration'ından önce |
-| RLS | Faz 0 composite FK + app guard katmanını kurar; PostgreSQL RLS ve transaction-local tenant context Faz 1'de ayrı expand migration'dır | Faz 1 |
+| RLS | Faz 0 composite FK + app guard üzerinde `0014` forced RLS, app/platform capability rolleri ve transaction-local tenant context uygulanır | F1C; SQLite compatibility + PostgreSQL 16.4 security gate passed |
 | F1A tenant settings | `0013` fixed-column settings check'leri, existing-tenant backfill ve custom-settings downgrade refusal ekler; tenant plan/region/locale input allowlist'i API/domain'dedir; arbitrary JSON/features/legal entity yoktur | F1A; SQLite + PostgreSQL 17.10 gate passed |
 | Hassas alan encryption | Key/provider ve envelope encryption kararı olmadan TCKN, IBAN, ücret veya sağlık kolonları eklenmez | İlgili employee/security fazı öncesi Murat kararı |
 | Audit immutability | Audit aynı PostgreSQL DB'de append-only write modelidir; runtime role update/delete engeli ve recorder Faz 2'de birlikte uygulanır | Faz 2 |

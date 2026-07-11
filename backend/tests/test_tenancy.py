@@ -40,3 +40,11 @@ def test_tenant_context_requires_non_empty_slug() -> None:
 
     with pytest.raises(ValueError, match="Tenant slug"):
         TenantContext(tenant_id=tenant_id, slug=" ")
+
+
+def test_tenant_context_rejects_missing_or_zero_tenant_identity() -> None:
+    with pytest.raises(ValueError, match="non-zero UUID"):
+        TenantContext(tenant_id=UUID(int=0), slug="zero-tenant")
+
+    with pytest.raises(ValueError, match="non-zero UUID"):
+        TenantContext(tenant_id=None, slug="missing-tenant")  # type: ignore[arg-type]

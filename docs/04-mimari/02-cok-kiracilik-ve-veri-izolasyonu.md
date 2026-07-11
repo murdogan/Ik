@@ -7,7 +7,7 @@ Bu doküman, IK Platform'un çok kiracılı SaaS modelini, tenant çözümleme y
 Varsayılan model:
 
 > Shared application + shared PostgreSQL schema + `tenant_id` + composite tenant foreign key +
-> uygulama seviyesi tenant guard; PostgreSQL RLS daha sonraki ayrı Faz 1 kesitinde.
+> uygulama seviyesi tenant guard + F1C forced PostgreSQL RLS.
 
 Enterprise için dedicated DB veya dedicated deployment opsiyonu açık bırakılır; ancak ilk ürün shared modelle ilerler.
 
@@ -77,7 +77,7 @@ Kurallar:
 | Auth/context | Immutable `RequestContext` + F1A trusted injected principal; Faz 2'de JWT/session claim |
 | Middleware | Safe request/trace context zorunlu; tenant scope protected dependency'den gelir |
 | Repository | Her sorguda tenant filtresi |
-| DB | Tenant-owned ilişkilerde composite foreign key; Faz 1'de RLS |
+| DB | Tenant-owned ilişkilerde composite foreign key + forced PostgreSQL RLS |
 | Cache | `tenant:{tenant_id}` prefix |
 | Object storage | Tenant prefix ve metadata |
 | Search/vector | Tenant filter ve ACL hash |
@@ -105,28 +105,46 @@ alternatifi değildir.
 
 ## 7. PostgreSQL RLS yaklaşımı
 
-RLS F1A'ya dahil değildir. Daha sonraki ayrı Faz 1 rollout'unda uygulanırsa her tenant tablosunda
-şu prensip uygulanır:
+F1C ile mevcut altı tenant-owned tabloda (`users`, `employees`, `leave_requests`,
+`leave_balance_summaries`, `command_idempotency`, `tenant_settings`) RLS hem enabled hem forced
+durumdadır. Normal tenant rolünün platform metadata root'u üzerinden başka tenant keşfetmemesi için
+`tenants.id` de aynı transaction tenant'ına scope edilir:
 
 ```sql
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employees FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY tenant_isolation ON employees
-USING (tenant_id = current_setting('app.tenant_id')::uuid)
-WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
+CREATE POLICY tenant_isolation_app ON employees
+TO wealthy_falcon_app
+USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 ```
 
-Uygulama transaction başında `SET LOCAL app.tenant_id = ...` yapmalıdır.
+Uygulama transaction başında önce `SET LOCAL ROLE wealthy_falcon_app`, sonra
+`SET LOCAL app.tenant_id = ...` uygular. Her iki değer de commit/rollback ile otomatik sıfırlanır;
+pool'a dönen bağlantıda tenant veya capability state'i kalmaz. UoW bunu operation'dan önce zorlar,
+read-only SQLAlchemy autobegin transaction'ları da aynı session hook'undan geçer. SQLite yolu hızlı
+servis/API uyumluluğu için no-op'tur; güvenlik kanıtı değildir.
 
 Kritik noktalar:
 
-- Uygulama DB rolünde `BYPASSRLS` olmamalıdır.
-- Background job da tenant context set etmelidir.
+- `wealthy_falcon_app` ve `wealthy_falcon_platform` capability rolleri `NOLOGIN`, `NOINHERIT`,
+  `NOSUPERUSER` ve `NOBYPASSRLS`'dir. Runtime login `NOINHERIT` olmalı ve yalnız açık transaction
+  yolu ile ilgili role geçebilmelidir; migration/table owner login'i HTTP runtime'da kullanılmaz.
+- Platform rolü `tenants` metadata işlemleri ve provisioning-only `tenant_settings` INSERT alır;
+  settings SELECT/UPDATE ile `users`, `employees`, leave ve idempotency tablo grant/policy'si
+  yoktur. Tenant app, `tenants` üzerinde yalnız locale/timezone ve ORM timestamp kolonlarını update
+  edebilir; platform-controlled lifecycle/plan/region/name/slug alanlarını değiştiremez.
+- Eksik GUC `NULL`/empty üzerinden policy'yi false yapar; malformed UUID context sorguyu hatayla
+  durdurur. Her iki durum da veri göstermeden fail closed olur.
+- Lokal seed/migration gibi tenant'lar arası bootstrap işlemleri HTTP platform session'ını yeniden
+  kullanmaz; ayrı ve açık operator/test-admin bağlantısıdır.
+- Background job DB adapter'ı da tenant context'i transaction-locally set etmelidir.
 - Mevcut worker fake/transport sınırı tenant-required serialized context allowlist'ini doğrular;
   extra metadata, tenant slug veya raw auth materyali taşımaz. Gerçek worker'ın DB transaction'ında
-  `SET LOCAL` uygulaması RLS rollout'u ile ayrıca tamamlanacaktır.
-- Faz 1 RLS rollout'u başladığında policy'siz tenant tablosu CI'da fail etmelidir.
+  aynı binder kullanılmadan HR sorgusu çalıştırmasına izin verilmez.
+- PostgreSQL catalog testi non-null `tenant_id` taşıyan tabloları bağımsız keşfeder; migration'ın
+  frozen inventory'si, forced flags ve app policy coverage farklıysa CI fail eder.
 
 ## 8. Cache, dosya ve arama izolasyonu
 

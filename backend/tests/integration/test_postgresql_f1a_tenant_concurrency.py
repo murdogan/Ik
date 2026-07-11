@@ -10,7 +10,12 @@ from alembic import command as alembic_command
 from alembic.config import Config
 from app.api.errors import application_error_to_api_error
 from app.models.tenant import Tenant, TenantSettings
-from app.platform.db import PersistenceConcurrencyError, SqlAlchemyUnitOfWork
+from app.platform.db import (
+    PersistenceConcurrencyError,
+    SqlAlchemyUnitOfWork,
+    configure_platform_database_access,
+    configure_tenant_database_access,
+)
 from app.schemas.tenant import (
     TenantPlatformCreate,
     TenantPlatformUpdate,
@@ -66,6 +71,7 @@ async def _assert_same_slug_provisioning_race(database_url: URL) -> None:
     try:
         async def provision() -> object:
             async with session_factory() as session:
+                configure_platform_database_access(session)
                 handler = TenantCommandHandler(
                     service=_BarrierTenantService(session, barrier),
                     unit_of_work=SqlAlchemyUnitOfWork(session),
@@ -118,6 +124,7 @@ async def _assert_lifecycle_lock_serialization(database_url: URL) -> None:
                 assert locked.status == "offboarding"
 
                 async with session_factory() as competing_session:
+                    configure_platform_database_access(competing_session)
                     handler = TenantCommandHandler(
                         service=_LockTimeoutTenantService(competing_session),
                         unit_of_work=SqlAlchemyUnitOfWork(competing_session),
@@ -130,6 +137,7 @@ async def _assert_lifecycle_lock_serialization(database_url: URL) -> None:
                     assert lock_error.value.sqlstate == "55P03"
 
         async with session_factory() as retry_session:
+            configure_platform_database_access(retry_session)
             retry_handler = TenantCommandHandler(
                 service=TenantService(retry_session),
                 unit_of_work=SqlAlchemyUnitOfWork(retry_session),
@@ -163,6 +171,7 @@ async def _assert_settings_lock_serialization(database_url: URL) -> None:
                 assert first.week_start_day == "sunday"
 
                 async with session_factory() as competing_session:
+                    configure_tenant_database_access(competing_session, tenant_id)
                     handler = TenantCommandHandler(
                         service=_LockTimeoutTenantService(competing_session),
                         unit_of_work=SqlAlchemyUnitOfWork(competing_session),
@@ -175,6 +184,7 @@ async def _assert_settings_lock_serialization(database_url: URL) -> None:
                     assert lock_error.value.sqlstate == "55P03"
 
         async with session_factory() as retry_session:
+            configure_tenant_database_access(retry_session, tenant_id)
             retry_handler = TenantCommandHandler(
                 service=TenantService(retry_session),
                 unit_of_work=SqlAlchemyUnitOfWork(retry_session),

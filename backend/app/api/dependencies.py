@@ -17,7 +17,12 @@ from app.api.errors import (
     tenant_slug_header_invalid_error,
 )
 from app.db.session import get_session
-from app.platform.db import SqlAlchemyUnitOfWork
+from app.platform.db import (
+    DatabaseAccessContext,
+    DatabaseAccessPath,
+    SqlAlchemyUnitOfWork,
+)
+from app.platform.db.tenant_access import DATABASE_ACCESS_CONTEXT_STATE_KEY
 from app.platform.observability.correlation import (
     get_or_create_request_context,
     replace_request_context,
@@ -71,6 +76,10 @@ def get_platform_request_context(
 ) -> RequestContext:
     """Authorize a platform request without trusting caller identity metadata."""
 
+    _set_request_database_access(
+        request,
+        DatabaseAccessContext(path=DatabaseAccessPath.PLATFORM),
+    )
     return replace_request_context(request, context)
 
 
@@ -86,6 +95,13 @@ def get_tenant_principal_request_context(
             tenant_id=principal.tenant_id,
             slug=str(principal.tenant_id),
         )
+    )
+    _set_request_database_access(
+        request,
+        DatabaseAccessContext(
+            path=DatabaseAccessPath.TENANT,
+            tenant_id=principal.tenant_id,
+        ),
     )
     return replace_request_context(request, enriched)
 
@@ -197,7 +213,26 @@ def get_phase0_tenant_request_context(
     principal and must not be reused by new protected endpoints.
     """
 
+    _set_request_database_access(
+        request,
+        DatabaseAccessContext(
+            path=DatabaseAccessPath.TENANT,
+            tenant_id=tenant.tenant_id,
+        ),
+    )
     return replace_request_context(request, context.derive(tenant=tenant))
+
+
+def _set_request_database_access(
+    request: Request,
+    context: DatabaseAccessContext,
+) -> None:
+    existing = getattr(request.state, DATABASE_ACCESS_CONTEXT_STATE_KEY, None)
+    if existing == context:
+        return
+    if existing is not None:
+        raise RuntimeError("Database access path is immutable for the request lifetime")
+    setattr(request.state, DATABASE_ACCESS_CONTEXT_STATE_KEY, context)
 
 
 def _single_header_value(
@@ -230,7 +265,7 @@ def _parse_tenant_id_header(value: str | None) -> UUID:
     except ValueError as exc:
         raise tenant_header_invalid_error() from exc
 
-    if value != str(tenant_id):
+    if tenant_id.int == 0 or value != str(tenant_id):
         raise tenant_header_invalid_error()
     return tenant_id
 

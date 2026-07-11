@@ -24,6 +24,7 @@ Bu doküman, IK Platform için temel teknoloji kararlarını ADR formatında öz
 | ADR-016 | Phase-0 sorgu performansı | Ölçümlü keyset, PostgreSQL trigram/normalize indexleri, aggregate consolidation; cache yok | Kabul |
 | ADR-017 | Tenant lifecycle ve provisioning yüzeyi | Typed tenant/settings modeli, injected principal ile default-deny platform/tenant API, lifecycle-derived health | Kabul |
 | ADR-018 | Request context ve API contract standardı | Immutable context, güvenli correlation middleware, yeni Faz-1 `{data, meta}` ve explicit Faz-0 adapter'ları | Kabul |
+| ADR-019 | PostgreSQL tenant RLS ve DB capability yolları | Forced RLS, transaction-local tenant binding, HR'sız platform role | Kabul |
 
 ## 2. ADR-001 Backend: FastAPI
 
@@ -643,7 +644,70 @@ Sonuç:
   broker/worker runtime veya yeni ürün modülü başlatmaz. Bunlar kendi faz ve ADR/gate'lerinde ele
   alınır.
 
-## 20. Ertelenen kararlar
+## 20. ADR-019 PostgreSQL RLS ve transaction-local tenant binding
+
+Bağlam:
+
+- Uygulama servisleri bütün sorgulara tenant predicate'i eklese de raw SQL, yeni repository,
+  bakım kodu veya unutulan filtre için veritabanı seviyesinde satır izolasyonu yoktu.
+- Tek runtime login/session factory platform metadata operasyonları ile tenant HR operasyonlarını
+  aynı database yetkisiyle çalıştırıyordu. Table-owner/superuser bağlantısı RLS kanıtı olamaz.
+- Command UoW açık transaction sahibiyken read servisleri SQLAlchemy autobegin kullanır. Yalnız
+  command yoluna tenant GUC eklemek GET/dashboard sorgularını korumazdı.
+- Connection-level tenant ayarı pool reuse sırasında başka request'e sızabilir; SQLite bu davranışı
+  veya PostgreSQL role/policy catalog'unu kanıtlayamaz.
+
+Karar:
+
+- `0014_f1c_postgresql_rls`, frozen inventory'deki `users`, `employees`, `leave_requests`,
+  `leave_balance_summaries`, `command_idempotency`, `tenant_settings` tablolarında RLS'yi
+  `ENABLE` ve `FORCE` eder. Tenant app rolünün global metadata root'undan başka tenant keşfetmemesi
+  için `tenants` da `id` üzerinden aynı tenant policy'sini taşır.
+- Normal capability `wealthy_falcon_app`; platform metadata capability
+  `wealthy_falcon_platform` rolüdür. İkisi de `NOLOGIN`, `NOINHERIT`, `NOSUPERUSER`,
+  `NOCREATEDB`, `NOCREATEROLE`, `NOBYPASSRLS`'dir. Runtime login ayrı `NOINHERIT` gateway'dir;
+  table owner/migration login'i HTTP runtime olarak kullanılmaz.
+- App policy hem `USING` hem `WITH CHECK` tarafında
+  `tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid` kullanır. `tenants`
+  root'unda sol kolon `id`'dir. Missing/empty context hiçbir satır göstermez; malformed UUID
+  sorguyu durdurur. Sıfır UUID application sınırında reddedilir.
+- Platform role `tenants` üzerinde metadata SELECT/INSERT/UPDATE ve provisioning için
+  `tenant_settings` INSERT-only policy/grant alır; settings SELECT/UPDATE verilmez. Normal app'in
+  tenant-root update yetkisi locale/timezone ve ORM `updated_at` kolonlarıyla sınırlıdır;
+  lifecycle/plan/region/name/slug platform-controlled kalır. Employee, user, leave, balance ve
+  idempotency tablolarına platform grant/policy verilmez. Platform API bu capability'yi açık
+  dependency yolundan seçer; tenant session'ıyla karıştırılması session-lifetime immutability
+  guard'ı ile reddedilir.
+- Tenant transaction önce `SET LOCAL ROLE wealthy_falcon_app`, ardından
+  `SET LOCAL app.tenant_id = '<uuid>'` çalıştırır. Platform transaction yalnız kendi local role'ünü
+  seçer. UoW connection'ı operation'dan önce materialize ederek binding'i garanti eder; implicit
+  read transaction'ları aynı `after_begin` hook'unu kullanır. Managed session context'siz başlarsa
+  app role'e düşürülür fakat tenant GUC set edilmez.
+- `SET LOCAL` role ve GUC commit/rollback ile sıfırlanır. Aynı fiziksel pool connection'ı üzerinde
+  A → missing → B, commit ve rollback senaryoları gerçek PostgreSQL testiyle doğrulanır.
+- Alembic helper identifier ve privilege allowlist'i doğrular; her revision tablo inventory'sini
+  sabitler. Reused capability rolünün başka bir parent role üyeliği varsa upgrade daha geniş role
+  geçiş riskini sessizce korumak yerine preflight'ta durur. Downgrade bu database'in
+  policy/grant/RLS nesnelerini kaldırır fakat cluster-global, başka database tarafından
+  kullanılabilecek capability rollerini düşürmez.
+- SQLite migration/runtime yolu no-op'tur ve mevcut hızlı suite'i korur. Catalog discovery,
+  role attributes, raw cross-tenant read/write, invalid/missing context, platform HR denial,
+  repository ve pool reset iddiaları yalnız disposable PostgreSQL lane'inde kabul edilir.
+- API/OpenAPI operation veya response contract değişmez. F1C authentication, RBAC, audit
+  persistence, support/break-glass, worker provider ya da yeni HR modülü başlatmaz.
+
+Sonuç:
+
+- Application predicate, composite tenant foreign key ve forced RLS birbirini tamamlayan üç ayrı
+  savunma katmanıdır.
+- Platform tenant provisioning/list/detail devam ederken platform database capability'si müşteri
+  HR tablolarını sorgulayamaz.
+- Gelecekte eklenen her non-null `tenant_id` tablosu kendi migration'ında policy/grant almazsa
+  bağımsız catalog inventory testi fail eder.
+- Gerçek worker adapter'ı tenant-required envelope'dan aynı transaction binder'ı kurmadan HR
+  persistence çalıştıramaz; mevcut fake cross-tenant context eşitliğini fail closed doğrular.
+
+## 21. Ertelenen kararlar
 
 | Konu | Tetikleyici |
 |---|---|
@@ -653,7 +717,7 @@ Sonuç:
 | Full native app | PWA aktivasyon/metrikleri yetersiz kalırsa |
 | Private AI model | Enterprise veri yerleşimi ve güvenlik ihtiyacı doğarsa |
 
-## 21. İlgili dokümanlar
+## 22. İlgili dokümanlar
 
 - [Teknik Mimari Genel Bakış](01-teknik-mimari-genel-bakis.md)
 - [Çok Kiracılık ve Veri İzolasyonu](02-cok-kiracilik-ve-veri-izolasyonu.md)

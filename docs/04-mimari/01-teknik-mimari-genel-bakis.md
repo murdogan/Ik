@@ -196,8 +196,9 @@ silme yetkisi veya tenant izolasyonu bypass'ı değildir.
 
 Aşağıdaki listenin correlation/request-context bölümü F1B'de, tenant header compatibility guard'ı,
 request-scoped DB session, application command/UoW ve typed error mapping ise önceki kesitlerde
-uygulanmıştır. Authenticated actor/session, permission, transaction-local RLS context, field masking
-ve audit persistence henüz uygulanmamıştır; tam akış Faz 1–2 boyunca tamamlanacaktır.
+uygulanmıştır. F1C transaction-local PostgreSQL RLS context'ini ekler. Authenticated actor/session,
+permission, field masking ve audit persistence henüz uygulanmamıştır; tam akış Faz 2 boyunca
+tamamlanacaktır.
 
 1. Request edge katmanından gelir.
 2. Middleware safe request ID ve trace ID'yi doğrular veya üretir, immutable `RequestContext`'e
@@ -208,8 +209,8 @@ ve audit persistence henüz uygulanmamıştır; tam akış Faz 1–2 boyunca tam
 6. Permission/scope değerlendirilir.
 7. Read query doğrudan çalışır veya write isteği application command handler'a gider.
 8. Write komutu tek Unit of Work transaction'ı içinde ve tenant-scoped sorgularla çalışır;
-   sağlanan idempotency key aynı transaction'da claim/complete edilir. PostgreSQL
-   transaction-local tenant/RLS context'i Faz 1 rollout kapsamındadır.
+   sağlanan idempotency key aynı transaction'da claim/complete edilir. PostgreSQL transaction'ı
+   operation/query öncesi explicit local capability role ve tenant/RLS context'i ile bağlanır.
 9. Field masking uygulanır.
 10. Audit/domain event gerekiyorsa yazılır.
 11. Standart response döner.

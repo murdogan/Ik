@@ -8,6 +8,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.platform.db.tenant_access import require_transaction_database_access
 from app.platform.errors.application import ApplicationError
 
 _ResultT = TypeVar("_ResultT")
@@ -48,6 +49,7 @@ class SqlAlchemyUnitOfWork:
 
         try:
             async with self.session.begin():
+                await require_transaction_database_access(self.session)
                 return await operation()
         except Exception as exc:
             translated = translate_persistence_error(exc)

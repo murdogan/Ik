@@ -96,3 +96,37 @@ Downgrade non-default settings sayısını önce kontrol eder. Herhangi bir cust
 üretilebilir default-only satırlar düşürülebilir. SQLite ve PostgreSQL 17.10 testleri backfill,
 round-trip, custom-settings refusal, schema drift, native check'ler ve tenant-root FK reddini
 doğrular.
+
+## F1C PostgreSQL RLS foundation
+
+`0014_f1c_postgresql_rls`, hızlı SQLite migration zincirini değiştirmeden gerçek PostgreSQL'de
+normal tenant ve platform operasyonlarını iki ayrı capability role ayırır:
+
+- `wealthy_falcon_app` ve `wealthy_falcon_platform` cluster role'leri idempotent olarak oluşturulur
+  veya güvenli attribute'lara geri çekilir. İkisi de `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`,
+  `NOCREATEROLE`, `NOINHERIT`, `NOBYPASSRLS` ve `NOREPLICATION` taşır. Runtime gateway üyeliği ve
+  credential provisioning migration'ın işi değildir. Reused capability rolü başka bir parent
+  role üyesiyse daha geniş role geçebilme riskine karşı upgrade preflight fail eder.
+- `users`, `employees`, `leave_requests`, `leave_balance_summaries`, `command_idempotency` ve
+  `tenant_settings` tenant-owned envanteri revision içinde sabittir. Bu tablolar ile tenant metadata
+  root'u `tenants` üzerinde RLS hem `ENABLE` hem `FORCE` edilir.
+- Normal app policy'si tenant-owned tablolarda `tenant_id`, root tabloda `id` değerini
+  `nullif(current_setting('app.tenant_id', true), '')::uuid` ile karşılaştırır. Aynı predicate
+  `USING` ve `WITH CHECK` üzerinde role-scoped uygulanır; eksik context satır göstermez/yazdırmaz,
+  invalid UUID ise sorguyu fail closed eder.
+- App role yalnız mevcut ürünün kullandığı `SELECT`/`INSERT`/`UPDATE` haklarını alır; `tenants`
+  update grant'i yalnız `locale`, `timezone` ve ORM on-update `updated_at` kolonlarıdır, dolayısıyla
+  platform-controlled lifecycle/plan/region/name/slug değiştirilemez. İki role de `DELETE`
+  verilmez. Upgrade önce iki capability role ait bu database/schema üzerindeki eski direct
+  table/column grant'lerini temizleyip exact matrisi yeniden kurar. Platform role `tenants` metadata işlemleri ile
+  provisioning sırasında `tenant_settings` INSERT yapabilir; settings SELECT/UPDATE ve employee,
+  user, leave, balance veya idempotency tablo grant/policy'si yoktur. Settings mapper'ında implicit
+  `RETURNING` kapalı olduğundan provisioning INSERT'i gereksiz settings SELECT yetkisi istemez.
+- SQLite upgrade/downgrade bu PostgreSQL güvenlik DDL'ini no-op olarak geçer. Downgrade database'e
+  ait grant/policy/RLS durumunu geri alır fakat başka database'lerce kullanılabilecek cluster
+  role'lerini düşürmez.
+
+Yeni tenant-owned tablo ekleyen her sonraki revision, aynı stable migration helper'ını açık ve o
+revision'a sabitlenmiş bir tablo listesiyle çağırmalıdır. ORM metadata'sından dinamik migration
+envanteri türetilmez. PostgreSQL catalog, raw-SQL isolation, role privilege ve pool-reuse kanıtı
+`backend/tests/integration/test_postgresql_f1c_rls.py` içinde gerçek normal role ile çalışır.

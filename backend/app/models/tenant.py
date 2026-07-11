@@ -69,6 +69,7 @@ class TenantSettings(Base, TimestampMixin):
             "time_format in ('24h','12h')",
             name="ck_tenant_settings_time_format",
         ),
+        {"implicit_returning": False},
     )
 
     tenant_id: Mapped[UUID] = mapped_column(

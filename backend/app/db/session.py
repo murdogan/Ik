@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings
+from app.platform.db.tenant_access import (
+    DATABASE_ACCESS_CONTEXT_STATE_KEY,
+    MANAGED_DATABASE_SESSION_KEY,
+    DatabaseAccessContext,
+    attach_database_access_resolver,
+)
 
 DATABASE_RUNTIME_STATE_KEY = "database_runtime"
 
@@ -69,7 +75,11 @@ def create_database_runtime(settings: Settings) -> DatabaseRuntime:
     )
     return DatabaseRuntime(
         engine=engine,
-        session_factory=async_sessionmaker(engine, expire_on_commit=False),
+        session_factory=async_sessionmaker(
+            engine,
+            expire_on_commit=False,
+            info={MANAGED_DATABASE_SESSION_KEY: True},
+        ),
     )
 
 
@@ -79,4 +89,15 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         raise RuntimeError("Database runtime is unavailable outside the application lifespan")
 
     async with runtime.session_factory() as session:
+        def resolve_request_database_access() -> DatabaseAccessContext | None:
+            context = getattr(
+                request.state,
+                DATABASE_ACCESS_CONTEXT_STATE_KEY,
+                None,
+            )
+            if context is not None and not isinstance(context, DatabaseAccessContext):
+                raise RuntimeError("Request database access context is corrupt")
+            return context
+
+        attach_database_access_resolver(session, resolve_request_database_access)
         yield session

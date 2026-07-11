@@ -68,6 +68,7 @@ def test_tenant_status_check_constraint_is_named() -> None:
 
 def test_tenant_settings_model_is_registered_with_fixed_columns() -> None:
     assert Base.metadata.tables["tenant_settings"] is TenantSettings.__table__
+    assert TenantSettings.__table__.implicit_returning is False
     assert list(TenantSettings.__table__.columns.keys()) == [
         "tenant_id",
         "week_start_day",

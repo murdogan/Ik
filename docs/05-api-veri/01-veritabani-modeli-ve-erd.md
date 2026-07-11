@@ -6,8 +6,8 @@ Bu doküman, IK Platform'un ana veri modelini, domain tablolarını, tenant izol
 
 Ana veri deposu PostgreSQL'dir. Tüm tenant-owned tablolarda `tenant_id` bulunur. Hassas alanlar
 uygulama seviyesinde şifrelenir veya maskelenir. Tenant izolasyonu uygulama guard'ları,
-tenant-owned ilişkilerde composite foreign key'ler ve daha sonraki ayrı Faz 1 PostgreSQL RLS
-rollout'u ile katmanlı korunur. F1A principal-injection ve typed settings kesiti RLS içermez.
+tenant-owned ilişkilerde composite foreign key'ler ve F1C forced PostgreSQL RLS ile katmanlı
+korunur. SQLite hızlı uyumluluk testidir; RLS kanıtı gerçek PostgreSQL lane'indedir.
 
 ## 2. Kavramsal ERD
 
@@ -145,20 +145,24 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 
 ## 8. RLS standardı
 
-RLS F1A kapsamı değildir. Daha sonraki ayrı Faz 1 rollout'unda uygulanırsa standart policy:
+F1C itibarıyla altı mevcut tenant-owned tablo RLS enabled/forced durumdadır. Standart app policy:
 
 ```sql
-CREATE POLICY tenant_isolation
+CREATE POLICY tenant_isolation_app
 ON table_name
-USING (tenant_id = current_setting('app.tenant_id')::uuid)
-WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
+TO wealthy_falcon_app
+USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 ```
 
 Kurallar:
 
-- App DB rolü `BYPASSRLS` alamaz.
-- Transaction başında tenant context set edilir.
-- Faz 1 RLS rollout'u başladığında policy'siz tenant tablosu CI'da fail etmelidir.
+- App ve platform capability rolleri login/superuser/`BYPASSRLS` değildir.
+- Transaction başında capability role ve tenant context `SET LOCAL` ile set edilir.
+- Platform rolünün HR tablo grant/policy'si yoktur; tenant metadata DML ve provisioning-only
+  settings INSERT açıktır, settings SELECT/UPDATE kapalıdır.
+- Eksik/empty context sıfır satır, malformed UUID hata üretir; pool reuse tenant state taşımaz.
+- Policy'siz, RLS'siz veya FORCE edilmemiş tenant tablosu PostgreSQL catalog testinde fail eder.
 
 ## 9. Backup ve restore
 

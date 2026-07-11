@@ -37,7 +37,6 @@ from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
-    AsyncSession,
     async_sessionmaker,
 )
 
@@ -173,10 +172,8 @@ async def main(database_url: str | None = None) -> None:
 
     async with app.router.lifespan_context(app):
         runtime = getattr(app.state, DATABASE_RUNTIME_STATE_KEY)
-        session_factory = runtime.session_factory
         await _prepare_smoke_database(
             runtime.engine,
-            session_factory,
             create_schema=database_url is None,
         )
         async with AsyncClient(
@@ -203,7 +200,7 @@ async def main(database_url: str | None = None) -> None:
             )
             await _smoke_leave_balance_endpoint(
                 client,
-                session_factory,
+                runtime.engine,
                 primary_employee_id,
                 secondary_employee_id,
                 other_employee_id,
@@ -229,7 +226,6 @@ async def main(database_url: str | None = None) -> None:
 
 async def _prepare_smoke_database(
     engine: AsyncEngine,
-    session_factory: async_sessionmaker[AsyncSession],
     *,
     create_schema: bool,
 ) -> None:
@@ -237,7 +233,10 @@ async def _prepare_smoke_database(
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
 
-    async with session_factory() as session:
+    # Fixture setup is an explicit test-admin path. Runtime request sessions are always reduced
+    # to tenant or platform capability roles and must never be reused for cross-tenant seeding.
+    bootstrap_sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with bootstrap_sessions() as session:
         session.add_all(
             [
                 Tenant(
@@ -1392,7 +1391,7 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
 
 async def _smoke_leave_balance_endpoint(
     client: AsyncClient,
-    session_factory: async_sessionmaker[AsyncSession],
+    engine: AsyncEngine,
     employee_id: str,
     secondary_employee_id: str,
     other_employee_id: str,
@@ -1400,7 +1399,8 @@ async def _smoke_leave_balance_endpoint(
     period_year = date.today().year
     balance_id = uuid4()
     other_balance_id = uuid4()
-    async with session_factory() as session:
+    bootstrap_sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with bootstrap_sessions() as session:
         session.add_all(
             [
                 LeaveBalanceSummary(

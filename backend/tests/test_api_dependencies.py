@@ -159,6 +159,7 @@ def test_tenant_dependency_rejects_blank_tenant_header() -> None:
         str(TENANT_ID).replace("-", ""),
         f"{{{TENANT_ID}}}",
         f"urn:uuid:{TENANT_ID}",
+        str(UUID(int=0)),
         str(TENANT_ID).upper(),
         f" {TENANT_ID}",
         f"{TENANT_ID} ",

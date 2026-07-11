@@ -11,7 +11,11 @@ from alembic import command as alembic_command
 from alembic.config import Config
 from app.api.errors import application_error_to_api_error
 from app.models.employee import Employee
-from app.platform.db import PersistenceConcurrencyError, SqlAlchemyUnitOfWork
+from app.platform.db import (
+    PersistenceConcurrencyError,
+    SqlAlchemyUnitOfWork,
+    configure_tenant_database_access,
+)
 from app.schemas.employee import EmployeeCreate
 from app.services.employee_commands import EmployeeCommandHandler
 from app.services.employee_service import DuplicateEmployeeNumberError, EmployeeService
@@ -55,6 +59,7 @@ async def _assert_concurrent_employee_conflict(database_url: URL) -> None:
 
         async def create_employee() -> object:
             async with session_factory() as session:
+                configure_tenant_database_access(session, tenant_id)
                 service = _BarrierEmployeeService(session, barrier)
                 handler = EmployeeCommandHandler(
                     service=service,
@@ -113,6 +118,7 @@ async def _assert_lock_conflict_mapping(database_url: URL) -> None:
                 )
 
                 async with session_factory() as conflicting_session:
+                    configure_tenant_database_access(conflicting_session, tenant_id)
                     unit_of_work = SqlAlchemyUnitOfWork(conflicting_session)
 
                     async def acquire_locked_row() -> None:

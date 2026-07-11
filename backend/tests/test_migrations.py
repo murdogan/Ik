@@ -283,6 +283,40 @@ def _run_alembic_f1a_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_f1c_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0013_tenant_settings:0014_f1c_postgresql_rls",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_f1c_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0014_f1c_postgresql_rls:0013_tenant_settings",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -316,8 +350,9 @@ def test_core_migration_chain_is_linear() -> None:
     p0e_revision = script.get_revision("0011_p0e_concurrency_idempotency_archive")
     p0f_revision = script.get_revision("0012_p0f_query_performance")
     tenant_settings_revision = script.get_revision("0013_tenant_settings")
+    f1c_rls_revision = script.get_revision("0014_f1c_postgresql_rls")
 
-    assert script.get_heads() == ["0013_tenant_settings"]
+    assert script.get_heads() == ["0014_f1c_postgresql_rls"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -348,6 +383,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert p0f_revision.down_revision == "0011_p0e_concurrency_idempotency_archive"
     assert tenant_settings_revision is not None
     assert tenant_settings_revision.down_revision == "0012_p0f_query_performance"
+    assert f1c_rls_revision is not None
+    assert f1c_rls_revision.down_revision == "0013_tenant_settings"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -398,6 +435,72 @@ def test_alembic_offline_f1a_downgrade_renders_settings_preflight() -> None:
     assert "F1A downgrade preflight failed" in result.stdout
 
 
+def test_alembic_offline_f1c_upgrade_renders_roles_rls_policies_and_grants() -> None:
+    result = _run_alembic_f1c_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    for role_name in ("wealthy_falcon_app", "wealthy_falcon_platform"):
+        assert f'CREATE ROLE "{role_name}"' in result.stdout
+        assert f'ALTER ROLE "{role_name}"' in result.stdout
+        assert "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE" in result.stdout
+        assert "NOINHERIT NOBYPASSRLS" in result.stdout
+        assert (
+            f"F1C role membership preflight failed: capability role {role_name}"
+            in result.stdout
+        )
+    for table_name in (
+        "tenants",
+        "users",
+        "employees",
+        "leave_requests",
+        "leave_balance_summaries",
+        "command_idempotency",
+        "tenant_settings",
+    ):
+        assert f'ALTER TABLE "{table_name}" ENABLE ROW LEVEL SECURITY' in result.stdout
+        assert f'ALTER TABLE "{table_name}" FORCE ROW LEVEL SECURITY' in result.stdout
+        assert f'ON "{table_name}" AS PERMISSIVE FOR ALL' in result.stdout
+    assert "nullif(current_setting('app.tenant_id', true), '')::uuid" in result.stdout
+    assert 'TO "wealthy_falcon_app"' in result.stdout
+    assert result.stdout.count('TO "wealthy_falcon_platform" USING (true)') == 1
+    assert (
+        'ON "tenant_settings" AS PERMISSIVE FOR INSERT '
+        'TO "wealthy_falcon_platform" WITH CHECK (true)'
+    ) in result.stdout
+    assert 'REVOKE ALL PRIVILEGES ON TABLE "employees" FROM "wealthy_falcon_platform"' in (
+        result.stdout
+    )
+    assert (
+        'REVOKE ALL PRIVILEGES ("id", "tenant_id", "employee_number"'
+        in result.stdout
+    )
+    assert 'REVOKE ALL PRIVILEGES ON SCHEMA "public" FROM "wealthy_falcon_app"' in result.stdout
+    assert 'GRANT SELECT, INSERT, UPDATE ON TABLE "employees"' in result.stdout
+    assert 'GRANT SELECT ON TABLE "tenants" TO "wealthy_falcon_app"' in result.stdout
+    assert (
+        'GRANT UPDATE ("locale", "timezone", "updated_at") ON TABLE "tenants" '
+        'TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert (
+        'GRANT INSERT ON TABLE "tenant_settings" TO "wealthy_falcon_platform"'
+        in result.stdout
+    )
+    assert "GRANT DELETE" not in result.stdout
+
+
+def test_alembic_offline_f1c_downgrade_removes_local_security_without_dropping_roles() -> None:
+    result = _run_alembic_f1c_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert 'DROP POLICY IF EXISTS "tenant_isolation_app"' in result.stdout
+    assert 'DROP POLICY IF EXISTS "platform_operations"' in result.stdout
+    assert 'DROP POLICY IF EXISTS "platform_provision_settings"' in result.stdout
+    assert "NO FORCE ROW LEVEL SECURITY" in result.stdout
+    assert "DISABLE ROW LEVEL SECURITY" in result.stdout
+    assert 'REVOKE USAGE ON SCHEMA "public"' in result.stdout
+    assert "DROP ROLE" not in result.stdout
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -416,6 +519,31 @@ def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None
             schema_diffs = compare_metadata(migration_context, Base.metadata)
 
         assert schema_diffs == []
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_f1c_security_migration_is_a_schema_noop(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-f1c-sqlite-noop.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0013_tenant_settings")
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        before_tables = set(inspect(engine).get_table_names())
+
+        alembic_command.upgrade(config, "head")
+
+        assert set(inspect(engine).get_table_names()) == before_tables
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0014_f1c_postgresql_rls"
+            )
+
+        alembic_command.downgrade(config, "0013_tenant_settings")
+
+        assert set(inspect(engine).get_table_names()) == before_tables
     finally:
         engine.dispose()
 
@@ -780,6 +908,34 @@ def test_tenant_settings_migration_exists() -> None:
     assert "ck_tenant_settings_date_format" in text
     assert "ck_tenant_settings_time_format" in text
     assert "CURRENT_TIMESTAMP from tenants" in text
+
+
+def test_f1c_postgresql_rls_migration_freezes_complete_security_inventory() -> None:
+    migration = Path("backend/alembic/versions/0014_f1c_postgresql_rls.py")
+    helper = Path("backend/app/platform/db/rls_migration.py")
+
+    assert migration.exists()
+    assert helper.exists()
+    migration_text = migration.read_text()
+    helper_text = helper.read_text()
+    for table_name in (
+        "users",
+        "employees",
+        "leave_requests",
+        "leave_balance_summaries",
+        "command_idempotency",
+        "tenant_settings",
+    ):
+        assert f'"{table_name}"' in migration_text
+    assert '"tenants"' in migration_text
+    assert "TENANT_OWNED_TABLES" in migration_text
+    assert "_ROW_SECURITY_TABLE_COLUMNS" in migration_text
+    assert "APPLICATION_TABLE_PRIVILEGES" in migration_text
+    assert "APPLICATION_COLUMN_PRIVILEGES" in migration_text
+    assert "PLATFORM_TABLE_PRIVILEGES" in migration_text
+    assert "TENANT_APPLICATION_ROLE" in migration_text
+    assert "PLATFORM_APPLICATION_ROLE" in migration_text
+    assert "nullif(current_setting('app.tenant_id', true), '')::uuid" in helper_text
 
 
 def test_readme_documents_migration_commands() -> None:
