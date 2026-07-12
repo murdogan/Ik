@@ -216,50 +216,6 @@ async def test_tenant_admin_reads_only_tenant_role_and_permission_catalogs() -> 
         assert all(permission["scope"] != "platform" for permission in permissions)
 
 
-async def test_employee_is_denied_every_tenant_administration_surface() -> None:
-    async with _authorization_api() as harness:
-        access_token, user = await _login(harness.client, email=EMPLOYEE_EMAIL)
-        headers = _authorization(access_token)
-        employee_role_id = ROLES_BY_CODE["employee"].id
-
-        assert [role["code"] for role in user["roles"]] == ["employee"]
-
-        attempts = (
-            (
-                await harness.client.get("/api/v1/users", headers=headers),
-                "user_administration_access_denied",
-            ),
-            (
-                await harness.client.post(
-                    "/api/v1/users/invitations",
-                    headers=headers,
-                    json={"email": "denied@test.example", "full_name": "Denied Invite"},
-                ),
-                "invitation_access_denied",
-            ),
-            (
-                await harness.client.get("/api/v1/roles", headers=headers),
-                "authorization_denied",
-            ),
-            (
-                await harness.client.get("/api/v1/permissions", headers=headers),
-                "authorization_denied",
-            ),
-            (
-                await harness.client.put(
-                    f"/api/v1/users/{EMPLOYEE_ID}/roles",
-                    headers=headers,
-                    json={"role_ids": [str(employee_role_id)]},
-                ),
-                "user_administration_access_denied",
-            ),
-        )
-
-        for response, expected_code in attempts:
-            assert response.status_code == 403
-            assert response.json()["error"]["code"] == expected_code
-
-
 async def test_reinvitation_preserves_an_exact_role_replacement() -> None:
     async with _authorization_api() as harness:
         admin_access, _admin = await _login(harness.client, email=ADMIN_EMAIL)

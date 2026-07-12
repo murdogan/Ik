@@ -156,7 +156,7 @@ const roleEvent = auditEvent({
 const sessionEvent = auditEvent({
   id: "a1000000-0000-4000-8000-000000000004",
   event_type: "session.revoked",
-  category: "session",
+  category: "tenant_security",
   action: "revoke",
   resource_type: "session",
   resource_id: "f4000000-0000-4000-8000-000000000001",

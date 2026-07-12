@@ -16,18 +16,24 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import create_database_runtime
 from app.models import (  # noqa: F401
+    AuditEvent,
     CommandIdempotency,
     Employee,
     LeaveBalanceSummary,
     LeaveRequest,
+    Permission,
     RefreshSessionFamily,
     RefreshSessionToken,
+    Role,
+    RolePermission,
     Tenant,
     TenantFeatureFlag,
     TenantSettings,
     User,
     UserActivationToken,
+    UserRole,
 )
+from app.platform.db.tenant_access import TENANT_APPLICATION_ROLE
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +47,12 @@ ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = ROOT / "alembic.ini"
 
 EXPECTED_UUID_COLUMNS = {
+    ("audit_events", "actor_user_id"),
+    ("audit_events", "id"),
+    ("audit_events", "impersonator_user_id"),
+    ("audit_events", "resource_id"),
+    ("audit_events", "session_id"),
+    ("audit_events", "tenant_id"),
     ("command_idempotency", "id"),
     ("command_idempotency", "resource_id"),
     ("command_idempotency", "tenant_id"),
@@ -54,11 +66,18 @@ EXPECTED_UUID_COLUMNS = {
     ("leave_requests", "id"),
     ("leave_requests", "requested_by_user_id"),
     ("leave_requests", "tenant_id"),
+    ("permissions", "id"),
+    ("role_permissions", "permission_id"),
+    ("role_permissions", "role_id"),
+    ("roles", "id"),
     ("tenants", "id"),
     ("tenant_settings", "tenant_id"),
     ("tenant_feature_flags", "tenant_id"),
     ("users", "id"),
     ("users", "tenant_id"),
+    ("user_roles", "role_id"),
+    ("user_roles", "tenant_id"),
+    ("user_roles", "user_id"),
     ("user_activation_tokens", "id"),
     ("user_activation_tokens", "tenant_id"),
     ("user_activation_tokens", "user_id"),
@@ -75,10 +94,13 @@ EXPECTED_TIMESTAMP_COLUMNS = {
         "employees",
         "leave_balance_summaries",
         "leave_requests",
+        "permissions",
+        "roles",
         "tenants",
         "tenant_settings",
         "tenant_feature_flags",
         "users",
+        "user_roles",
         "user_activation_tokens",
         "refresh_session_families",
         "refresh_session_tokens",
@@ -94,8 +116,15 @@ EXPECTED_TIMESTAMP_COLUMNS = {
     ("refresh_session_families", "expires_at"),
     ("refresh_session_families", "revoked_at"),
     ("refresh_session_tokens", "consumed_at"),
+    ("audit_events", "occurred_at"),
 }
 EXPECTED_CHECK_CONSTRAINTS = {
+    "ck_audit_events_actor_type",
+    "ck_audit_events_result",
+    "ck_audit_events_scope_category",
+    "ck_audit_events_scope_tenant",
+    "ck_audit_events_scope_type",
+    "ck_audit_events_severity",
     "ck_command_idempotency_completion",
     "ck_employees_date_order",
     "ck_employees_lifecycle_status_dates",
@@ -106,6 +135,8 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_leave_balance_summaries_used_non_negative",
     "ck_leave_requests_date_order",
     "ck_leave_requests_status",
+    "ck_permissions_scope_target",
+    "ck_permissions_target_type",
     "ck_tenants_status",
     "ck_tenants_active_employee_limit_positive",
     "ck_tenant_feature_flags_enabled",
@@ -124,12 +155,19 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_refresh_session_families_revoked_order",
     "ck_refresh_session_tokens_hash_length",
     "ck_refresh_session_tokens_consumed_order",
+    "ck_roles_scope_type",
+    "ck_user_roles_active",
+    "ck_user_roles_tenant_role_scope",
+    "ck_users_permission_version_positive",
 }
 EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_command_idempotency_tenant_key",
     "uq_employees_tenant_id_id",
     "uq_employees_tenant_employee_number",
     "uq_leave_balance_summaries_tenant_employee_type_period",
+    "uq_permissions_code",
+    "uq_roles_code",
+    "uq_roles_id_scope_type",
     "uq_users_tenant_id_id",
     "uq_users_tenant_email",
     "uq_users_tenant_email_normalized",
@@ -138,13 +176,16 @@ EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_refresh_session_tokens_token_hash",
 }
 EXPECTED_FOREIGN_KEY_COUNTS = {
+    "audit_events": 1,
     "command_idempotency": 1,
     "employees": 1,
     "leave_balance_summaries": 2,
     "leave_requests": 4,
+    "role_permissions": 2,
     "tenant_settings": 1,
     "tenant_feature_flags": 1,
     "users": 1,
+    "user_roles": 2,
     "user_activation_tokens": 2,
     "refresh_session_families": 2,
     "refresh_session_tokens": 2,
@@ -302,6 +343,29 @@ def test_live_postgresql_schema_has_no_autogenerate_drift(
     assert schema_diffs == []
 
 
+def test_f2f_user_insert_grant_is_minimal_and_reversible(
+    postgres_database_url: URL,
+) -> None:
+    config = _alembic_config(postgres_database_url)
+    alembic_command.upgrade(config, "0020_f2e_audit_events")
+    assert asyncio.run(_user_insert_grants(postgres_database_url)) == {
+        "can_invite_users": False,
+        "permission_version": False,
+    }
+
+    alembic_command.upgrade(config, "head")
+    assert asyncio.run(_user_insert_grants(postgres_database_url)) == {
+        "can_invite_users": False,
+        "permission_version": True,
+    }
+
+    alembic_command.downgrade(config, "0020_f2e_audit_events")
+    assert asyncio.run(_user_insert_grants(postgres_database_url)) == {
+        "can_invite_users": False,
+        "permission_version": False,
+    }
+
+
 def test_postgresql_catalog_and_constraints_are_native_and_enforced(
     migrated_postgres_database: URL,
 ) -> None:
@@ -348,7 +412,7 @@ def test_full_api_smoke_uses_alembic_migrated_postgresql(
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     assert result.returncode == 0, output
     assert "BACKEND_SMOKE_OK" in result.stdout
-    assert "documented_endpoints=31" in result.stdout
+    assert "documented_endpoints=40" in result.stdout
 
 
 def _alembic_config(database_url: URL) -> Config:
@@ -373,6 +437,30 @@ async def _current_revision(database_url: URL) -> str | None:
                     sync_connection
                 ).get_current_revision()
             )
+    finally:
+        await engine.dispose()
+
+
+async def _user_insert_grants(database_url: URL) -> dict[str, bool]:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            return {
+                column_name: bool(
+                    await connection.scalar(
+                        text(
+                            "select has_column_privilege("
+                            ":role_name, 'public.users', :column_name, 'INSERT'"
+                            ")"
+                        ),
+                        {
+                            "role_name": TENANT_APPLICATION_ROLE,
+                            "column_name": column_name,
+                        },
+                    )
+                )
+                for column_name in ("can_invite_users", "permission_version")
+            }
     finally:
         await engine.dispose()
 

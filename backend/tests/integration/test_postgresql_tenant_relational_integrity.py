@@ -74,13 +74,8 @@ LEGACY_TENANT_OWNED_CONSTRAINTS = {
 @pytest.fixture
 def p0d_postgres_database(postgres_database_url: URL) -> URL:
     config = _alembic_config(postgres_database_url)
-    alembic_command.downgrade(config, "base")
     alembic_command.upgrade(config, "head")
-    try:
-        yield postgres_database_url
-    finally:
-        alembic_command.downgrade(config, "base")
-        alembic_command.upgrade(config, "head")
+    return postgres_database_url
 
 
 def test_preflight_query_detects_cross_tenant_and_orphan_rows(

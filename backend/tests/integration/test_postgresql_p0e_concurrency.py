@@ -78,9 +78,13 @@ def test_employee_archive_preserves_history_and_restricts_hard_delete(
 def test_p0e_downgrade_refuses_to_discard_retained_state(
     p0e_migrated_postgres_database: URL,
 ) -> None:
+    config = _alembic_config(p0e_migrated_postgres_database)
+    alembic_command.downgrade(
+        config,
+        "0011_p0e_concurrency_idempotency_archive",
+    )
     seed = _tenant_seed()
     asyncio.run(_seed_p0e_downgrade_blockers(p0e_migrated_postgres_database, seed))
-    config = _alembic_config(p0e_migrated_postgres_database)
 
     with pytest.raises(RuntimeError, match="P0E downgrade preflight failed"):
         alembic_command.downgrade(

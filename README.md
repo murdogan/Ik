@@ -272,6 +272,14 @@ PostgreSQL baseline upgrade/downgrade/drift/smoke hattında `8 passed` ve RLS + 
 hattında `12 passed` üretmiştir. Authentication, session, RBAC ve append-only audit persistence Faz
 2 işidir ve bu checkpoint'te başlatılmamıştır.
 
+F2A–F2E sırasıyla `0016`–`0020` revision'larında hashli activation credential'ı, server-side
+refresh family/rotation, bounded user administration, seeded RBAC ve append-only audit store/RLS
+grants'lerini ekler. F2F'nin tek forward migration'ı `0021_f2f_user_insert_grant` yeni tablo veya
+kolon eklemez; invited-user INSERT'inde ORM'nin yazdığı server-controlled `permission_version`
+defaultu için tenant runtime rolüne yalnız o kolonun INSERT yetkisini verir. Table-wide INSERT ve
+legacy `can_invite_users` INSERT yetkisi verilmez; downgrade bu tek grant'i geri alır. Güncel tek
+Alembic head `0021_f2f_user_insert_grant`'tır.
+
 Veritabanı migration komutları:
 
 ```bash
@@ -880,7 +888,7 @@ Beklenen sonuç:
 - Backend API smoke testi `BACKEND_SMOKE_OK` çıktısı verir.
 - Opsiyonel HTTP landing/health smoke testi `SMOKE_OK` çıktısı verir.
 
-## F2A/F2B invitation → activation → secure session demo
+## F2F invitation → activation → secure admin/audit demo
 
 The local bootstrap creates no committed password or token. It resets only the synthetic demo
 admin and prints one short-lived activation URL to the current terminal:
@@ -905,6 +913,15 @@ in at `http://localhost:3000/login` with organization code `wealthy-falcon-demo`
 page rotates the HttpOnly refresh credential and restores the in-memory access credential; **Çıkış
 yap** revokes the server-side session family and returns to login.
 
+The activated demo admin can open `/users` to search/page accounts, issue another invitation,
+update allowlisted account fields and replace tenant-role assignments. `/audit` shows the resulting
+security/administration history as a filtered, cursor-paged, redacted and read-only view. Employee
+sessions do not receive either navigation item and direct `/users` or `/audit` navigation redirects
+before those administration APIs mount. The browser regression also keeps platform audit in the
+separate `/platform/audit` shell and never calls the tenant audit API. That backend endpoint still
+requires the trusted `PlatformPrincipal` boundary; a normal bearer alone does not unlock platform
+operations, and the local tenant-admin demo does not pretend to provide step-up/platform access.
+
 An API client can use that login response's short-lived `data.access_token` as
 `Authorization: Bearer <token>` when calling `POST /api/v1/users/invitations`; the response returns
 the new user's fragment-based activation URL once. Caller-supplied tenant headers and body fields
@@ -916,6 +933,21 @@ Local/dev uses a process-local random signing key. Staging/production deliberate
 start without `IK_AUTH_SIGNING_KEY` supplied out of band and an HTTPS `IK_FRONTEND_BASE_URL`; no
 secret or `.env` file is part of this repository flow. Set the non-secret `BACKEND_API_URL` during
 `next build` for staging because the Next.js rewrite destination is compiled into the build.
+
+The deterministic focused browser gate starts its own production Next.js build/server and mocks
+only the API boundary while exercising the real pages, session provider and navigation:
+
+```bash
+npm --prefix frontend run lint
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+npm --prefix frontend run test:e2e
+```
+
+The focused Playwright set covers invite → activate → login → refresh → logout, tenant-admin
+user/role management, employee denial, protected navigation, tenant audit redaction/read-only
+behavior and platform/tenant audit separation. PostgreSQL RLS, grants, audit immutability and
+cross-tenant storage claims remain in the separate disposable-database `-m postgres` lane.
 
 ## Branch iş akışı
 
@@ -953,18 +985,15 @@ henüz yoktur:
 
 ## Durum
 
-P0A–P0G ile Faz 0 ve F1A–F1D base review branch kapıları tamamlanmıştır; F1E yerel Faz 1 kapanış
-teknik gate'leri yeşildir, supervisor push kabulü bekler. Güncel uygulama yüzeyi, intentional
-OpenAPI farkları, PostgreSQL/SQLite kanıtları
-ve açık plan sapmaları
+P0A–P0G ile Faz 0, F1A–F1E ile Faz 1 ve F2A–F2E product slice'ları tamamlanmıştır. F2F yalnız
+Phase 2 product hardening, manual-demo ve focused regression gate'ini kapatır; yeni endpoint,
+ekran veya Phase 3 modülü eklemez. Güncel uygulama yüzeyi, intentional OpenAPI farkları,
+PostgreSQL/SQLite kanıtları ve açık plan sapmaları
 [API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md) içinde kayıtlıdır.
 
-Queue `STOP — supervisor F1E push pending; awaiting Murat review` checkpoint'indedir. Yerel Phase 1
-teknik gate'leri geçmiştir; Faz 2
-F2A identity and F2B secure-session product slices are implemented; later RBAC/audit persistence
-has not started. F1D base commit'i `54a3678` review
-branch'inde pushed durumdadır; F1E HEAD'inin review branch'ine push edilmesi supervisor
-sorumluluğundadır ve remote sync doğrulanmadan F1E push gate'i tamam sayılmaz. Yürütme otoritesi
+Queue F2F commit'inden sonra `STOP — supervisor push pending; awaiting Murat review`
+checkpoint'inde kalır. Codex push/merge/deploy yapmaz; review branch push'u ve remote sync
+doğrulaması supervisor sorumluluğundadır. Yürütme otoritesi
 [MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;
 [Implementation Readiness Checklist](docs/09-uygulama/08-implementation-readiness-checklist.md)
 ise uygulama öncesi tarihsel planlama kapısı olarak korunur.

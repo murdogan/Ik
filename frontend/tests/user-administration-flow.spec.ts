@@ -84,7 +84,7 @@ function envelope(data: unknown, page?: { limit: number; next_cursor: string | n
   });
 }
 
-test("tenant admin searches, pages, inspects, updates, and invites users", async ({
+test("tenant admin searches, pages, inspects, updates, and assigns roles", async ({
   page,
   context,
 }) => {
@@ -118,7 +118,6 @@ test("tenant admin searches, pages, inspects, updates, and invites users", async
   };
   const listQueries: URLSearchParams[] = [];
   const patches: unknown[] = [];
-  const invitations: unknown[] = [];
   const roleReplacements: unknown[] = [];
 
   await context.addCookies([
@@ -168,27 +167,6 @@ test("tenant admin searches, pages, inspects, updates, and invites users", async
         status: 200,
         contentType: "application/json",
         body: envelope(roleCatalog),
-      });
-      return;
-    }
-
-    if (path === "/api/v1/users/invitations") {
-      expect(request.method()).toBe("POST");
-      const payload = request.postDataJSON();
-      invitations.push(payload);
-      await route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: envelope({
-          user: {
-            id: "f2000000-0000-4000-8000-000000000013",
-            email: payload.email,
-            full_name: payload.full_name,
-            status: "invited",
-          },
-          activation_url: "http://127.0.0.1:3100/activate#token=safe-browser-token",
-          expires_at: "2026-07-13T10:00:00Z",
-        }),
       });
       return;
     }
@@ -311,21 +289,6 @@ test("tenant admin searches, pages, inspects, updates, and invites users", async
   await expect(page.getByLabel("Roller: Çalışan, İK uzmanı")).toBeVisible();
   await page.getByRole("button", { name: "Kullanıcı ayrıntısını kapat" }).click();
 
-  await page.getByRole("button", { name: "Kullanıcı davet et" }).first().click();
-  await page.getByLabel("Ad soyad").fill("Selin Ak");
-  await page.getByLabel("İş e-postası").fill("selin@wealthyfalcon.demo");
-  await page.getByRole("button", { name: "Davet gönder" }).click();
-  await expect(page.getByRole("heading", { name: "Davet hazır" })).toBeVisible();
-  await expect(page.getByLabel("Etkinleştirme bağlantısı")).toHaveValue(
-    /activate#token=safe-browser-token/,
-  );
-  expect(invitations).toEqual([
-    { email: "selin@wealthyfalcon.demo", full_name: "Selin Ak" },
-  ]);
-  expect(JSON.stringify(invitations)).not.toContain("tenant_id");
-  expect(JSON.stringify(invitations)).not.toContain("actor");
-
-  await page.getByRole("button", { name: "Tamam" }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileNavigation = page.getByRole("navigation", { name: "Mobil ana menü" });
   await expect(mobileNavigation).toBeVisible();

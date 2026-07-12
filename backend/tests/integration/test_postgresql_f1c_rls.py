@@ -349,6 +349,8 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                 ("users", "id", "INSERT", TENANT_APPLICATION_ROLE),
                 ("users", "password_hash", "INSERT", TENANT_APPLICATION_ROLE),
                 ("users", "password_hash", "UPDATE", TENANT_APPLICATION_ROLE),
+                ("users", "permission_version", "INSERT", TENANT_APPLICATION_ROLE),
+                ("users", "permission_version", "UPDATE", TENANT_APPLICATION_ROLE),
                 ("users", "status", "INSERT", TENANT_APPLICATION_ROLE),
                 ("users", "status", "UPDATE", TENANT_APPLICATION_ROLE),
                 ("users", "tenant_id", "INSERT", TENANT_APPLICATION_ROLE),

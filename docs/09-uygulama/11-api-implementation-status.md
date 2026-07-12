@@ -1,15 +1,56 @@
 # API Implementation Status Report
 
-Date: 2026-07-11
-Branch: `codex/mvp-phase1-until-20260712-0900`
-Task: `F1E Phase 1 security gate, OpenAPI evidence and review checkpoint`
-Review checkpoint: `STOP — supervisor F1E push pending; awaiting Murat review`
-Review decision: `Local F1E technical gates passed; supervisor push acceptance pending; Phase 2 authentication/RBAC/audit persistence not started`
-Push state: `F1D base 54a3678 is pushed; F1E HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
+Date: 2026-07-12
+Branch: `codex/mvp-phase2-product-first-until-20260713-0900`
+Task: `F2F Phase 2 product hardening, manual-demo gate and focused regression`
+Review checkpoint: `STOP — local F2F gates passed; supervisor push pending; awaiting Murat review`
+Review decision: `Phase 2 focused product/security gates are green; do not start Phase 3`
+Push state: `F2E base 4b654a4 is pushed; F2F HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### F1E local Phase 1 security, product and contract closure
+### F2F Phase 2 product hardening, manual-demo gate and focused regression
+
+- Hardens the completed F2A–F2E product without adding a new route, screen, table/column, domain
+  module or Phase 3 organization behavior. The reviewable product flow is invitation → fragment
+  activation → tenant-aware login → protected workspace → refresh rotation → logout, followed by
+  tenant-admin user/role administration and redacted audit exploration.
+- The live contract has 39 generated operations: all 24 historical F1E operations remain exact and
+  15 F2 auth/user/RBAC/audit operations are additive. Runtime `/openapi.json` makes the synchronized
+  docs/smoke registry 40 rows. F2F uses an explicit additive-set assertion plus executable OpenAPI
+  metadata and smoke coverage; it does not create another full per-block snapshot.
+- One consolidated role × scope × endpoint matrix covers every seeded tenant role without
+  repeating the removed lower-level denial cases: tenant admin has the full user/role/audit
+  surface; IT admin has user-read plus security-audit access; HR director and auditor receive their
+  explicit audit categories; HR specialist, manager and employee are denied the general admin/audit
+  center. Hidden/cross-tenant resources fail as indistinguishable `404`s and platform audit remains
+  a separate trusted boundary.
+- F2 database behavior remains PostgreSQL-specific where required. Migrations add hashed
+  activation/session credentials, system RBAC, tenant-bound assignments and append-only audit
+  storage; FORCE RLS, least-privilege runtime grants, transaction-local tenant binding, audit redaction and
+  write-plus-audit rollback are proved only by the dedicated `-m postgres` lane, never by SQLite.
+- F2F adds one PostgreSQL-only forward grant revision, `0021_f2f_user_insert_grant`. It repairs the
+  minimum runtime `INSERT(permission_version)` capability required by ORM-created invited users;
+  the server/database still owns the positive default, no caller field is exposed, and the runtime
+  role receives neither table-wide INSERT nor INSERT on legacy `can_invite_users`.
+- The bounded-query smoke measures query counts rather than unstable wall-clock thresholds for
+  login, user list and audit list. Lists retain capped cursor pagination and a `limit + 1` probe;
+  the smoke is intended to catch obvious N+1/query-budget regressions, not claim production load
+  capacity.
+
+### Reviewable browser surface
+
+| Route | Visible outcome | Access boundary |
+|---|---|---|
+| `/activate#token=…` | One-time invitation activation and password setup; fragment is removed before API submission | Invitation credential only |
+| `/login` | Tenant-aware login; access credential stays in memory and refresh credential stays HttpOnly | Public credential exchange |
+| `/dashboard` | Protected tenant shell and session restore/refresh | Authenticated tenant user |
+| `/users` | Search/page/detail, invite, status/name update and exact role replacement | Tenant admin permissions; employee redirects before admin API mount |
+| `/audit` | Read-only filtered/paged redacted tenant security and administration history | `audit:read:tenant`; employee redirects before audit API mount |
+| `/platform` | Separate platform workspace without tenant navigation or customer HR context | Platform workspace identity; not seeded by the local tenant-admin demo |
+| `/platform/audit` | Platform-operations-only audit explorer UI and browser separation gate | Backend remains a trusted `PlatformPrincipal` boundary; bearer alone cannot unlock it and no tenant audit API is called |
+
+### Historical F1E local Phase 1 security, product and contract closure
 
 - Completes the local Phase 1 technical gate without adding a route, response field, database
   revision, authentication/RBAC implementation or persistent audit store. Final closure remains
@@ -577,9 +618,11 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 
-F2D adds the role, permission and exact user-role replacement operations, for 36 generated
-operations. The executable smoke covers the tenant-admin catalog and replacement flow in addition
-to login, user administration, refresh rotation and logout without printing credential material.
+F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
+list/detail and the separate platform audit list. The current F2F surface is therefore 39 generated
+operations and 40 documented runtime endpoints including `/openapi.json`. The executable smoke
+covers activation/login/session lifecycle, tenant-admin user/role/audit behavior and contract-table
+drift without printing credential material.
 
 ## Current Behavior Notes
 
@@ -588,8 +631,9 @@ to login, user administration, refresh rotation and logout without printing cred
   `X-Correlation-Id`; response body meta on new Phase-1 operations comes from that same context.
   Duplicate/conflicting/unsafe inputs are regenerated and not reflected or logged.
 - Request-context error metadata is limited to request/trace. Completion-log metadata excludes
-  actor/session/support-operator IDs, tenant slug, raw auth, tokens, secrets and PII. Authentication
-  strength and identity/support fields remain typed placeholders, not an auth/RBAC implementation.
+  actor/session/support-operator IDs, tenant slug, raw auth, tokens, secrets and PII. F2 bearer
+  validation derives tenant, actor, live session, authentication strength and permission version
+  into a new immutable context; caller headers/body cannot populate those authority fields.
 - F2B access credentials are short-lived and session-bound. Refresh credentials exist only in a
   host-only HttpOnly cookie and as SHA-256 hashes in tenant-RLS tables. Rotation consumes one token;
   presenting it again commits revocation of its entire fixed-expiry family. Logout revokes that
@@ -634,9 +678,10 @@ to login, user administration, refresh rotation and logout without printing cred
   scopes exclusively from the injected principal.
 - Tenant principal injection alone still yields `403 platform_access_denied` on platform feature
   and tenant-operations routes. Header/query/body/path tenant or user identifiers never promote it.
-- Actual create/status/setting/flag changes produce one of four exact redacted event contracts
-  inside the command UoW. No-op and failed commands emit none. The default recorder discards; no
-  audit row/read-center exists until Phase 2 supplies a transactional adapter.
+- Actual create/status/setting/flag changes and F2 auth/user/role/session commands produce exact
+  allowlisted redacted event contracts inside the command UoW. No-op and failed commands emit none.
+  F2 installs the same-session append-only recorder and separate tenant/platform read policies;
+  normal runtime capability cannot update or delete audit rows.
 - The seven F1A success operations now use the F1B `{data,meta}` contract. Existing Phase-0
   employee/leave response bodies remain direct schema/list; employee and leave-request lists use
   the explicit plain-array + `X-Next-Cursor` adapter and retain deprecated offset compatibility.
@@ -683,17 +728,16 @@ to login, user administration, refresh rotation and logout without printing cred
 - W4C2 locks the current limitation: leave balance reads do not derive balances from leave
   requests. A tenant employee with leave request records but no manual balance summary rows gets
   `200 []`.
-- OpenAPI uses readable tags: `System`, `Public`, `Platform Tenants`, `Tenant Settings`, `Dashboard`,
-  `Employees`, `Leave Balances`, and `Leave Requests`. F1B adds no operation; it documents the
-  seven envelopes, safe response headers, platform cursor contract and explicit Phase-0 adapters.
-  F1D reuses the two tenant/platform tags and adds three feature operations without an audit-center
-  tag. F1E keeps that operation set and adds required principal metadata to the ten Phase 1
-  operations only.
+- OpenAPI uses readable tags for `System`, `Public`, `Authentication`, `Authorization`,
+  `User Administration`, `Audit`, `Platform Audit`, `Platform Tenants`, `Tenant Settings`,
+  `Dashboard`, `Employees`, `Leave Balances`, and `Leave Requests`. Historical trusted-principal
+  routes retain exact `x-required-principal` metadata; only the ten real F2 tenant bearer
+  operations advertise `BearerAuth`.
 - Historical W4C6 was a report and smoke-governance refresh only. At that checkpoint the
   implementation report, endpoint draft and smoke agreed on 15 documented endpoints. Historical
-  F1A target was 21 generated operations plus runtime `/openapi.json`; historical F1D and current
-  F1E both have 24 generated and 25 documented endpoints. Neither rewrites the earlier checkpoint
-  evidence.
+  F1A target was 21 generated operations plus runtime `/openapi.json`; historical F1D/F1E have 24
+  generated and 25 documented endpoints. F2F has 39 generated and 40 documented endpoints without
+  rewriting any earlier checkpoint evidence or adding a duplicate current snapshot.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -719,15 +763,16 @@ to login, user administration, refresh rotation and logout without printing cred
 - FastAPI's generic request validation remains framework default outside the employee and leave
   endpoint scope.
 - Local demo seed remains a script command, not an API surface:
-  `uv run python scripts/seed_demo_data.py`. It assumes the target local/dev schema already
-  exists, then idempotently creates or resets demo tenants, users, employees, and leave requests.
+  `uv run python scripts/seed_demo_data.py --auth-demo`. It assumes the target local/dev schema
+  already exists, idempotently resets the synthetic demo dataset and prints one short-lived
+  activation URL without committing any password/token.
   The command refuses non-local database URL hosts before opening a connection; local hostnames are
   matched case-insensitively.
 
 ## Current Tenant Relational Integrity and Retention
 
 Current model metadata and the Alembic head represent these tenant-owned relationships; current
-F1E Phase 1 gate status is tracked separately below:
+F2F Phase 2 gate status is tracked separately below:
 
 | Child columns | Parent candidate key | Delete/null behavior |
 |---|---|---|
@@ -836,12 +881,12 @@ SQLite. The PostgreSQL baseline invokes the same script with `--database-url` ag
 test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
 services.
 
-Current F1E documentation expects the registry to contain 25 rows: 24 generated operations plus
-runtime `/openapi.json`. Smoke must execute all ten platform/tenant operations with dependency
-overrides, prove representative missing- and opposite-principal denial, inspect exact projected
-metadata/configured-limit/no-HR boundaries, verify the exact `x-required-principal` matrix, and
-verify feature defaults/overrides/tenant isolation alongside F1B correlation, `{data,meta}`, unsafe-ID
-non-reflection and deterministic cursor behavior.
+Current F2F documentation expects the registry to contain 40 rows: 39 generated operations plus
+runtime `/openapi.json`. Smoke executes all historical platform/tenant operations with dependency
+overrides and all F2 auth/user/RBAC/audit operations through their real credential or trusted
+principal boundary. It verifies activation/login/refresh/logout, tenant-admin user and role
+management, redacted audit reads, tenant-header spoof resistance, projected no-HR platform output,
+the exact `x-required-principal`/`BearerAuth` split, and bounded cursor behavior.
 Historical Phase-0/F1A/F1B smoke evidence below remains unchanged.
 
 The script now verifies the documented API surface in four directions:
@@ -886,9 +931,37 @@ propagation without HR count, terminal lifecycle hardening, four redacted event 
 on no-op/failure. The synchronized script/registry provides the final 25-endpoint F1D smoke evidence;
 the full required command results are recorded below.
 
+F2F scenarios additionally verify all 15 additive operations, invite/activation and secure-session
+lifecycle, tenant-admin user/role/audit happy paths, employee permission denial, cross-tenant
+not-found behavior, platform/tenant audit separation and safe audit projections. Playwright covers
+the same product-visible journeys with same-origin API interception so the browser gate remains
+deterministic; PostgreSQL integration separately proves storage/RLS/grant/immutability claims.
+
 ## Verification
 
-### F1E Phase 1 closure gates — local technical gates passed; supervisor push pending
+### F2F Phase 2 hardening gates — passed locally; supervisor push pending
+
+| Gate | Command | Current evidence state |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend` | Passed: `All checks passed!` |
+| Full fast backend suite | `uv run pytest` | Passed: 787 passed, 41 PostgreSQL tests deselected, 1 known Starlette/httpx deprecation warning |
+| Role × scope × endpoint matrix | `uv run pytest -q backend/tests/test_audit_api.py backend/tests/test_authorization_api.py` | Passed: 6 tests; all seven tenant roles, three audit categories, hidden `404` vs denied `403`, cross-tenant and platform boundaries, signed super-admin bearer negative |
+| OpenAPI/current contract | `uv run pytest -q backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py` | Passed: 27 tests; 24 exact historical operations + 15 additive F2 operations, exact ten-operation `BearerAuth` set, no duplicate current snapshot |
+| Migration fast lane | `uv run pytest -q backend/tests/test_migrations.py` | Passed: 38 tests; linear sole-head chain, SQLite compatibility, offline DDL and downgrade guards |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0021_f2f_user_insert_grant` |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 40 documented runtime endpoints executed and docs/OpenAPI registry exact |
+| Full PostgreSQL 17.10 lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed: 41 tests; migration round-trip/drift, runtime RLS/grants, auth/session/RBAC/audit, concurrency and migrated API smoke |
+| Focused F2 PostgreSQL security | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_f2[a-e]_*.py` | Passed: 9 tests; activation/session isolation, user search, role assignment/versioning, append-only audit and tenant/platform separation |
+| Bounded-query smoke | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_f2f_query_smoke.py -s` | Passed: 1 test over 1,000 users/events; login 4 SELECT + 4 INSERT + 5 SET, user list 2 SELECT + 2 SET, audit list 1 SELECT + 2 SET |
+| Frontend static gates | `npm run lint && npm run typecheck && npm run build` in `frontend/` | Passed; production build includes `/activate`, `/login`, `/dashboard`, `/users`, `/audit`, `/platform`, `/platform/audit` |
+| Focused browser E2E | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/opt/data/pw-browsers/chromium-1223/chrome-linux/chrome npm run test:e2e` | Passed: 7 Chromium tests; connected invite → activate → login → refresh → logout, admin user/role flow, employee denial, tenant audit and platform-shell separation |
+| Git hygiene | `git diff --check` plus task-scope review | Passed; no deployment, staging, cron, credential, `.env` or Phase 3 change |
+
+The queue stops at this F2F commit. Codex does not push, merge or deploy; the supervisor owns the
+review-branch push and remote-sync gate, after which Murat review is required before any Phase 3
+work.
+
+### Historical F1E Phase 1 closure gates — local technical gates passed; supervisor push pending
 
 | Gate | Command | Current evidence state |
 |---|---|---|
@@ -919,8 +992,9 @@ git rev-list --left-right --count '@{upstream}...HEAD'
 
 The F1A-F1D implementation base was already pushed on the review branch before this closure block.
 Per task authority, F1E HEAD is intentionally not pushed by Codex; the supervisor owns that push.
-The queue remains at `STOP — supervisor F1E push pending; awaiting Murat review`, and no Phase 2
-authentication, session, RBAC, permission enforcement or audit persistence work has started.
+At that historical checkpoint, the queue remained at
+`STOP — supervisor F1E push pending; awaiting Murat review`, and Phase 2 authentication, session,
+RBAC, permission enforcement and audit persistence had not started yet.
 
 ### F1D required gates — passed
 
@@ -1121,14 +1195,17 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Post-Phase-1 Backend Backlog
+## Post-Phase-2 Backend Backlog
 
-The items below remain queued behind Murat's explicit review. F1E does not authorize beginning any
-of them automatically.
+The items below are not part of the completed F2F surface and remain queued behind Murat's explicit
+review. This checkpoint does not authorize Phase 3 or any later module automatically.
 
-- Auth/session/RBAC dependencies, permission enforcement, current-user context and persistent
-  append-only audit recorder/read policy remain Phase 2. Phase 1 provides only redacted event
-  contracts plus the default-discard replaceable port; it does not fabricate an audit center.
+- Password reset request/confirm and enforced privileged-role MFA are not implemented endpoints or
+  screens in this checkpoint. The current product is MFA-ready and invitation activation is the
+  only local first-credential path. The trusted step-up/BFF adapter that would turn a privileged
+  platform identity into `PlatformPrincipal` is also not implemented, so the platform audit shell
+  is a separation/readiness surface rather than part of the local tenant-admin demo. F2F does not
+  weaken the boundary or silently claim the deferred flows.
 - Global sort controls and validation/error normalization beyond the endpoint families already
   covered. Immutable `RequestContext`, global correlation middleware and the new Phase-1
   `{data,meta}` standard are implemented; remaining Phase-0 envelope migrations require an explicit

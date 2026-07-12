@@ -8,8 +8,10 @@ Ana veri deposu PostgreSQL'dir. Tüm tenant-owned tablolarda `tenant_id` bulunur
 uygulama seviyesinde şifrelenir veya maskelenir. Tenant izolasyonu uygulama guard'ları,
 tenant-owned ilişkilerde composite foreign key'ler ve F1C forced PostgreSQL RLS ile katmanlı
 korunur. SQLite hızlı uyumluluk testidir; RLS kanıtı gerçek PostgreSQL lane'indedir.
-F1E Faz 1 kapanış kapısı yeni tablo, kolon veya Alembic revision eklemez; fiziksel şema tek
-Alembic head olan `0015_f1d_feature_flags` ile aynıdır.
+Historical F1E Faz 1 kapanışında fiziksel şema `0015_f1d_feature_flags` idi. F2A–F2E activation,
+server-side session, RBAC ve append-only audit tablolarını `0016`–`0020` ile ekledi. F2F'nin
+PostgreSQL-only `0021_f2f_user_insert_grant` revision'ı tablo/kolon eklemeden invited-user INSERT'i
+için yalnız `users.permission_version` kolon grant'ini tamamlar; güncel tek head `0021`'dir.
 
 ## 2. Kavramsal ERD
 
@@ -39,7 +41,7 @@ erDiagram
 
 | Domain | Tablolar |
 |---|---|
-| CORE/AUTH/RBAC | Faz 1 final (`0015` head): `tenants`, `tenant_settings`, `tenant_feature_flags`; mevcut foundation: `users`, `command_idempotency`; session/RBAC tabloları Faz 2 |
+| CORE/AUTH/RBAC | F2F implemented: `tenants`, `tenant_settings`, `tenant_feature_flags`, `users`, `user_activation_tokens`, `refresh_session_families`, `refresh_session_tokens`, `roles`, `permissions`, `role_permissions`, `user_roles`, `command_idempotency` |
 | EMP/DOC | `employees`, `employee_profiles`, `employee_employments`, `employee_assignments`, `employee_documents`, `document_types` |
 | ORG | `legal_entities`, `branches`, `departments`, `positions`, `headcount_requests` |
 | LEAVE/TIME | `leave_types`, `leave_balances`, `leave_requests`, `holiday_calendars`, `shift_assignments`, `time_clock_events`, `timesheet_days` |
@@ -48,7 +50,7 @@ erDiagram
 | PERF/LMS | `goals`, `performance_cycles`, `review_forms`, `learning_courses`, `competencies`, `development_plans` |
 | SS/Workflow | `requests`, `approval_tasks`, `delegations`, `announcements`, `notifications` |
 | REP/AI/INT | `report_definitions`, `export_jobs`, `ai_requests`, `ai_outputs`, `integration_connectors`, `webhook_deliveries` |
-| OPS | `audit_events`, `security_events`, `outbox_events`, `background_jobs` |
+| OPS | F2F implemented: `audit_events`; planned later: `security_events`, `outbox_events`, `background_jobs` |
 
 ## 4. Temel veri kuralları
 
@@ -59,7 +61,7 @@ erDiagram
 | UUID | Dışa açık ID'ler tahmin edilemez olmalıdır |
 | Archive | Yasal saklama gerektiren employee verisi `archived_at` ile gizlenir; normal API hard delete yapmaz |
 | Concurrency | Kritik transition kaydı tenant-scoped row lock veya uygun olduğunda optimistic `version` ile korunur |
-| Audit | Kritik değişikliklerde before/after hash veya snapshot tutulur |
+| Audit | Kritik değişikliklerde yalnız allowlisted changed-field/metadata tutulur; secret/credential ve full payload snapshot'ı varsayılan olarak yasaktır |
 | Effective dating | Assignment, ücret, pozisyon gibi tarihsel veri aralıkla tutulur |
 | Reference data | Mevzuat, tatil, para birimi gibi değerler versiyonlanır |
 
@@ -168,7 +170,9 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 
 F1C historical checkpoint'inde altı tenant-owned tablo RLS enabled/forced durumuna gelmiştir. F1D
 revision'ı `tenant_feature_flags` tablosunu aynı standarda eklemiştir. F1E final kapısında şema
-değişmemiş ve tek head `0015_f1d_feature_flags` olarak doğrulanmıştır. Standart app policy:
+değişmemiş ve tek head `0015_f1d_feature_flags` olarak doğrulanmıştır. F2 activation/session,
+`user_roles` ve `audit_events` tablolarını FORCE RLS envanterine ekler; audit runtime rolleri yalnız
+`SELECT/INSERT` alır, `UPDATE/DELETE` alamaz. Standart app policy:
 
 ```sql
 CREATE POLICY tenant_isolation_app

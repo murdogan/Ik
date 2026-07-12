@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-12 / F2C tenant user administration product slice.
+Son güncelleme: 2026-07-12 / F2F Phase 2 product hardening ve contract reconciliation.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -22,6 +22,10 @@ F1D'nin additive feature/limit sözleşmesi historical
 `backend/tests/contracts/f1d_openapi_contract.json` snapshot'ında korunur. F1E endpoint veya schema
 eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekler ve sonucu ayrı
 `backend/tests/contracts/f1e_openapi_contract.json` snapshot'ında dondurur.
+F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: executable contract testi
+F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
+canlı OpenAPI'den doğrular. Böylece güncel registry 39 generated operation ve runtime
+`/openapi.json` ile 40 documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -66,11 +70,15 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note, row-lock one-winner ve opsiyonel idempotency |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
 
-F2A historical F1E yüzeyine üç, F2B refresh/logout/me ile üç, F2C user list/detail/update ile üç
-generated operation daha ekler. Lokal executable smoke, tenant-admin list/search/detail/update ve
-invite/aktivasyon sonrasında login → me → refresh rotation → logout akışını
-çalıştırır; tenant header spoof'un scope'u değiştiremediğini ve revoke edilen session'ın yeniden
-kullanılamadığını doğrular, credential/token değerlerini çıktıya yazmaz.
+F2A historical F1E yüzeyine activation/login/invitation ile üç; F2B refresh/logout/me ile üç;
+F2C user list/detail/update ile üç; F2D role/permission catalog ve exact role replacement ile üç;
+F2E tenant audit list/detail ve platform audit list ile üç generated operation daha ekler. Lokal
+executable smoke tenant-admin user/role/audit akışını ve invite/activation sonrasında login → me →
+refresh rotation → logout yaşam döngüsünü çalıştırır; tenant header spoof'un scope'u
+değiştiremediğini ve revoke edilen session'ın yeniden kullanılamadığını doğrular. F2F focused
+matrix ayrıca yedi tenant rolünün her user/role/audit endpoint kararını ve
+tenant_admin/tenant_security/hr_operations kategori görünürlüğünü doğrular; employee genel
+yönetim/audit center'da fail closed kalır. Credential/token değerleri çıktıya yazılmaz.
 
 Geçerli uygulama notları:
 
@@ -84,12 +92,13 @@ Geçerli uygulama notları:
   overwrite edilmez; F1E exact principal-metadata diff'i ayrı snapshot'ta, 25-endpoint runtime smoke
   sonucu ise implementation-status gate kaydında tutulur.
 - Exact on Faz 1 operation'ının altı platform route'u `x-required-principal: platform`, dört current
-  tenant route'u `x-required-principal: tenant` taşır. Bu vendor extension uygulanmış injected
-  principal sınırını dürüstçe belgeler; Faz 2 authentication/session/RBAC gelmeden standard
-  OpenAPI `security` veya sahte bir HTTP bearer/security scheme üretilmez.
-- Platform route'ları injected immutable `PlatformPrincipal`, tenant route'ları injected immutable
-  `TenantPrincipal` ister. Default dependencies principal üretmez ve `403` döner; yalnız testler
-  Phase 2 authentication gelene kadar dependency override kullanır. Caller-supplied
+  tenant route'u `x-required-principal: tenant` taşımaya devam eder. F2'nin on tenant
+  auth/RBAC/audit operation'ı gerçek kısa ömürlü access credential için standard
+  `BearerAuth` security scheme'ini taşır. Public activation/login/refresh/logout ile ayrı trusted
+  principal kullanan platform audit route'u bearer authority varmış gibi belgelenmez.
+- Historical Faz 1 platform route'ları injected immutable `PlatformPrincipal`, tenant route'ları
+  injected immutable `TenantPrincipal` ister. Default dependencies principal üretmez ve `403`
+  döner; testler bu trusted seam'i dependency override ile çalıştırır. Caller-supplied
   `X-Tenant-Id`, user/tenant ID header'ı, query, path veya body değeri authorization değildir.
 - F1B, F1A'da eklenen yedi success operation'ını intentional contract migration ile
   `{data, meta}` zarfına geçirir. Tekil `meta`, `request_id`, `trace_id`, deprecated alias
@@ -125,7 +134,8 @@ Geçerli uygulama notları:
   trace ID non-zero lowercase 32 hex'tir. Invalid, duplicate, conflicting, e-posta/PII veya JWT
   biçimli input yeniden üretilir; ham değer response/error/log yüzeyine yansıtılmaz.
 
-- OpenAPI dokümanı okunabilir tag kataloğu kullanır: `System`, `Public`, `Platform Tenants`,
+- OpenAPI dokümanı okunabilir tag kataloğu kullanır: `System`, `Public`, `Authentication`,
+  `Authorization`, `User Administration`, `Audit`, `Platform Audit`, `Platform Tenants`,
   `Tenant Settings`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
   İlk altı ürün/system tag'i W4C5'te sabitlenmiş; F1A `Platform Tenants` ve `Tenant Settings`
   gruplarını additive olarak eklemiştir. F1D feature operation'ları aynı sahiplik tag'lerini
@@ -138,9 +148,10 @@ Geçerli uygulama notları:
   generated OpenAPI operasyon seti, documented smoke registry, güncel endpoint tabloları ve
   runtime smoke senaryolarında gerçekten çağrılan endpoint setini path ve HTTP method seviyesinde
   doğrular.
-  F1E metadata gate'i ayrıca exact on Faz 1 operation'ının doğru `x-required-principal` değerini,
-  public/system ve legacy Faz-0 operation'larında bu extension'ın bulunmamasını ve Faz 2 öncesi
-  standard `security` scheme üretilmemesini doğrular.
+  F1E historical metadata gate'i exact on Faz 1 operation'ının doğru `x-required-principal`
+  değerini korur. F2F metadata ve smoke gate'leri yalnız gerçek bearer kullanan F2 tenant
+  operation'larında `BearerAuth` bulunduğunu ve public/trusted-principal route'lara yayılmadığını
+  doğrular.
 - Historical W4C6 yalnız uygulama raporu ve smoke governance yenilemesiydi. O checkpoint'teki
   15 endpoint Phase-0 yüzeyini temsil eder; F1A current tabloya yedi additive operation ekler ve
   güncel snapshot/metadata/runtime smoke gate'leri bu additive sözleşmeyi doğrular.
@@ -169,9 +180,11 @@ Geçerli uygulama notları:
   deprecation notu olmadan değiştirilemez.
 - F1D'nin üç feature success operation'ı da aynı tekil `{data,meta}` standardını ve üç safe
   correlation response header'ını kullanır.
-- Auth/session/RBAC henüz uygulanmadı. F1A platform/tenant route'ları fail-closed injected principal
-  seam'ini kullanır; tenant header yalnız legacy employee/leave backend foundation compatibility
-  mekanizmasıdır ve yeni platform/current-tenant route'larını authorize etmez.
+- F2 activation, tenant-aware login, server-side refresh rotation/reuse detection, logout,
+  live-session `/me`, deny-by-default RBAC ve append-only audit read/write modelini uygular. F1A
+  platform/tenant route'ları fail-closed injected principal seam'ini korur; tenant header yalnız
+  legacy employee/leave backend foundation compatibility mekanizmasıdır ve F2 user/RBAC/audit
+  operation'larını authorize etmez.
 - Tenant header dependency hataları, API edge'de merkezi olarak map edilen typed
   `ApplicationError` hataları ve employee, leave balance, leave request endpointlerindeki otomatik
   request validation `422` hataları Bölüm 1'deki error zarfını döner. Diğer endpointlerdeki
@@ -330,10 +343,14 @@ Eksik `X-Tenant-Id`, boş `X-Tenant-Id`, canonical hyphenated UUID olmayan değe
   Existing Faz-0 employee/leave/dashboard success response'ları explicit compatibility olarak
   doğrudan object/list kalır.
 - Her HTTP response `X-Request-Id`, `X-Trace-Id` ve deprecated `X-Correlation-Id` taşır.
-- Protected platform endpointlerde injected platform principal, tenant endpointlerde injected
-  tenant principal zorunlu; caller header/body kimliği authorization değildir.
-- Exact on Faz 1 operation'ı bu sınırı OpenAPI'de `x-required-principal: platform|tenant` ile taşır;
-  bu metadata authentication scheme değildir ve standard `security` Faz 2'ye kadar eklenmez.
+- Historical protected platform endpointlerde injected platform principal, current-tenant settings
+  endpointlerinde injected tenant principal zorunludur; caller header/body kimliği authorization
+  değildir. Exact on Faz 1 operation'ı bu sınırı OpenAPI'de
+  `x-required-principal: platform|tenant` ile taşır.
+- F2 `/me`, user, role, permission ve tenant-audit operation'ları gerçek kısa ömürlü access
+  credential için OpenAPI `BearerAuth` taşır. Login/activation public credential exchange,
+  refresh/logout ise HttpOnly cookie yaşam döngüsüdür; platform audit ayrı trusted principal
+  sınırını korur.
 - Büyük listelerde pagination zorunlu.
 - Desteklenen kritik POST işlemlerinde opsiyonel `X-Idempotency-Key` kullanılır.
 
@@ -371,6 +388,23 @@ Yetki: public.
 
 ## 4. Auth endpointleri
 
+### `POST /api/v1/auth/activate`
+
+Request:
+
+```json
+{
+  "token": "fragmentten-alinan-tek-kullanimlik-deger",
+  "password": "en-az-12-karakter"
+}
+```
+
+Token veritabanında yalnız hashli ve süreli tutulur; başarılı kullanım aynı transaction'da
+credential'ı consume eder ve Argon2id password hash'ini yazar. Browser token'ı URL query yerine
+fragmentten okur ve API çağrısından önce adres çubuğu/history state'ten kaldırır. Invalid, expired
+veya reused credential aynı `400 activation_invalid`; malformed payload
+`422 auth_validation_error` zarfını döner.
+
 ### `POST /api/v1/auth/login`
 
 Request:
@@ -396,10 +430,25 @@ Response:
       "tenant_id": "uuid",
       "email": "ayse@example.com",
       "full_name": "Ayşe Yılmaz",
-      "tenant": { "slug": "acme", "name": "Acme" }
+      "tenant": { "slug": "acme", "name": "Acme" },
+      "workspace_scope": "tenant",
+      "roles": [
+        {
+          "id": "uuid",
+          "code": "employee",
+          "name": "Employee",
+          "scope_type": "tenant"
+        }
+      ],
+      "permissions": ["dashboard:read:own", "employee:read:own"],
+      "permission_version": 1
     }
   },
-  "meta": { "correlation_id": "req_..." }
+  "meta": {
+    "request_id": "req_...",
+    "trace_id": "0123456789abcdef0123456789abcdef",
+    "correlation_id": "req_..."
+  }
 }
 ```
 
@@ -408,9 +457,9 @@ verilir ve staging/production'da `Secure` + `__Host-` policy zorunludur.
 
 Hatalar:
 
-- `AUTH_401_INVALID_CREDENTIALS`
-- `AUTH_423_ACCOUNT_LOCKED`
-- `CORE_403_TENANT_SUSPENDED`
+- `401 invalid_credentials`: unknown tenant/email, wrong password and unavailable account/tenant
+  aynı generic response'u kullanır.
+- `422 auth_validation_error`: malformed/extra credential payload.
 
 ### `POST /api/v1/auth/refresh`
 
@@ -420,29 +469,32 @@ Davranış:
 
 - Refresh token rotation yapar.
 - Eski token tekrar gelirse token family revoke edilir.
+- Missing/expired/revoked/reused credential `401 session_invalid`; response cookie'yi de temizler.
 
 ### `POST /api/v1/auth/logout`
 
-Yetki: authenticated.
-
-Davranış: aktif session ve refresh token revoke edilir.
+Davranış: cookie veya valid bearer ile seçilen aktif session family idempotent revoke edilir,
+refresh cookie temizlenir ve body olmadan `204` döner. Credential yok/invalid ise de bilgi
+sızdırmadan idempotent `204` + cookie clear uygulanır.
 
 ### `GET /api/v1/me`
 
 Yetki: authenticated.
 
-Response mevcut F2B kapsamında doğrulanmış kullanıcı ve tenant bilgisini döner. Rol ve permission
-özeti sonraki RBAC bloğundadır.
+Response doğrulanmış kullanıcı/tenant bilgisini, active role özetlerini, effective permission
+kodlarını, workspace scope ve permission version'ı döner. Bearer credential tek başına yeterli
+değildir; canlı server session family, kullanıcı/tenant durumu ve permission version yeniden
+doğrulanır.
 
 ## 5. Platform ve tenant endpointleri — F1E final Faz 1 yüzeyi
 
-F1A–F1E auth/session/RBAC uygulamaz. Platform operasyonları yalnız trusted boundary'den injected
+F1A–F1E historical platform operasyonları yalnız trusted boundary'den injected
 `PlatformPrincipal`, tenant operasyonları yalnız injected `TenantPrincipal` ile çalışır. Default
 dependency context yokken `403` döner; caller-supplied header/path/query/body kimliği authorization
 değildir. Tenant principal platform operation'ını authorize edemez. F1B'deki yedi operation ve F1D
 üç additive feature operation'ı `{data,meta}` döner. F1E bu on operation'ı
-`x-required-principal: platform|tenant` ile belgeler; standard OpenAPI authentication `security`
-metadata'sı Faz 2'ye bırakılır. Tekil response meta örneği:
+`x-required-principal: platform|tenant` ile belgeler. F2'nin bearer scheme'i bu historical trusted
+principal operation'larına geriye dönük olarak uygulanmaz. Tekil response meta örneği:
 
 ```json
 {
@@ -731,17 +783,24 @@ ve employee/HR alanı kabul etmez. Faz 1 default recorder discard eder. Bu API y
 audit query endpoint'i veya kalıcı audit merkezi sunmaz; Phase 2 transactional adapter aynı portu
 değiştirir.
 
-## 6. User ve RBAC endpointleri
+## 6. User, RBAC ve audit endpointleri
 
 | Method | Path | Permission | Not |
 |---|---|---|---|
-| GET | `/api/v1/users` | `user:read:tenant` | Kullanıcı listesi |
-| POST | `/api/v1/users/invite` | `user:invite:tenant` | Davet gönderir |
-| PATCH | `/api/v1/users/{id}` | `user:update:tenant` | Status/name günceller |
-| GET | `/api/v1/roles` | `role:read:tenant` | Rol listesi |
-| POST | `/api/v1/roles/{id}/assign` | `role:assign:tenant` | Kullanıcıya rol atar |
+| POST | `/api/v1/users/invitations` | `user:invite:tenant` | Session-derived tenant/actor ile davet; activation URL yalnız response'ta bir kez görünür |
+| GET | `/api/v1/users` | `user:read:tenant` | Bounded cursor, indexed search/status filter ve role özetli tenant listesi |
+| GET | `/api/v1/users/{user_id}` | `user:read:tenant` | Missing/cross-tenant target aynı `404` |
+| PATCH | `/api/v1/users/{user_id}` | `user:update:tenant` | Yalnız `full_name`/`status`; lock/disable canlı credential'ları revoke eder |
+| GET | `/api/v1/roles` | `role:read:tenant` | Yalnız tenant-assignable seeded roller; platform rolü dışarıda |
+| GET | `/api/v1/permissions` | `permission:read:tenant` | Yalnız tenant permission katalogu |
+| PUT | `/api/v1/users/{user_id}/roles` | `role:assign:tenant` | Exact replace, permission-version artışı, platform/cross-tenant role reddi |
+| GET | `/api/v1/audit-events` | `audit:read:tenant` | Role/category filtreli, redacted, bounded cursor listesi |
+| GET | `/api/v1/audit-events/{event_id}` | `audit:read:tenant` | Visible current-tenant event için salt-okunur safe detail |
+| GET | `/api/v1/platform/audit-events` | trusted platform principal | Yalnız `platform_operations`; tenant security/HR event'i seçilmez |
 
-Kritik davranış: role assignment audit event üretmelidir.
+Actual invitation, user update ve role replacement aynı command transaction'ında redacted audit
+event üretir. Tenant audit API'sinde update/delete operation'ı yoktur; PostgreSQL runtime
+capability'si audit row update/delete alamaz ve cross-tenant/hidden IDs not-found olarak kapanır.
 
 ## 7. Employee endpointleri
 
@@ -1400,11 +1459,13 @@ yeniden kullanılması ikinci karar write'ını çalıştırmadan aşağıdaki `
 
 ## 10. Kabul kriterleri
 
-- İlk uygulama öncesi endpoint listesi bu dokümanla uyumlu olmalıdır.
-- Uygulanmış exact on Faz 1 protected operation'ı doğru
-  `x-required-principal: platform|tenant` metadata'sını taşır; standard auth scheme Faz 2 öncesi
-  varmış gibi gösterilmez.
-- Auth ve employee endpointleri Sprint-1 önceliğindedir.
+- Güncel 39 generated operation ve runtime `/openapi.json`, Bölüm 0 ile implementation-status
+  tablosunda exact method/path olarak aynı olmalıdır.
+- Exact on historical Faz 1 protected operation doğru `x-required-principal` metadata'sını;
+  gerçek bearer kullanan exact on F2 tenant operation ise `BearerAuth` security metadata'sını
+  taşır. Public ve trusted-principal operation'lara bearer scheme eklenmez.
+- Invite → activate → login → refresh → logout, tenant-admin user/role/audit ve employee denial
+  browser gate'leri geçmelidir.
 - Employee response hassas alan masking kararına uyar.
 - Import/export async operation standardına uyar.
 

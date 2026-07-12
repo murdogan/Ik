@@ -70,6 +70,35 @@ F1E_PRINCIPAL_METADATA_MIGRATIONS = {
     "PATCH /api/v1/tenant/settings",
     "POST /api/v1/platform/tenants",
 }
+F2_APPROVED_ADDITIVE_OPERATIONS = {
+    "GET /api/v1/audit-events",
+    "GET /api/v1/audit-events/{event_id}",
+    "GET /api/v1/me",
+    "GET /api/v1/permissions",
+    "GET /api/v1/platform/audit-events",
+    "GET /api/v1/roles",
+    "GET /api/v1/users",
+    "GET /api/v1/users/{user_id}",
+    "PATCH /api/v1/users/{user_id}",
+    "POST /api/v1/auth/activate",
+    "POST /api/v1/auth/login",
+    "POST /api/v1/auth/logout",
+    "POST /api/v1/auth/refresh",
+    "POST /api/v1/users/invitations",
+    "PUT /api/v1/users/{user_id}/roles",
+}
+F2_BEARER_OPERATIONS = {
+    "GET /api/v1/audit-events",
+    "GET /api/v1/audit-events/{event_id}",
+    "GET /api/v1/me",
+    "GET /api/v1/permissions",
+    "GET /api/v1/roles",
+    "GET /api/v1/users",
+    "GET /api/v1/users/{user_id}",
+    "PATCH /api/v1/users/{user_id}",
+    "POST /api/v1/users/invitations",
+    "PUT /api/v1/users/{user_id}/roles",
+}
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -93,6 +122,32 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
             component: current["components"].get(group_name, {}).get(component)
             for component in components
         } == components
+
+
+def test_f2f_current_openapi_surface_is_the_approved_additive_phase2_contract() -> None:
+    """Reconcile the live F2 surface without creating another full contract snapshot."""
+
+    f1e = _load_contract(F1E_SNAPSHOT_PATH)
+    openapi = create_app().openapi()
+    current = build_openapi_contract_manifest(openapi)
+
+    assert current["operation_count"] == 39
+    assert set(current["operations"]) == (
+        set(f1e["operations"]) | F2_APPROVED_ADDITIVE_OPERATIONS
+    )
+    bearer_security = [{"BearerAuth": []}]
+    assert {
+        f"{method.upper()} {path}"
+        for path, path_item in openapi["paths"].items()
+        for method, operation in path_item.items()
+        if method in HTTP_METHODS and operation.get("security") == bearer_security
+    } == F2_BEARER_OPERATIONS
+    for path, path_item in openapi["paths"].items():
+        for method, operation in path_item.items():
+            if method not in HTTP_METHODS:
+                continue
+            if f"{method.upper()} {path}" not in F2_BEARER_OPERATIONS:
+                assert "security" not in operation
 
 
 def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:
