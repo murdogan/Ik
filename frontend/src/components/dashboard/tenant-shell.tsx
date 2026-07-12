@@ -5,6 +5,11 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { useSession } from "@/components/session/session-provider";
+import type { AuthUser } from "@/lib/auth-contracts";
+import {
+  AUTHORIZATION_PERMISSIONS,
+  hasPermission,
+} from "@/lib/authorization";
 
 import styles from "./tenant-shell.module.css";
 
@@ -13,19 +18,27 @@ function displayName(fullName: string | null, email: string): string {
 }
 
 const navigationItems = [
-  { href: "/dashboard", label: "Genel bakış", icon: "⌂" },
-  { href: "/users", label: "Kullanıcılar", icon: "K" },
+  { href: "/dashboard", label: "Genel bakış", icon: "⌂", permission: null },
+  {
+    href: "/users",
+    label: "Kullanıcılar",
+    icon: "K",
+    permission: AUTHORIZATION_PERMISSIONS.readUsers,
+  },
 ] as const;
 
-function Navigation({ mobile = false }: { mobile?: boolean }) {
+function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
   const pathname = usePathname();
+  const visibleItems = navigationItems.filter(
+    (item) => item.permission === null || hasPermission(user, item.permission),
+  );
 
   return (
     <nav
       className={mobile ? styles.mobileNavigation : styles.navigation}
       aria-label={mobile ? "Mobil ana menü" : "Ana menü"}
     >
-      {navigationItems.map((item) => {
+      {visibleItems.map((item) => {
         const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
@@ -46,9 +59,10 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
 export function TenantShell({ children }: { children: ReactNode }) {
   const { user, isLoggingOut, logoutError, signOut } = useSession();
   const name = displayName(user.full_name, user.email);
+  const roleNames = user.roles.map((role) => role.name).join(" · ") || "Rol atanmamış";
 
   return (
-    <div className={styles.application}>
+    <div className={styles.application} data-workspace-shell="tenant">
       <aside className={styles.sidebar}>
         <div className={styles.brand} aria-label="Wealthy Falcon HR">
           <span className={styles.brandMark} aria-hidden="true">
@@ -61,9 +75,10 @@ export function TenantShell({ children }: { children: ReactNode }) {
           <span>Çalışma alanı</span>
           <strong>{user.tenant.name}</strong>
           <small>{user.tenant.slug}</small>
+          <small className={styles.roleSummary}>{roleNames}</small>
         </div>
 
-        <Navigation />
+        <Navigation user={user} />
 
         <p className={styles.sidebarNote}>Güvenli tenant oturumu etkin</p>
       </aside>
@@ -85,7 +100,7 @@ export function TenantShell({ children }: { children: ReactNode }) {
           </button>
         </header>
 
-        <Navigation mobile />
+        <Navigation user={user} mobile />
 
         <div className={styles.content}>
           {logoutError ? (

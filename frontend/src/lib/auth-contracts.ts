@@ -5,12 +5,25 @@ export interface AuthTenant {
   name: string;
 }
 
+export type WorkspaceScope = "tenant" | "platform";
+
+export interface RoleSummary {
+  id: string;
+  code: string;
+  name: string;
+  scope_type: WorkspaceScope;
+}
+
 export interface AuthUser {
   id: string;
   tenant_id: string;
   email: string;
   full_name: string | null;
   tenant: AuthTenant;
+  workspace_scope: WorkspaceScope;
+  roles: RoleSummary[];
+  permissions: string[];
+  permission_version: number;
 }
 
 export interface LoginResponseData {

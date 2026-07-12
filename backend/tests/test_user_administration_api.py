@@ -15,6 +15,7 @@ from app.models.auth import RefreshSessionFamily, UserActivationToken
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.identity import PasswordManager
+from app.services.authorization_service import assign_system_role, seed_authorization_catalog
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, select
@@ -80,6 +81,7 @@ async def _seed_users(
 ) -> None:
     password_hash = passwords.hash(PASSWORD)
     async with session_factory.begin() as session:
+        await seed_authorization_catalog(session)
         session.add_all(
             [
                 Tenant(
@@ -154,6 +156,21 @@ async def _seed_users(
                 ),
             ]
         )
+        await session.flush()
+        for tenant_id, user_id, role_code in (
+            (TENANT_A_ID, ADMIN_A_ID, "tenant_admin"),
+            (TENANT_A_ID, USER_A_ID, "employee"),
+            (TENANT_A_ID, INVITED_A_ID, "employee"),
+            (TENANT_A_ID, PERCENT_A_ID, "employee"),
+            (TENANT_B_ID, ADMIN_B_ID, "tenant_admin"),
+            (TENANT_B_ID, USER_B_ID, "employee"),
+        ):
+            await assign_system_role(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                role_code=role_code,
+            )
 
 
 async def _login(
@@ -208,7 +225,7 @@ async def test_admin_lists_searches_and_cursor_pages_only_authenticated_tenant_u
         assert len(first_body["data"]) == 2
         assert first_body["meta"]["limit"] == 2
         assert first_body["meta"]["next_cursor"]
-        assert len(select_statements) == 3
+        assert len(select_statements) == 4
         assert all(
             set(user)
             == {
@@ -216,6 +233,8 @@ async def test_admin_lists_searches_and_cursor_pages_only_authenticated_tenant_u
                 "email",
                 "full_name",
                 "status",
+                "roles",
+                "permission_version",
                 "created_at",
                 "updated_at",
             }

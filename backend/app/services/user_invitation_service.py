@@ -13,13 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.auth import UserActivationToken
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.authorization import DenyByDefaultPolicy
 from app.platform.db import SqlAlchemyUnitOfWork, configure_tenant_database_access
 from app.platform.errors.application import ApplicationError
 from app.platform.identity import AccessPrincipal, issue_activation_token
+from app.services.authorization_service import (
+    assign_system_role,
+    load_authorization_snapshot,
+)
 
 _INVITABLE_TENANT_STATUSES = frozenset(
     {TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value}
 )
+_authorization_policy = DenyByDefaultPolicy()
 
 
 class InvitationAccessDeniedError(ApplicationError):
@@ -81,11 +87,19 @@ class UserInvitationService:
                 if inviter_row is None:
                     raise InvitationAccessDeniedError()
                 inviter, tenant = inviter_row
+                authorization = await load_authorization_snapshot(
+                    session,
+                    tenant_id=inviter.tenant_id,
+                    user_id=inviter.id,
+                )
                 if (
                     inviter.status != UserStatus.ACTIVE.value
-                    or not inviter.can_invite_users
                     or tenant.status not in _INVITABLE_TENANT_STATUSES
                     or tenant.slug != principal.tenant_slug
+                    or not _authorization_policy.allows(
+                        "user:invite:tenant",
+                        authorization.permissions,
+                    )
                 ):
                     raise InvitationAccessDeniedError()
 
@@ -97,6 +111,7 @@ class UserInvitationService:
                     )
                     .with_for_update()
                 )
+                is_new_user = user is None
                 if user is None:
                     user = User(
                         id=uuid4(),
@@ -113,6 +128,14 @@ class UserInvitationService:
                     user.full_name = full_name
                 else:
                     raise InvitationConflictError()
+
+                if is_new_user:
+                    await assign_system_role(
+                        session,
+                        tenant_id=principal.tenant_id,
+                        user_id=user.id,
+                        role_code="employee",
+                    )
 
                 await session.execute(
                     update(UserActivationToken)

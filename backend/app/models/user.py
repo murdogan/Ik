@@ -7,6 +7,7 @@ from sqlalchemy import (
     Computed,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -42,6 +43,10 @@ class User(Base, TimestampMixin):
         CheckConstraint(
             "length(email_normalized) > 0",
             name="ck_users_email_normalized_not_empty",
+        ),
+        CheckConstraint(
+            "permission_version >= 1",
+            name="ck_users_permission_version_positive",
         ),
         Index(
             "ix_users_tenant_created_at_id",
@@ -92,4 +97,10 @@ class User(Base, TimestampMixin):
         Boolean,
         nullable=False,
         server_default=false(),
+    )
+    permission_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
     )

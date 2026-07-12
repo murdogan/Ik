@@ -13,13 +13,15 @@ export const STATUS_LABELS: Record<UserStatus, string> = {
   disabled: "Devre dışı",
 };
 
-type UserAction = "list" | "read" | "update" | "invite";
+type UserAction = "list" | "read" | "update" | "invite" | "role_list" | "role_update";
 
 const GENERIC_MESSAGES: Record<UserAction, string> = {
   list: "Kullanıcı listesi şu anda yüklenemiyor. Lütfen yeniden deneyin.",
   read: "Kullanıcı ayrıntıları şu anda yüklenemiyor. Lütfen yeniden deneyin.",
   update: "Kullanıcı değişiklikleri kaydedilemedi. Lütfen yeniden deneyin.",
   invite: "Davet şu anda gönderilemedi. Lütfen yeniden deneyin.",
+  role_list: "Rol kataloğu şu anda yüklenemiyor. Lütfen yeniden deneyin.",
+  role_update: "Kullanıcı rolleri şu anda kaydedilemiyor. Lütfen yeniden deneyin.",
 };
 
 export function userAdminErrorPresentation(
@@ -36,7 +38,9 @@ export function userAdminErrorPresentation(
   } else if (cause.status === 401) {
     message = "Oturumunuz doğrulanamadı. Lütfen yeniden giriş yapın.";
   } else if (cause.status === 403) {
-    message = "Bu kullanıcı yönetimi işlemi için tenant yöneticisi yetkiniz bulunmuyor.";
+    message = action.startsWith("role_")
+      ? "Bu rol yönetimi işlemi için tenant yöneticisi yetkiniz bulunmuyor."
+      : "Bu kullanıcı yönetimi işlemi için tenant yöneticisi yetkiniz bulunmuyor.";
   } else if (cause.status === 404) {
     message = "Kullanıcı bulunamadı veya artık bu çalışma alanında değil.";
   } else if (cause.status === 409 && action === "invite") {
@@ -44,11 +48,16 @@ export function userAdminErrorPresentation(
   } else if (cause.status === 409 && action === "update") {
     message =
       "Bu durum değişikliği hesabın mevcut etkinleştirme durumuyla uyumlu değil veya kendi erişiminizi kapatamazsınız.";
+  } else if (cause.status === 409 && action === "role_update") {
+    message =
+      "Bu rol değişikliği kendi yönetici erişiminizi veya tenant'ın son yönetici atamasını kaldıramaz.";
   } else if (cause.status === 422) {
     message =
       action === "invite"
         ? "Ad soyad ve e-posta bilgilerini kontrol edin."
-        : "Değişiklikleri kontrol edin ve yeniden deneyin.";
+        : action === "role_update"
+          ? "Rol seçimini kontrol edin ve yeniden deneyin."
+          : "Değişiklikleri kontrol edin ve yeniden deneyin.";
   } else if (cause.status === 429) {
     message = "Çok sayıda istek gönderildi. Kısa bir süre bekleyip yeniden deneyin.";
   }

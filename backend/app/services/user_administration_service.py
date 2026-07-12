@@ -10,8 +10,8 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.auth import RefreshSessionFamily, UserActivationToken
-from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.authorization import DenyByDefaultPolicy
 from app.platform.db import SqlAlchemyUnitOfWork, configure_tenant_database_access
 from app.platform.errors.application import ApplicationError
 from app.platform.pagination import CursorPage
@@ -21,8 +21,9 @@ from app.schemas.user_administration import (
     UserListCursor,
     UserListPagination,
 )
+from app.services.authorization_service import AssignedRole, load_assigned_roles
 
-_ADMINISTRABLE_TENANT_STATUSES = frozenset({TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value})
+_authorization_policy = DenyByDefaultPolicy()
 
 
 class UserAdministrationAccessDeniedError(ApplicationError):
@@ -43,6 +44,8 @@ class UserAdministrationRecord:
     email: str
     full_name: str
     status: str
+    roles: tuple[AssignedRole, ...]
+    permission_version: int
     created_at: datetime
     updated_at: datetime
 
@@ -62,17 +65,13 @@ class UserAdministrationService:
         *,
         request_context: RequestContext,
         pagination: UserListPagination,
+        granted_permissions: tuple[str, ...],
     ) -> CursorPage[UserAdministrationRecord]:
         tenant_id, _actor_id = _scope_from_context(request_context)
+        _require_permission(granted_permissions, "user:read:tenant")
         async with self._session_factory() as session:
             configure_tenant_database_access(session, tenant_id)
             async with session.begin():
-                await _authorize_tenant_admin(
-                    session,
-                    tenant_id=tenant_id,
-                    actor_id=_actor_id,
-                    tenant_slug=request_context.require_tenant().slug,
-                )
                 dialect_name = session.get_bind().dialect.name
                 statement = _user_list_statement(
                     tenant_id,
@@ -80,8 +79,17 @@ class UserAdministrationService:
                     dialect_name=dialect_name,
                 )
                 rows = list((await session.execute(statement.limit(pagination.limit + 1))).all())
+                visible_rows = rows[: pagination.limit]
+                roles_by_user = await load_assigned_roles(
+                    session,
+                    tenant_id=tenant_id,
+                    user_ids=tuple(row._mapping["id"] for row in visible_rows),
+                )
 
-        items = [_record_from_row(row) for row in rows[: pagination.limit]]
+        items = [
+            _record_from_row(row, roles=roles_by_user.get(row._mapping["id"], ()))
+            for row in visible_rows
+        ]
         next_cursor = None
         if len(rows) > pagination.limit:
             last_item = items[-1]
@@ -101,17 +109,13 @@ class UserAdministrationService:
         *,
         request_context: RequestContext,
         user_id: UUID,
+        granted_permissions: tuple[str, ...],
     ) -> UserAdministrationRecord:
-        tenant_id, actor_id = _scope_from_context(request_context)
+        tenant_id, _actor_id = _scope_from_context(request_context)
+        _require_permission(granted_permissions, "user:read:tenant")
         async with self._session_factory() as session:
             configure_tenant_database_access(session, tenant_id)
             async with session.begin():
-                await _authorize_tenant_admin(
-                    session,
-                    tenant_id=tenant_id,
-                    actor_id=actor_id,
-                    tenant_slug=request_context.require_tenant().slug,
-                )
                 row = (
                     await session.execute(
                         _user_projection().where(
@@ -120,9 +124,14 @@ class UserAdministrationService:
                         )
                     )
                 ).one_or_none()
+                roles_by_user = await load_assigned_roles(
+                    session,
+                    tenant_id=tenant_id,
+                    user_ids=(user_id,) if row is not None else (),
+                )
         if row is None:
             raise UserAdministrationUserNotFoundError()
-        return _record_from_row(row)
+        return _record_from_row(row, roles=roles_by_user.get(user_id, ()))
 
     async def update_user(
         self,
@@ -130,19 +139,15 @@ class UserAdministrationService:
         request_context: RequestContext,
         user_id: UUID,
         update: UserAdministrationUpdate,
+        granted_permissions: tuple[str, ...],
     ) -> UserAdministrationRecord:
         tenant_id, actor_id = _scope_from_context(request_context)
+        _require_permission(granted_permissions, "user:update:tenant")
         async with self._session_factory() as session:
             configure_tenant_database_access(session, tenant_id)
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> UserAdministrationRecord:
-                await _authorize_tenant_admin(
-                    session,
-                    tenant_id=tenant_id,
-                    actor_id=actor_id,
-                    tenant_slug=request_context.require_tenant().slug,
-                )
                 user = await session.scalar(
                     select(User)
                     .where(
@@ -173,7 +178,12 @@ class UserAdministrationService:
                 user.updated_at = datetime.now(UTC)
                 await session.flush()
                 await session.refresh(user)
-                return _record_from_user(user)
+                roles_by_user = await load_assigned_roles(
+                    session,
+                    tenant_id=tenant_id,
+                    user_ids=(user.id,),
+                )
+                return _record_from_user(user, roles=roles_by_user.get(user.id, ()))
 
             return await unit_of_work.execute(operation)
 
@@ -186,33 +196,8 @@ def _scope_from_context(request_context: RequestContext) -> tuple[UUID, UUID]:
     return tenant_id, actor_id
 
 
-async def _authorize_tenant_admin(
-    session: AsyncSession,
-    *,
-    tenant_id: UUID,
-    actor_id: UUID,
-    tenant_slug: str,
-) -> None:
-    row = (
-        await session.execute(
-            select(User.status, User.can_invite_users, Tenant.status, Tenant.slug)
-            .join(Tenant, Tenant.id == User.tenant_id)
-            .where(
-                User.tenant_id == tenant_id,
-                User.id == actor_id,
-                Tenant.id == tenant_id,
-            )
-        )
-    ).one_or_none()
-    if row is None:
-        raise UserAdministrationAccessDeniedError()
-    user_status, can_invite_users, tenant_status, persisted_tenant_slug = row
-    if (
-        user_status != UserStatus.ACTIVE.value
-        or not can_invite_users
-        or tenant_status not in _ADMINISTRABLE_TENANT_STATUSES
-        or persisted_tenant_slug != tenant_slug
-    ):
+def _require_permission(granted_permissions: tuple[str, ...], permission: str) -> None:
+    if not _authorization_policy.allows(permission, granted_permissions):
         raise UserAdministrationAccessDeniedError()
 
 
@@ -277,6 +262,7 @@ def _user_projection():
         User.email,
         User.full_name,
         User.status,
+        User.permission_version,
         User.created_at,
         User.updated_at,
     )
@@ -332,24 +318,36 @@ def _cursor_predicate(cursor: UserListCursor, *, dialect_name: str):
     )
 
 
-def _record_from_row(row: object) -> UserAdministrationRecord:
+def _record_from_row(
+    row: object,
+    *,
+    roles: tuple[AssignedRole, ...],
+) -> UserAdministrationRecord:
     mapping = row._mapping  # type: ignore[attr-defined]
     return UserAdministrationRecord(
         id=mapping["id"],
         email=mapping["email"],
         full_name=mapping["full_name"],
         status=mapping["status"],
+        roles=roles,
+        permission_version=mapping["permission_version"],
         created_at=mapping["created_at"],
         updated_at=mapping["updated_at"],
     )
 
 
-def _record_from_user(user: User) -> UserAdministrationRecord:
+def _record_from_user(
+    user: User,
+    *,
+    roles: tuple[AssignedRole, ...],
+) -> UserAdministrationRecord:
     return UserAdministrationRecord(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         status=user.status,
+        roles=roles,
+        permission_version=user.permission_version,
         created_at=user.created_at,  # type: ignore[arg-type]
         updated_at=user.updated_at,  # type: ignore[arg-type]
     )

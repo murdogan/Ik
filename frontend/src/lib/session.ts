@@ -21,6 +21,11 @@ let accessToken: string | null = null;
 let sessionGeneration = 0;
 let refreshInFlight: Promise<RefreshResponseData> | null = null;
 let restoreInFlight: Promise<AuthUser> | null = null;
+const sessionChangeListeners = new Set<(change: SessionChange) => void>();
+
+export type SessionChange =
+  | { type: "user_updated"; user: AuthUser }
+  | { type: "invalidated" };
 
 class SessionSupersededError extends Error {
   constructor() {
@@ -31,12 +36,29 @@ class SessionSupersededError extends Error {
 
 function applySession(data: LoginResponseData): void {
   accessToken = data.access_token;
+  publishSessionChange({ type: "user_updated", user: data.user });
 }
 
-function invalidateSession(): void {
+function invalidateSession({ notify = true }: { notify?: boolean } = {}): void {
   sessionGeneration += 1;
   accessToken = null;
   restoreInFlight = null;
+  if (notify) {
+    publishSessionChange({ type: "invalidated" });
+  }
+}
+
+function publishSessionChange(change: SessionChange): void {
+  for (const listener of sessionChangeListeners) {
+    listener(change);
+  }
+}
+
+export function subscribeToSessionChanges(
+  listener: (change: SessionChange) => void,
+): () => void {
+  sessionChangeListeners.add(listener);
+  return () => sessionChangeListeners.delete(listener);
 }
 
 export function establishSession(data: LoginResponseData): void {
@@ -214,7 +236,7 @@ export function restoreSession(): Promise<AuthUser> {
 export async function logoutSession(): Promise<void> {
   const pendingRefresh = refreshInFlight;
   const logoutAccessToken = accessToken;
-  invalidateSession();
+  invalidateSession({ notify: false });
 
   if (pendingRefresh) {
     try {

@@ -552,12 +552,15 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/auth/login` | Implemented for F2B | Tenant-aware credential verification, short-lived bearer response, and hashed server-side refresh family with HttpOnly cookie |
 | POST | `/api/v1/auth/refresh` | Implemented for F2B | Single-use rotation, retained token history, reuse-triggered family revoke, and rotated HttpOnly cookie |
 | POST | `/api/v1/auth/logout` | Implemented for F2B | Idempotent family revoke and exact-policy refresh-cookie deletion |
-| GET | `/api/v1/me` | Implemented for F2B | Bearer plus active server-session validation; current user and tenant derived without caller tenant selectors |
+| GET | `/api/v1/me` | Implemented for F2D | Bearer plus active server-session/version validation; current user, tenant, roles and permissions derived without caller selectors |
 | POST | `/api/v1/auth/activate` | Implemented for F2A | Hashed expiring invitation credential, atomic single-use consumption and Argon2id password setup |
-| POST | `/api/v1/users/invitations` | Implemented for F2A | Bearer-derived actor/tenant, invite capability check and header/payload tenant-spoof resistance |
-| GET | `/api/v1/users` | Implemented for F2C | RequestContext-derived tenant/actor, bounded cursor, indexed name/email search, status filter and explicit projection |
-| GET | `/api/v1/users/{user_id}` | Implemented for F2C | Allowlisted tenant detail with identical not-found behavior for missing and cross-tenant IDs |
-| PATCH | `/api/v1/users/{user_id}` | Implemented for F2C | Full-name/status allowlist, impossible-state guard and session/activation credential revocation on lock/disable |
+| POST | `/api/v1/users/invitations` | Implemented for F2D | Bearer-derived actor/tenant, exact invite permission and header/payload tenant-spoof resistance |
+| GET | `/api/v1/users` | Implemented for F2D | Permission-protected tenant list with role summaries, bounded cursor and indexed filters |
+| GET | `/api/v1/users/{user_id}` | Implemented for F2D | Permission-protected tenant detail with roles and identical missing/cross-tenant behavior |
+| PATCH | `/api/v1/users/{user_id}` | Implemented for F2D | Permission-protected full-name/status allowlist and credential revocation on lock/disable |
+| GET | `/api/v1/roles` | Implemented for F2D | Seeded tenant-assignable roles with explicit permission codes; platform role excluded |
+| GET | `/api/v1/permissions` | Implemented for F2D | Seeded tenant permission catalog; platform permissions excluded |
+| PUT | `/api/v1/users/{user_id}/roles` | Implemented for F2D | Atomic replace semantics, tenant isolation, platform-role rejection and permission-version bump |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -571,11 +574,9 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 
-F2A adds three generated operations to the historical 24-operation F1E surface; F2B adds refresh,
-logout and `/api/v1/me`; F2C adds tenant user list/detail/update, for 33 generated operations. The
-executable smoke now completes tenant-admin list/search/detail/update plus login → current user →
-refresh rotation → logout and proves the logged-out session is rejected, without printing
-credential or activation material.
+F2D adds the role, permission and exact user-role replacement operations, for 36 generated
+operations. The executable smoke covers the tenant-admin catalog and replacement flow in addition
+to login, user administration, refresh rotation and logout without printing credential material.
 
 ## Current Behavior Notes
 

@@ -12,7 +12,11 @@ import {
 } from "react";
 
 import type { AuthUser } from "@/lib/auth-contracts";
-import { logoutSession, restoreSession } from "@/lib/session";
+import {
+  logoutSession,
+  restoreSession,
+  subscribeToSessionChanges,
+} from "@/lib/session";
 
 import styles from "./session.module.css";
 
@@ -31,6 +35,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [isChecking, setIsChecking] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  useEffect(
+    () =>
+      subscribeToSessionChanges((change) => {
+        if (change.type === "user_updated") {
+          setUser(change.user);
+          return;
+        }
+        setUser(null);
+        setIsChecking(false);
+        router.replace("/login");
+      }),
+    [router],
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -57,6 +75,34 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isActive = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    let isActive = true;
+    const revalidateAuthorization = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      void restoreSession().then(
+        (restoredUser) => {
+          if (isActive) {
+            setUser(restoredUser);
+          }
+        },
+        () => {
+          // Terminal invalidation is published by the session module. Transient focus checks
+          // keep the current shell and recover on the next successful request.
+        },
+      );
+    };
+
+    window.addEventListener("focus", revalidateAuthorization);
+    document.addEventListener("visibilitychange", revalidateAuthorization);
+    return () => {
+      isActive = false;
+      window.removeEventListener("focus", revalidateAuthorization);
+      document.removeEventListener("visibilitychange", revalidateAuthorization);
+    };
+  }, []);
 
   const signOut = useCallback(async () => {
     if (isLoggingOut) {

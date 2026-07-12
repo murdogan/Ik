@@ -8,6 +8,7 @@ import {
   loginErrorPresentation,
 } from "@/lib/auth-contracts";
 import { postApi } from "@/lib/api-client";
+import { homePathForUser } from "@/lib/authorization";
 import { establishSession } from "@/lib/session";
 
 import styles from "./auth.module.css";
@@ -48,7 +49,7 @@ export function LoginForm({ initialTenantSlug = "" }: LoginFormProps) {
 
       form.reset();
       establishSession(data);
-      router.replace("/dashboard");
+      router.replace(homePathForUser(data.user));
     } catch (cause) {
       setError(loginErrorPresentation(cause));
     } finally {

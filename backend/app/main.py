@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.auth import me_router
 from app.api.auth import router as auth_router
+from app.api.authorization import router as authorization_router
 from app.api.dashboard import router as dashboard_router
 from app.api.employees import router as employees_router
 from app.api.errors import (
@@ -68,6 +69,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(platform_tenants_router)
     app.include_router(auth_router)
     app.include_router(me_router)
+    app.include_router(authorization_router)
     app.include_router(user_invitations_router)
     app.include_router(users_router)
     app.include_router(tenant_router)

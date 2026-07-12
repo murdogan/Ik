@@ -36,6 +36,7 @@ from app.schemas.auth import (
     LoginRequest,
     MeRead,
 )
+from app.schemas.authorization import RoleSummaryRead
 from app.services.auth_session_service import AuthSessionService, InvalidSessionError, SessionGrant
 from app.services.authentication_service import AuthenticatedUser, AuthenticationService
 
@@ -215,6 +216,18 @@ def _auth_user_read(user: AuthenticatedUser) -> AuthUserRead:
         email=user.email,
         full_name=user.full_name,
         tenant=AuthTenantRead(slug=user.tenant_slug, name=user.tenant_name),
+        workspace_scope=user.workspace_scope,
+        roles=[
+            RoleSummaryRead(
+                id=role.id,
+                code=role.code,
+                name=role.name,
+                scope_type=role.scope_type,
+            )
+            for role in user.roles
+        ],
+        permissions=list(user.permissions),
+        permission_version=user.permission_version,
     )
 
 

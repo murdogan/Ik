@@ -22,6 +22,11 @@ from app.platform.identity import (
     issue_refresh_token,
     parse_refresh_token,
 )
+from app.services.authorization_service import (
+    AssignedRole,
+    AuthorizationSnapshot,
+    load_authorization_snapshot,
+)
 
 _SESSION_TENANT_STATUSES = frozenset(
     {TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value}
@@ -40,6 +45,10 @@ class AuthenticatedUser:
     full_name: str
     tenant_slug: str
     tenant_name: str
+    workspace_scope: str
+    roles: tuple[AssignedRole, ...]
+    permissions: tuple[str, ...]
+    permission_version: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +109,7 @@ class AuthSessionService:
                             User.id == user_id,
                             Tenant.id == tenant_id,
                         )
-                        .with_for_update()
+                        .with_for_update(of=User)
                     )
                 ).one_or_none()
                 if row is None:
@@ -130,7 +139,12 @@ class AuthSessionService:
                     ]
                 )
                 await session.flush()
-                return _authenticated_user(user, tenant)
+                authorization = await load_authorization_snapshot(
+                    session,
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                )
+                return _authenticated_user(user, tenant, authorization)
 
             user = await unit_of_work.execute(operation)
 
@@ -179,7 +193,9 @@ class AuthSessionService:
                             RefreshSessionToken.id == presented.token_id,
                             RefreshSessionToken.token_hash == presented.token_hash,
                         )
-                        .with_for_update()
+                        .with_for_update(
+                            of=(RefreshSessionToken, RefreshSessionFamily, User)
+                        )
                     )
                 ).one_or_none()
                 if row is None:
@@ -216,11 +232,16 @@ class AuthSessionService:
                     )
                 )
                 await session.flush()
+                authorization = await load_authorization_snapshot(
+                    session,
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                )
                 return _PersistedSessionGrant(
                     family_id=family.id,
                     refresh_token=replacement.raw_token,
                     refresh_expires_at=_as_utc(family.expires_at),
-                    user=_authenticated_user(user, tenant),
+                    user=_authenticated_user(user, tenant, authorization),
                 )
 
             persisted = await unit_of_work.execute(operation)
@@ -250,22 +271,28 @@ class AuthSessionService:
                             RefreshSessionFamily.id == family_id,
                             RefreshSessionFamily.user_id == principal.user_id,
                         )
+                        .with_for_update(of=(RefreshSessionFamily, User))
                     )
                 ).one_or_none()
-
-        if row is None:
-            raise InvalidSessionError()
-        family, user, tenant = row
-        now = datetime.now(UTC)
-        if (
-            family.revoked_at is not None
-            or _as_utc(family.expires_at) <= now
-            or user.status != UserStatus.ACTIVE.value
-            or tenant.status not in _SESSION_TENANT_STATUSES
-            or tenant.slug != principal.tenant_slug
-        ):
-            raise InvalidSessionError()
-        return _authenticated_user(user, tenant)
+                if row is None:
+                    raise InvalidSessionError()
+                family, user, tenant = row
+                now = datetime.now(UTC)
+                if (
+                    family.revoked_at is not None
+                    or _as_utc(family.expires_at) <= now
+                    or user.status != UserStatus.ACTIVE.value
+                    or tenant.status not in _SESSION_TENANT_STATUSES
+                    or tenant.slug != principal.tenant_slug
+                    or user.permission_version != principal.permission_version
+                ):
+                    raise InvalidSessionError()
+                authorization = await load_authorization_snapshot(
+                    session,
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                )
+        return _authenticated_user(user, tenant, authorization)
 
     async def revoke(
         self,
@@ -340,6 +367,7 @@ class AuthSessionService:
                 tenant_id=persisted.user.tenant_id,
                 tenant_slug=persisted.user.tenant_slug,
                 session_family_id=persisted.family_id,
+                permission_version=persisted.user.permission_version,
             )
         )
         return SessionGrant(
@@ -352,7 +380,11 @@ class AuthSessionService:
         )
 
 
-def _authenticated_user(user: User, tenant: Tenant) -> AuthenticatedUser:
+def _authenticated_user(
+    user: User,
+    tenant: Tenant,
+    authorization: AuthorizationSnapshot,
+) -> AuthenticatedUser:
     return AuthenticatedUser(
         id=user.id,
         tenant_id=user.tenant_id,
@@ -360,6 +392,10 @@ def _authenticated_user(user: User, tenant: Tenant) -> AuthenticatedUser:
         full_name=user.full_name,
         tenant_slug=tenant.slug,
         tenant_name=tenant.name,
+        workspace_scope=authorization.workspace_scope,
+        roles=authorization.roles,
+        permissions=authorization.permissions,
+        permission_version=user.permission_version,
     )
 
 

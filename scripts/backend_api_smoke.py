@@ -35,6 +35,10 @@ from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.identity import PasswordManager
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
+from app.services.authorization_service import (
+    assign_system_role,
+    seed_authorization_catalog,
+)
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
@@ -94,6 +98,16 @@ TENANT_SETTINGS_FIELDS = {
     "time_format",
 }
 TENANT_FEATURE_FIELDS = {"features"}
+USER_ADMIN_FIELDS = {
+    "id",
+    "email",
+    "full_name",
+    "status",
+    "roles",
+    "permission_version",
+    "created_at",
+    "updated_at",
+}
 FEATURE_FLAG_ITEM_FIELDS = {"key", "enabled", "source"}
 FEATURE_DEFAULTS = {
     "organization": False,
@@ -140,6 +154,7 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("post", "/api/v1/auth/logout"),
     ("post", "/api/v1/auth/refresh"),
     ("get", "/api/v1/me"),
+    ("get", "/api/v1/permissions"),
     ("post", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants/{tenant_id}"),
@@ -166,6 +181,8 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/users"),
     ("get", "/api/v1/users/{user_id}"),
     ("patch", "/api/v1/users/{user_id}"),
+    ("put", "/api/v1/users/{user_id}/roles"),
+    ("get", "/api/v1/roles"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -293,6 +310,7 @@ async def _prepare_smoke_database(
     # to tenant or platform capability roles and must never be reused for cross-tenant seeding.
     bootstrap_sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with bootstrap_sessions() as session:
+        await seed_authorization_catalog(session)
         session.add_all(
             [
                 Tenant(
@@ -342,6 +360,23 @@ async def _prepare_smoke_database(
                 ),
             ]
         )
+        await session.flush()
+        await assign_system_role(
+            session,
+            tenant_id=TENANT_ID,
+            user_id=REQUESTING_USER_ID,
+            role_code="tenant_admin",
+        )
+        for tenant_id, user_id in (
+            (TENANT_ID, APPROVER_USER_ID),
+            (OTHER_TENANT_ID, OTHER_REQUESTING_USER_ID),
+        ):
+            await assign_system_role(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                role_code="employee",
+            )
         await session.commit()
 
 
@@ -564,6 +599,80 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         **SPOOFED_IDENTITY_HEADERS,
         "Authorization": f"Bearer {access_token}",
     }
+    roles_response = await _request_documented(
+        client,
+        "get",
+        "/api/v1/roles",
+        headers=admin_headers,
+    )
+    roles_body = _expect_json(roles_response, 200, "GET /api/v1/roles")
+    _assert_exact_fields(roles_body, {"data", "meta"}, "GET /api/v1/roles envelope")
+    _expect_phase1_response_meta(roles_body["meta"], roles_response, "GET /api/v1/roles")
+    roles = roles_body["data"]
+    if not isinstance(roles, list) or not all(isinstance(role, dict) for role in roles):
+        raise AssertionError("GET /api/v1/roles data must be a list of role objects")
+    _assert_equal(
+        {role["code"] for role in roles},
+        {
+            "tenant_admin",
+            "hr_director",
+            "hr_specialist",
+            "it_admin",
+            "auditor",
+            "manager",
+            "employee",
+        },
+        "tenant-assignable role catalog",
+    )
+    manager_role_id = next(role["id"] for role in roles if role["code"] == "manager")
+
+    permissions_response = await _request_documented(
+        client,
+        "get",
+        "/api/v1/permissions",
+        headers=admin_headers,
+    )
+    permissions_body = _expect_json(
+        permissions_response,
+        200,
+        "GET /api/v1/permissions",
+    )
+    _assert_exact_fields(
+        permissions_body,
+        {"data", "meta"},
+        "GET /api/v1/permissions envelope",
+    )
+    _expect_phase1_response_meta(
+        permissions_body["meta"],
+        permissions_response,
+        "GET /api/v1/permissions",
+    )
+    permission_codes = {permission["code"] for permission in permissions_body["data"]}
+    if "role:assign:tenant" not in permission_codes or any(
+        code.endswith(":platform") for code in permission_codes
+    ):
+        raise AssertionError("tenant permission catalog leaked or omitted an authority boundary")
+
+    role_replacement = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "put",
+            f"/api/v1/users/{APPROVER_USER_ID}/roles",
+            documented_path="/api/v1/users/{user_id}/roles",
+            headers=admin_headers,
+            json={"role_ids": [manager_role_id]},
+        ),
+        200,
+        "PUT /api/v1/users/{user_id}/roles",
+        USER_ADMIN_FIELDS,
+    )
+    _assert_equal(
+        [role["code"] for role in role_replacement["roles"]],
+        ["manager"],
+        "exact role replacement",
+    )
+    _assert_equal(role_replacement["permission_version"], 2, "permission version bump")
+
     users, _next_cursor = _expect_phase1_list(
         await _request_documented(
             client,
@@ -579,7 +688,7 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
     _assert_equal(len(users), 1, "bounded user administration search")
     _assert_exact_fields(
         users[0],
-        {"id", "email", "full_name", "status", "created_at", "updated_at"},
+        USER_ADMIN_FIELDS,
         "GET /api/v1/users item",
     )
     _assert_equal(users[0]["id"], str(APPROVER_USER_ID), "searched tenant user")
@@ -594,7 +703,7 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         ),
         200,
         "GET /api/v1/users/{user_id}",
-        {"id", "email", "full_name", "status", "created_at", "updated_at"},
+        USER_ADMIN_FIELDS,
     )
     _assert_equal(user_detail["id"], str(APPROVER_USER_ID), "user detail id")
 
@@ -609,7 +718,7 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         ),
         200,
         "PATCH /api/v1/users/{user_id}",
-        {"id", "email", "full_name", "status", "created_at", "updated_at"},
+        USER_ADMIN_FIELDS,
     )
     _assert_equal(updated_user["full_name"], "Approver Smoke User", "user update")
 

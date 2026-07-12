@@ -62,6 +62,7 @@ TENANT_OWNED_TABLES = frozenset(
         "user_activation_tokens",
         "refresh_session_families",
         "refresh_session_tokens",
+        "user_roles",
     }
 )
 ROW_SECURITY_TABLES = TENANT_OWNED_TABLES | {"tenants"}
@@ -83,6 +84,7 @@ EXPECTED_APPLICATION_PRIVILEGES = {
     "user_activation_tokens": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "refresh_session_families": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "refresh_session_tokens": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "user_roles": frozenset({"SELECT", "INSERT", "UPDATE"}),
 }
 EXPECTED_PLATFORM_PRIVILEGES = {
     table_name: (

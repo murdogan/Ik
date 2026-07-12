@@ -30,6 +30,7 @@ from app.services.auth_session_service import (
     InvalidSessionError,
     SessionGrant,
 )
+from app.services.authorization_service import load_authorization_snapshot
 
 _LOGIN_TENANT_STATUSES = frozenset(
     {TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value}
@@ -144,6 +145,11 @@ class AuthenticationService:
                 user.status = UserStatus.ACTIVE.value
                 activation.consumed_at = now
                 await session.flush()
+                authorization = await load_authorization_snapshot(
+                    session,
+                    tenant_id=user.tenant_id,
+                    user_id=user.id,
+                )
                 return AuthenticatedUser(
                     id=user.id,
                     tenant_id=user.tenant_id,
@@ -151,6 +157,10 @@ class AuthenticationService:
                     full_name=user.full_name,
                     tenant_slug=tenant.slug,
                     tenant_name=tenant.name,
+                    workspace_scope=authorization.workspace_scope,
+                    roles=authorization.roles,
+                    permissions=authorization.permissions,
+                    permission_version=user.permission_version,
                 )
 
             return await unit_of_work.execute(operation)

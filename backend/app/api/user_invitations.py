@@ -3,10 +3,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Response, status
 
 from app.api.auth_dependencies import (
+    AuthenticatedSession,
+    get_authenticated_request_context,
     get_user_invitation_service,
-    require_invitation_principal,
+    require_permission,
 )
-from app.api.dependencies import get_request_context
 from app.api.errors import (
     AUTH_VALIDATION_RESPONSES,
     AUTHENTICATION_REQUIRED_RESPONSES,
@@ -15,11 +16,10 @@ from app.api.errors import (
     UNEXPECTED_ERROR_RESPONSES,
 )
 from app.api.openapi import USER_ADMINISTRATION_TAG, with_correlation_response_headers
-from app.platform.identity import AccessPrincipal
 from app.platform.request_context import RequestContext
 from app.platform.responses import DataEnvelope, data_envelope
 from app.schemas.auth import InvitationRead, InvitationRequest, InvitationUserRead
-from app.services.user_invitation_service import UserInvitationService
+from app.services.user_invitation_service import InvitationAccessDeniedError, UserInvitationService
 
 router = APIRouter(
     prefix="/api/v1/users",
@@ -49,12 +49,23 @@ router = APIRouter(
 async def create_invitation(
     payload: InvitationRequest,
     response: Response,
-    principal: Annotated[AccessPrincipal, Depends(require_invitation_principal)],
-    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    authorized: Annotated[
+        AuthenticatedSession,
+        Depends(
+            require_permission(
+                "user:invite:tenant",
+                denied_error=InvitationAccessDeniedError,
+            )
+        ),
+    ],
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_request_context),
+    ],
     service: Annotated[UserInvitationService, Depends(get_user_invitation_service)],
 ) -> DataEnvelope[InvitationRead]:
     result = await service.invite(
-        principal=principal,
+        principal=authorized.principal,
         email=payload.email,
         full_name=payload.full_name,
     )

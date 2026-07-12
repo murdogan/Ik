@@ -3,6 +3,7 @@ from typing import Any
 SYSTEM_TAG = "System"
 PUBLIC_TAG = "Public"
 AUTHENTICATION_TAG = "Authentication"
+AUTHORIZATION_TAG = "Authorization"
 USER_ADMINISTRATION_TAG = "User Administration"
 PLATFORM_TENANTS_TAG = "Platform Tenants"
 TENANT_SETTINGS_TAG = "Tenant Settings"
@@ -70,6 +71,13 @@ OPENAPI_TAGS = [
             "Tenant-aware login and activation plus cookie-backed refresh rotation, logout, and "
             "live-session current-user validation. Credential failures are generic and all "
             "credential-bearing responses are non-cacheable."
+        ),
+    },
+    {
+        "name": AUTHORIZATION_TAG,
+        "description": (
+            "Seeded deny-by-default role and permission catalogs for tenant administration. "
+            "Platform roles are kept outside tenant assignment surfaces."
         ),
     },
     {

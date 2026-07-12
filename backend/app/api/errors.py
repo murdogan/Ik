@@ -39,6 +39,12 @@ from app.services.authentication_service import (
     InvalidActivationError,
     InvalidCredentialsError,
 )
+from app.services.authorization_service import (
+    AuthorizationAccessDeniedError,
+    RoleAssignmentConflictError,
+    RoleAssignmentInvalidError,
+    RoleAssignmentUserNotFoundError,
+)
 from app.services.employee_service import (
     EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
     DuplicateEmployeeNumberError,
@@ -158,6 +164,12 @@ USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_CODE = "user_status_conflict"
 USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_MESSAGE = (
     "The requested user status transition is not allowed"
 )
+AUTHORIZATION_ACCESS_DENIED_ERROR_CODE = "authorization_denied"
+AUTHORIZATION_ACCESS_DENIED_ERROR_MESSAGE = "You do not have the required permission"
+ROLE_ASSIGNMENT_INVALID_ERROR_CODE = "role_assignment_invalid"
+ROLE_ASSIGNMENT_INVALID_ERROR_MESSAGE = "The requested tenant role set is invalid"
+ROLE_ASSIGNMENT_CONFLICT_ERROR_CODE = "role_assignment_conflict"
+ROLE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE = "The requested role replacement is not allowed"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -441,6 +453,35 @@ USER_ADMINISTRATION_AUTHORIZATION_RESPONSES = {
         },
     }
 }
+AUTHORIZATION_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {
+        "model": ApiErrorResponse,
+        "description": "The authenticated actor lacks the exact required permission.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    AUTHORIZATION_ACCESS_DENIED_ERROR_CODE,
+                    AUTHORIZATION_ACCESS_DENIED_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+ROLE_ASSIGNMENT_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "The replacement contains an unknown or non-tenant role.",
+    }
+}
+ROLE_ASSIGNMENT_CONFLICT_RESPONSES = _conflict_response(
+    description="The role replacement would remove required administrator access.",
+    examples={
+        ROLE_ASSIGNMENT_CONFLICT_ERROR_CODE: _error_example(
+            ROLE_ASSIGNMENT_CONFLICT_ERROR_CODE,
+            ROLE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE,
+        )
+    },
+)
 USER_ADMINISTRATION_VALIDATION_RESPONSES = {
     status.HTTP_422_UNPROCESSABLE_CONTENT: {
         "model": ApiErrorResponse,
@@ -569,6 +610,14 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return invalid_activation_error()
     if isinstance(exc, InvalidSessionError):
         return session_invalid_error()
+    if isinstance(exc, AuthorizationAccessDeniedError):
+        return authorization_access_denied_error()
+    if isinstance(exc, RoleAssignmentInvalidError):
+        return role_assignment_invalid_error()
+    if isinstance(exc, RoleAssignmentConflictError):
+        return role_assignment_conflict_error(str(exc))
+    if isinstance(exc, RoleAssignmentUserNotFoundError):
+        return user_not_found_error()
     if isinstance(exc, InvitationAccessDeniedError):
         return invitation_access_denied_error()
     if isinstance(exc, InvitationConflictError):
@@ -777,6 +826,30 @@ def user_administration_access_denied_error() -> ApiError:
         status_code=status.HTTP_403_FORBIDDEN,
         code=USER_ADMINISTRATION_ACCESS_DENIED_ERROR_CODE,
         message=USER_ADMINISTRATION_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def authorization_access_denied_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=AUTHORIZATION_ACCESS_DENIED_ERROR_CODE,
+        message=AUTHORIZATION_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def role_assignment_invalid_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=ROLE_ASSIGNMENT_INVALID_ERROR_CODE,
+        message=ROLE_ASSIGNMENT_INVALID_ERROR_MESSAGE,
+    )
+
+
+def role_assignment_conflict_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ROLE_ASSIGNMENT_CONFLICT_ERROR_CODE,
+        message=message or ROLE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE,
     )
 
 

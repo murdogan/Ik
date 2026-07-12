@@ -7,11 +7,16 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import ValidationError
 
 from app.api.auth_dependencies import (
+    AuthenticatedSession,
     get_authenticated_request_context,
+    get_authorization_service,
     get_user_administration_service,
+    require_permission,
 )
 from app.api.errors import (
     AUTHENTICATION_REQUIRED_RESPONSES,
+    ROLE_ASSIGNMENT_CONFLICT_RESPONSES,
+    ROLE_ASSIGNMENT_VALIDATION_RESPONSES,
     UNEXPECTED_ERROR_RESPONSES,
     USER_ADMINISTRATION_AUTHORIZATION_RESPONSES,
     USER_ADMINISTRATION_CONFLICT_RESPONSES,
@@ -29,6 +34,7 @@ from app.platform.responses import (
     data_envelope,
     list_envelope,
 )
+from app.schemas.authorization import RoleSummaryRead, UserRoleReplace
 from app.schemas.user_administration import (
     USER_LIST_DEFAULT_LIMIT,
     USER_LIST_MAX_LIMIT,
@@ -39,7 +45,12 @@ from app.schemas.user_administration import (
     UserListCursor,
     UserListPagination,
 )
+from app.services.authorization_service import (
+    AuthorizationService,
+    RoleReplacementRecord,
+)
 from app.services.user_administration_service import (
+    UserAdministrationAccessDeniedError,
     UserAdministrationRecord,
     UserAdministrationService,
 )
@@ -131,12 +142,22 @@ async def list_users(
         UserAdministrationService,
         Depends(get_user_administration_service),
     ],
+    authorized: Annotated[
+        AuthenticatedSession,
+        Depends(
+            require_permission(
+                "user:read:tenant",
+                denied_error=UserAdministrationAccessDeniedError,
+            )
+        ),
+    ],
     pagination: Annotated[UserListPagination, Depends(get_user_list_pagination)],
 ) -> ListEnvelope[UserAdministrationRead]:
     _prevent_storage(response)
     page = await service.list_users(
         request_context=request_context,
         pagination=pagination,
+        granted_permissions=authorized.user.permissions,
     )
     return list_envelope(
         [_user_read(user) for user in page.items],
@@ -173,11 +194,21 @@ async def get_user(
         UserAdministrationService,
         Depends(get_user_administration_service),
     ],
+    authorized: Annotated[
+        AuthenticatedSession,
+        Depends(
+            require_permission(
+                "user:read:tenant",
+                denied_error=UserAdministrationAccessDeniedError,
+            )
+        ),
+    ],
 ) -> DataEnvelope[UserAdministrationRead]:
     _prevent_storage(response)
     user = await service.get_user(
         request_context=request_context,
         user_id=user_id,
+        granted_permissions=authorized.user.permissions,
     )
     return data_envelope(_user_read(user), request_context)
 
@@ -212,22 +243,91 @@ async def update_user(
         UserAdministrationService,
         Depends(get_user_administration_service),
     ],
+    authorized: Annotated[
+        AuthenticatedSession,
+        Depends(
+            require_permission(
+                "user:update:tenant",
+                denied_error=UserAdministrationAccessDeniedError,
+            )
+        ),
+    ],
 ) -> DataEnvelope[UserAdministrationRead]:
     _prevent_storage(response)
     user = await service.update_user(
         request_context=request_context,
         user_id=user_id,
         update=payload,
+        granted_permissions=authorized.user.permissions,
     )
     return data_envelope(_user_read(user), request_context)
 
 
-def _user_read(user: UserAdministrationRecord) -> UserAdministrationRead:
+@router.put(
+    "/{user_id}/roles",
+    response_model=DataEnvelope[UserAdministrationRead],
+    summary="Replace one tenant user's role assignments",
+    description=(
+        "Atomically replaces the complete active tenant-role set. Platform roles and "
+        "cross-tenant targets fail closed; an actual change increments permission_version so "
+        "previously issued access credentials stop authorizing immediately."
+    ),
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_200_OK: {},
+            **USER_ADMINISTRATION_NOT_FOUND_RESPONSES,
+            **ROLE_ASSIGNMENT_VALIDATION_RESPONSES,
+            **ROLE_ASSIGNMENT_CONFLICT_RESPONSES,
+        }
+    ),
+)
+async def replace_user_roles(
+    user_id: UUID,
+    payload: UserRoleReplace,
+    response: Response,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_request_context),
+    ],
+    authorized: Annotated[
+        AuthenticatedSession,
+        Depends(
+            require_permission(
+                "role:assign:tenant",
+                denied_error=UserAdministrationAccessDeniedError,
+            )
+        ),
+    ],
+    service: Annotated[AuthorizationService, Depends(get_authorization_service)],
+) -> DataEnvelope[UserAdministrationRead]:
+    _prevent_storage(response)
+    user = await service.replace_user_roles(
+        tenant_id=request_context.require_tenant().tenant_id,
+        actor_id=authorized.user.id,
+        user_id=user_id,
+        role_ids=tuple(payload.role_ids),
+    )
+    return data_envelope(_user_read(user), request_context)
+
+
+def _user_read(
+    user: UserAdministrationRecord | RoleReplacementRecord,
+) -> UserAdministrationRead:
     return UserAdministrationRead(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         status=user.status,
+        roles=[
+            RoleSummaryRead(
+                id=role.id,
+                code=role.code,
+                name=role.name,
+                scope_type=role.scope_type,
+            )
+            for role in user.roles
+        ],
+        permission_version=user.permission_version,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )

@@ -11,12 +11,18 @@ from app.api.errors import authentication_required_error
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, AuthRuntime
 from app.core.config import APP_SETTINGS_STATE_KEY, Settings
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
+from app.platform.authorization import DenyByDefaultPolicy, PermissionName
+from app.platform.errors.application import ApplicationError
 from app.platform.identity import AccessPrincipal, InvalidAccessTokenError
 from app.platform.observability.correlation import replace_request_context
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
 from app.services.auth_session_service import AuthenticatedUser, AuthSessionService
 from app.services.authentication_service import AuthenticationService
+from app.services.authorization_service import (
+    AuthorizationAccessDeniedError,
+    AuthorizationService,
+)
 from app.services.user_administration_service import UserAdministrationService
 from app.services.user_invitation_service import UserInvitationService
 
@@ -25,6 +31,7 @@ _bearer_scheme = HTTPBearer(
     scheme_name="BearerAuth",
     description="Short-lived access credential returned by the login endpoint.",
 )
+_authorization_policy = DenyByDefaultPolicy()
 
 
 def get_auth_runtime(request: Request) -> AuthRuntime:
@@ -88,6 +95,12 @@ def get_user_administration_service(
     return UserAdministrationService(session_factory=database_runtime.session_factory)
 
 
+def get_authorization_service(
+    database_runtime: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+) -> AuthorizationService:
+    return AuthorizationService(session_factory=database_runtime.session_factory)
+
+
 def require_access_principal(
     request: Request,
     credentials: Annotated[
@@ -137,6 +150,31 @@ async def require_authenticated_session(
     )
 
 
+def require_permission(
+    permission_code: str,
+    *,
+    denied_error: type[ApplicationError] = AuthorizationAccessDeniedError,
+):
+    """Build an exact-match, deny-by-default policy dependency."""
+
+    required_permission = PermissionName.parse(permission_code)
+
+    async def dependency(
+        authenticated: Annotated[
+            AuthenticatedSession,
+            Depends(require_authenticated_session),
+        ],
+    ) -> AuthenticatedSession:
+        if not _authorization_policy.allows(
+            required_permission,
+            authenticated.user.permissions,
+        ):
+            raise denied_error()
+        return authenticated
+
+    return dependency
+
+
 def get_authenticated_request_context(
     request: Request,
     authenticated_session: Annotated[
@@ -170,11 +208,13 @@ async def require_invitation_principal(
 __all__ = [
     "AuthenticatedSession",
     "get_auth_session_service",
+    "get_authorization_service",
     "get_authentication_service",
     "get_authenticated_request_context",
     "get_user_administration_service",
     "get_user_invitation_service",
     "require_access_principal",
     "require_authenticated_session",
+    "require_permission",
     "require_invitation_principal",
 ]

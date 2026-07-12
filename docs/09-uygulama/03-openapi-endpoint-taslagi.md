@@ -41,12 +41,15 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | POST | `/api/v1/auth/login` | F2B uygulandı | Tenant-aware doğrulama, kısa ömürlü bearer ve HttpOnly cookie üzerinden hashli server session family |
 | POST | `/api/v1/auth/refresh` | F2B uygulandı | Tek kullanımlık rotation; reuse bütün session family'yi revoke eder |
 | POST | `/api/v1/auth/logout` | F2B uygulandı | Session family revoke ve refresh cookie temizleme |
-| GET | `/api/v1/me` | F2B uygulandı | Bearer + aktif server session doğrulamasıyla current user/tenant |
+| GET | `/api/v1/me` | F2D uygulandı | Bearer + aktif/versioned session doğrulamasıyla current user/tenant/role/permission bilgisi |
 | POST | `/api/v1/auth/activate` | F2A uygulandı | Hashli/süreli aktivasyon credential'ı, atomik tek kullanım ve Argon2id parola kurulumu |
-| POST | `/api/v1/users/invitations` | F2A uygulandı | Bearer actor/tenant scope, invite capability ve header/payload tenant spoof reddi |
-| GET | `/api/v1/users` | F2C uygulandı | Authenticated `RequestContext` tenant/actor scope; bounded cursor, indexed name/email search ve status filtresi |
-| GET | `/api/v1/users/{user_id}` | F2C uygulandı | Allowlisted tenant user detail; missing/cross-tenant aynı `404` |
-| PATCH | `/api/v1/users/{user_id}` | F2C uygulandı | Yalnız `full_name`/`status`; actor/tenant/capability payload alanı yok; lock/disable credential revoke |
+| POST | `/api/v1/users/invitations` | F2D uygulandı | Bearer actor/tenant scope, exact invite permission ve tenant spoof reddi |
+| GET | `/api/v1/users` | F2D uygulandı | Permission-protected bounded tenant listesi ve role özetleri |
+| GET | `/api/v1/users/{user_id}` | F2D uygulandı | Permission-protected role-aware detail; missing/cross-tenant aynı `404` |
+| PATCH | `/api/v1/users/{user_id}` | F2D uygulandı | Exact update permission; yalnız `full_name`/`status` |
+| GET | `/api/v1/roles` | F2D uygulandı | Seeded tenant rolleri ve explicit permission kodları; platform rolü yok |
+| GET | `/api/v1/permissions` | F2D uygulandı | Seeded tenant permission katalogu; platform permission yok |
+| PUT | `/api/v1/users/{user_id}/roles` | F2D uygulandı | Atomik replace, tenant isolation, platform-role reddi ve permission-version artışı |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |

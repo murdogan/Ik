@@ -14,6 +14,7 @@ from pydantic import (
     field_validator,
 )
 
+from app.schemas.authorization import RoleSummaryRead
 from app.schemas.tenant import TenantSlug
 
 EmailValue = Annotated[
@@ -107,6 +108,10 @@ class AuthUserRead(BaseModel):
     email: str
     full_name: str
     tenant: AuthTenantRead
+    workspace_scope: Literal["platform", "tenant"]
+    roles: list[RoleSummaryRead]
+    permissions: list[str]
+    permission_version: int = Field(ge=1)
 
 
 class LoginRead(BaseModel):

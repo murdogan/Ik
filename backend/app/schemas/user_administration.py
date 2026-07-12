@@ -16,6 +16,7 @@ from pydantic import (
 
 from app.models.user import UserStatus
 from app.platform.pagination import decode_cursor, encode_cursor
+from app.schemas.authorization import RoleSummaryRead
 
 USER_LIST_DEFAULT_LIMIT = 25
 USER_LIST_MAX_LIMIT = 100
@@ -43,6 +44,8 @@ class UserAdministrationRead(BaseModel):
     email: str
     full_name: str
     status: UserStatus
+    roles: list[RoleSummaryRead]
+    permission_version: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
 

@@ -12,6 +12,7 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from app.db.base import Base
+from app.platform.authorization import PERMISSIONS, ROLE_PERMISSION_CODES, ROLES
 from sqlalchemy import (
     CheckConstraint,
     ForeignKeyConstraint,
@@ -352,6 +353,23 @@ def _run_alembic_f1d_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_f2d_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0019_f2d_rbac:0018_f2c_user_administration",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -392,8 +410,9 @@ def test_core_migration_chain_is_linear() -> None:
     f2c_user_administration_revision = script.get_revision(
         "0018_f2c_user_administration"
     )
+    f2d_rbac_revision = script.get_revision("0019_f2d_rbac")
 
-    assert script.get_heads() == ["0018_f2c_user_administration"]
+    assert script.get_heads() == ["0019_f2d_rbac"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -434,6 +453,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert f2b_session_revision.down_revision == "0016_f2a_identity_activation"
     assert f2c_user_administration_revision is not None
     assert f2c_user_administration_revision.down_revision == "0017_f2b_secure_sessions"
+    assert f2d_rbac_revision is not None
+    assert f2d_rbac_revision.down_revision == "0018_f2c_user_administration"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -466,6 +487,16 @@ def test_alembic_offline_sql_renders_p0d_preflight_and_expand_contract() -> None
     assert "CREATE UNIQUE INDEX CONCURRENTLY" in result.stdout
     assert "NOT VALID" in result.stdout
     assert "VALIDATE CONSTRAINT" in result.stdout
+    f2d_backfill = result.stdout.index("insert into user_roles")
+    assert result.stdout.rfind(
+        'ALTER TABLE "users" NO FORCE ROW LEVEL SECURITY',
+        0,
+        f2d_backfill,
+    ) >= 0
+    assert result.stdout.index(
+        'ALTER TABLE "users" FORCE ROW LEVEL SECURITY',
+        f2d_backfill,
+    ) > f2d_backfill
 
 
 def test_alembic_offline_p0e_downgrade_renders_retention_preflight() -> None:
@@ -620,6 +651,14 @@ def test_alembic_offline_f1d_downgrade_guards_state_and_removes_local_security()
     assert "DROP COLUMN active_employee_limit" in result.stdout
 
 
+def test_alembic_offline_f2d_downgrade_renders_authorization_preflight() -> None:
+    result = _run_alembic_f2d_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $f2d_rbac_downgrade_preflight$" in result.stdout
+    assert "F2D downgrade preflight failed" in result.stdout
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -638,6 +677,136 @@ def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None
             schema_diffs = compare_metadata(migration_context, Base.metadata)
 
         assert schema_diffs == []
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-f2d-rbac-backfill.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    tenant_id = "d1000000000040008000000000000001"
+    admin_id = "d1100000000040008000000000000001"
+    employee_id = "d1100000000040008000000000000002"
+
+    alembic_command.upgrade(config, "0018_f2c_user_administration")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'f2d-backfill', 'F2D Backfill', 'active', 'core', 'tr-1', "
+                    "'en-US', 'UTC', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into users ("
+                    "id, tenant_id, email, full_name, status, can_invite_users, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":admin_id, :tenant_id, 'admin@f2d.test', 'Legacy Admin', 'active', true, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    "), ("
+                    ":employee_id, :tenant_id, 'employee@f2d.test', 'Legacy Employee', "
+                    "'active', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "admin_id": admin_id,
+                    "employee_id": employee_id,
+                },
+            )
+
+        alembic_command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            persisted_roles = set(
+                connection.execute(text("select code, scope_type from roles")).tuples()
+            )
+            persisted_permissions = set(
+                connection.scalars(text("select code from permissions"))
+            )
+            persisted_grants: dict[str, set[str]] = {}
+            for role_code, permission_code in connection.execute(
+                text(
+                    "select roles.code, permissions.code "
+                    "from role_permissions "
+                    "join roles on roles.id = role_permissions.role_id "
+                    "join permissions on permissions.id = role_permissions.permission_id"
+                )
+            ).tuples():
+                persisted_grants.setdefault(role_code, set()).add(permission_code)
+            assignments = dict(
+                list(
+                    connection.execute(
+                        text(
+                            "select users.email, roles.code from user_roles "
+                            "join users on users.tenant_id = user_roles.tenant_id "
+                            "and users.id = user_roles.user_id "
+                            "join roles on roles.id = user_roles.role_id "
+                            "where user_roles.active = true"
+                        )
+                    ).tuples()
+                )
+            )
+            permission_versions = set(
+                connection.scalars(text("select permission_version from users"))
+            )
+
+        assert persisted_roles == {
+            (role.code, role.scope_type.value) for role in ROLES
+        }
+        assert persisted_permissions == {permission.code for permission in PERMISSIONS}
+        assert persisted_grants == {
+            role_code: set(permission_codes)
+            for role_code, permission_codes in ROLE_PERMISSION_CODES.items()
+        }
+        assert assignments == {
+            "admin@f2d.test": "tenant_admin",
+            "employee@f2d.test": "employee",
+        }
+        assert permission_versions == {1}
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(text("update users set permission_version = 0"))
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "update users set permission_version = 2 "
+                    "where email = 'employee@f2d.test'"
+                )
+            )
+        with pytest.raises(
+            RuntimeError,
+            match="F2D downgrade preflight failed: changed_authorization_users=1",
+        ):
+            alembic_command.downgrade(config, "0018_f2c_user_administration")
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0019_f2d_rbac"
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "update users set permission_version = 1 "
+                    "where email = 'employee@f2d.test'"
+                )
+            )
+        alembic_command.downgrade(config, "0018_f2c_user_administration")
+        assert "user_roles" not in inspect(engine).get_table_names()
     finally:
         engine.dispose()
 

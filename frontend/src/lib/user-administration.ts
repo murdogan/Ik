@@ -1,4 +1,5 @@
 import { ApiClientError, type ApiSuccessEnvelope } from "./api-client";
+import type { RoleSummary } from "./auth-contracts";
 import {
   requestAuthenticatedApi,
   requestAuthenticatedApiEnvelope,
@@ -15,6 +16,8 @@ export interface TenantUser {
   status: UserStatus;
   created_at: string;
   updated_at: string;
+  roles: RoleSummary[];
+  permission_version: number;
 }
 
 export interface UserListMeta {

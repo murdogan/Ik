@@ -2,6 +2,11 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 
+import { useSession } from "@/components/session/session-provider";
+import {
+  AUTHORIZATION_PERMISSIONS,
+  hasPermission,
+} from "@/lib/authorization";
 import {
   type TenantUser,
   type UserStatus,
@@ -10,6 +15,7 @@ import {
 } from "@/lib/user-administration";
 
 import { InvitationDialog } from "./invitation-dialog";
+import { RoleChips } from "./role-chips";
 import { StatusBadge } from "./status-badge";
 import { UserDetailDialog } from "./user-detail-dialog";
 import styles from "./users.module.css";
@@ -34,6 +40,8 @@ function userInitial(user: TenantUser): string {
 }
 
 export function UserAdminScreen() {
+  const { user: actor } = useSession();
+  const canInviteUsers = hasPermission(actor, AUTHORIZATION_PERMISSIONS.inviteUsers);
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [filters, setFilters] = useState<UserFilters>(EMPTY_FILTERS);
   const [draftSearch, setDraftSearch] = useState("");
@@ -157,14 +165,16 @@ export function UserAdminScreen() {
             kullanıcı davetleri oluşturun.
           </p>
         </div>
-        <button
-          className={styles.primaryButton}
-          type="button"
-          onClick={() => setIsInvitationOpen(true)}
-        >
-          <span aria-hidden="true">＋</span>
-          Kullanıcı davet et
-        </button>
+        {canInviteUsers ? (
+          <button
+            className={styles.primaryButton}
+            type="button"
+            onClick={() => setIsInvitationOpen(true)}
+          >
+            <span aria-hidden="true">＋</span>
+            Kullanıcı davet et
+          </button>
+        ) : null}
       </header>
 
       <form className={styles.filterBar} role="search" onSubmit={applyFilters}>
@@ -272,7 +282,7 @@ export function UserAdminScreen() {
               <button className={styles.secondaryButton} type="button" onClick={clearFilters}>
                 Filtreleri temizle
               </button>
-            ) : (
+            ) : canInviteUsers ? (
               <button
                 className={styles.primaryButton}
                 type="button"
@@ -280,7 +290,7 @@ export function UserAdminScreen() {
               >
                 Kullanıcı davet et
               </button>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className={styles.tableScroller}>
@@ -289,6 +299,7 @@ export function UserAdminScreen() {
                 <tr>
                   <th scope="col">Kullanıcı</th>
                   <th scope="col">Durum</th>
+                  <th scope="col">Roller</th>
                   <th scope="col">Oluşturulma</th>
                   <th scope="col">
                     <span className={styles.visuallyHidden}>İşlemler</span>
@@ -315,6 +326,9 @@ export function UserAdminScreen() {
                     </td>
                     <td data-label="Durum">
                       <StatusBadge status={user.status} />
+                    </td>
+                    <td data-label="Roller">
+                      <RoleChips roles={user.roles} limit={2} />
                     </td>
                     <td data-label="Oluşturulma">{formatUserDate(user.created_at)}</td>
                     <td className={styles.actionCell}>
@@ -368,7 +382,7 @@ export function UserAdminScreen() {
         />
       ) : null}
 
-      {isInvitationOpen ? (
+      {isInvitationOpen && canInviteUsers ? (
         <InvitationDialog
           onClose={() => setIsInvitationOpen(false)}
           onInvited={handleInvitedUser}

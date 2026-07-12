@@ -9,6 +9,22 @@ const user = {
     slug: "wealthy-falcon-demo",
     name: "Wealthy Falcon HR Demo",
   },
+  workspace_scope: "tenant",
+  roles: [
+    {
+      id: "f3000000-0000-4000-8000-000000000001",
+      code: "tenant_admin",
+      name: "Tenant yöneticisi",
+      scope_type: "tenant",
+    },
+  ],
+  permissions: [
+    "user:read:tenant",
+    "user:invite:tenant",
+    "user:update:tenant",
+    "role:assign:tenant",
+  ],
+  permission_version: 1,
 };
 
 function dataEnvelope(data: unknown): string {

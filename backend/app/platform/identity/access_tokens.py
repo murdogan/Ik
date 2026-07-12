@@ -22,6 +22,7 @@ class AccessPrincipal:
     tenant_id: UUID
     tenant_slug: str
     session_family_id: UUID
+    permission_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,7 @@ class AccessTokenCodec:
             "sub": str(principal.user_id),
             "tenant_id": str(principal.tenant_id),
             "tenant_slug": principal.tenant_slug,
+            "pver": principal.permission_version,
             "jti": str(uuid4()),
             "iat": now,
             "exp": expires_at,
@@ -83,6 +85,7 @@ class AccessTokenCodec:
                         "sub",
                         "tenant_id",
                         "tenant_slug",
+                        "pver",
                         "sid",
                         "jti",
                         "iat",
@@ -98,6 +101,13 @@ class AccessTokenCodec:
             if not isinstance(tenant_slug, str) or not tenant_slug.strip():
                 raise InvalidAccessTokenError("Access token is invalid")
             session_family_id = _canonical_uuid(claims["sid"])
+            permission_version = claims["pver"]
+            if (
+                not isinstance(permission_version, int)
+                or isinstance(permission_version, bool)
+                or permission_version < 1
+            ):
+                raise InvalidAccessTokenError("Access token is invalid")
         except (jwt.PyJWTError, KeyError, TypeError, InvalidAccessTokenError) as exc:
             raise InvalidAccessTokenError("Access token is invalid") from exc
         return AccessPrincipal(
@@ -105,6 +115,7 @@ class AccessTokenCodec:
             tenant_id=tenant_id,
             tenant_slug=tenant_slug,
             session_family_id=session_family_id,
+            permission_version=permission_version,
         )
 
 

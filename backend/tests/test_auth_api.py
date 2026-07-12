@@ -19,12 +19,14 @@ from app.models.auth import (
 )
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.authorization import ROLE_PERMISSION_CODES, ROLES_BY_CODE
 from app.platform.identity import (
     AccessPrincipal,
     PasswordManager,
     hash_activation_token,
     hash_refresh_token,
 )
+from app.services.authorization_service import assign_system_role, seed_authorization_catalog
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -103,6 +105,7 @@ async def _seed_auth_fixtures(
     password_manager: PasswordManager,
 ) -> None:
     async with session_factory.begin() as session:
+        await seed_authorization_catalog(session)
         session.add_all(
             [
                 Tenant(
@@ -144,6 +147,19 @@ async def _seed_auth_fixtures(
                     can_invite_users=False,
                 ),
             ]
+        )
+        await session.flush()
+        await assign_system_role(
+            session,
+            tenant_id=TENANT_ID,
+            user_id=ADMIN_ID,
+            role_code="tenant_admin",
+        )
+        await assign_system_role(
+            session,
+            tenant_id=TENANT_ID,
+            user_id=NON_CAPABLE_USER_ID,
+            role_code="employee",
         )
 
 
@@ -262,6 +278,7 @@ async def test_invite_activate_and_login_end_to_end_with_hashed_single_use_crede
             password=ACTIVATED_PASSWORD,
         )
         assert user_access_token
+        employee_role = ROLES_BY_CODE["employee"]
         assert login_response.json()["data"]["user"] == {
             "id": str(invited_user_id),
             "tenant_id": str(TENANT_ID),
@@ -271,6 +288,17 @@ async def test_invite_activate_and_login_end_to_end_with_hashed_single_use_crede
                 "slug": TENANT_SLUG,
                 "name": "Wealthy Falcon HR",
             },
+            "workspace_scope": "tenant",
+            "roles": [
+                {
+                    "id": str(employee_role.id),
+                    "code": employee_role.code,
+                    "name": employee_role.name,
+                    "scope_type": employee_role.scope_type.value,
+                }
+            ],
+            "permissions": sorted(ROLE_PERMISSION_CODES["employee"]),
+            "permission_version": 1,
         }
 
 
@@ -375,6 +403,19 @@ async def test_application_filters_tenant_for_login_inviter_and_invitation_targe
                         password_hash=None,
                     ),
                 ]
+            )
+            await session.flush()
+            await assign_system_role(
+                session,
+                tenant_id=OTHER_TENANT_ID,
+                user_id=OTHER_TENANT_ACTIVE_USER_ID,
+                role_code="tenant_admin",
+            )
+            await assign_system_role(
+                session,
+                tenant_id=OTHER_TENANT_ID,
+                user_id=OTHER_TENANT_INVITED_USER_ID,
+                role_code="employee",
             )
 
         cross_tenant_login = await harness.client.post(

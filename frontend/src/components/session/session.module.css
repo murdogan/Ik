@@ -44,6 +44,36 @@
   animation: spin 700ms linear infinite;
 }
 
+.authorizationNotice {
+  display: flex;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 30px;
+  border: 1px solid var(--wf-line);
+  border-radius: var(--wf-radius-md);
+  background: var(--wf-surface);
+  text-align: left;
+}
+
+.authorizationNotice .spinner {
+  width: 22px;
+  height: 22px;
+}
+
+.authorizationNotice strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 15px;
+}
+
+.authorizationNotice p {
+  margin: 0;
+  color: var(--wf-muted);
+  font-size: 13px;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

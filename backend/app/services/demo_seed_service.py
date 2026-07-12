@@ -9,6 +9,10 @@ from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
+from app.services.authorization_service import (
+    assign_system_role,
+    seed_authorization_catalog,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,7 @@ class DemoUserFixture:
     id: UUID
     email: str
     full_name: str
+    role_code: str = "employee"
     status: UserStatus = UserStatus.ACTIVE
 
 
@@ -102,6 +107,7 @@ DEMO_USERS: tuple[DemoUserFixture, ...] = (
         id=UUID("f2000000-0000-4000-8000-000000000001"),
         email="admin@wealthyfalcon.demo",
         full_name="Maya Stone",
+        role_code="tenant_admin",
     ),
     DemoUserFixture(
         key="wf_people_partner",
@@ -109,6 +115,7 @@ DEMO_USERS: tuple[DemoUserFixture, ...] = (
         id=UUID("f2000000-0000-4000-8000-000000000002"),
         email="people.partner@wealthyfalcon.demo",
         full_name="Deniz Carter",
+        role_code="hr_specialist",
     ),
     DemoUserFixture(
         key="wf_manager",
@@ -116,6 +123,7 @@ DEMO_USERS: tuple[DemoUserFixture, ...] = (
         id=UUID("f2000000-0000-4000-8000-000000000003"),
         email="manager@wealthyfalcon.demo",
         full_name="Leila Morgan",
+        role_code="manager",
     ),
     DemoUserFixture(
         key="atlas_admin",
@@ -123,6 +131,7 @@ DEMO_USERS: tuple[DemoUserFixture, ...] = (
         id=UUID("f2000000-0000-4000-8000-000000000004"),
         email="admin@atlaspeople.demo",
         full_name="Arda Blake",
+        role_code="tenant_admin",
     ),
     DemoUserFixture(
         key="atlas_manager",
@@ -130,6 +139,7 @@ DEMO_USERS: tuple[DemoUserFixture, ...] = (
         id=UUID("f2000000-0000-4000-8000-000000000005"),
         email="manager@atlaspeople.demo",
         full_name="Nora Ellis",
+        role_code="manager",
     ),
 )
 
@@ -299,6 +309,7 @@ DEMO_LEAVE_REQUESTS: tuple[DemoLeaveRequestFixture, ...] = (
 
 
 async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
+    await seed_authorization_catalog(session)
     tenants = await _upsert_tenants(session)
     await session.flush()
     await _ensure_tenant_settings(session, tenants)
@@ -389,6 +400,13 @@ async def _upsert_users(session: AsyncSession, tenants: dict[str, Tenant]) -> di
         if is_new_user:
             user.status = fixture.status.value
             user.password_hash = None
+        await session.flush()
+        await assign_system_role(
+            session,
+            tenant_id=tenant.id,
+            user_id=user.id,
+            role_code=fixture.role_code,
+        )
         users[fixture.key] = user
     return users
 
