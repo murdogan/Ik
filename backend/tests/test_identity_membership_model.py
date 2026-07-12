@@ -4,6 +4,7 @@ from app.models.identity import (
     IdentityStatus,
     MembershipRole,
     MembershipStatus,
+    PlatformIdentityRole,
     TenantMembership,
 )
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
@@ -14,6 +15,7 @@ def test_identity_and_membership_models_are_registered() -> None:
         "identities",
         "tenant_memberships",
         "membership_roles",
+        "platform_identity_roles",
     } <= set(Base.metadata.tables)
 
 
@@ -30,6 +32,7 @@ def test_identity_statuses_and_global_credential_constraints_are_explicit() -> N
         Identity.__table__.c.email_normalized,
         Identity.__table__.c.status,
         Identity.__table__.c.password_hash,
+        Identity.__table__.c.platform_permission_version,
         Identity.__table__.c.created_at,
         Identity.__table__.c.updated_at,
     )
@@ -48,6 +51,7 @@ def test_identity_statuses_and_global_credential_constraints_are_explicit() -> N
         "ck_identities_status",
         "ck_identities_email_normalized_not_empty",
         "ck_identities_password_ownership",
+        "ck_identities_platform_permission_version_positive",
     }
     assert "status = 'pending' and password_hash is null" in checks[
         "ck_identities_password_ownership"
@@ -55,6 +59,31 @@ def test_identity_statuses_and_global_credential_constraints_are_explicit() -> N
     assert "status in ('active','locked') and password_hash is not null" in checks[
         "ck_identities_password_ownership"
     ]
+
+
+def test_platform_roles_are_global_identity_assignments_with_platform_scope() -> None:
+    assert tuple(
+        column.name for column in PlatformIdentityRole.__table__.primary_key.columns
+    ) == ("identity_id", "role_id")
+    assert set(_check_constraints(PlatformIdentityRole)) == {
+        "ck_platform_identity_roles_platform_scope",
+        "ck_platform_identity_roles_active",
+    }
+    assert _foreign_keys(PlatformIdentityRole) == {
+        "fk_platform_identity_roles_identity_id_identities": (
+            ("identity_id",),
+            ("identities.id",),
+            "CASCADE",
+        ),
+        "fk_platform_identity_roles_role_id_scope_roles": (
+            ("role_id", "role_scope_type"),
+            ("roles.id", "roles.scope_type"),
+            "RESTRICT",
+        ),
+    }
+    assert _indexes(PlatformIdentityRole) == {
+        "ix_platform_identity_roles_identity_active": ("identity_id", "active")
+    }
 
 
 def test_tenant_membership_preserves_legacy_state_with_tenant_safe_keys() -> None:

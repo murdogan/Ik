@@ -1,14 +1,16 @@
 import type { ReactNode } from "react";
 
-import { PermissionBoundary } from "@/components/session/authorization-boundary";
+import { PlatformPermissionBoundary } from "@/components/session/platform-authorization-boundary";
 import { AUTHORIZATION_PERMISSIONS } from "@/lib/authorization";
 
 export default function PlatformAuditLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
   return (
-    <PermissionBoundary permission={AUTHORIZATION_PERMISSIONS.readPlatformAudit}>
+    <PlatformPermissionBoundary
+      permission={AUTHORIZATION_PERMISSIONS.readPlatformAudit}
+    >
       {children}
-    </PermissionBoundary>
+    </PlatformPermissionBoundary>
   );
 }

@@ -35,6 +35,16 @@ interface AuditFilters {
 
 const EMPTY_FILTERS: AuditFilters = { category: "", eventType: "", result: "" };
 
+function TenantAuditDescription() {
+  const { user } = useSession();
+  return (
+    <>
+      {user.tenant.name} çalışma alanındaki izinli giriş, davet, rol ve oturum
+      olaylarını inceleyin.
+    </>
+  );
+}
+
 function resourceLabel(event: AuditEvent): string {
   if (!event.resource_type) {
     return "—";
@@ -46,7 +56,6 @@ function resourceLabel(event: AuditEvent): string {
 }
 
 export function AuditExplorer({ scope }: { scope: AuditScope }) {
-  const { user } = useSession();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [draftCategory, setDraftCategory] = useState("");
@@ -215,7 +224,7 @@ export function AuditExplorer({ scope }: { scope: AuditScope }) {
           </h1>
           <p>
             {isTenant
-              ? `${user.tenant.name} çalışma alanındaki izinli giriş, davet, rol ve oturum olaylarını inceleyin.`
+              ? <TenantAuditDescription />
               : "Yalnız platform operasyonlarını ve güvenlik olaylarını inceleyin; müşteri HR verileri bu görünümde yer almaz."}
           </p>
         </div>
@@ -249,7 +258,11 @@ export function AuditExplorer({ scope }: { scope: AuditScope }) {
             id={`${scope}_audit_event_type`}
             value={draftEventType}
             onChange={(event) => setDraftEventType(event.target.value)}
-            placeholder="Örn. auth.login.succeeded"
+            placeholder={
+              isTenant
+                ? "Örn. auth.login.succeeded"
+                : "Örn. platform.auth.login.succeeded"
+            }
             maxLength={160}
           />
         </div>

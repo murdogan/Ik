@@ -640,6 +640,10 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact five-key typed settings view and tenant isolation |
 | PATCH | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact allowlist update and suspended/offboarding read-only guard |
 | GET | `/api/v1/tenant/features` | Implemented and verified | Current-principal-only ordered effective flags; no tenant selector or mutation |
+| POST | `/api/v1/platform/auth/login` | Implemented for P3D | Global email/password verification followed by active platform-role enforcement; no tenant or organization selection; separate cookie/audience |
+| POST | `/api/v1/platform/auth/refresh` | Implemented for P3D | Platform-cookie-only tenantless family rotation and reuse detection |
+| POST | `/api/v1/platform/auth/logout` | Implemented for P3D | Revokes only the platform family and clears only the platform cookie |
+| GET | `/api/v1/platform/me` | Implemented for P3D | `PlatformBearerAuth` plus active tenantless session/role/version validation; no tenant-shaped principal fields |
 | POST | `/api/v1/auth/login` | Implemented for F2B | Tenant-aware credential verification, short-lived bearer response, and hashed server-side refresh family with HttpOnly cookie |
 | POST | `/api/v1/auth/select-organization` | Implemented for P3C | One-use opaque selection consumption and membership/tenant-bound access plus refresh session issuance |
 | POST | `/api/v1/auth/organization-selection` | Implemented for P3C | Authenticated identity-derived alternatives, source-family revocation, and no caller tenant selector |
@@ -656,7 +660,7 @@ the expected local commits ahead of the review-branch remote after the final com
 | PUT | `/api/v1/users/{user_id}/roles` | Implemented for F2D | Atomic replace semantics, tenant isolation, platform-role rejection and permission-version bump |
 | GET | `/api/v1/audit-events` | Implemented for F2E | Bearer + tenant audit permission, role/category filtering, redacted cursor page |
 | GET | `/api/v1/audit-events/{event_id}` | Implemented for F2E | Read-only safe detail with identical hidden/cross-tenant not-found behavior |
-| GET | `/api/v1/platform/audit-events` | Implemented for F2E | Separate trusted platform principal and platform-operations-only projection |
+| GET | `/api/v1/platform/audit-events` | Implemented for F2E/P3D | Separate `PlatformBearerAuth`, live platform session, and platform-operations-only projection |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |

@@ -9,7 +9,10 @@ export const AUTHORIZATION_PERMISSIONS = {
   readPlatformAudit: "audit:read:platform",
 } as const;
 
-export function hasPermission(user: AuthUser, permission: string): boolean {
+export function hasPermission(
+  user: { permissions: readonly string[] },
+  permission: string,
+): boolean {
   return user.permissions.includes(permission);
 }
 
@@ -17,6 +20,7 @@ export function isWorkspace(user: AuthUser, scope: WorkspaceScope): boolean {
   return user.workspace_scope === scope;
 }
 
-export function homePathForUser(user: AuthUser): "/dashboard" | "/platform" {
-  return user.workspace_scope === "platform" ? "/platform" : "/dashboard";
+export function homePathForUser(user: AuthUser): "/dashboard" {
+  void user;
+  return "/dashboard";
 }

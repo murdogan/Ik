@@ -56,6 +56,9 @@ export default function HomePage() {
           >
             <span aria-hidden="true" /> Sistem durumu
           </a>
+          <Link className={styles.platformLink} href="/platform/login">
+            Platform yönetimi
+          </Link>
           <Link className={styles.loginLink} href="/login">Giriş yap</Link>
         </div>
       </nav>
@@ -148,7 +151,10 @@ export default function HomePage() {
       <footer className={styles.footer}>
         <div className={styles.brand}><span className={styles.mark}>WF</span><strong>Wealthy Falcon HR</strong></div>
         <p>Güvenli, tenant-aware insan operasyonları platformu.</p>
-        <Link href="/login">Giriş yap →</Link>
+        <div className={styles.footerLinks}>
+          <Link href="/platform/login">Platform yönetimi</Link>
+          <Link href="/login">Giriş yap →</Link>
+        </div>
       </footer>
     </main>
   );

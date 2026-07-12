@@ -4,8 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { useSession } from "@/components/session/session-provider";
-import type { AuthUser } from "@/lib/auth-contracts";
+import { usePlatformSession } from "@/components/session/platform-session-provider";
+import type {
+  PlatformAuthenticationStrength,
+  PlatformAuthUser,
+} from "@/lib/auth-contracts";
 import {
   AUTHORIZATION_PERMISSIONS,
   hasPermission,
@@ -34,7 +37,13 @@ function displayName(fullName: string | null, email: string): string {
   return fullName?.trim() || email;
 }
 
-function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
+function Navigation({
+  user,
+  mobile = false,
+}: {
+  user: PlatformAuthUser;
+  mobile?: boolean;
+}) {
   const pathname = usePathname();
   const visibleItems = platformNavigation.filter(
     (item) => item.permission === null || hasPermission(user, item.permission),
@@ -65,10 +74,25 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
   );
 }
 
+function authenticationStrengthLabel(
+  strength: PlatformAuthenticationStrength,
+): string {
+  if (strength === "multi_factor") {
+    return "Çok faktörlü doğrulama";
+  }
+  if (strength === "step_up") {
+    return "Yükseltilmiş doğrulama";
+  }
+  return "Tek faktörlü doğrulama";
+}
+
 export function PlatformShell({ children }: { children: ReactNode }) {
-  const { user, isLoggingOut, logoutError, signOut } = useSession();
+  const { user, isLoggingOut, logoutError, signOut } = usePlatformSession();
   const name = displayName(user.full_name, user.email);
   const roleNames = user.roles.map((role) => role.name).join(" · ") || "Platform yetkisi";
+  const authenticationStrength = authenticationStrengthLabel(
+    user.authentication_strength,
+  );
 
   return (
     <div className={styles.application} data-workspace-shell="platform">
@@ -88,7 +112,9 @@ export function PlatformShell({ children }: { children: ReactNode }) {
 
         <Navigation user={user} />
 
-        <p className={styles.sidebarNote}>Platform oturumu · varsayılan erişim kapalı</p>
+        <p className={styles.sidebarNote}>
+          Platform oturumu · {authenticationStrength} · varsayılan erişim kapalı
+        </p>
       </aside>
 
       <main className={styles.main}>
@@ -96,7 +122,9 @@ export function PlatformShell({ children }: { children: ReactNode }) {
           <div className={styles.identity}>
             <span>Platform yönetimi</span>
             <strong>{name}</strong>
-            <small>{roleNames}</small>
+            <small>
+              {roleNames} · {authenticationStrength}
+            </small>
           </div>
           <button
             className={styles.logoutButton}

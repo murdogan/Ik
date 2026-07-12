@@ -5,6 +5,8 @@ from app.models.auth import (
     AuthenticationRateLimitBucket,
     OrganizationSelectionChoice,
     OrganizationSelectionTransaction,
+    PlatformRefreshSessionFamily,
+    PlatformRefreshSessionToken,
     RefreshSessionFamily,
     RefreshSessionToken,
     UserActivationToken,
@@ -17,6 +19,7 @@ from app.models.identity import (
     IdentityStatus,
     MembershipRole,
     MembershipStatus,
+    PlatformIdentityRole,
     TenantMembership,
 )
 from app.models.leave_balance_summary import LeaveBalanceSummary
@@ -40,6 +43,9 @@ __all__ = [
     "Permission",
     "OrganizationSelectionTransaction",
     "OrganizationSelectionChoice",
+    "PlatformIdentityRole",
+    "PlatformRefreshSessionFamily",
+    "PlatformRefreshSessionToken",
     "RefreshSessionFamily",
     "RefreshSessionToken",
     "Role",

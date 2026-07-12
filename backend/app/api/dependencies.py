@@ -5,6 +5,10 @@ from uuid import UUID
 from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth_dependencies import (
+    PlatformAuthenticatedSession,
+    require_platform_authenticated_session,
+)
 from app.api.errors import (
     IDEMPOTENCY_KEY_HEADER,
     TENANT_ID_HEADER,
@@ -42,10 +46,20 @@ from app.services.tenant_feature_service import TenantFeatureService
 from app.services.tenant_service import TenantService
 
 
-def get_platform_principal() -> PlatformPrincipal:
-    """Fail closed until a trusted Phase-2 identity adapter injects platform authority."""
+async def get_platform_principal(
+    authenticated: Annotated[
+        PlatformAuthenticatedSession,
+        Depends(require_platform_authenticated_session),
+    ],
+) -> PlatformPrincipal:
+    """Adapt only a live platform-realm session into the platform operations seam."""
 
-    raise platform_access_denied_error()
+    return PlatformPrincipal(
+        source="platform_session",
+        identity_id=authenticated.principal.identity_id,
+        session_family_id=authenticated.principal.session_family_id,
+        authentication_strength=authenticated.principal.authentication_strength,
+    )
 
 
 def get_tenant_principal() -> TenantPrincipal:
@@ -79,7 +93,7 @@ def get_request_context(request: Request) -> RequestContext:
 def get_platform_request_context(
     request: Request,
     context: Annotated[RequestContext, Depends(get_request_context)],
-    _principal: Annotated[PlatformPrincipal, Depends(require_platform_principal)],
+    principal: Annotated[PlatformPrincipal, Depends(require_platform_principal)],
 ) -> RequestContext:
     """Authorize a platform request without trusting caller identity metadata."""
 
@@ -87,7 +101,18 @@ def get_platform_request_context(
         request,
         DatabaseAccessContext(path=DatabaseAccessPath.PLATFORM),
     )
-    return replace_request_context(request, context)
+    if principal.identity_id is None or principal.session_family_id is None:
+        # Unit-level trusted-adapter overrides need not manufacture actor metadata. Production
+        # principals always carry both values from a validated platform session.
+        return replace_request_context(request, context)
+    return replace_request_context(
+        request,
+        context.derive(
+            actor_id=principal.identity_id,
+            session_id=principal.session_family_id,
+            authentication_strength=principal.authentication_strength,
+        ),
+    )
 
 
 def get_tenant_principal_request_context(

@@ -233,7 +233,7 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
             operation: (
                 "Platform principal authorization denial envelope.",
                 "platform_access_denied",
-                "Platform tenant access requires a trusted principal",
+                "A valid platform access credential is required",
             )
             for operation in PLATFORM_TENANT_OPERATIONS
         },
@@ -256,10 +256,13 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
         denial = operation["responses"]["403"]
         media_type = denial["content"]["application/json"]
 
-        # Phase 1 truthfully documents its injected authorization seam without advertising a
-        # caller-facing bearer/API-key scheme that does not exist until Phase 2.
+        # P3D retains the explicit principal metadata while wiring the production platform
+        # audience instead of accepting a tenant credential or caller identity header.
         assert operation["x-required-principal"] == expected_principals[(path, method)]
-        assert "security" not in operation
+        if expected_principals[(path, method)] == "platform":
+            assert operation["security"] == [{"PlatformBearerAuth": []}]
+        else:
+            assert "security" not in operation
         assert denial["description"] == description
         assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
         assert media_type["example"]["error"] == {
@@ -268,11 +271,15 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
             "correlation_id": "req_wf_demo_001",
         }
 
-    # Phase 2 may advertise its real bearer credential without retrofitting caller credentials
-    # onto the frozen Phase-1 trusted-principal operations above.
+    # Tenant and platform bearer schemes remain distinct in the generated contract.
     assert response.json()["components"]["securitySchemes"]["BearerAuth"] == {
         "type": "http",
         "description": "Short-lived access credential returned by the login endpoint.",
+        "scheme": "bearer",
+    }
+    assert response.json()["components"]["securitySchemes"]["PlatformBearerAuth"] == {
+        "type": "http",
+        "description": "Short-lived credential issued only by the platform authentication realm.",
         "scheme": "bearer",
     }
     assert paths["/api/v1/users/invitations"]["post"]["security"] == [

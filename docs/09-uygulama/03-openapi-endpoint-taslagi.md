@@ -42,6 +42,10 @@ generated operation ve runtime `/openapi.json` ile 42 documented endpoint'tir.
 | GET | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; `{data,meta}`; beş typed/allowlisted current-tenant setting |
 | PATCH | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; `{data,meta}`; extra key reddi ve lifecycle read-only guard |
 | GET | `/api/v1/tenant/features` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; selector kabul etmeden injected current tenant effective flag catalogu |
+| POST | `/api/v1/platform/auth/login` | P3D uygulandı | Global email/parola doğrulamasından sonra aktif platform rolü; tenant/organizasyon seçimi yok; ayrı platform cookie/audience |
+| POST | `/api/v1/platform/auth/refresh` | P3D uygulandı | Yalnız platform refresh cookie'sini döndürür; tenantless family rotation ve reuse koruması |
+| POST | `/api/v1/platform/auth/logout` | P3D uygulandı | Yalnız platform family revoke/cookie temizleme; eşzamanlı tenant oturumuna dokunmaz |
+| GET | `/api/v1/platform/me` | P3D uygulandı | `PlatformBearerAuth` + canlı tenantless session/rol/version doğrulaması; tenant alanı döndürmez |
 | POST | `/api/v1/auth/login` | F2B uygulandı | Tenant-aware doğrulama, kısa ömürlü bearer ve HttpOnly cookie üzerinden hashli server session family |
 | POST | `/api/v1/auth/select-organization` | P3C uygulandı | Hashli, süreli, tek kullanımlık seçim credential'ı ve opaque choice ile membership/tenant-bound session |
 | POST | `/api/v1/auth/organization-selection` | P3C uygulandı | Aktif membership-bound session'dan server-derived alternatifler; kaynak family revoke; tenant selector kabul etmez |
@@ -58,7 +62,7 @@ generated operation ve runtime `/openapi.json` ile 42 documented endpoint'tir.
 | PUT | `/api/v1/users/{user_id}/roles` | F2D uygulandı | Atomik replace, tenant isolation, platform-role reddi ve permission-version artışı |
 | GET | `/api/v1/audit-events` | F2E uygulandı | Bearer + `audit:read:tenant`; role/category filtreli, redakte cursor sayfası |
 | GET | `/api/v1/audit-events/{event_id}` | F2E uygulandı | Yalnız current tenant ve görünür kategoride salt-okunur güvenli detay |
-| GET | `/api/v1/platform/audit-events` | F2E uygulandı | Ayrı trusted platform principal; yalnız `platform_operations`, HR payload yok |
+| GET | `/api/v1/platform/audit-events` | P3D sınırıyla F2E uygulandı | Ayrı `PlatformBearerAuth` ve canlı platform session; yalnız `platform_operations`, HR payload yok |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |

@@ -10,6 +10,13 @@
     linear-gradient(180deg, #fbfffd 0%, var(--wf-bg) 62%, #eef7f2 100%);
 }
 
+.platformPage {
+  background:
+    radial-gradient(circle at 12% 10%, rgba(83, 107, 196, 0.18), transparent 34%),
+    radial-gradient(circle at 90% 6%, rgba(49, 107, 255, 0.13), transparent 30%),
+    linear-gradient(180deg, #fbfcff 0%, #f4f6fb 62%, #edf0f8 100%);
+}
+
 .shell {
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(420px, 0.78fr);
@@ -50,6 +57,18 @@
     0 0 0 48px rgba(255, 255, 255, 0.04),
     0 0 0 96px rgba(255, 255, 255, 0.025);
   content: "";
+}
+
+.platformStory {
+  background:
+    radial-gradient(circle at 15% 10%, rgba(107, 133, 255, 0.3), transparent 34%),
+    radial-gradient(circle at 95% 92%, rgba(53, 164, 119, 0.18), transparent 34%),
+    linear-gradient(145deg, #111a31 0%, #1e2d52 55%, #2d4274 100%);
+}
+
+.platformStory .statusDot {
+  background: #91a7ff;
+  box-shadow: 0 0 0 6px rgba(145, 167, 255, 0.16);
 }
 
 .brand {
@@ -304,6 +323,40 @@
   background: #71a991;
   box-shadow: none;
   cursor: wait;
+}
+
+.platformPrimaryButton {
+  border-color: #425cb9;
+  background: #425cb9;
+  box-shadow: 0 14px 30px rgba(42, 62, 127, 0.24);
+}
+
+.platformPrimaryButton:hover:not(:disabled) {
+  border-color: #344a97;
+  background: #344a97;
+  box-shadow: 0 16px 34px rgba(42, 62, 127, 0.3);
+}
+
+.platformPrimaryButton:disabled {
+  border-color: #8291c8;
+  background: #8291c8;
+}
+
+.platformPage .eyebrow {
+  color: #425cb9;
+}
+
+.realmSwitch {
+  margin: 2px 0 0;
+  color: var(--wf-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.realmSwitch a {
+  color: #425cb9;
+  font-weight: 800;
 }
 
 .secondaryButton,
@@ -614,6 +667,10 @@
 
   .mobileBrand .brandName {
     color: var(--wf-ink);
+  }
+
+  .platformPage .mobileBrand .brandMark {
+    background: linear-gradient(135deg, #253862, #536bc4);
   }
 
   .card h1 {

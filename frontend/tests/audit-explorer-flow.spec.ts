@@ -44,13 +44,8 @@ const employee = {
 
 const platformAdmin = {
   id: "f2000000-0000-4000-8000-000000000099",
-  tenant_id: "f1000000-0000-4000-8000-000000000099",
   email: "platform@wealthyfalcon.demo",
   full_name: "Atlas Platform",
-  tenant: {
-    slug: "internal-platform",
-    name: "Internal Platform Identity Tenant",
-  },
   workspace_scope: "platform",
   roles: [
     {
@@ -62,6 +57,7 @@ const platformAdmin = {
   ],
   permissions: ["tenant:read:platform", "audit:read:platform"],
   permission_version: 8,
+  authentication_strength: "multi_factor",
 };
 
 interface EventOverrides {
@@ -392,7 +388,7 @@ test("platform audit view stays in the platform shell and never calls tenant aud
 
   await context.addCookies([
     {
-      name: "wf_refresh",
+      name: "wf_platform_refresh",
       value: "platform-audit-refresh",
       url: "http://127.0.0.1:3100",
       httpOnly: true,
@@ -403,7 +399,7 @@ test("platform audit view stays in the platform shell and never calls tenant aud
   await page.route("**/api/v1/**", async (route: Route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (path === "/api/v1/auth/refresh") {
+    if (path === "/api/v1/platform/auth/refresh") {
       accessToken = "platform-audit-access";
       await route.fulfill({
         status: 200,
@@ -419,7 +415,7 @@ test("platform audit view stays in the platform shell and never calls tenant aud
     }
 
     expect(request.headers().authorization).toBe(`Bearer ${accessToken}`);
-    if (path === "/api/v1/me") {
+    if (path === "/api/v1/platform/me") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",

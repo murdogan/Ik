@@ -27,6 +27,8 @@
 .navActions { display: flex; align-items: center; gap: 26px; }
 .statusLink { color: var(--wf-muted); font-size: 13px; text-decoration: none; }
 .statusLink span { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: #31ad73; box-shadow: 0 0 0 4px rgba(49,173,115,.12); }
+.platformLink { color: #536bc4; font-size: 12px; font-weight: 750; text-decoration: none; }
+.platformLink:hover { color: #344a97; }
 .loginLink { padding: 11px 19px; border: 1px solid var(--wf-line); border-radius: 11px; background: rgba(255,255,255,.76); font-size: 14px; font-weight: 700; text-decoration: none; }
 
 .hero {
@@ -94,7 +96,9 @@
 .cardGrid p { color: var(--wf-muted); font-size: 14px; line-height: 1.65; }
 .footer { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 37px 0 50px; border-top: 1px solid var(--wf-line); display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 35px; }
 .footer p { color: var(--wf-muted); font-size: 12px; }
-.footer > a { color: var(--wf-green); font-size: 13px; font-weight: 800; text-decoration: none; }
+.footerLinks { display: flex; align-items: center; gap: 20px; }
+.footerLinks a { color: var(--wf-green); font-size: 13px; font-weight: 800; text-decoration: none; }
+.footerLinks a:first-child { color: #536bc4; font-size: 12px; }
 
 @media (max-width: 900px) {
   .hero { margin-top: 20px; grid-template-columns: 1fr; }
@@ -108,6 +112,8 @@
 @media (max-width: 620px) {
   .nav { height: 75px; }
   .statusLink { display: none; }
+  .navActions { gap: 12px; }
+  .platformLink { display: none; }
   .hero { width: min(100% - 28px, 1180px); margin-bottom: 60px; gap: 38px; }
   .hero h1 { font-size: 43px; }
   .lead { font-size: 16px; }
@@ -119,4 +125,5 @@
   .metrics { grid-template-columns: 1fr; }
   .metrics div { padding: 16px; border-right: 0; border-bottom: 1px solid var(--wf-line); }
   .footer { grid-template-columns: 1fr; gap: 12px; }
+  .footerLinks { align-items: flex-start; flex-direction: column; gap: 10px; }
 }

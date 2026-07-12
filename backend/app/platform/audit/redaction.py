@@ -66,7 +66,7 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "revocation_reason": frozenset(
         {"logout", "account_locked", "account_disabled", "refresh_reuse"}
     ),
-    "source": frozenset({"access_session", "account_status"}),
+    "source": frozenset({"access_session", "account_status", "refresh_cookie"}),
     "status": frozenset({"provisioning", "trial", "active", "suspended", "offboarding", "closed"}),
     "plan_code": frozenset({"core", "professional", "enterprise"}),
     "data_region": frozenset({"tr-1", "eu-1"}),
@@ -79,6 +79,9 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     AuditEventType.LOGIN_FAILED: AuditMetadataPolicy(
         metadata_keys=frozenset({"failure_reason"})
     ),
+    AuditEventType.PLATFORM_LOGIN_SUCCEEDED: AuditMetadataPolicy(),
+    AuditEventType.PLATFORM_LOGIN_FAILED: AuditMetadataPolicy(),
+    AuditEventType.PLATFORM_LOGIN_DENIED: AuditMetadataPolicy(),
     AuditEventType.ACTIVATION_COMPLETED: AuditMetadataPolicy(
         metadata_keys=frozenset({"before_status", "after_status"}),
         changed_fields=frozenset({"status"}),
@@ -107,6 +110,12 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         metadata_keys=frozenset({"revocation_reason"})
     ),
     AuditEventType.SESSION_REVOKED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"revocation_reason", "source"})
+    ),
+    AuditEventType.PLATFORM_SESSION_STARTED: AuditMetadataPolicy(),
+    AuditEventType.PLATFORM_SESSION_REFRESHED: AuditMetadataPolicy(),
+    AuditEventType.PLATFORM_SESSION_REUSE_DETECTED: AuditMetadataPolicy(),
+    AuditEventType.PLATFORM_SESSION_REVOKED: AuditMetadataPolicy(
         metadata_keys=frozenset({"revocation_reason", "source"})
     ),
     AuditEventType.PLATFORM_TENANT_CREATED: AuditMetadataPolicy(

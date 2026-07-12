@@ -7,13 +7,22 @@ from typing import Annotated
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.api.errors import authentication_required_error
+from app.api.errors import (
+    authentication_required_error,
+    platform_access_denied_error,
+    platform_step_up_required_error,
+)
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, AuthRuntime
 from app.core.config import APP_SETTINGS_STATE_KEY, Settings
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
 from app.platform.authorization import DenyByDefaultPolicy, PermissionName
 from app.platform.errors.application import ApplicationError
-from app.platform.identity import AccessPrincipal, InvalidAccessTokenError
+from app.platform.identity import (
+    AccessPrincipal,
+    InvalidAccessTokenError,
+    InvalidPlatformAccessTokenError,
+    PlatformAccessPrincipal,
+)
 from app.platform.observability.correlation import replace_request_context
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
@@ -24,6 +33,11 @@ from app.services.authorization_service import (
     AuthorizationAccessDeniedError,
     AuthorizationService,
 )
+from app.services.platform_auth_session_service import (
+    PlatformAuthenticatedUser,
+    PlatformAuthSessionService,
+)
+from app.services.platform_authentication_service import PlatformAuthenticationService
 from app.services.user_administration_service import UserAdministrationService
 from app.services.user_invitation_service import UserInvitationService
 
@@ -31,6 +45,11 @@ _bearer_scheme = HTTPBearer(
     auto_error=False,
     scheme_name="BearerAuth",
     description="Short-lived access credential returned by the login endpoint.",
+)
+_platform_bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="PlatformBearerAuth",
+    description="Short-lived credential issued only by the platform authentication realm.",
 )
 _authorization_policy = DenyByDefaultPolicy()
 
@@ -87,6 +106,29 @@ def get_auth_session_service(
     return AuthSessionService(
         session_factory=database_runtime.session_factory,
         access_tokens=auth_runtime.access_tokens,
+        refresh_ttl=auth_runtime.refresh_ttl,
+    )
+
+
+def get_platform_authentication_service(
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+    database_runtime: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+) -> PlatformAuthenticationService:
+    return PlatformAuthenticationService(
+        session_factory=database_runtime.session_factory,
+        password_manager=auth_runtime.password_manager,
+        access_tokens=auth_runtime.platform_access_tokens,
+        refresh_ttl=auth_runtime.refresh_ttl,
+    )
+
+
+def get_platform_auth_session_service(
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+    database_runtime: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+) -> PlatformAuthSessionService:
+    return PlatformAuthSessionService(
+        session_factory=database_runtime.session_factory,
+        access_tokens=auth_runtime.platform_access_tokens,
         refresh_ttl=auth_runtime.refresh_ttl,
     )
 
@@ -163,6 +205,63 @@ async def require_authenticated_session(
     )
 
 
+def require_platform_access_principal(
+    request: Request,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(_platform_bearer_scheme),
+    ],
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+) -> PlatformAccessPrincipal:
+    authorization_values = request.headers.getlist("Authorization")
+    if len(authorization_values) != 1 or credentials is None:
+        raise platform_access_denied_error()
+    if credentials.scheme.lower() != "bearer":
+        raise platform_access_denied_error()
+    try:
+        return auth_runtime.platform_access_tokens.decode(credentials.credentials)
+    except InvalidPlatformAccessTokenError as exc:
+        raise platform_access_denied_error() from exc
+
+
+@dataclass(frozen=True, slots=True)
+class PlatformAuthenticatedSession:
+    principal: PlatformAccessPrincipal
+    user: PlatformAuthenticatedUser
+
+
+async def require_platform_authenticated_session(
+    principal: Annotated[
+        PlatformAccessPrincipal,
+        Depends(require_platform_access_principal),
+    ],
+    service: Annotated[
+        PlatformAuthSessionService,
+        Depends(get_platform_auth_session_service),
+    ],
+) -> PlatformAuthenticatedSession:
+    return PlatformAuthenticatedSession(
+        principal=principal,
+        user=await service.current_user(principal),
+    )
+
+
+def require_platform_step_up(
+    authenticated: Annotated[
+        PlatformAuthenticatedSession,
+        Depends(require_platform_authenticated_session),
+    ],
+) -> PlatformAuthenticatedSession:
+    """Future privileged routes can opt into MFA/step-up without changing token shape."""
+
+    if authenticated.principal.authentication_strength not in {
+        AuthenticationStrength.MULTI_FACTOR,
+        AuthenticationStrength.STEP_UP,
+    }:
+        raise platform_step_up_required_error()
+    return authenticated
+
+
 def require_permission(
     permission_code: str,
     *,
@@ -223,11 +322,17 @@ __all__ = [
     "get_auth_session_service",
     "get_authorization_service",
     "get_authentication_service",
+    "get_platform_auth_session_service",
+    "get_platform_authentication_service",
     "get_authenticated_request_context",
     "get_user_administration_service",
     "get_user_invitation_service",
     "require_access_principal",
     "require_authenticated_session",
+    "PlatformAuthenticatedSession",
+    "require_platform_access_principal",
+    "require_platform_authenticated_session",
+    "require_platform_step_up",
     "require_permission",
     "require_invitation_principal",
 ]

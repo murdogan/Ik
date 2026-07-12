@@ -106,6 +106,22 @@ P3C_ADDITIVE_OPERATIONS = {
 P3C_BEARER_OPERATIONS = {
     "POST /api/v1/auth/organization-selection",
 }
+P3D_ADDITIVE_OPERATIONS = {
+    "GET /api/v1/platform/me",
+    "POST /api/v1/platform/auth/login",
+    "POST /api/v1/platform/auth/logout",
+    "POST /api/v1/platform/auth/refresh",
+}
+P3D_PLATFORM_BEARER_OPERATIONS = {
+    "GET /api/v1/platform/audit-events",
+    "GET /api/v1/platform/me",
+    "GET /api/v1/platform/tenants",
+    "GET /api/v1/platform/tenants/{tenant_id}",
+    "GET /api/v1/platform/tenants/{tenant_id}/features",
+    "PATCH /api/v1/platform/tenants/{tenant_id}",
+    "PATCH /api/v1/platform/tenants/{tenant_id}/features",
+    "POST /api/v1/platform/tenants",
+}
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -123,7 +139,12 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
     assert {
         operation: current["operations"].get(operation)
         for operation in snapshot["contract"]["operations"]
-    } == snapshot["contract"]["operations"]
+        if operation not in P3D_PLATFORM_BEARER_OPERATIONS
+    } == {
+        operation: digest
+        for operation, digest in snapshot["contract"]["operations"].items()
+        if operation not in P3D_PLATFORM_BEARER_OPERATIONS
+    }
     for group_name, components in snapshot["contract"]["components"].items():
         assert {
             component: current["components"].get(group_name, {}).get(component)
@@ -132,17 +153,18 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
 
 
 def test_current_openapi_surface_is_the_approved_additive_identity_contract() -> None:
-    """Preserve the historical F2 surface while approving the focused P3C additions."""
+    """Preserve the historical surface while approving focused P3C/P3D additions."""
 
     f1e = _load_contract(F1E_SNAPSHOT_PATH)
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
 
-    assert current["operation_count"] == 41
+    assert current["operation_count"] == 45
     assert set(current["operations"]) == (
         set(f1e["operations"])
         | F2_APPROVED_ADDITIVE_OPERATIONS
         | P3C_ADDITIVE_OPERATIONS
+        | P3D_ADDITIVE_OPERATIONS
     )
     bearer_security = [{"BearerAuth": []}]
     assert {
@@ -151,12 +173,21 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         for method, operation in path_item.items()
         if method in HTTP_METHODS and operation.get("security") == bearer_security
     } == F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS
+    platform_bearer_security = [{"PlatformBearerAuth": []}]
+    assert {
+        f"{method.upper()} {path}"
+        for path, path_item in openapi["paths"].items()
+        for method, operation in path_item.items()
+        if method in HTTP_METHODS and operation.get("security") == platform_bearer_security
+    } == P3D_PLATFORM_BEARER_OPERATIONS
     for path, path_item in openapi["paths"].items():
         for method, operation in path_item.items():
             if method not in HTTP_METHODS:
                 continue
             if f"{method.upper()} {path}" not in (
-                F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS
+                F2_BEARER_OPERATIONS
+                | P3C_BEARER_OPERATIONS
+                | P3D_PLATFORM_BEARER_OPERATIONS
             ):
                 assert "security" not in operation
 

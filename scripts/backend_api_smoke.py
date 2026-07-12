@@ -29,10 +29,12 @@ from app.db.base import Base
 from app.db.session import DATABASE_RUNTIME_STATE_KEY
 from app.main import create_app
 from app.models.employee import EmployeeStatus
+from app.models.identity import Identity, PlatformIdentityRole
 from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequestStatus
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.authorization import ROLES_BY_CODE
 from app.platform.identity import PasswordManager
 from app.platform.db import configure_tenant_database_access
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
@@ -42,6 +44,7 @@ from app.services.authorization_service import (
 )
 from app.services.identity_projection_service import sync_identity_membership_projection
 from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy import select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -191,6 +194,10 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/audit-events"),
     ("get", "/api/v1/audit-events/{event_id}"),
     ("get", "/api/v1/platform/audit-events"),
+    ("post", "/api/v1/platform/auth/login"),
+    ("post", "/api/v1/platform/auth/logout"),
+    ("post", "/api/v1/platform/auth/refresh"),
+    ("get", "/api/v1/platform/me"),
     ("post", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants/{tenant_id}"),
@@ -419,6 +426,7 @@ async def _prepare_smoke_database(
             requesting_user = await session.get(User, REQUESTING_USER_ID)
             assert requesting_user is not None
             await sync_identity_membership_projection(session, requesting_user)
+            await _seed_smoke_platform_role(session)
         await session.commit()
 
     if engine.dialect.name == "postgresql":
@@ -428,6 +436,32 @@ async def _prepare_smoke_database(
                 requesting_user = await session.get(User, REQUESTING_USER_ID)
                 assert requesting_user is not None
                 await sync_identity_membership_projection(session, requesting_user)
+        async with bootstrap_sessions.begin() as session:
+            await _seed_smoke_platform_role(session)
+
+
+async def _seed_smoke_platform_role(session: Any) -> None:
+    identity_id = await session.scalar(
+        select(Identity.id).where(
+            Identity.email_normalized == "requester@wealthyfalcon.test"
+        )
+    )
+    if identity_id is None:
+        raise AssertionError("smoke platform identity projection is missing")
+    super_admin_role = ROLES_BY_CODE["super_admin"]
+    assignment = await session.get(
+        PlatformIdentityRole,
+        (identity_id, super_admin_role.id),
+    )
+    if assignment is None:
+        session.add(
+            PlatformIdentityRole(
+                identity_id=identity_id,
+                role_id=super_admin_role.id,
+                role_scope_type="platform",
+                active=True,
+            )
+        )
 
 
 async def _smoke_correlation_middleware(client: AsyncClient) -> None:
@@ -648,6 +682,89 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         **SPOOFED_IDENTITY_HEADERS,
         "Authorization": f"Bearer {access_token}",
     }
+    platform_login = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/platform/auth/login",
+            json={
+                "email": "requester@wealthyfalcon.test",
+                "password": SMOKE_ADMIN_CREDENTIAL,
+            },
+        ),
+        200,
+        "POST /api/v1/platform/auth/login",
+        {"status", "access_token", "token_type", "expires_in", "user"},
+    )
+    _assert_equal(
+        platform_login["user"]["workspace_scope"],
+        "platform",
+        "platform login workspace",
+    )
+    if "tenant_id" in platform_login["user"] or "tenant" in platform_login["user"]:
+        raise AssertionError("platform login returned tenant-shaped principal data")
+    platform_access = platform_login["access_token"]
+    _expect_phase1_error_code(
+        await client.get(
+            "/api/v1/platform/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+        ),
+        403,
+        "platform_access_denied",
+        "tenant audience cannot call platform me",
+    )
+    _expect_phase1_error_code(
+        await client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {platform_access}"},
+        ),
+        401,
+        "authentication_required",
+        "platform audience cannot call tenant me",
+    )
+    platform_me = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/platform/me",
+            headers={"Authorization": f"Bearer {platform_access}"},
+        ),
+        200,
+        "GET /api/v1/platform/me",
+        {"user"},
+    )
+    _assert_equal(
+        platform_me["user"],
+        platform_login["user"],
+        "platform current principal",
+    )
+    refreshed_platform = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/platform/auth/refresh",
+        ),
+        200,
+        "POST /api/v1/platform/auth/refresh",
+        {"access_token", "token_type", "expires_in", "user"},
+    )
+    _assert_equal(
+        refreshed_platform["user"],
+        platform_login["user"],
+        "refreshed platform principal",
+    )
+    _expect_status(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/platform/auth/logout",
+            headers={
+                "Authorization": f"Bearer {refreshed_platform['access_token']}"
+            },
+        ),
+        204,
+        "POST /api/v1/platform/auth/logout",
+    )
     _expect_phase1_error_code(
         await _request_documented(
             client,
@@ -1377,9 +1494,15 @@ def _expect_phase1_openapi_contracts(openapi: dict[str, Any]) -> None:
             PHASE1_REQUIRED_PRINCIPALS[(method, path)],
             f"{method.upper()} {path} required principal metadata",
         )
-        if "security" in operation:
+        if PHASE1_REQUIRED_PRINCIPALS[(method, path)] == "platform":
+            _assert_equal(
+                operation.get("security"),
+                [{"PlatformBearerAuth": []}],
+                f"{method.upper()} {path} platform bearer requirement",
+            )
+        elif "security" in operation:
             raise AssertionError(
-                f"{method.upper()} {path} must not advertise a Phase 2 credential scheme"
+                f"{method.upper()} {path} must not advertise a caller credential scheme"
             )
         success_response = operation["responses"][status_code]
         _assert_equal(
@@ -1495,10 +1618,17 @@ def _expect_phase1_openapi_contracts(openapi: dict[str, Any]) -> None:
 def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
     paths = openapi["paths"]
     security_schemes = openapi["components"].get("securitySchemes", {})
-    _assert_equal(set(security_schemes), {"BearerAuth"}, "F2A security schemes")
+    _assert_equal(
+        set(security_schemes),
+        {"BearerAuth", "PlatformBearerAuth"},
+        "P3D separated security schemes",
+    )
     bearer = security_schemes["BearerAuth"]
     _assert_equal(bearer.get("type"), "http", "F2A bearer type")
     _assert_equal(bearer.get("scheme"), "bearer", "F2A bearer scheme")
+    platform_bearer = security_schemes["PlatformBearerAuth"]
+    _assert_equal(platform_bearer.get("type"), "http", "P3D platform bearer type")
+    _assert_equal(platform_bearer.get("scheme"), "bearer", "P3D platform bearer scheme")
 
     login = paths["/api/v1/auth/login"]["post"]
     activation = paths["/api/v1/auth/activate"]["post"]
@@ -1508,12 +1638,19 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
     select_organization = paths["/api/v1/auth/select-organization"]["post"]
     prepare_organization_switch = paths["/api/v1/auth/organization-selection"]["post"]
     me = paths["/api/v1/me"]["get"]
+    platform_login = paths["/api/v1/platform/auth/login"]["post"]
+    platform_refresh = paths["/api/v1/platform/auth/refresh"]["post"]
+    platform_logout = paths["/api/v1/platform/auth/logout"]["post"]
+    platform_me = paths["/api/v1/platform/me"]["get"]
     for operation, label in (
         (login, "F2A login"),
         (activation, "F2A activation"),
         (refresh, "F2B refresh"),
         (logout, "F2B logout"),
         (select_organization, "P3C organization selection"),
+        (platform_login, "P3D platform login"),
+        (platform_refresh, "P3D platform refresh"),
+        (platform_logout, "P3D platform logout"),
     ):
         if "security" in operation:
             raise AssertionError(f"{label} must remain a public credential endpoint")
@@ -1523,6 +1660,11 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
         "F2A invitation bearer requirement",
     )
     _assert_equal(me.get("security"), [{"BearerAuth": []}], "F2B me bearer requirement")
+    _assert_equal(
+        platform_me.get("security"),
+        [{"PlatformBearerAuth": []}],
+        "P3D platform me bearer requirement",
+    )
     _assert_equal(
         prepare_organization_switch.get("security"),
         [{"BearerAuth": []}],
@@ -1537,6 +1679,9 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
         (select_organization, "200", "P3C organization selection"),
         (prepare_organization_switch, "200", "P3C organization switch"),
         (me, "200", "F2B me"),
+        (platform_login, "200", "P3D platform login"),
+        (platform_refresh, "200", "P3D platform refresh"),
+        (platform_me, "200", "P3D platform me"),
     ):
         success_response = operation["responses"][success_status]
         _assert_equal(
@@ -1557,6 +1702,11 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
         set(logout["responses"]["204"].get("headers", {})),
         set(CORRELATION_RESPONSE_HEADERS),
         "F2B logout documented correlation headers",
+    )
+    _assert_equal(
+        set(platform_logout["responses"]["204"].get("headers", {})),
+        set(CORRELATION_RESPONSE_HEADERS),
+        "P3D platform logout documented correlation headers",
     )
 
 

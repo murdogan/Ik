@@ -20,10 +20,26 @@ export interface AuthUser {
   email: string;
   full_name: string | null;
   tenant: AuthTenant;
-  workspace_scope: WorkspaceScope;
+  workspace_scope: "tenant";
   roles: RoleSummary[];
   permissions: string[];
   permission_version: number;
+}
+
+export type PlatformAuthenticationStrength =
+  | "single_factor"
+  | "multi_factor"
+  | "step_up";
+
+export interface PlatformAuthUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  workspace_scope: "platform";
+  roles: RoleSummary[];
+  permissions: string[];
+  permission_version: number;
+  authentication_strength: PlatformAuthenticationStrength;
 }
 
 export interface SessionGrantData {
@@ -35,6 +51,26 @@ export interface SessionGrantData {
 
 export interface AuthenticatedLoginResponseData extends SessionGrantData {
   status: "authenticated";
+}
+
+export interface PlatformSessionGrantData {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: PlatformAuthUser;
+}
+
+export interface PlatformAuthenticatedLoginResponseData
+  extends PlatformSessionGrantData {
+  status: "authenticated";
+}
+
+export type PlatformLoginResponseData = PlatformAuthenticatedLoginResponseData;
+
+export type PlatformRefreshResponseData = PlatformSessionGrantData;
+
+export interface PlatformMeResponseData {
+  user: PlatformAuthUser;
 }
 
 export interface OrganizationSelectionOption {
@@ -131,6 +167,58 @@ export function loginErrorPresentation(cause: unknown): AuthErrorPresentation {
   if ((cause.status ?? 0) >= 500 || code === "invalid_response") {
     return presentation(
       "Giriş hizmeti geçici olarak kullanılamıyor. Lütfen biraz sonra yeniden deneyin.",
+      cause,
+    );
+  }
+
+  return presentation(GENERIC_LOGIN_ERROR, cause);
+}
+
+export function platformLoginErrorPresentation(
+  cause: unknown,
+): AuthErrorPresentation {
+  if (!(cause instanceof ApiClientError)) {
+    return {
+      message:
+        "Platform girişi şu anda tamamlanamıyor. Lütfen biraz sonra yeniden deneyin.",
+    };
+  }
+
+  const code = cause.code.toLowerCase();
+  if (cause.status === null || code === "network_error") {
+    return presentation(
+      "Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edip yeniden deneyin.",
+      cause,
+    );
+  }
+  if (cause.status === 429 || code.includes("rate_limit")) {
+    return presentation(
+      "Çok sayıda platform giriş denemesi yapıldı. Kısa bir süre bekleyip yeniden deneyin.",
+      cause,
+    );
+  }
+  if (cause.status === 403 && code === "platform_role_required") {
+    return presentation(
+      "Bu hesap platform yönetimi için yetkilendirilmemiş. Kurum çalışma alanı için standart giriş ekranını kullanın.",
+      cause,
+    );
+  }
+  if (
+    [401, 403, 404].includes(cause.status ?? 0) ||
+    code.includes("credential") ||
+    code.includes("user_not_found")
+  ) {
+    return presentation(GENERIC_LOGIN_ERROR, cause);
+  }
+  if (cause.status === 422 || code.includes("validation")) {
+    return presentation(
+      "E-posta biçimini kontrol edin; ardından parolanızı yeniden girin.",
+      cause,
+    );
+  }
+  if ((cause.status ?? 0) >= 500 || code === "invalid_response") {
+    return presentation(
+      "Platform giriş hizmeti geçici olarak kullanılamıyor. Lütfen biraz sonra yeniden deneyin.",
       cause,
     );
   }

@@ -204,6 +204,107 @@ class RefreshSessionToken(Base, TimestampMixin):
     )
 
 
+class PlatformRefreshSessionFamily(Base, TimestampMixin):
+    """Tenantless lifetime, assurance, and revocation state for a platform session."""
+
+    __tablename__ = "platform_refresh_session_families"
+    __table_args__ = (
+        CheckConstraint(
+            "permission_version >= 1",
+            name="ck_platform_session_families_permission_version_positive",
+        ),
+        CheckConstraint(
+            "authentication_strength in ('single_factor','multi_factor','step_up')",
+            name="ck_platform_refresh_session_families_authentication_strength",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_platform_refresh_session_families_expiry_order",
+        ),
+        CheckConstraint(
+            "revoked_at is null or revoked_at >= created_at",
+            name="ck_platform_refresh_session_families_revoked_order",
+        ),
+        Index(
+            "ix_platform_refresh_session_families_identity_expires_at",
+            "identity_id",
+            "expires_at",
+        ),
+        Index(
+            "ix_platform_refresh_session_families_expires_at",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    identity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "identities.id",
+            name="fk_platform_refresh_session_families_identity_id_identities",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    permission_version: Mapped[int] = mapped_column(
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    authentication_strength: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="single_factor",
+        server_default="single_factor",
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class PlatformRefreshSessionToken(Base, TimestampMixin):
+    """Hashed rotation history for a tenantless platform refresh family."""
+
+    __tablename__ = "platform_refresh_session_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "length(token_hash) = 64",
+            name="ck_platform_refresh_session_tokens_hash_length",
+        ),
+        CheckConstraint(
+            "consumed_at is null or consumed_at >= created_at",
+            name="ck_platform_refresh_session_tokens_consumed_order",
+        ),
+        UniqueConstraint(
+            "token_hash",
+            name="uq_platform_refresh_session_tokens_token_hash",
+        ),
+        Index(
+            "ix_platform_refresh_session_tokens_family_created_at",
+            "family_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    family_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "platform_refresh_session_families.id",
+            name="fk_platform_refresh_session_tokens_family_id_families",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
 class OrganizationSelectionTransaction(Base, TimestampMixin):
     """Hashed, expiring, one-use continuation issued after identity authentication."""
 

@@ -60,6 +60,10 @@ class Identity(Base, TimestampMixin):
             "status = 'disabled'",
             name="ck_identities_password_ownership",
         ),
+        CheckConstraint(
+            "platform_permission_version >= 1",
+            name="ck_identities_platform_permission_version_positive",
+        ),
         UniqueConstraint(
             "email_normalized",
             name="uq_identities_email_normalized",
@@ -80,6 +84,12 @@ class Identity(Base, TimestampMixin):
         server_default=IdentityStatus.PENDING.value,
     )
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    platform_permission_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
 
 
 class TenantMembership(Base, TimestampMixin):
@@ -167,6 +177,56 @@ class TenantMembership(Base, TimestampMixin):
     )
 
 
+class PlatformIdentityRole(Base, TimestampMixin):
+    """Platform-scoped role assignment owned by a global credential identity."""
+
+    __tablename__ = "platform_identity_roles"
+    __table_args__ = (
+        CheckConstraint(
+            "role_scope_type = 'platform'",
+            name="ck_platform_identity_roles_platform_scope",
+        ),
+        CheckConstraint(
+            "active in (false, true)",
+            name="ck_platform_identity_roles_active",
+        ),
+        ForeignKeyConstraint(
+            ["role_id", "role_scope_type"],
+            ["roles.id", "roles.scope_type"],
+            name="fk_platform_identity_roles_role_id_scope_roles",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_platform_identity_roles_identity_active",
+            "identity_id",
+            "active",
+        ),
+    )
+
+    identity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "identities.id",
+            name="fk_platform_identity_roles_identity_id_identities",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    role_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    role_scope_type: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=RoleScopeType.PLATFORM.value,
+        server_default=RoleScopeType.PLATFORM.value,
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=true(),
+    )
+
+
 class MembershipRole(Base, TimestampMixin):
     """Tenant-qualified role assignment for a canonical membership."""
 
@@ -222,5 +282,6 @@ __all__ = [
     "IdentityStatus",
     "MembershipRole",
     "MembershipStatus",
+    "PlatformIdentityRole",
     "TenantMembership",
 ]

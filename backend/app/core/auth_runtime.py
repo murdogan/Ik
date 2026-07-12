@@ -7,7 +7,7 @@ from datetime import timedelta
 from secrets import token_bytes
 
 from app.core.config import Settings
-from app.platform.identity import AccessTokenCodec, PasswordManager
+from app.platform.identity import AccessTokenCodec, PasswordManager, PlatformAccessTokenCodec
 from app.services.authentication_rate_limit_service import (
     AuthenticationRateLimitKeyHasher,
     AuthenticationRateLimitPolicy,
@@ -19,12 +19,14 @@ AUTH_RUNTIME_STATE_KEY = "auth_runtime"
 @dataclass(frozen=True, slots=True)
 class AuthRuntime:
     access_tokens: AccessTokenCodec
+    platform_access_tokens: PlatformAccessTokenCodec
     password_manager: PasswordManager
     refresh_ttl: timedelta
     organization_selection_ttl: timedelta
     rate_limit_key_hasher: AuthenticationRateLimitKeyHasher
     rate_limit_policy: AuthenticationRateLimitPolicy
     refresh_cookie: RefreshCookiePolicy
+    platform_refresh_cookie: RefreshCookiePolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,10 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
             signing_key,
             ttl=timedelta(minutes=settings.auth_access_token_ttl_minutes),
         ),
+        platform_access_tokens=PlatformAccessTokenCodec(
+            signing_key,
+            ttl=timedelta(minutes=settings.auth_access_token_ttl_minutes),
+        ),
         password_manager=PasswordManager(
             max_concurrent_operations=settings.auth_argon2_max_concurrency
         ),
@@ -78,6 +84,14 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
         ),
         refresh_cookie=RefreshCookiePolicy(
             name="__Host-wf_refresh" if secure_cookie else "wf_refresh",
+            secure=secure_cookie,
+        ),
+        platform_refresh_cookie=RefreshCookiePolicy(
+            name=(
+                "__Host-wf_platform_refresh"
+                if secure_cookie
+                else "wf_platform_refresh"
+            ),
             secure=secure_cookie,
         ),
     )

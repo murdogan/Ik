@@ -65,6 +65,11 @@ from app.services.leave_request_service import (
     LeaveRequestTransitionError,
     LeaveRequestUserNotFoundError,
 )
+from app.services.platform_auth_session_service import (
+    InvalidPlatformSessionError,
+    PlatformRoleRequiredError,
+)
+from app.services.platform_authentication_service import InvalidPlatformCredentialsError
 from app.services.tenant_service import (
     DuplicateTenantSlugError,
     TenantClosedError,
@@ -99,6 +104,7 @@ LEAVE_REQUEST_API_PREFIX = "/api/v1/leave-requests"
 PLATFORM_TENANT_API_PREFIX = "/api/v1/platform/tenants"
 TENANT_API_PREFIX = "/api/v1/tenant"
 AUTH_API_PREFIX = "/api/v1/auth"
+PLATFORM_AUTH_API_PREFIX = "/api/v1/platform/auth"
 USER_INVITATION_API_PREFIX = "/api/v1/users/invitations"
 USER_ADMINISTRATION_API_PREFIX = "/api/v1/users"
 
@@ -126,7 +132,13 @@ IDEMPOTENCY_KEY_INVALID_ERROR_CODE = "idempotency_key_invalid"
 IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE = "idempotency_key_mismatch"
 APPLICATION_COMMAND_FAILED_ERROR_CODE = "application_command_failed"
 PLATFORM_ACCESS_DENIED_ERROR_CODE = "platform_access_denied"
-PLATFORM_ACCESS_DENIED_ERROR_MESSAGE = "Platform tenant access requires a trusted principal"
+PLATFORM_ACCESS_DENIED_ERROR_MESSAGE = "A valid platform access credential is required"
+PLATFORM_ROLE_REQUIRED_ERROR_CODE = "platform_role_required"
+PLATFORM_ROLE_REQUIRED_ERROR_MESSAGE = "Platform access is not available for this account"
+PLATFORM_STEP_UP_REQUIRED_ERROR_CODE = "platform_step_up_required"
+PLATFORM_STEP_UP_REQUIRED_ERROR_MESSAGE = (
+    "A stronger platform authentication method is required"
+)
 TENANT_ACCESS_DENIED_ERROR_CODE = "tenant_access_denied"
 TENANT_ACCESS_DENIED_ERROR_MESSAGE = "Tenant access requires a trusted principal"
 PLATFORM_TENANT_VALIDATION_ERROR_CODE = "platform_tenant_validation_error"
@@ -654,10 +666,16 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return authentication_rate_limit_error()
     if isinstance(exc, InvalidCredentialsError):
         return invalid_credentials_error()
+    if isinstance(exc, InvalidPlatformCredentialsError):
+        return invalid_credentials_error()
     if isinstance(exc, InvalidActivationError):
         return invalid_activation_error()
     if isinstance(exc, InvalidSessionError):
         return session_invalid_error()
+    if isinstance(exc, InvalidPlatformSessionError):
+        return session_invalid_error()
+    if isinstance(exc, PlatformRoleRequiredError):
+        return platform_role_required_error()
     if isinstance(exc, InvalidOrganizationSelectionError):
         return organization_selection_invalid_error()
     if isinstance(exc, OrganizationSwitchUnavailableError):
@@ -770,6 +788,22 @@ def platform_access_denied_error() -> ApiError:
         status_code=status.HTTP_403_FORBIDDEN,
         code=PLATFORM_ACCESS_DENIED_ERROR_CODE,
         message=PLATFORM_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def platform_role_required_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=PLATFORM_ROLE_REQUIRED_ERROR_CODE,
+        message=PLATFORM_ROLE_REQUIRED_ERROR_MESSAGE,
+    )
+
+
+def platform_step_up_required_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=PLATFORM_STEP_UP_REQUIRED_ERROR_CODE,
+        message=PLATFORM_STEP_UP_REQUIRED_ERROR_MESSAGE,
     )
 
 
@@ -1090,8 +1124,10 @@ def _domain_request_validation_error(
     exc: RequestValidationError,
 ) -> ApiError | None:
     path = request.url.path
-    if _matches_api_prefix(path, AUTH_API_PREFIX) or _matches_api_prefix(
-        path, USER_INVITATION_API_PREFIX
+    if (
+        _matches_api_prefix(path, AUTH_API_PREFIX)
+        or _matches_api_prefix(path, PLATFORM_AUTH_API_PREFIX)
+        or _matches_api_prefix(path, USER_INVITATION_API_PREFIX)
     ):
         return ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

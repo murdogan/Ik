@@ -3,6 +3,7 @@ import {
   requestAuthenticatedApi,
   requestAuthenticatedApiEnvelope,
 } from "./session";
+import { requestPlatformAuthenticatedApiEnvelope } from "./platform-session";
 
 export type AuditScope = "tenant" | "platform";
 export type AuditMetadataScalar = string | number | boolean | null;
@@ -148,10 +149,17 @@ async function listAuditEvents(
   scope: AuditScope,
   options: AuditListOptions,
 ): Promise<ApiSuccessEnvelope<AuditEvent[], AuditListMeta>> {
-  const envelope = await requestAuthenticatedApiEnvelope<
-    unknown,
-    Record<string, unknown>
-  >(listPath(scope, options));
+  const path = listPath(scope, options);
+  const envelope =
+    scope === "tenant"
+      ? await requestAuthenticatedApiEnvelope<
+          unknown,
+          Record<string, unknown>
+        >(path)
+      : await requestPlatformAuthenticatedApiEnvelope<
+          unknown,
+          Record<string, unknown>
+        >(path);
   if (
     !Array.isArray(envelope.data) ||
     !envelope.data.every((event) => isAuditEvent(event, scope)) ||
