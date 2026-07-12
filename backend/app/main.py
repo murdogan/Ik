@@ -21,6 +21,7 @@ from app.api.openapi import OPENAPI_TAGS
 from app.api.platform_tenants import router as platform_tenants_router
 from app.api.tenant import router as tenant_router
 from app.api.user_invitations import router as user_invitations_router
+from app.api.users import router as users_router
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, create_auth_runtime
 from app.core.config import APP_SETTINGS_STATE_KEY, Settings, get_settings
 from app.db.session import (
@@ -68,6 +69,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(me_router)
     app.include_router(user_invitations_router)
+    app.include_router(users_router)
     app.include_router(tenant_router)
     app.include_router(dashboard_router)
     app.include_router(employees_router)

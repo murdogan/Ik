@@ -163,6 +163,9 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
     ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
     ("post", "/api/v1/users/invitations"),
+    ("get", "/api/v1/users"),
+    ("get", "/api/v1/users/{user_id}"),
+    ("patch", "/api/v1/users/{user_id}"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -557,15 +560,65 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
     if not isinstance(access_token, str) or not access_token:
         raise AssertionError("auth login must return a non-empty access credential")
 
+    admin_headers = {
+        **SPOOFED_IDENTITY_HEADERS,
+        "Authorization": f"Bearer {access_token}",
+    }
+    users, _next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/users",
+            headers=admin_headers,
+            params={"limit": 1, "search": "Approver"},
+        ),
+        200,
+        "GET /api/v1/users with spoofed tenant headers",
+        expected_limit=1,
+    )
+    _assert_equal(len(users), 1, "bounded user administration search")
+    _assert_exact_fields(
+        users[0],
+        {"id", "email", "full_name", "status", "created_at", "updated_at"},
+        "GET /api/v1/users item",
+    )
+    _assert_equal(users[0]["id"], str(APPROVER_USER_ID), "searched tenant user")
+
+    user_detail = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/users/{APPROVER_USER_ID}",
+            documented_path="/api/v1/users/{user_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/users/{user_id}",
+        {"id", "email", "full_name", "status", "created_at", "updated_at"},
+    )
+    _assert_equal(user_detail["id"], str(APPROVER_USER_ID), "user detail id")
+
+    updated_user = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/users/{APPROVER_USER_ID}",
+            documented_path="/api/v1/users/{user_id}",
+            headers=admin_headers,
+            json={"full_name": "Approver Smoke User"},
+        ),
+        200,
+        "PATCH /api/v1/users/{user_id}",
+        {"id", "email", "full_name", "status", "created_at", "updated_at"},
+    )
+    _assert_equal(updated_user["full_name"], "Approver Smoke User", "user update")
+
     invitation = _expect_phase1_data(
         await _request_documented(
             client,
             "post",
             "/api/v1/users/invitations",
-            headers={
-                **SPOOFED_IDENTITY_HEADERS,
-                "Authorization": f"Bearer {access_token}",
-            },
+            headers=admin_headers,
             json={
                 "email": SMOKE_INVITED_EMAIL,
                 "full_name": "Invited Smoke User",

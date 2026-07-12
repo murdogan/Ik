@@ -7,7 +7,9 @@ import type {
 import {
   ApiClientError,
   type ApiRequestOptions,
+  type ApiSuccessEnvelope,
   requestApi,
+  requestApiEnvelope,
   requestApiNoContent,
 } from "./api-client";
 
@@ -85,10 +87,15 @@ export function refreshSession(): Promise<RefreshResponseData> {
 }
 
 type AuthenticatedRequestOptions = Omit<ApiRequestOptions, "accessToken">;
-
-export async function requestAuthenticatedApi<TResponse>(
+type AuthenticatedRequester<TResponse> = (
   path: `/api/${string}`,
-  options: AuthenticatedRequestOptions = {},
+  options: ApiRequestOptions,
+) => Promise<TResponse>;
+
+async function requestAuthenticated<TResponse>(
+  path: `/api/${string}`,
+  options: AuthenticatedRequestOptions,
+  requester: AuthenticatedRequester<TResponse>,
 ): Promise<TResponse> {
   const requestGeneration = sessionGeneration;
   if (!accessToken) {
@@ -105,7 +112,7 @@ export async function requestAuthenticatedApi<TResponse>(
   }
 
   try {
-    const data = await requestApi<TResponse>(path, {
+    const data = await requester(path, {
       ...options,
       accessToken: attemptedToken,
     });
@@ -133,7 +140,7 @@ export async function requestAuthenticatedApi<TResponse>(
   }
 
   try {
-    const data = await requestApi<TResponse>(path, {
+    const data = await requester(path, {
       ...options,
       accessToken: retryToken,
     });
@@ -151,6 +158,27 @@ export async function requestAuthenticatedApi<TResponse>(
     }
     throw cause;
   }
+}
+
+export async function requestAuthenticatedApi<TResponse>(
+  path: `/api/${string}`,
+  options: AuthenticatedRequestOptions = {},
+): Promise<TResponse> {
+  return requestAuthenticated(path, options, (requestPath, requestOptions) =>
+    requestApi<TResponse>(requestPath, requestOptions),
+  );
+}
+
+export async function requestAuthenticatedApiEnvelope<TResponse, TMeta = unknown>(
+  path: `/api/${string}`,
+  options: AuthenticatedRequestOptions = {},
+): Promise<ApiSuccessEnvelope<TResponse, TMeta>> {
+  return requestAuthenticated(
+    path,
+    options,
+    (requestPath, requestOptions) =>
+      requestApiEnvelope<TResponse, TMeta>(requestPath, requestOptions),
+  );
 }
 
 async function performRestore(): Promise<AuthUser> {

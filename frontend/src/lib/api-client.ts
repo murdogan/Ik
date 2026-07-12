@@ -7,12 +7,13 @@ interface ApiErrorEnvelope {
   error?: ApiErrorBody;
 }
 
-interface ApiSuccessEnvelope<TResponse> {
+export interface ApiSuccessEnvelope<TResponse, TMeta = unknown> {
   data: TResponse;
+  meta: TMeta;
 }
 
 export interface ApiRequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH";
   body?: object;
   accessToken?: string;
 }
@@ -128,6 +129,28 @@ export async function requestApi<TResponse>(
   }
 
   return (payload as unknown as ApiSuccessEnvelope<TResponse>).data;
+}
+
+export async function requestApiEnvelope<TResponse, TMeta = unknown>(
+  path: `/api/${string}`,
+  options: ApiRequestOptions = {},
+): Promise<ApiSuccessEnvelope<TResponse, TMeta>> {
+  const { payload, response } = await sendApiRequest(path, options);
+
+  if (
+    !isRecord(payload) ||
+    !("data" in payload) ||
+    !("meta" in payload) ||
+    !isRecord(payload.meta)
+  ) {
+    throw new ApiClientError({
+      status: response.status,
+      code: "invalid_response",
+      correlationId: response.headers.get("x-request-id"),
+    });
+  }
+
+  return payload as unknown as ApiSuccessEnvelope<TResponse, TMeta>;
 }
 
 export async function requestApiNoContent(

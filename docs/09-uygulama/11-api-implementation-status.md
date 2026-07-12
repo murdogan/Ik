@@ -555,6 +555,9 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/me` | Implemented for F2B | Bearer plus active server-session validation; current user and tenant derived without caller tenant selectors |
 | POST | `/api/v1/auth/activate` | Implemented for F2A | Hashed expiring invitation credential, atomic single-use consumption and Argon2id password setup |
 | POST | `/api/v1/users/invitations` | Implemented for F2A | Bearer-derived actor/tenant, invite capability check and header/payload tenant-spoof resistance |
+| GET | `/api/v1/users` | Implemented for F2C | RequestContext-derived tenant/actor, bounded cursor, indexed name/email search, status filter and explicit projection |
+| GET | `/api/v1/users/{user_id}` | Implemented for F2C | Allowlisted tenant detail with identical not-found behavior for missing and cross-tenant IDs |
+| PATCH | `/api/v1/users/{user_id}` | Implemented for F2C | Full-name/status allowlist, impossible-state guard and session/activation credential revocation on lock/disable |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -569,9 +572,10 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 
 F2A adds three generated operations to the historical 24-operation F1E surface; F2B adds refresh,
-logout and `/api/v1/me`, for 30 generated operations. The executable smoke now completes
-login → current user → refresh rotation → logout and proves the logged-out session is rejected,
-without printing credential or activation material.
+logout and `/api/v1/me`; F2C adds tenant user list/detail/update, for 33 generated operations. The
+executable smoke now completes tenant-admin list/search/detail/update plus login → current user →
+refresh rotation → logout and proves the logged-out session is rejected, without printing
+credential or activation material.
 
 ## Current Behavior Notes
 

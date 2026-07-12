@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-11 / F1E Faz 1 security/product gate, principal metadata ve review checkpoint.
+Son güncelleme: 2026-07-12 / F2C tenant user administration product slice.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -44,6 +44,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | GET | `/api/v1/me` | F2B uygulandı | Bearer + aktif server session doğrulamasıyla current user/tenant |
 | POST | `/api/v1/auth/activate` | F2A uygulandı | Hashli/süreli aktivasyon credential'ı, atomik tek kullanım ve Argon2id parola kurulumu |
 | POST | `/api/v1/users/invitations` | F2A uygulandı | Bearer actor/tenant scope, invite capability ve header/payload tenant spoof reddi |
+| GET | `/api/v1/users` | F2C uygulandı | Authenticated `RequestContext` tenant/actor scope; bounded cursor, indexed name/email search ve status filtresi |
+| GET | `/api/v1/users/{user_id}` | F2C uygulandı | Allowlisted tenant user detail; missing/cross-tenant aynı `404` |
+| PATCH | `/api/v1/users/{user_id}` | F2C uygulandı | Yalnız `full_name`/`status`; actor/tenant/capability payload alanı yok; lock/disable credential revoke |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |
@@ -57,8 +60,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Uygulandı | Decision note, row-lock one-winner ve opsiyonel idempotency |
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Uygulandı | Pending-only, row-lock one-winner ve opsiyonel idempotency |
 
-F2A historical F1E yüzeyine üç, F2B refresh/logout/me ile üç generated operation daha ekler. Lokal
-executable smoke, invite/aktivasyon sonrasında login → me → refresh rotation → logout akışını
+F2A historical F1E yüzeyine üç, F2B refresh/logout/me ile üç, F2C user list/detail/update ile üç
+generated operation daha ekler. Lokal executable smoke, tenant-admin list/search/detail/update ve
+invite/aktivasyon sonrasında login → me → refresh rotation → logout akışını
 çalıştırır; tenant header spoof'un scope'u değiştiremediğini ve revoke edilen session'ın yeniden
 kullanılamadığını doğrular, credential/token değerlerini çıktıya yazmaz.
 

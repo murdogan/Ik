@@ -17,6 +17,7 @@ from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
 from app.services.auth_session_service import AuthenticatedUser, AuthSessionService
 from app.services.authentication_service import AuthenticationService
+from app.services.user_administration_service import UserAdministrationService
 from app.services.user_invitation_service import UserInvitationService
 
 _bearer_scheme = HTTPBearer(
@@ -81,6 +82,12 @@ def get_user_invitation_service(
     )
 
 
+def get_user_administration_service(
+    database_runtime: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+) -> UserAdministrationService:
+    return UserAdministrationService(session_factory=database_runtime.session_factory)
+
+
 def require_access_principal(
     request: Request,
     credentials: Annotated[
@@ -130,6 +137,28 @@ async def require_authenticated_session(
     )
 
 
+def get_authenticated_request_context(
+    request: Request,
+    authenticated_session: Annotated[
+        AuthenticatedSession,
+        Depends(require_authenticated_session),
+    ],
+) -> RequestContext:
+    """Return context enriched only by the validated access/session dependency chain."""
+
+    context = getattr(request.state, "request_context", None)
+    principal = authenticated_session.principal
+    if (
+        not isinstance(context, RequestContext)
+        or context.tenant is None
+        or context.tenant.tenant_id != principal.tenant_id
+        or context.actor_id != principal.user_id
+        or context.session_id != principal.session_family_id
+    ):
+        raise authentication_required_error()
+    return context
+
+
 async def require_invitation_principal(
     principal: Annotated[AccessPrincipal, Depends(require_access_principal)],
     service: Annotated[AuthSessionService, Depends(get_auth_session_service)],
@@ -142,6 +171,8 @@ __all__ = [
     "AuthenticatedSession",
     "get_auth_session_service",
     "get_authentication_service",
+    "get_authenticated_request_context",
+    "get_user_administration_service",
     "get_user_invitation_service",
     "require_access_principal",
     "require_authenticated_session",

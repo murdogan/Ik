@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     Computed,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -41,6 +42,31 @@ class User(Base, TimestampMixin):
         CheckConstraint(
             "length(email_normalized) > 0",
             name="ck_users_email_normalized_not_empty",
+        ),
+        Index(
+            "ix_users_tenant_created_at_id",
+            "tenant_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_users_tenant_status_created_at_id",
+            "tenant_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_users_email_normalized_trgm",
+            "email_normalized",
+            postgresql_using="gin",
+            postgresql_ops={"email_normalized": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_users_full_name_trgm",
+            "full_name",
+            postgresql_using="gin",
+            postgresql_ops={"full_name": "gin_trgm_ops"},
         ),
     )
 

@@ -61,6 +61,11 @@ from app.services.tenant_service import (
     TenantNotReadyError,
     TenantReadOnlyError,
 )
+from app.services.user_administration_service import (
+    UserAdministrationAccessDeniedError,
+    UserAdministrationStatusConflictError,
+    UserAdministrationUserNotFoundError,
+)
 from app.services.user_invitation_service import (
     InvitationAccessDeniedError,
     InvitationConflictError,
@@ -83,6 +88,7 @@ PLATFORM_TENANT_API_PREFIX = "/api/v1/platform/tenants"
 TENANT_API_PREFIX = "/api/v1/tenant"
 AUTH_API_PREFIX = "/api/v1/auth"
 USER_INVITATION_API_PREFIX = "/api/v1/users/invitations"
+USER_ADMINISTRATION_API_PREFIX = "/api/v1/users"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -144,6 +150,14 @@ INVITATION_ACCESS_DENIED_ERROR_CODE = "invitation_access_denied"
 INVITATION_ACCESS_DENIED_ERROR_MESSAGE = "You do not have permission to invite users"
 INVITATION_CONFLICT_ERROR_CODE = "invitation_conflict"
 INVITATION_CONFLICT_ERROR_MESSAGE = "This user cannot be invited"
+USER_ADMINISTRATION_ACCESS_DENIED_ERROR_CODE = "user_administration_access_denied"
+USER_ADMINISTRATION_ACCESS_DENIED_ERROR_MESSAGE = "You do not have permission to administer users"
+USER_ADMINISTRATION_VALIDATION_ERROR_CODE = "user_administration_validation_error"
+USER_ADMINISTRATION_VALIDATION_ERROR_MESSAGE = "User administration request validation failed"
+USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_CODE = "user_status_conflict"
+USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_MESSAGE = (
+    "The requested user status transition is not allowed"
+)
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -413,6 +427,49 @@ INVITATION_CONFLICT_RESPONSES = _conflict_response(
         )
     },
 )
+USER_ADMINISTRATION_AUTHORIZATION_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {
+        "model": ApiErrorResponse,
+        "description": "The authenticated actor cannot administer tenant users.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    USER_ADMINISTRATION_ACCESS_DENIED_ERROR_CODE,
+                    USER_ADMINISTRATION_ACCESS_DENIED_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+USER_ADMINISTRATION_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "User administration request validation error envelope.",
+    }
+}
+USER_ADMINISTRATION_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "The user is absent or outside the authenticated tenant.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    USER_NOT_FOUND_ERROR_CODE,
+                    USER_NOT_FOUND_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+USER_ADMINISTRATION_CONFLICT_RESPONSES = _conflict_response(
+    description="The requested account status would violate account invariants.",
+    examples={
+        USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_CODE: _error_example(
+            USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_CODE,
+            USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_MESSAGE,
+        )
+    },
+)
 
 
 EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
@@ -516,6 +573,12 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return invitation_access_denied_error()
     if isinstance(exc, InvitationConflictError):
         return invitation_conflict_error()
+    if isinstance(exc, UserAdministrationAccessDeniedError):
+        return user_administration_access_denied_error()
+    if isinstance(exc, UserAdministrationUserNotFoundError):
+        return user_not_found_error()
+    if isinstance(exc, UserAdministrationStatusConflictError):
+        return user_administration_status_conflict_error(str(exc))
     if isinstance(exc, TenantNotFoundError):
         return tenant_not_found_error()
     if isinstance(exc, DuplicateTenantSlugError):
@@ -709,6 +772,30 @@ def invitation_conflict_error() -> ApiError:
     )
 
 
+def user_administration_access_denied_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=USER_ADMINISTRATION_ACCESS_DENIED_ERROR_CODE,
+        message=USER_ADMINISTRATION_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def user_administration_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=USER_ADMINISTRATION_VALIDATION_ERROR_CODE,
+        message=USER_ADMINISTRATION_VALIDATION_ERROR_MESSAGE,
+    )
+
+
+def user_administration_status_conflict_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_CODE,
+        message=message or USER_ADMINISTRATION_STATUS_CONFLICT_ERROR_MESSAGE,
+    )
+
+
 def platform_tenant_pagination_validation_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -842,6 +929,8 @@ def _domain_request_validation_error(
             code=AUTH_VALIDATION_ERROR_CODE,
             message=AUTH_VALIDATION_ERROR_MESSAGE,
         )
+    if _matches_api_prefix(path, USER_ADMINISTRATION_API_PREFIX):
+        return user_administration_validation_error()
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):
         return ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

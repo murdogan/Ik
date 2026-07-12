@@ -75,8 +75,9 @@ OPENAPI_TAGS = [
     {
         "name": USER_ADMINISTRATION_TAG,
         "description": (
-            "Authenticated tenant user invitations. Tenant and actor scope come from a signed "
-            "credential and are never accepted from caller-supplied tenant fields."
+            "Authenticated tenant user listing, indexed search, account updates, and invitations. "
+            "Tenant and actor scope come from a validated session-backed RequestContext and are "
+            "never accepted from caller-supplied fields."
         ),
     },
     {

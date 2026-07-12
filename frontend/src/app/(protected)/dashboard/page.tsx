@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 
-import { TenantShell } from "@/components/dashboard/tenant-shell";
+import { DashboardOverview } from "@/components/dashboard/dashboard-overview";
 
 export const metadata: Metadata = {
   title: "Genel bakış",
 };
 
 export default function DashboardPage() {
-  return <TenantShell />;
+  return <DashboardOverview />;
 }
