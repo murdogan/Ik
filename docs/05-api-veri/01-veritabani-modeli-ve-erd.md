@@ -11,13 +11,17 @@ korunur. SQLite hızlı uyumluluk testidir; RLS kanıtı gerçek PostgreSQL lane
 Historical F1E Faz 1 kapanışında fiziksel şema `0015_f1d_feature_flags` idi. F2A–F2E activation,
 server-side session, RBAC ve append-only audit tablolarını `0016`–`0020` ile ekledi. F2F'nin
 PostgreSQL-only `0021_f2f_user_insert_grant` revision'ı tablo/kolon eklemeden invited-user INSERT'i
-için yalnız `users.permission_version` kolon grant'ini tamamlar; güncel tek head `0021`'dir.
+için yalnız `users.permission_version` kolon grant'ini tamamlar. P3A `0022`, legacy user sınırını
+koruyan additive `identities`, `tenant_memberships` ve `membership_roles` projection'ını ekler;
+güncel tek head `0022_p3a_identity_memberships`'tır.
 
 ## 2. Kavramsal ERD
 
 ```mermaid
 erDiagram
+  identities ||--o{ tenant_memberships : authenticates
   tenants ||--o{ users : has
+  tenants ||--o{ tenant_memberships : grants_access
   tenants ||--o{ employees : has
   tenants ||--o{ command_idempotency : owns
   tenants ||--|| tenant_settings : configures
@@ -25,6 +29,8 @@ erDiagram
   users ||--o{ sessions : opens
   roles ||--o{ role_permissions : grants
   users ||--o{ user_roles : assigned
+  users ||--|| tenant_memberships : legacy_projection
+  tenant_memberships ||--o{ membership_roles : assigned
   employees ||--o{ employee_assignments : has
   employees ||--o{ employee_documents : owns
   employees ||--o{ leave_requests : requests
@@ -41,7 +47,7 @@ erDiagram
 
 | Domain | Tablolar |
 |---|---|
-| CORE/AUTH/RBAC | F2F implemented: `tenants`, `tenant_settings`, `tenant_feature_flags`, `users`, `user_activation_tokens`, `refresh_session_families`, `refresh_session_tokens`, `roles`, `permissions`, `role_permissions`, `user_roles`, `command_idempotency` |
+| CORE/AUTH/RBAC | P3A expanded: `identities`, `tenant_memberships`, `membership_roles`; compatibility retained: `tenants`, `tenant_settings`, `tenant_feature_flags`, `users`, `user_activation_tokens`, `refresh_session_families`, `refresh_session_tokens`, `roles`, `permissions`, `role_permissions`, `user_roles`, `command_idempotency` |
 | EMP/DOC | `employees`, `employee_profiles`, `employee_employments`, `employee_assignments`, `employee_documents`, `document_types` |
 | ORG | `legal_entities`, `branches`, `departments`, `positions`, `headcount_requests` |
 | LEAVE/TIME | `leave_types`, `leave_balances`, `leave_requests`, `holiday_calendars`, `shift_assignments`, `time_clock_events`, `timesheet_days` |
@@ -71,6 +77,21 @@ Mevcut Faz 0 şemasında `employees` ve `users` parent candidate key taşır.
 `(tenant_id, id)` anahtarına bağlanır. Root ownership ilişkileri doğrudan `tenant_id → tenants.id`
 olarak kalır. Bu kural yeni tenant-owned ilişki eklenirken de migration ve model metadata'sında
 birlikte temsil edilmelidir.
+
+P3A identity-boundary kuralları:
+
+- Global `identities` normalized e-posta, credential-wide durum ve parola sahipliği için target
+  projection'dır; tenant ve platform runtime capability'leri bu tabloya grant almaz. P3A'da canlı
+  activation/login write sahibi compatibility gereği hâlâ legacy `users` tablosudur.
+- `tenant_memberships` aynı identity'yi farklı tenant'lara bağlayabilir fakat
+  `(tenant_id,identity_id)` unique olduğu için aynı tenant'ta duplicate membership kurulamaz.
+  Membership ID, expand süresince legacy public `users.id` ile aynıdır; tenant-local ad, durum ve
+  permission version membership'te ayrıca temsil edilir.
+- `membership_roles(tenant_id,membership_id)`, membership candidate key'ine composite FK ile
+  bağlanır. Böylece global identity ID tek başına tenant role authority oluşturmaz.
+- `users`, `user_roles`, activation/session ve actor foreign key'leri P3A'da kaldırılmaz. Login,
+  activation ve user API'leri compatibility projection üzerinden aynı contract'la çalışmaya devam
+  eder; canonical write geçişi sonraki identity-checkpoint adımlarının işidir.
 
 F1A tenant/config kuralları:
 

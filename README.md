@@ -277,8 +277,15 @@ refresh family/rotation, bounded user administration, seeded RBAC ve append-only
 grants'lerini ekler. F2F'nin tek forward migration'ı `0021_f2f_user_insert_grant` yeni tablo veya
 kolon eklemez; invited-user INSERT'inde ORM'nin yazdığı server-controlled `permission_version`
 defaultu için tenant runtime rolüne yalnız o kolonun INSERT yetkisini verir. Table-wide INSERT ve
-legacy `can_invite_users` INSERT yetkisi verilmez; downgrade bu tek grant'i geri alır. Güncel tek
-Alembic head `0021_f2f_user_insert_grant`'tır.
+legacy `can_invite_users` INSERT yetkisi verilmez; downgrade bu tek grant'i geri alır.
+
+P3A `0022_p3a_identity_memberships` ile mevcut tenant `users`/API ID'lerini kaldırmadan global
+`identities`, tenant-local `tenant_memberships` ve tenant-qualified `membership_roles` tablolarını
+ekler. Normalized e-posta başına deterministic identity ve her legacy user/role için membership
+projection backfill edilir; bir e-postada farklı non-null parola hash'leri varsa migration açık
+onarım için fail eder. Global credential tablosu mevcut tenant/platform capability'lerine kapalı,
+membership tabloları tenant RLS altında read-only'dir. Güncel tek Alembic head
+`0022_p3a_identity_memberships`'tır.
 
 Veritabanı migration komutları:
 

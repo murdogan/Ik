@@ -63,13 +63,17 @@ TENANT_OWNED_TABLES = frozenset(
         "refresh_session_families",
         "refresh_session_tokens",
         "user_roles",
+        "tenant_memberships",
+        "membership_roles",
     }
 )
 ROW_SECURITY_TABLES = TENANT_OWNED_TABLES | {"tenants"}
+GLOBAL_RESTRICTED_TABLES = frozenset({"identities"})
+SECURED_TABLES = ROW_SECURITY_TABLES | GLOBAL_RESTRICTED_TABLES
 PLATFORM_TABLES = frozenset(
     {"tenants", "tenant_settings", "tenant_feature_flags"}
 )
-HR_TABLES = ROW_SECURITY_TABLES - PLATFORM_TABLES
+HR_TABLES = SECURED_TABLES - PLATFORM_TABLES
 
 TABLE_PRIVILEGES = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
 EXPECTED_APPLICATION_PRIVILEGES = {
@@ -85,6 +89,9 @@ EXPECTED_APPLICATION_PRIVILEGES = {
     "refresh_session_families": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "refresh_session_tokens": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "user_roles": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "tenant_memberships": frozenset({"SELECT"}),
+    "membership_roles": frozenset({"SELECT"}),
+    "identities": frozenset(),
 }
 EXPECTED_PLATFORM_PRIVILEGES = {
     table_name: (
@@ -94,7 +101,7 @@ EXPECTED_PLATFORM_PRIVILEGES = {
         if table_name == "tenant_settings"
         else frozenset()
     )
-    for table_name in ROW_SECURITY_TABLES
+    for table_name in SECURED_TABLES
 }
 
 
@@ -131,11 +138,11 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                         "where n.nspname = 'public' and c.relkind = 'r' "
                         "and c.relname = any(:table_names)"
                     ),
-                    {"table_names": sorted(ROW_SECURITY_TABLES)},
+                    {"table_names": sorted(SECURED_TABLES)},
                 )
             ).mappings()
             row_security = {row["relname"]: row for row in row_security_rows}
-            assert set(row_security) == ROW_SECURITY_TABLES
+            assert set(row_security) == SECURED_TABLES
             assert all(row["relrowsecurity"] for row in row_security.values())
             assert all(row["relforcerowsecurity"] for row in row_security.values())
             assert all(
@@ -150,7 +157,7 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                         "from pg_catalog.pg_policies where schemaname = 'public' "
                         "and tablename = any(:table_names)"
                     ),
-                    {"table_names": sorted(ROW_SECURITY_TABLES)},
+                    {"table_names": sorted(SECURED_TABLES)},
                 )
             ).mappings()
             policies = {(row["tablename"], row["policyname"]): row for row in policy_rows}
@@ -162,6 +169,8 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                 ("tenant_feature_flags", "platform_feature_operations"),
             }
             assert set(policies) == expected_policy_keys
+            policy_tables = {table_name for table_name, _policy_name in policies}
+            assert policy_tables.isdisjoint(GLOBAL_RESTRICTED_TABLES)
 
             for table_name in ROW_SECURITY_TABLES:
                 policy = policies[(table_name, "tenant_isolation_app")]
@@ -272,6 +281,18 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                 )
                 == EXPECTED_PLATFORM_PRIVILEGES
             )
+            assert await _direct_table_acl_snapshot(connection) == {
+                *(
+                    (table_name, TENANT_APPLICATION_ROLE, privilege, False)
+                    for table_name, privileges in EXPECTED_APPLICATION_PRIVILEGES.items()
+                    for privilege in privileges
+                ),
+                *(
+                    (table_name, PLATFORM_APPLICATION_ROLE, privilege, False)
+                    for table_name, privileges in EXPECTED_PLATFORM_PRIVILEGES.items()
+                    for privilege in privileges
+                ),
+            }
             app_tenant_update_columns = {
                 column_name
                 for column_name in (
@@ -303,33 +324,29 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                 "timezone",
                 "updated_at",
             }
-            direct_column_grants = {
+            direct_column_acl_rows = tuple(
                 (
-                    row["table_name"],
-                    row["column_name"],
-                    row["privilege_type"],
-                    row["grantee"],
-                )
-                for row in (
                     await connection.execute(
                         text(
                             "select table_class.relname as table_name, "
                             "attribute.attname as column_name, "
-                            "privilege.privilege_type, grantee.rolname as grantee "
+                            "privilege.privilege_type, privilege.is_grantable, "
+                            "coalesce(grantee.rolname, 'PUBLIC') as grantee "
                             "from pg_catalog.pg_attribute attribute "
                             "join pg_catalog.pg_class table_class "
                             "on table_class.oid = attribute.attrelid "
                             "join pg_catalog.pg_namespace namespace "
                             "on namespace.oid = table_class.relnamespace "
                             "cross join lateral pg_catalog.aclexplode(attribute.attacl) privilege "
-                            "join pg_catalog.pg_roles grantee "
+                            "left join pg_catalog.pg_roles grantee "
                             "on grantee.oid = privilege.grantee "
                             "where namespace.nspname = 'public' "
                             "and table_class.relname = any(:table_names) "
-                            "and grantee.rolname = any(:role_names)"
+                            "and (privilege.grantee = 0 "
+                            "or grantee.rolname = any(:role_names))"
                         ),
                         {
-                            "table_names": sorted(ROW_SECURITY_TABLES),
+                            "table_names": sorted(SECURED_TABLES),
                             "role_names": [
                                 TENANT_APPLICATION_ROLE,
                                 PLATFORM_APPLICATION_ROLE,
@@ -337,6 +354,18 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                         },
                     )
                 ).mappings()
+            )
+            assert all(
+                row["is_grantable"] is False for row in direct_column_acl_rows
+            )
+            direct_column_grants = {
+                (
+                    row["table_name"],
+                    row["column_name"],
+                    row["privilege_type"],
+                    row["grantee"],
+                )
+                for row in direct_column_acl_rows
             }
             assert direct_column_grants == {
                 ("tenants", "locale", "UPDATE", TENANT_APPLICATION_ROLE),
@@ -829,7 +858,7 @@ async def _table_privilege_snapshot(
     role_name: str,
 ) -> dict[str, frozenset[str]]:
     snapshot: dict[str, frozenset[str]] = {}
-    for table_name in ROW_SECURITY_TABLES:
+    for table_name in SECURED_TABLES:
         granted = {
             privilege
             for privilege in TABLE_PRIVILEGES
@@ -844,6 +873,45 @@ async def _table_privilege_snapshot(
         }
         snapshot[table_name] = frozenset(granted)
     return snapshot
+
+
+async def _direct_table_acl_snapshot(
+    connection: AsyncConnection,
+) -> set[tuple[str, str, str, bool]]:
+    rows = (
+        await connection.execute(
+            text(
+                "select table_class.relname as table_name, "
+                "coalesce(grantee.rolname, 'PUBLIC') as grantee, "
+                "privilege.privilege_type, privilege.is_grantable "
+                "from pg_catalog.pg_class table_class "
+                "join pg_catalog.pg_namespace namespace "
+                "on namespace.oid = table_class.relnamespace "
+                "cross join lateral pg_catalog.aclexplode(table_class.relacl) privilege "
+                "left join pg_catalog.pg_roles grantee "
+                "on grantee.oid = privilege.grantee "
+                "where namespace.nspname = 'public' "
+                "and table_class.relname = any(:table_names) "
+                "and (privilege.grantee = 0 or grantee.rolname = any(:role_names))"
+            ),
+            {
+                "table_names": sorted(SECURED_TABLES),
+                "role_names": [
+                    TENANT_APPLICATION_ROLE,
+                    PLATFORM_APPLICATION_ROLE,
+                ],
+            },
+        )
+    ).mappings()
+    return {
+        (
+            str(row["table_name"]),
+            str(row["grantee"]),
+            str(row["privilege_type"]),
+            bool(row["is_grantable"]),
+        )
+        for row in rows
+    }
 
 
 async def _seed_tenants_and_employees(engine: AsyncEngine) -> None:

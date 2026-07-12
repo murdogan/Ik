@@ -28,6 +28,16 @@ from sqlalchemy.exc import IntegrityError
 ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = Path("alembic.ini")
 
+_P3A_TENANT_A_ID = "a1000000000040008000000000000001"
+_P3A_TENANT_B_ID = "a1000000000040008000000000000002"
+_P3A_CANONICAL_USER_ID = "a2000000000040008000000000000001"
+_P3A_SECOND_USER_ID = "a2000000000040008000000000000002"
+_P3A_SHARED_EMAIL_NORMALIZED = "shared.identity@p3a.test"
+_P3A_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$cDNhLXRlc3Q$credential-a"
+_P3A_OTHER_PASSWORD_HASH = (
+    "$argon2id$v=19$m=65536,t=3,p=4$cDNhLXRlc3Q$credential-b"
+)
+
 
 def _alembic_config(database_url: str | None = None) -> Config:
     config = Config(str(ALEMBIC_INI))
@@ -370,6 +380,40 @@ def _run_alembic_f2d_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p3a_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0021_f2f_user_insert_grant:0022_p3a_identity_memberships",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p3a_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0022_p3a_identity_memberships:0021_f2f_user_insert_grant",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -415,8 +459,11 @@ def test_core_migration_chain_is_linear() -> None:
     f2f_user_insert_grant_revision = script.get_revision(
         "0021_f2f_user_insert_grant"
     )
+    p3a_identity_memberships_revision = script.get_revision(
+        "0022_p3a_identity_memberships"
+    )
 
-    assert script.get_heads() == ["0021_f2f_user_insert_grant"]
+    assert script.get_heads() == ["0022_p3a_identity_memberships"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -463,6 +510,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert f2e_audit_revision.down_revision == "0019_f2d_rbac"
     assert f2f_user_insert_grant_revision is not None
     assert f2f_user_insert_grant_revision.down_revision == "0020_f2e_audit_events"
+    assert p3a_identity_memberships_revision is not None
+    assert p3a_identity_memberships_revision.down_revision == (
+        "0021_f2f_user_insert_grant"
+    )
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -667,6 +718,45 @@ def test_alembic_offline_f2d_downgrade_renders_authorization_preflight() -> None
     assert "F2D downgrade preflight failed" in result.stdout
 
 
+def test_alembic_offline_p3a_upgrade_renders_backfill_guards_before_writes() -> None:
+    result = _run_alembic_p3a_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p3a_identity_backfill_preflight$" in result.stdout
+    assert "P3A identity backfill preflight failed" in result.stdout
+    assert (
+        "conflicting_password_identities=%, blank_normalized_emails=%"
+        in result.stdout
+    )
+    assert "DO $p3a_identity_backfill_verification$" in result.stdout
+    assert "P3A identity backfill verification failed" in result.stdout
+    preflight_position = result.stdout.index("DO $p3a_identity_backfill_preflight$")
+    identity_table_position = result.stdout.index("CREATE TABLE identities")
+    identity_backfill_position = result.stdout.index("insert into identities")
+    verification_position = result.stdout.index(
+        "DO $p3a_identity_backfill_verification$"
+    )
+    assert preflight_position < identity_table_position < identity_backfill_position
+    assert identity_backfill_position < verification_position
+    assert "insert into tenant_memberships" in result.stdout
+    assert "insert into membership_roles" in result.stdout
+
+
+def test_alembic_offline_p3a_downgrade_guards_projection_before_drops() -> None:
+    result = _run_alembic_p3a_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p3a_downgrade_preflight$" in result.stdout
+    assert (
+        "P3A downgrade preflight failed: identity_drift=%," in result.stdout
+    )
+    preflight_position = result.stdout.index("DO $p3a_downgrade_preflight$")
+    first_drop_position = result.stdout.index("DROP TABLE membership_roles")
+    assert preflight_position < first_drop_position
+    assert result.stdout.index("DROP TABLE tenant_memberships") > first_drop_position
+    assert result.stdout.index("DROP TABLE identities") > first_drop_position
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -785,6 +875,10 @@ def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
         }
         assert permission_versions == {1}
 
+        # Return to F2D while the P3A projection is still reproducible. The assertions below
+        # intentionally create legacy authorization drift and exercise F2D's own downgrade guard.
+        alembic_command.downgrade(config, "0019_f2d_rbac")
+
         with pytest.raises(IntegrityError):
             with engine.begin() as connection:
                 connection.execute(text("update users set permission_version = 0"))
@@ -815,6 +909,563 @@ def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
             )
         alembic_command.downgrade(config, "0018_f2c_user_administration")
         assert "user_roles" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+
+
+def _seed_p3a_legacy_multi_membership_fixture(
+    engine,
+    *,
+    second_password_hash: str | None = None,
+) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into tenants ("
+                "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                "created_at, updated_at"
+                ") values ("
+                ":tenant_a_id, 'p3a-tenant-a', 'P3A Tenant A', 'active', 'core', "
+                "'tr-1', 'en-US', 'UTC', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                "), ("
+                ":tenant_b_id, 'p3a-tenant-b', 'P3A Tenant B', 'active', 'core', "
+                "'tr-1', 'en-US', 'UTC', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                ")"
+            ),
+            {
+                "tenant_a_id": _P3A_TENANT_A_ID,
+                "tenant_b_id": _P3A_TENANT_B_ID,
+            },
+        )
+        connection.execute(
+            text(
+                "insert into users ("
+                "id, tenant_id, email, full_name, status, password_hash, "
+                "can_invite_users, permission_version, created_at, updated_at"
+                ") values ("
+                ":canonical_id, :tenant_a_id, ' Shared.Identity@P3A.Test ', "
+                "'Canonical Tenant Admin', 'active', :password_hash, true, 2, "
+                "'2026-07-01 09:00:00', '2026-07-01 10:00:00'"
+                "), ("
+                ":second_id, :tenant_b_id, 'shared.identity@p3a.test', "
+                "'Second Tenant Employee', :second_status, :second_password_hash, false, 3, "
+                "'2026-07-02 09:00:00', '2026-07-03 10:00:00'"
+                ")"
+            ),
+            {
+                "canonical_id": _P3A_CANONICAL_USER_ID,
+                "second_id": _P3A_SECOND_USER_ID,
+                "tenant_a_id": _P3A_TENANT_A_ID,
+                "tenant_b_id": _P3A_TENANT_B_ID,
+                "password_hash": _P3A_PASSWORD_HASH,
+                "second_password_hash": second_password_hash,
+                "second_status": "active" if second_password_hash else "invited",
+            },
+        )
+        role_ids = dict(
+            list(
+                connection.execute(
+                    text(
+                        "select code, id from roles "
+                        "where code in ('tenant_admin', 'employee')"
+                    )
+                ).tuples()
+            )
+        )
+        connection.execute(
+            text(
+                "insert into user_roles ("
+                "tenant_id, user_id, role_id, role_scope_type, active, created_at, updated_at"
+                ") values ("
+                ":tenant_a_id, :canonical_id, :tenant_admin_id, 'tenant', true, "
+                "'2026-07-01 09:00:00', '2026-07-01 10:00:00'"
+                "), ("
+                ":tenant_b_id, :second_id, :employee_id, 'tenant', true, "
+                "'2026-07-02 09:00:00', '2026-07-03 10:00:00'"
+                ")"
+            ),
+            {
+                "tenant_a_id": _P3A_TENANT_A_ID,
+                "tenant_b_id": _P3A_TENANT_B_ID,
+                "canonical_id": _P3A_CANONICAL_USER_ID,
+                "second_id": _P3A_SECOND_USER_ID,
+                "tenant_admin_id": role_ids["tenant_admin"],
+                "employee_id": role_ids["employee"],
+            },
+        )
+
+
+def _p3a_projection_snapshot(connection) -> dict[str, tuple[tuple[object, ...], ...]]:
+    return {
+        "identities": tuple(
+            connection.execute(
+                text(
+                    "select id, email, email_normalized, status, password_hash, "
+                    "created_at, updated_at from identities order by id"
+                )
+            ).tuples()
+        ),
+        "memberships": tuple(
+            connection.execute(
+                text(
+                    "select id, tenant_id, identity_id, legacy_user_id, full_name, status, "
+                    "permission_version, created_at, updated_at "
+                    "from tenant_memberships order by tenant_id, id"
+                )
+            ).tuples()
+        ),
+        "roles": tuple(
+            connection.execute(
+                text(
+                    "select membership_roles.tenant_id, membership_roles.membership_id, "
+                    "roles.code, membership_roles.active, membership_roles.created_at, "
+                    "membership_roles.updated_at from membership_roles "
+                    "join roles on roles.id = membership_roles.role_id "
+                    "order by membership_roles.tenant_id, membership_roles.membership_id, "
+                    "roles.code"
+                )
+            ).tuples()
+        ),
+    }
+
+
+def test_sqlite_p3a_backfills_one_identity_two_memberships_and_copies_roles(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p3a-multi-membership.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0021_f2f_user_insert_grant")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        _seed_p3a_legacy_multi_membership_fixture(engine)
+
+        alembic_command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            snapshot = _p3a_projection_snapshot(connection)
+            legacy_users = tuple(
+                connection.execute(
+                    text(
+                        "select id, tenant_id, status, password_hash, permission_version "
+                        "from users order by id"
+                    )
+                ).tuples()
+            )
+
+        assert snapshot["identities"] == (
+            (
+                _P3A_CANONICAL_USER_ID,
+                " Shared.Identity@P3A.Test ",
+                _P3A_SHARED_EMAIL_NORMALIZED,
+                "active",
+                _P3A_PASSWORD_HASH,
+                "2026-07-01 09:00:00",
+                "2026-07-03 10:00:00",
+            ),
+        )
+        assert snapshot["memberships"] == (
+            (
+                _P3A_CANONICAL_USER_ID,
+                _P3A_TENANT_A_ID,
+                _P3A_CANONICAL_USER_ID,
+                _P3A_CANONICAL_USER_ID,
+                "Canonical Tenant Admin",
+                "active",
+                2,
+                "2026-07-01 09:00:00",
+                "2026-07-01 10:00:00",
+            ),
+            (
+                _P3A_SECOND_USER_ID,
+                _P3A_TENANT_B_ID,
+                _P3A_CANONICAL_USER_ID,
+                _P3A_SECOND_USER_ID,
+                "Second Tenant Employee",
+                "invited",
+                3,
+                "2026-07-02 09:00:00",
+                "2026-07-03 10:00:00",
+            ),
+        )
+        assert tuple((row[0], row[1], row[2], row[3]) for row in snapshot["roles"]) == (
+            (_P3A_TENANT_A_ID, _P3A_CANONICAL_USER_ID, "tenant_admin", 1),
+            (_P3A_TENANT_B_ID, _P3A_SECOND_USER_ID, "employee", 1),
+        )
+        assert legacy_users == (
+            (
+                _P3A_CANONICAL_USER_ID,
+                _P3A_TENANT_A_ID,
+                "active",
+                _P3A_PASSWORD_HASH,
+                2,
+            ),
+            (_P3A_SECOND_USER_ID, _P3A_TENANT_B_ID, "invited", None, 3),
+        )
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p3a_demo_admin_legacy_id_survives_as_identity_and_membership(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p3a-demo-admin.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    demo_tenant_id = "f1000000000040008000000000000001"
+    demo_admin_id = "f2000000000040008000000000000001"
+    alembic_command.upgrade(config, "0021_f2f_user_insert_grant")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":tenant_id, 'wealthy-falcon-demo', 'Wealthy Falcon HR Demo', "
+                    "'active', 'core', 'tr-1', 'en-US', 'Europe/Istanbul', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"tenant_id": demo_tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into users ("
+                    "id, tenant_id, email, full_name, status, password_hash, "
+                    "can_invite_users, permission_version, created_at, updated_at"
+                    ") values ("
+                    ":admin_id, :tenant_id, 'admin@wealthyfalcon.demo', 'Maya Stone', "
+                    "'active', null, true, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"admin_id": demo_admin_id, "tenant_id": demo_tenant_id},
+            )
+
+        alembic_command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            identity = connection.execute(
+                text(
+                    "select id, email, status, password_hash from identities "
+                    "where id = :admin_id"
+                ),
+                {"admin_id": demo_admin_id},
+            ).one()
+            membership = connection.execute(
+                text(
+                    "select id, tenant_id, identity_id, legacy_user_id, full_name, status "
+                    "from tenant_memberships where id = :admin_id"
+                ),
+                {"admin_id": demo_admin_id},
+            ).one()
+            legacy_user_id = connection.scalar(
+                text("select id from users where id = :admin_id"),
+                {"admin_id": demo_admin_id},
+            )
+
+        assert identity == (
+            demo_admin_id,
+            "admin@wealthyfalcon.demo",
+            "pending",
+            None,
+        )
+        assert membership == (
+            demo_admin_id,
+            demo_tenant_id,
+            demo_admin_id,
+            demo_admin_id,
+            "Maya Stone",
+            "active",
+        )
+        assert legacy_user_id == demo_admin_id
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p3a_enforces_global_identity_and_tenant_membership_uniqueness(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p3a-uniqueness.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0021_f2f_user_insert_grant")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        _seed_p3a_legacy_multi_membership_fixture(engine)
+        alembic_command.upgrade(config, "head")
+
+        fresh_engine = create_engine(f"sqlite:///{database_path}")
+        try:
+            fresh_inspector = inspect(fresh_engine)
+            identity_unique_constraints = {
+                constraint["name"]
+                for constraint in fresh_inspector.get_unique_constraints("identities")
+            }
+            membership_unique_constraints = {
+                constraint["name"]
+                for constraint in fresh_inspector.get_unique_constraints(
+                    "tenant_memberships"
+                )
+            }
+        finally:
+            fresh_engine.dispose()
+        assert identity_unique_constraints == {"uq_identities_email_normalized"}
+        assert membership_unique_constraints == {
+            "uq_tenant_memberships_tenant_id_id",
+            "uq_tenant_memberships_tenant_identity",
+            "uq_tenant_memberships_tenant_legacy_user",
+        }
+
+        for invalid_identity_update in (
+            "update identities set password_hash = null "
+            "where id = :identity_id",
+            "update identities set status = 'pending' "
+            "where id = :identity_id",
+        ):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(invalid_identity_update),
+                        {"identity_id": _P3A_CANONICAL_USER_ID},
+                    )
+
+        for invalid_membership_update in (
+            "update tenant_memberships set permission_version = 0 "
+            "where id = :membership_id",
+            "update tenant_memberships set status = 'suspended' "
+            "where id = :membership_id",
+        ):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(invalid_membership_update),
+                        {"membership_id": _P3A_CANONICAL_USER_ID},
+                    )
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "insert into identities (id, email, status) values ("
+                        "'a2000000000040008000000000000099', "
+                        "' SHARED.IDENTITY@P3A.TEST ', 'pending'"
+                        ")"
+                    )
+                )
+
+        duplicate_membership_id = "a2000000000040008000000000000098"
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "insert into users ("
+                        "id, tenant_id, email, full_name, status, permission_version, "
+                        "created_at, updated_at"
+                        ") values ("
+                        ":id, :tenant_id, 'other-membership@p3a.test', "
+                        "'Other Membership', 'invited', 1, "
+                        "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                        ")"
+                    ),
+                    {
+                        "id": duplicate_membership_id,
+                        "tenant_id": _P3A_TENANT_A_ID,
+                    },
+                )
+                connection.execute(
+                    text(
+                        "insert into tenant_memberships ("
+                        "id, tenant_id, identity_id, legacy_user_id, full_name, status, "
+                        "permission_version"
+                        ") values ("
+                        ":id, :tenant_id, :identity_id, :id, 'Other Membership', "
+                        "'invited', 1"
+                        ")"
+                    ),
+                    {
+                        "id": duplicate_membership_id,
+                        "tenant_id": _P3A_TENANT_A_ID,
+                        "identity_id": _P3A_CANONICAL_USER_ID,
+                    },
+                )
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p3a_conflicting_passwords_refuse_atomically(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-p3a-password-conflict.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0021_f2f_user_insert_grant")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        _seed_p3a_legacy_multi_membership_fixture(
+            engine,
+            second_password_hash=_P3A_OTHER_PASSWORD_HASH,
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "P3A identity backfill preflight failed: "
+                "conflicting_password_identities=1, blank_normalized_emails=0"
+            ),
+        ):
+            alembic_command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            revision = connection.scalar(text("select version_num from alembic_version"))
+            hashes = tuple(
+                connection.scalars(text("select password_hash from users order by id"))
+            )
+        assert revision == "0021_f2f_user_insert_grant"
+        assert not {
+            "identities",
+            "tenant_memberships",
+            "membership_roles",
+        } & set(inspect(engine).get_table_names())
+        assert hashes == (_P3A_PASSWORD_HASH, _P3A_OTHER_PASSWORD_HASH)
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p3a_downgrade_refuses_new_legacy_password_conflict(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p3a-downgrade-password-conflict.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0021_f2f_user_insert_grant")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        _seed_p3a_legacy_multi_membership_fixture(engine)
+        alembic_command.upgrade(config, "head")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "update users set password_hash = :password_hash "
+                    "where id = :user_id"
+                ),
+                {
+                    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$000$lower",
+                    "user_id": _P3A_SECOND_USER_ID,
+                },
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "P3A downgrade preflight failed: identity_drift=0, "
+                "membership_drift=0, role_drift=0, "
+                "conflicting_password_identities=1, blank_normalized_emails=0"
+            ),
+        ):
+            alembic_command.downgrade(config, "0021_f2f_user_insert_grant")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0022_p3a_identity_memberships"
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("update users set password_hash = null where id = :user_id"),
+                {"user_id": _P3A_SECOND_USER_ID},
+            )
+        alembic_command.downgrade(config, "0021_f2f_user_insert_grant")
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) -> None:
+    database_path = tmp_path / "migration-p3a-safe-round-trip.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0021_f2f_user_insert_grant")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        _seed_p3a_legacy_multi_membership_fixture(engine)
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            first_projection = _p3a_projection_snapshot(connection)
+
+        alembic_command.downgrade(config, "0021_f2f_user_insert_grant")
+        assert not {
+            "identities",
+            "tenant_memberships",
+            "membership_roles",
+        } & set(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            assert connection.scalar(text("select count(*) from users")) == 2
+            assert connection.scalar(text("select count(*) from user_roles")) == 2
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            second_projection = _p3a_projection_snapshot(connection)
+            revision = connection.scalar(text("select version_num from alembic_version"))
+
+        assert second_projection == first_projection
+        assert revision == "0022_p3a_identity_memberships"
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p3a_downgrade_refuses_drift_until_projection_is_repaired(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p3a-downgrade-guard.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0021_f2f_user_insert_grant")
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        _seed_p3a_legacy_multi_membership_fixture(engine)
+        alembic_command.upgrade(config, "head")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "update tenant_memberships set full_name = 'Canonical Membership Drift' "
+                    "where id = :membership_id"
+                ),
+                {"membership_id": _P3A_CANONICAL_USER_ID},
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "P3A downgrade preflight failed: identity_drift=0, "
+                "membership_drift=1, role_drift=0"
+            ),
+        ):
+            alembic_command.downgrade(config, "0021_f2f_user_insert_grant")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0022_p3a_identity_memberships"
+            )
+            assert connection.scalar(
+                text(
+                    "select full_name from tenant_memberships where id = :membership_id"
+                ),
+                {"membership_id": _P3A_CANONICAL_USER_ID},
+            ) == "Canonical Membership Drift"
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "update tenant_memberships set full_name = ("
+                    "select users.full_name from users "
+                    "where users.id = tenant_memberships.legacy_user_id "
+                    "and users.tenant_id = tenant_memberships.tenant_id"
+                    ") where id = :membership_id"
+                ),
+                {"membership_id": _P3A_CANONICAL_USER_ID},
+            )
+        alembic_command.downgrade(config, "0021_f2f_user_insert_grant")
+        assert "tenant_memberships" not in inspect(engine).get_table_names()
     finally:
         engine.dispose()
 

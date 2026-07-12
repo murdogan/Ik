@@ -165,3 +165,39 @@ sözleşmesi application/UoW portudur; append-only audit modeli Faz 2 migration'
 SQLite round-trip/drift ile gerçek PostgreSQL 17.10 catalog/RLS/grant/cross-tenant,
 hostile-default-ACL ve non-BYPASS migration-owner testleri geçmiştir; exact sonuçlar
 implementation-status dokümanında kayıtlıdır.
+
+## P3A global identity and tenant-membership expand foundation
+
+`0022_p3a_identity_memberships`, tenant-scoped `users` sözleşmesini kaldırmadan global credential
+kimliği ile tenant erişimini ayıran additive expand adımıdır.
+
+- `identities`, normalized e-posta için global unique anahtar ile gelecekte credential-wide
+  `pending|active|locked|disabled` durumu ve parola sahipliği kurulacak target projection'dır.
+  P3A compatibility checkpoint'inde activation/login/user servislerinin canlı write sahibi hâlâ
+  `users`/`user_roles`'dır; canonical write cutover ve sürekli senkronizasyon sonraki identity
+  checkpoint adımlarına bırakılır.
+- `tenant_memberships`, mevcut public user ID'sini membership ID olarak korur; tenant-local ad,
+  `invited|active|locked|disabled` durumu ve `permission_version` taşır. Böylece bir tenant'taki
+  lock/disable başka tenant membership'ini veya global credential'ı kapatmaz.
+- `membership_roles`, role bağlantısını `(tenant_id,membership_id)` composite foreign key ile
+  tenant-qualified tutar. Legacy `user_roles` bu checkpoint'te kaldırılmaz.
+- Backfill normalized e-posta başına en düşük UUID'li legacy user'ı canonical identity ID/e-posta
+  kaynağı seçer; her legacy user aynı ID'li membership'e, her `user_roles` satırı membership role'a
+  dönüşür. Bir e-posta grubunda birden fazla farklı non-null parola hash'i varsa migration seçim
+  yapmaz ve `conflicting_password_identities` sayısıyla atomik olarak durur. Onarım, kimlik sahibi
+  doğrulaması + parola resetiyle legacy hash'leri tek canonical değere getiren açık forward data-fix
+  üzerinden yapılır; hash lexical olarak seçilmez veya sessizce silinmez.
+- PostgreSQL'de membership tabloları `ENABLE + FORCE RLS` ve tenant policy altında yalnız `SELECT`
+  grant'i alır. Platform capability hiçbir membership/identity grant'i almaz. Global credential
+  tablosu FORCE RLS altında policy'siz/default-deny kalır; ilerideki login geçişi platform rolünü
+  yeniden kullanmak yerine ayrı dar authentication capability'si kurmalıdır.
+- Uygulama binary'si legacy tablolardan çalışmaya devam ettiği için schema downgrade olmadan geri
+  alınabilir. Schema downgrade yalnız identity, membership ve role satırları legacy projection'dan
+  birebir yeniden üretilebiliyorsa çalışır. `identity_drift`, `membership_drift` veya `role_drift`
+  varsa ya da legacy credential grubu artık tek hash'e indirgenemiyorsa veri düşürmek yerine fail
+  eder; target state forward reconciliation revision'ıyla onarılır ve sonra yeniden değerlendirilir.
+
+SQLite hattı deterministic projection, unique/check/FK metadata ve guarded downgrade için hızlı
+kanıttır. FORCE RLS, exact ACL, platform denial ve cross-tenant visibility iddiaları yalnız
+`backend/tests/integration/test_postgresql_p3a_identity_memberships.py` ile gerçek PostgreSQL'de
+kanıtlanır.
