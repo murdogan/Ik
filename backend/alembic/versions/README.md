@@ -231,3 +231,41 @@ SQLite testleri contract/constraint ve ürün akışı kanıtıdır. FORCE RLS, 
 tenant/platform selection-table denial ve projection-function sınırı
 `backend/tests/integration/test_postgresql_p3b_email_first_login.py` ile disposable PostgreSQL
 hattında kanıtlanır.
+
+## P3C–P3E identity checkpoint closure
+
+`0024_p3c_organization_selection`, refresh session'ını canonical membership'e bağlar ve hashli
+organization-selection credential'ının tek kullanımlık tüketimini açar. `0025_p3d_platform_authentication`,
+tenant session/cookie/audience sınırından ayrı platform identity role ve session tablolarını ekler.
+
+`0026_p3e_identity_checkpoint`, P3A–P3E / Phase 3A kimlik sınırını kapatan additive revision'dır:
+
+- `password_reset_tokens`, yalnız SHA-256 hash, identity FK, süre ve mutually-exclusive
+  consumed/revoked terminal durumlarını saklar; raw token DB'ye yazılmaz.
+- Tablo PostgreSQL'de `ENABLE + FORCE RLS` altındadır. Tenant, platform ve authentication
+  capability'leri tablo grant'i almaz; authentication capability yalnız dar
+  `issue_identity_password_reset` ve `complete_identity_password_reset` fonksiyonlarını çalıştırır.
+  Non-login recovery owner yeniden kullanılıyorsa bütün stale object/column grant'leri sıfırlanır;
+  rolün beklenmeyen member'ı veya önceden sahip olduğu public object varsa migration fail closed
+  olur.
+- `accept_existing_identity_membership(uuid,text)` SECURITY DEFINER fonksiyonu, tenant context
+  içindeki invited legacy user ile `active` global identity'nin doğrulanmış ve değişmemiş Argon
+  hash'ini atomik kontrol eder. Yalnız membership/user durumunu aktive eder; global credential'ı
+  değiştirmez. Aktivasyon token'ı yine süreli, hashli ve tek kullanımlıktır.
+- `issue_identity_password_reset(uuid,uuid,text,timestamptz)` aktif identity'yi kilitler, önceki
+  canlı resetleri iptal eder ve en fazla bir saatlik yeni hashli credential'ı atomik oluşturur.
+- `complete_identity_password_reset(uuid,text,text)` yalnız doğru, canlı reset hash'iyle global
+  credential ve legacy credential projection'larını aynı değere getirir; reset token'ını tüketir,
+  diğer resetleri iptal eder ve tenant/platform refresh family'leri ile açık organization-selection
+  transaction'larını revoke/consume eder.
+- Login, activation ve recovery public denemeleri PII-free HMAC bucket'larıyla kaynak ve
+  identity/token bazında sınırlandırılır. Recovery request'i bilinen/bilinmeyen hesap için aynı
+  response ve audit şeklini korur; reset confirm kaynak/token limitini pahalı Argon işleminden önce
+  tüketir. Downgrade, P3E scope satırlarını non-BYPASS owner ile silebilmek için rate-limit tablosunda
+  FORCE RLS'i transaction içinde geçici kaldırır ve constraint contract'tan sonra geri kurar.
+
+SQLite migration/model/API hattı hızlı compatibility kanıtıdır. Function owner, exact ACL/RLS,
+tenant/platform denial, existing-identity kabulü, tek identity/iki membership ve recovery session
+revoke iddiaları `backend/tests/integration/test_postgresql_p3e_identity_checkpoint.py` ile gerçek
+PostgreSQL'de doğrulanır. Bu revision sonrası tek head `0026_p3e_identity_checkpoint`'tır; P3F
+organization tabloları bu checkpoint'e dahil değildir.

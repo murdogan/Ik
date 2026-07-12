@@ -276,6 +276,27 @@
   line-height: 1.45;
 }
 
+.formLinkRow {
+  margin-top: -6px;
+  text-align: right;
+}
+
+.formLinkRow a,
+.textLink {
+  color: var(--wf-green-strong);
+  font-size: 13px;
+  font-weight: 750;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.formLinkRow a:focus-visible,
+.textLink:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid rgba(49, 107, 255, 0.3);
+  outline-offset: 3px;
+}
+
 .primaryButton,
 .secondaryButton,
 .primaryLink,

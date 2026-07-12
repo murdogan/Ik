@@ -86,6 +86,8 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         metadata_keys=frozenset({"before_status", "after_status"}),
         changed_fields=frozenset({"status"}),
     ),
+    AuditEventType.PASSWORD_RESET_REQUESTED: AuditMetadataPolicy(),
+    AuditEventType.PASSWORD_RESET_COMPLETED: AuditMetadataPolicy(),
     AuditEventType.INVITATION_CREATED: AuditMetadataPolicy(
         metadata_keys=frozenset({"is_reinvite", "initial_role"}),
         changed_fields=frozenset({"status", "roles"}),

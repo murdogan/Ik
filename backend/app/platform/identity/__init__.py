@@ -20,6 +20,13 @@ from app.platform.identity.organization_selection_tokens import (
     issue_organization_selection_token,
     parse_organization_selection_token,
 )
+from app.platform.identity.password_reset_tokens import (
+    InvalidPasswordResetTokenFormatError,
+    PasswordResetTokenMaterial,
+    hash_password_reset_token,
+    issue_password_reset_token,
+    parse_password_reset_token,
+)
 from app.platform.identity.passwords import PasswordManager
 from app.platform.identity.platform_access_tokens import (
     PLATFORM_ACCESS_TOKEN_AUDIENCE,
@@ -54,6 +61,7 @@ __all__ = [
     "InvalidOrganizationSelectionTokenFormatError",
     "InvalidPlatformAccessTokenError",
     "InvalidPlatformRefreshTokenFormatError",
+    "InvalidPasswordResetTokenFormatError",
     "InvalidRefreshTokenFormatError",
     "IssuedAccessToken",
     "IssuedPlatformAccessToken",
@@ -62,6 +70,7 @@ __all__ = [
     "PLATFORM_ACCESS_TOKEN_ISSUER",
     "PLATFORM_REFRESH_TOKEN_VERSION",
     "PasswordManager",
+    "PasswordResetTokenMaterial",
     "PlatformAccessPrincipal",
     "PlatformAccessTokenCodec",
     "PlatformRefreshTokenMaterial",
@@ -70,12 +79,15 @@ __all__ = [
     "hash_refresh_token",
     "hash_organization_selection_token",
     "hash_platform_refresh_token",
+    "hash_password_reset_token",
     "issue_activation_token",
     "issue_refresh_token",
     "issue_organization_selection_token",
     "issue_platform_refresh_token",
+    "issue_password_reset_token",
     "parse_activation_token",
     "parse_organization_selection_token",
     "parse_platform_refresh_token",
+    "parse_password_reset_token",
     "parse_refresh_token",
 ]

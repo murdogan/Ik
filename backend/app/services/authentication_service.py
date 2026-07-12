@@ -55,7 +55,9 @@ from app.services.auth_session_service import (
 )
 from app.services.authorization_service import load_authorization_snapshot
 from app.services.identity_projection_service import (
+    IdentityCredentialConflictError,
     IdentityProjectionConflictError,
+    accept_existing_identity_membership_projection,
     sync_identity_membership_projection,
 )
 
@@ -336,12 +338,25 @@ class AuthenticationService:
         if target_email is None:
             raise InvalidActivationError()
         identity = await self._find_identity(target_email)
-        if identity is not None and identity.status != IdentityStatus.PENDING.value:
-            # A tenant invitation is not proof of control over an existing global identity.
-            # Membership acceptance for an already-active identity must happen behind a later
-            # identity-authenticated flow; never turn this activation token into a password reset.
+        accepting_existing_identity = (
+            identity is not None and identity.status == IdentityStatus.ACTIVE.value
+        )
+        if identity is not None and identity.status not in {
+            IdentityStatus.PENDING.value,
+            IdentityStatus.ACTIVE.value,
+        }:
             raise InvalidActivationError()
-        activation_password_hash = await self._password_manager.hash_async(password)
+        if accepting_existing_identity:
+            if not await self._password_manager.verify_async(
+                password,
+                identity.password_hash,
+            ):
+                raise InvalidActivationError()
+            activation_password_hash = identity.password_hash
+            if activation_password_hash is None:  # pragma: no cover - model invariant
+                raise InvalidActivationError()
+        else:
+            activation_password_hash = await self._password_manager.hash_async(password)
 
         async with self._session_factory() as session:
             configure_tenant_database_access(session, token_material.tenant_id)
@@ -386,12 +401,22 @@ class AuthenticationService:
                 activation.consumed_at = now
                 await session.flush()
                 try:
-                    await sync_identity_membership_projection(
-                        session,
-                        user,
-                        require_pending_identity=True,
-                    )
-                except IdentityProjectionConflictError as exc:
+                    if accepting_existing_identity:
+                        await accept_existing_identity_membership_projection(
+                            session,
+                            user,
+                            verified_password_hash=activation_password_hash,
+                        )
+                    else:
+                        await sync_identity_membership_projection(
+                            session,
+                            user,
+                            require_pending_identity=True,
+                        )
+                except (
+                    IdentityCredentialConflictError,
+                    IdentityProjectionConflictError,
+                ) as exc:
                     raise InvalidActivationError() from exc
                 authorization = await load_authorization_snapshot(
                     session,

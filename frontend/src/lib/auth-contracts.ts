@@ -106,6 +106,14 @@ export interface ActivationResponseData {
   user: AuthUser;
 }
 
+export interface PasswordResetRequestResponseData {
+  status: "accepted";
+}
+
+export interface PasswordResetConfirmResponseData {
+  status: "completed";
+}
+
 export interface AuthErrorPresentation {
   message: string;
   reference?: string | null;
@@ -115,6 +123,11 @@ export interface AuthErrorPresentation {
 export interface OrganizationSelectionErrorPresentation
   extends AuthErrorPresentation {
   terminal: boolean;
+}
+
+export interface PasswordResetConfirmErrorPresentation
+  extends AuthErrorPresentation {
+  offerNewRequest?: boolean;
 }
 
 const GENERIC_LOGIN_ERROR =
@@ -323,5 +336,108 @@ export function activationErrorPresentation(cause: unknown): AuthErrorPresentati
   return {
     ...presentation(GENERIC_ACTIVATION_ERROR, cause),
     offerLogin: true,
+  };
+}
+
+export function passwordResetRequestErrorPresentation(
+  cause: unknown,
+): AuthErrorPresentation {
+  if (!(cause instanceof ApiClientError)) {
+    return {
+      message:
+        "Parola yenileme isteği şu anda gönderilemiyor. Lütfen biraz sonra yeniden deneyin.",
+    };
+  }
+
+  const code = cause.code.toLowerCase();
+  if (cause.status === null || code === "network_error") {
+    return presentation(
+      "Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edip yeniden deneyin.",
+      cause,
+    );
+  }
+  if (cause.status === 429 || code.includes("rate_limit")) {
+    return presentation(
+      "Çok sayıda istek yapıldı. Kısa bir süre bekleyip yeniden deneyin.",
+      cause,
+    );
+  }
+  if (cause.status === 422 || code.includes("validation")) {
+    return presentation("Geçerli bir e-posta adresi girip yeniden deneyin.", cause);
+  }
+  if ((cause.status ?? 0) >= 500 || code === "invalid_response") {
+    return presentation(
+      "Parola yenileme hizmeti geçici olarak kullanılamıyor. Lütfen biraz sonra yeniden deneyin.",
+      cause,
+    );
+  }
+
+  return presentation(
+    "Parola yenileme isteği şu anda gönderilemiyor. Lütfen biraz sonra yeniden deneyin.",
+    cause,
+  );
+}
+
+export function passwordResetConfirmErrorPresentation(
+  cause: unknown,
+): PasswordResetConfirmErrorPresentation {
+  if (!(cause instanceof ApiClientError)) {
+    return {
+      message:
+        "Parolanız şu anda yenilenemiyor. Lütfen biraz sonra yeniden deneyin.",
+    };
+  }
+
+  const code = cause.code.toLowerCase();
+  if (cause.status === null || code === "network_error") {
+    return presentation(
+      "Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edip yeniden deneyin.",
+      cause,
+    );
+  }
+  if (cause.status === 429 || code.includes("rate_limit")) {
+    return presentation(
+      "Çok sayıda deneme yapıldı. Kısa bir süre bekleyip yeniden deneyin.",
+      cause,
+    );
+  }
+  if (
+    [400, 404, 409, 410].includes(cause.status ?? 0) ||
+    code.includes("token") ||
+    code.includes("reset")
+  ) {
+    return {
+      ...presentation(
+        "Bu parola yenileme bağlantısı geçersiz, süresi dolmuş veya daha önce kullanılmış. Yeni bir bağlantı isteyin.",
+        cause,
+      ),
+      offerNewRequest: true,
+    };
+  }
+  if (code.includes("password")) {
+    return presentation(
+      "Yeni parolanız güvenlik gereksinimlerini karşılamıyor. En az 12 karakterlik, size özel bir parola seçin.",
+      cause,
+    );
+  }
+  if (cause.status === 422 || code.includes("validation")) {
+    return presentation(
+      "Yeni parolanızı kontrol edin. En az 12 karakter kullanın ve iki alana aynı parolayı yazın.",
+      cause,
+    );
+  }
+  if ((cause.status ?? 0) >= 500 || code === "invalid_response") {
+    return presentation(
+      "Parola yenileme hizmeti geçici olarak kullanılamıyor. Bağlantıyı kapatmadan biraz sonra yeniden deneyin.",
+      cause,
+    );
+  }
+
+  return {
+    ...presentation(
+      "Bu parola yenileme bağlantısı geçersiz, süresi dolmuş veya daha önce kullanılmış. Yeni bir bağlantı isteyin.",
+      cause,
+    ),
+    offerNewRequest: true,
   };
 }

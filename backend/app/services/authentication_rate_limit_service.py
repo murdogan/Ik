@@ -1,4 +1,4 @@
-"""Database-backed, PII-free fixed-window limits for public tenant login."""
+"""Database-backed, PII-free fixed-window limits for public identity exchanges."""
 
 from __future__ import annotations
 
@@ -39,6 +39,24 @@ class AuthenticationRateLimitKeyHasher:
     def identity_bucket(self, normalized_email: str) -> str:
         return self._digest("login-identity", normalized_email)
 
+    def activation_source_bucket(self, source_address: str) -> str:
+        return self._digest("activation-source", source_address)
+
+    def activation_token_bucket(self, raw_token: str) -> str:
+        return self._digest("activation-token", raw_token)
+
+    def password_reset_source_bucket(self, source_address: str) -> str:
+        return self._digest("password-reset-source", source_address)
+
+    def password_reset_identity_bucket(self, normalized_email: str) -> str:
+        return self._digest("password-reset-identity", normalized_email)
+
+    def password_reset_confirmation_source_bucket(self, source_address: str) -> str:
+        return self._digest("password-reset-confirmation-source", source_address)
+
+    def password_reset_confirmation_token_bucket(self, raw_token: str) -> str:
+        return self._digest("password-reset-confirmation-token", raw_token)
+
     def _digest(self, purpose: str, *parts: str) -> str:
         material = "\0".join((purpose, *parts)).encode("utf-8")
         return hmac.new(self._key, material, sha256).hexdigest()
@@ -75,20 +93,90 @@ class AuthenticationRateLimitService:
         source_address: str,
         normalized_email: str,
     ) -> None:
+        await self._consume_attempt(
+            (
+                (
+                    self._key_hasher.source_bucket(source_address),
+                    "login_source",
+                    self._policy.source_attempts,
+                ),
+                (
+                    self._key_hasher.identity_bucket(normalized_email),
+                    "login_identity",
+                    self._policy.identity_attempts,
+                ),
+            )
+        )
+
+    async def consume_activation_attempt(
+        self,
+        *,
+        source_address: str,
+        raw_token: str,
+    ) -> None:
+        await self._consume_attempt(
+            (
+                (
+                    self._key_hasher.activation_source_bucket(source_address),
+                    "activation_source",
+                    self._policy.source_attempts,
+                ),
+                (
+                    self._key_hasher.activation_token_bucket(raw_token),
+                    "activation_token",
+                    self._policy.identity_attempts,
+                ),
+            )
+        )
+
+    async def consume_password_reset_attempt(
+        self,
+        *,
+        source_address: str,
+        normalized_email: str,
+    ) -> None:
+        await self._consume_attempt(
+            (
+                (
+                    self._key_hasher.password_reset_source_bucket(source_address),
+                    "password_reset_source",
+                    self._policy.source_attempts,
+                ),
+                (
+                    self._key_hasher.password_reset_identity_bucket(normalized_email),
+                    "password_reset_identity",
+                    self._policy.identity_attempts,
+                ),
+            )
+        )
+
+    async def consume_password_reset_confirmation(
+        self,
+        *,
+        source_address: str,
+        raw_token: str,
+    ) -> None:
+        await self._consume_attempt(
+            (
+                (
+                    self._key_hasher.password_reset_confirmation_source_bucket(source_address),
+                    "password_reset_confirm_source",
+                    self._policy.source_attempts,
+                ),
+                (
+                    self._key_hasher.password_reset_confirmation_token_bucket(raw_token),
+                    "password_reset_confirm_token",
+                    self._policy.identity_attempts,
+                ),
+            )
+        )
+
+    async def _consume_attempt(
+        self,
+        buckets: tuple[tuple[str, str, int], ...],
+    ) -> None:
         now = datetime.now(UTC)
         expires_at = now + self._policy.window
-        buckets = (
-            (
-                self._key_hasher.source_bucket(source_address),
-                "login_source",
-                self._policy.source_attempts,
-            ),
-            (
-                self._key_hasher.identity_bucket(normalized_email),
-                "login_identity",
-                self._policy.identity_attempts,
-            ),
-        )
         exceeded_until: datetime | None = None
         async with self._session_factory() as session:
             configure_authentication_database_access(session)
@@ -120,9 +208,7 @@ async def _increment_bucket(
 ) -> tuple[int, datetime]:
     table = AuthenticationRateLimitBucket.__table__
     dialect_name = session.get_bind().dialect.name
-    insert_factory = (
-        postgresql_insert if dialect_name == "postgresql" else sqlite_insert
-    )
+    insert_factory = postgresql_insert if dialect_name == "postgresql" else sqlite_insert
     statement = insert_factory(table).values(
         bucket_key_hash=bucket_key,
         scope=scope,

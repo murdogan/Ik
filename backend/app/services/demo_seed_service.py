@@ -5,7 +5,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.authorization import UserRole
 from app.models.employee import Employee, EmployeeStatus
+from app.models.identity import (
+    Identity,
+    IdentityStatus,
+    MembershipRole,
+    TenantMembership,
+)
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
@@ -129,7 +136,7 @@ DEMO_USERS: tuple[DemoUserFixture, ...] = (
         key="atlas_admin",
         tenant_key="atlas",
         id=UUID("f2000000-0000-4000-8000-000000000004"),
-        email="admin@atlaspeople.demo",
+        email="admin@wealthyfalcon.demo",
         full_name="Arda Blake",
         role_code="tenant_admin",
     ),
@@ -407,8 +414,98 @@ async def _upsert_users(session: AsyncSession, tenants: dict[str, Tenant]) -> di
             user_id=user.id,
             role_code=fixture.role_code,
         )
+        await _upsert_identity_membership_projection(session, user)
         users[fixture.key] = user
     return users
+
+
+async def _upsert_identity_membership_projection(
+    session: AsyncSession,
+    user: User,
+) -> None:
+    """Keep the local demo usable through the canonical P3 identity boundary."""
+
+    identity = await session.scalar(
+        select(Identity).where(
+            Identity.email_normalized == user.email.strip().lower()
+        )
+    )
+    if identity is None:
+        identity = Identity(
+            id=user.id,
+            email=user.email,
+            status=(
+                IdentityStatus.PENDING.value
+                if user.password_hash is None
+                else IdentityStatus.ACTIVE.value
+            ),
+            password_hash=user.password_hash,
+        )
+        session.add(identity)
+        await session.flush()
+    elif (
+        identity.status == IdentityStatus.PENDING.value
+        and user.password_hash is not None
+    ):
+        identity.email = user.email
+        identity.status = IdentityStatus.ACTIVE.value
+        identity.password_hash = user.password_hash
+
+    membership = await session.scalar(
+        select(TenantMembership).where(
+            TenantMembership.tenant_id == user.tenant_id,
+            TenantMembership.identity_id == identity.id,
+        )
+    )
+    if membership is None:
+        membership = TenantMembership(
+            id=user.id,
+            tenant_id=user.tenant_id,
+            identity_id=identity.id,
+            legacy_user_id=user.id,
+            full_name=user.full_name,
+            status=user.status,
+            permission_version=user.permission_version,
+        )
+        session.add(membership)
+    else:
+        membership.full_name = user.full_name
+        membership.status = user.status
+        membership.permission_version = user.permission_version
+    await session.flush()
+
+    assignments = tuple(
+        await session.scalars(
+            select(UserRole).where(
+                UserRole.tenant_id == user.tenant_id,
+                UserRole.user_id == user.id,
+            )
+        )
+    )
+    projected_roles = {
+        role.role_id: role
+        for role in await session.scalars(
+            select(MembershipRole).where(
+                MembershipRole.tenant_id == user.tenant_id,
+                MembershipRole.membership_id == membership.id,
+            )
+        )
+    }
+    for assignment in assignments:
+        projected = projected_roles.get(assignment.role_id)
+        if projected is None:
+            session.add(
+                MembershipRole(
+                    tenant_id=user.tenant_id,
+                    membership_id=membership.id,
+                    role_id=assignment.role_id,
+                    role_scope_type=assignment.role_scope_type,
+                    active=assignment.active,
+                )
+            )
+        else:
+            projected.active = assignment.active
+    await session.flush()
 
 
 async def _upsert_employees(

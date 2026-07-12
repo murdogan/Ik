@@ -88,6 +88,68 @@ class UserActivationToken(Base, TimestampMixin):
     )
 
 
+class PasswordResetToken(Base, TimestampMixin):
+    """SHA-256-hashed, expiring, one-use recovery credential for one identity."""
+
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "length(token_hash) = 64",
+            name="ck_password_reset_tokens_hash_length",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_password_reset_tokens_expiry_order",
+        ),
+        CheckConstraint(
+            "consumed_at is null or consumed_at >= created_at",
+            name="ck_password_reset_tokens_consumed_order",
+        ),
+        CheckConstraint(
+            "revoked_at is null or revoked_at >= created_at",
+            name="ck_password_reset_tokens_revoked_order",
+        ),
+        CheckConstraint(
+            "consumed_at is null or revoked_at is null",
+            name="ck_password_reset_tokens_terminal_state",
+        ),
+        UniqueConstraint(
+            "token_hash",
+            name="uq_password_reset_tokens_token_hash",
+        ),
+        Index(
+            "ix_password_reset_tokens_identity_expires_at",
+            "identity_id",
+            "expires_at",
+        ),
+        Index(
+            "ix_password_reset_tokens_expires_at",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    identity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "identities.id",
+            name="fk_password_reset_tokens_identity_id_identities",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
 class RefreshSessionFamily(Base, TimestampMixin):
     """Server-side lifetime and revocation state shared by rotated credentials."""
 
@@ -395,7 +457,9 @@ class AuthenticationRateLimitBucket(Base):
             name="ck_authentication_rate_limit_buckets_hash_length",
         ),
         CheckConstraint(
-            "scope in ('login_source','login_identity')",
+            "scope in ('login_source','login_identity','activation_source',"
+            "'activation_token','password_reset_source','password_reset_identity',"
+            "'password_reset_confirm_source','password_reset_confirm_token')",
             name="ck_authentication_rate_limit_buckets_scope",
         ),
         CheckConstraint(

@@ -1,13 +1,52 @@
 # API Implementation Status Report
 
-Date: 2026-07-12
+Date: 2026-07-13
 Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3B email-first tenant login and post-auth membership discovery`
-Review checkpoint: `STOP — local P3B gates passed; supervisor push pending`
-Review decision: `P3B product/security scope is green; do not start P3C or later work in this task`
-Push state: `P3A base is pushed; P3B HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P3E invitation, activation, recovery and identity checkpoint closure`
+Review checkpoint: `STOP — P3A–P3E / Phase 3A identity checkpoint complete; P3F organization work not started`
+Review decision: `P3E product/security scope is green after the recorded gates below`
+Push state: `P3E HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
+
+### P3E Phase 3A identity checkpoint closure
+
+- Tenant admins can invite either a new email or an existing global identity. A new identity uses
+  the hashed, expiring activation link once to establish its first Argon2id password. An existing
+  active identity submits its current password through the same one-use link; the server verifies
+  and preserves the global hash while activating only the pending tenant membership.
+- Tenant login remains email/password only. Membership names are resolved only after successful
+  global credential verification; two active demo memberships produce the existing safe,
+  short-lived organization-selection flow.
+- Password recovery is available from `/login`. Request returns the same `202 {status: accepted}`
+  for known, unknown and inactive emails and never returns a reset URL, identity or organization.
+  The delivery port uses a local/dev console fake only; production mail integration remains outside
+  this task. Confirm consumes a hashed 15-minute token once, reconciles legacy credential
+  projections, and revokes tenant sessions, platform sessions and pending organization selections.
+- Revision `0026_p3e_identity_checkpoint` is additive. `password_reset_tokens` is FORCE-RLS,
+  tenant/platform/authentication capabilities have no table access, and a narrow non-login
+  recovery owner exposes only atomic issuance and token-checked completion functions to the
+  authentication capability. Reused-role stale grants are cleared, unexpected owner members or
+  pre-owned public objects fail closed, and reset-confirm source/token limits run before Argon2id.
+- This checkpoint closes Phase 3A only. No legal entity, branch, department, position, assignment
+  or other P3F organization work is present.
+
+### P3E Phase 3A identity checkpoint gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend scripts` | Passed: `All checks passed!` |
+| Full fast backend suite | `uv run pytest -q` | Passed: 819 tests; 50 PostgreSQL tests deselected; one known Starlette/httpx deprecation warning |
+| Focused P3E contracts | `uv run pytest -q backend/tests/test_auth_api.py backend/tests/test_demo_seed_command.py backend/tests/test_demo_seed_service.py backend/tests/test_migrations.py backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py` | Passed: 106 tests; one known Starlette/httpx warning |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0026_p3e_identity_checkpoint` |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 48 documented runtime endpoints executed |
+| Full PostgreSQL 17.6 lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed: 50 tests; migration round-trip/drift, hostile reused-role cleanup, exact RLS/ACLs, safe rate-scope downgrade, invitation acceptance, reset atomicity and all prior persistence gates |
+| Frontend static gates | `npm run lint && npm run typecheck && npm run build` in `frontend/` | Passed; production build includes `/forgot-password` and `/reset-password` |
+| Full browser E2E | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npm run test:e2e` in `frontend/` | Passed: 17 Chromium tests, including recovery and existing-identity activation → organization selection |
+| Git hygiene | `git diff --check` plus task-scope review | Passed; no deployment, staging, cron, secret, P3F organization or later-phase change |
+
+The committed P3E checkpoint is the explicit Phase 3A completion boundary. Codex does not push,
+merge or deploy; the supervisor owns the review-branch push before any P3F work begins.
 
 ### P3B email-first tenant login and post-auth membership discovery
 
@@ -29,23 +68,24 @@ Push state: `P3A base is pushed; P3B HEAD is intentionally left unpushed for the
   read HR data, private identity/membership display fields, selection rows or platform data beyond
   the login projection. Its audit `INSERT` policy accepts only the exact redacted login-failure
   shape. Tenant and platform capabilities cannot read selection credentials.
-- Invitation and activation remain expand-compatible for absent/pending identities and project the
+- Historical P3B invitation and activation remained expand-compatible for absent/pending identities and projected the
   legacy user/membership/roles in the same transaction. A tenant invitation cannot reset an
   already-active global identity: that activation is rejected without consuming its token or
   changing either credential. If a pending identity changes state concurrently, the projection
   function rejects and rolls back the whole activation transaction. Existing-identity membership
-  acceptance requires a later identity-authenticated flow.
+  acceptance required a later identity-authenticated flow. P3E above now supplies that verified
+  current-password acceptance without replacing the global credential.
 - `/login` now asks only for email and password. A single-organization user reaches the dashboard
   automatically; a verified multi-organization user sees safe organization names while the raw
   selection transaction remains only in expiring component memory and is never rendered or stored
   in browser storage.
 
-The Phase-2 local/manual invitation response still contains its raw activation URL. An authorized
+At the historical P3B checkpoint, the Phase-2 local/manual invitation response still contained its raw activation URL. An authorized
 tenant inviter can therefore distinguish a new/pending global account (activatable) from an
 already-active/locked/disabled account (generic rejection), although no organization membership
-metadata is returned. Removing that account-existence signal requires the later identity-owned
-invitation-delivery/acceptance flow; P3B keeps the existing manual invitation contract and fails
-closed against credential takeover.
+metadata was returned. P3E closes the visible behavior with the same response shape: both new and
+existing identities receive a usable link, while only the existing credential owner can activate
+the pending membership.
 
 ### P3B local gate evidence
 
@@ -650,7 +690,9 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/auth/refresh` | Implemented for F2B | Single-use rotation, retained token history, reuse-triggered family revoke, and rotated HttpOnly cookie |
 | POST | `/api/v1/auth/logout` | Implemented for F2B | Idempotent family revoke and exact-policy refresh-cookie deletion |
 | GET | `/api/v1/me` | Implemented for F2D | Bearer plus active server-session/version validation; current user, tenant, roles and permissions derived without caller selectors |
-| POST | `/api/v1/auth/activate` | Implemented for F2A | Hashed expiring invitation credential, atomic single-use consumption and Argon2id password setup |
+| POST | `/api/v1/auth/activate` | Completed for P3E | One-use hashed invitation; first-password setup or current-password proof that activates only an existing identity's pending membership |
+| POST | `/api/v1/auth/password-reset/request` | Implemented for P3E | Enumeration-resistant `202 accepted`, separate delivery, no identity/organization/token response |
+| POST | `/api/v1/auth/password-reset/confirm` | Implemented for P3E | One-use hashed reset, global credential reconciliation and all-realm session invalidation |
 | POST | `/api/v1/users/invitations` | Implemented for F2D | Bearer-derived actor/tenant, exact invite permission and header/payload tenant-spoof resistance |
 | GET | `/api/v1/users` | Implemented for F2D | Permission-protected tenant list with role summaries, bounded cursor and indexed filters |
 | GET | `/api/v1/users/{user_id}` | Implemented for F2D | Permission-protected tenant detail with roles and identical missing/cross-tenant behavior |
@@ -676,7 +718,8 @@ the expected local commits ahead of the review-branch remote after the final com
 
 F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
 list/detail and the separate platform audit list. P3C adds two organization-selection operations,
-bringing the current surface to 41 generated operations and 42 documented runtime endpoints
+P3D adds four platform-auth operations and P3E adds two password-recovery operations, bringing the
+current surface to 47 generated operations and 48 documented runtime endpoints
 including `/openapi.json`. The executable smoke
 covers activation/login/session lifecycle, tenant-admin user/role/audit behavior and contract-table
 drift without printing credential material.
@@ -1252,16 +1295,14 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Post-Phase-2 Backend Backlog
+## Remaining post-checkpoint backend backlog
 
-The items below are not part of the completed F2F surface and remain queued behind Murat's explicit
-review. This checkpoint does not authorize Phase 3 or any later module automatically.
+The items below are not part of the completed P3E identity surface. This checkpoint authorizes no
+P3F organization implementation automatically.
 
-- Password reset request/confirm and enforced privileged-role MFA are not implemented endpoints or
-  screens in this checkpoint. The current product is MFA-ready and invitation activation is the
-  only local first-credential path. The trusted step-up/BFF adapter that would turn a privileged
+- Enforced privileged-role MFA is not implemented. The trusted step-up/BFF adapter that would turn a privileged
   platform identity into `PlatformPrincipal` is also not implemented, so the platform audit shell
-  is a separation/readiness surface rather than part of the local tenant-admin demo. F2F does not
+  is a separation/readiness surface rather than part of the local tenant-admin demo. P3E does not
   weaken the boundary or silently claim the deferred flows.
 - Global sort controls and validation/error normalization beyond the endpoint families already
   covered. Immutable `RequestContext`, global correlation middleware and the new Phase-1

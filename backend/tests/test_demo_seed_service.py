@@ -3,6 +3,7 @@ from uuid import UUID
 import pytest
 from app.db.base import Base
 from app.models.employee import Employee
+from app.models.identity import Identity, MembershipRole, TenantMembership
 from app.models.leave_request import LeaveRequest
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User
@@ -51,9 +52,28 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert await _count(session, Tenant) == len(DEMO_TENANTS)
         assert await _count(session, TenantSettings) == len(DEMO_TENANTS)
         assert await _count(session, User) == len(DEMO_USERS)
+        assert await _count(session, Identity) == 4
+        assert await _count(session, TenantMembership) == len(DEMO_USERS)
+        assert await _count(session, MembershipRole) == len(DEMO_USERS)
         assert await _count(session, Employee) == len(DEMO_EMPLOYEES)
         assert await _count(session, LeaveRequest) == len(DEMO_LEAVE_REQUESTS)
         assert set(second_result.tenant_ids) == {tenant.id for tenant in DEMO_TENANTS}
+        shared_identity = await session.scalar(
+            select(Identity).where(
+                Identity.email_normalized == "admin@wealthyfalcon.demo"
+            )
+        )
+        assert shared_identity is not None
+        shared_memberships = tuple(
+            await session.scalars(
+                select(TenantMembership).where(
+                    TenantMembership.identity_id == shared_identity.id
+                )
+            )
+        )
+        assert {membership.tenant_id for membership in shared_memberships} == {
+            tenant.id for tenant in DEMO_TENANTS
+        }
 
         updated_employee = await session.get(Employee, employee_fixture.id)
         assert updated_employee is not None
@@ -96,6 +116,8 @@ async def test_demo_seed_service_flushes_without_completing_transaction() -> Non
             assert await _count(verification_session, Tenant) == 0
             assert await _count(verification_session, TenantSettings) == 0
             assert await _count(verification_session, User) == 0
+            assert await _count(verification_session, Identity) == 0
+            assert await _count(verification_session, TenantMembership) == 0
             assert await _count(verification_session, Employee) == 0
             assert await _count(verification_session, LeaveRequest) == 0
     finally:

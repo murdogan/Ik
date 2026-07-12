@@ -304,7 +304,11 @@ async def test_p3b_authentication_role_is_narrow_and_selection_rows_are_private(
                     "authentication_rate_limit_access",
                     "ALL",
                 ),
-                ("audit_events", "authentication_failure_insert", "INSERT"),
+                (
+                    "audit_events",
+                    "authentication_platform_security_insert",
+                    "INSERT",
+                ),
             } <= policies
             assert await connection.scalar(
                 text(
@@ -333,7 +337,6 @@ async def test_p3b_authentication_role_is_narrow_and_selection_rows_are_private(
         assert sqlstate_from_error(hr_access.value) == "42501"
 
         for private_query in (
-            "select email, created_at from identities",
             "select full_name, permission_version from tenant_memberships",
             "select email from users",
             "select plan_code from tenants",

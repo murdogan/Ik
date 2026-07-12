@@ -133,17 +133,19 @@ Current F1D CORE boundary:
 
 1. `tenant_admin` veya yetkili HR kullanıcısı kullanıcı daveti oluşturur.
 2. Davet ilgili employee kaydıyla bağlanabilir.
-3. Kullanıcı e-posta veya alternatif aktivasyon yöntemiyle parolasını belirler.
+3. Yeni global identity linkle ilk parolasını belirler; mevcut identity kendi parolasıyla yalnız
+   yeni tenant membership'ini kabul eder.
 4. İlk login sonrası profil ve güvenlik ayarları tamamlanır.
 5. Sistem `user.activated` eventini yazar.
 
 ### 5.3 Login ve oturum yenileme
 
-1. Kullanıcı tenant domain/kurum kodu/e-posta ile giriş ekranına gelir.
-2. E-posta/şifre doğrulanır.
-3. Risk veya policy gerektiriyorsa MFA challenge çalışır.
-4. Access token kısa ömürlü, refresh token rotation ile verilir.
-5. Refresh token tekrar kullanımı tespit edilirse session family revoke edilir.
+1. Kullanıcı yalnız global e-posta ve parolasını girer; kurum kodu istenmez.
+2. Credential doğrulandıktan sonra aktif tenant membership'leri bulunur.
+3. Tek membership doğrudan session açar; çoklu membership güvenli display name seçimi gösterir.
+4. Risk veya policy gerektiriyorsa MFA challenge çalışır.
+5. Access token kısa ömürlü, refresh token rotation ile verilir.
+6. Refresh token tekrar kullanımı tespit edilirse session family revoke edilir.
 
 ### 5.4 Yetki kararı
 
@@ -185,7 +187,10 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 | `tenant_settings` | F1A fixed kurum ayarları | `tenant_id`, `week_start_day`, `date_format`, `time_format`, timestamps; arbitrary key/value yok |
 | `plans` | İleri-faz paket katalogu | Ayrı plan tablosu yok; canonical write kodları `core`, `professional`, `enterprise`; F1D tek configured active-employee limitini tenant metadata'sında taşır |
 | `tenant_feature_flags` | F1D tenant/modül rollout state'i | Composite `(tenant_id,key)` PK; fixed key check, boolean enabled, timestamps; default/override effective read |
-| `users` | Login kimliği | `id`, `tenant_id`, `email`, `password_hash`, `status` |
+| `identities` | Global credential sahibi | `id`, global unique normalized `email`, `password_hash`, credential-wide `status` |
+| `tenant_memberships` | Identity'nin tenant erişimi | `tenant_id`, `identity_id`, `legacy_user_id`, tenant-local `status`, `permission_version` |
+| `users` | Expand-contract tenant projection | `id`, `tenant_id`, `email`, reconciled `password_hash`, `status` |
+| `password_reset_tokens` | Tek-kullanım recovery | `identity_id`, yalnız token hash, `expires_at`, `consumed_at`, `revoked_at` |
 | `user_identities` | SSO/harici kimlik | `provider`, `subject`, `user_id` |
 | `sessions` | Oturum ve cihaz bilgisi | `user_id`, `device_id`, `refresh_family_id`, `revoked_at` |
 | `roles` | Rol tanımı | `tenant_id`, `code`, `name`, `system_role` |
@@ -212,7 +217,10 @@ Deneyim kararı: MVP'de roller tamamen serbest özelleştirilebilir bir editörl
 | POST | `/api/v1/auth/login` | Login başlatır | MVP |
 | POST | `/api/v1/auth/refresh` | Token yeniler | MVP |
 | POST | `/api/v1/auth/logout` | Session kapatır | MVP |
-| POST | `/api/v1/users/invite` | Kullanıcı daveti oluşturur | MVP |
+| POST | `/api/v1/auth/activate` | Yeni identity aktivasyonu veya mevcut identity membership kabulü | MVP/P3E |
+| POST | `/api/v1/auth/password-reset/request` | Enumeration-resistant recovery isteği | MVP/P3E |
+| POST | `/api/v1/auth/password-reset/confirm` | Global credential reset + session revoke | MVP/P3E |
+| POST | `/api/v1/users/invitations` | Kullanıcı daveti oluşturur | MVP |
 | GET | `/api/v1/users` | Tenant kullanıcılarını listeler | MVP |
 | PATCH | `/api/v1/users/{id}` | Kullanıcı durum/temel bilgi günceller | MVP |
 | GET | `/api/v1/roles` | Roller ve permission görünümü | MVP |

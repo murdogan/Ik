@@ -65,6 +65,7 @@ from app.services.leave_request_service import (
     LeaveRequestTransitionError,
     LeaveRequestUserNotFoundError,
 )
+from app.services.password_recovery_service import InvalidPasswordResetError
 from app.services.platform_auth_session_service import (
     InvalidPlatformSessionError,
     PlatformRoleRequiredError,
@@ -169,6 +170,10 @@ AUTHENTICATION_RATE_LIMIT_ERROR_MESSAGE = (
 INVALID_ACTIVATION_ERROR_CODE = "activation_invalid"
 INVALID_ACTIVATION_ERROR_MESSAGE = (
     "This activation link is invalid, expired, or has already been used"
+)
+INVALID_PASSWORD_RESET_ERROR_CODE = "password_reset_invalid"
+INVALID_PASSWORD_RESET_ERROR_MESSAGE = (
+    "This password-reset link is invalid, expired, or has already been used"
 )
 AUTHENTICATION_REQUIRED_ERROR_CODE = "authentication_required"
 AUTHENTICATION_REQUIRED_ERROR_MESSAGE = "A valid access credential is required"
@@ -670,6 +675,8 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return invalid_credentials_error()
     if isinstance(exc, InvalidActivationError):
         return invalid_activation_error()
+    if isinstance(exc, InvalidPasswordResetError):
+        return invalid_password_reset_error()
     if isinstance(exc, InvalidSessionError):
         return session_invalid_error()
     if isinstance(exc, InvalidPlatformSessionError):
@@ -884,6 +891,14 @@ def invalid_activation_error() -> ApiError:
         status_code=status.HTTP_400_BAD_REQUEST,
         code=INVALID_ACTIVATION_ERROR_CODE,
         message=INVALID_ACTIVATION_ERROR_MESSAGE,
+    )
+
+
+def invalid_password_reset_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=INVALID_PASSWORD_RESET_ERROR_CODE,
+        message=INVALID_PASSWORD_RESET_ERROR_MESSAGE,
     )
 
 

@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-12 / F2F Phase 2 product hardening ve contract reconciliation.
+Son güncelleme: 2026-07-13 / P3E Phase 3A identity checkpoint closure.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -24,8 +24,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 `backend/tests/contracts/f1e_openapi_contract.json` snapshot'ında dondurur.
 F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: executable contract testi
 F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
-canlı OpenAPI'den doğrular. P3C iki organization-selection operation'ı ekler; güncel registry 41
-generated operation ve runtime `/openapi.json` ile 42 documented endpoint'tir.
+canlı OpenAPI'den doğrular. P3C iki organization-selection, P3D dört platform-auth ve P3E iki
+password-recovery operation'ı ekler; güncel registry 47 generated operation ve runtime
+`/openapi.json` ile 48 documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -46,13 +47,15 @@ generated operation ve runtime `/openapi.json` ile 42 documented endpoint'tir.
 | POST | `/api/v1/platform/auth/refresh` | P3D uygulandı | Yalnız platform refresh cookie'sini döndürür; tenantless family rotation ve reuse koruması |
 | POST | `/api/v1/platform/auth/logout` | P3D uygulandı | Yalnız platform family revoke/cookie temizleme; eşzamanlı tenant oturumuna dokunmaz |
 | GET | `/api/v1/platform/me` | P3D uygulandı | `PlatformBearerAuth` + canlı tenantless session/rol/version doğrulaması; tenant alanı döndürmez |
-| POST | `/api/v1/auth/login` | F2B uygulandı | Tenant-aware doğrulama, kısa ömürlü bearer ve HttpOnly cookie üzerinden hashli server session family |
+| POST | `/api/v1/auth/login` | P3B uygulandı | Yalnız global e-posta/parola doğrulamasından sonra aktif membership discovery; kurum kodu/tenant selector yok |
 | POST | `/api/v1/auth/select-organization` | P3C uygulandı | Hashli, süreli, tek kullanımlık seçim credential'ı ve opaque choice ile membership/tenant-bound session |
 | POST | `/api/v1/auth/organization-selection` | P3C uygulandı | Aktif membership-bound session'dan server-derived alternatifler; kaynak family revoke; tenant selector kabul etmez |
 | POST | `/api/v1/auth/refresh` | F2B uygulandı | Tek kullanımlık rotation; reuse bütün session family'yi revoke eder |
 | POST | `/api/v1/auth/logout` | F2B uygulandı | Session family revoke ve refresh cookie temizleme |
 | GET | `/api/v1/me` | F2D uygulandı | Bearer + aktif/versioned session doğrulamasıyla current user/tenant/role/permission bilgisi |
-| POST | `/api/v1/auth/activate` | F2A uygulandı | Hashli/süreli aktivasyon credential'ı, atomik tek kullanım ve Argon2id parola kurulumu |
+| POST | `/api/v1/auth/activate` | P3E tamamlandı | Hashli/süreli tek-kullanım credential; yeni identity ilk parolayı kurar, mevcut identity kendi parolasıyla yalnız pending membership'i aktive eder |
+| POST | `/api/v1/auth/password-reset/request` | P3E uygulandı | Bilinen/bilinmeyen e-posta için aynı `202 accepted`; kullanıcı/kurum/token bilgisi dönmez |
+| POST | `/api/v1/auth/password-reset/confirm` | P3E uygulandı | Hashli, süreli, tek-kullanım reset token; global Argon2id credential yenileme ve tenant/platform session revoke |
 | POST | `/api/v1/users/invitations` | F2D uygulandı | Bearer actor/tenant scope, exact invite permission ve tenant spoof reddi |
 | GET | `/api/v1/users` | F2D uygulandı | Permission-protected bounded tenant listesi ve role özetleri |
 | GET | `/api/v1/users/{user_id}` | F2D uygulandı | Permission-protected role-aware detail; missing/cross-tenant aynı `404` |
@@ -405,8 +408,9 @@ Request:
 }
 ```
 
-Token veritabanında yalnız hashli ve süreli tutulur; başarılı kullanım aynı transaction'da
-credential'ı consume eder ve Argon2id password hash'ini yazar. Browser token'ı URL query yerine
+Token veritabanında yalnız hashli ve süreli tutulur. Yeni identity başarılı kullanımda ilk Argon2id
+hash'ini yazar; mevcut active identity aynı alanla current password'ünü kanıtlar ve global hash'i
+değiştirmeden yalnız pending membership'i aktive eder. Browser token'ı URL query yerine
 fragmentten okur ve API çağrısından önce adres çubuğu/history state'ten kaldırır. Invalid, expired
 veya reused credential aynı `400 activation_invalid`; malformed payload
 `422 auth_validation_error` zarfını döner.
@@ -417,11 +421,14 @@ Request:
 
 ```json
 {
-  "tenant_slug": "acme",
   "email": "ayse@example.com",
   "password": "********"
 }
 ```
+
+Login hiçbir tenant/kurum kodu veya slug kabul etmez. Credential doğrulanmadan membership sorgusu
+ve kurum adı response'u oluşmaz. Tek aktif membership doğrudan session üretir; birden fazla aktif
+membership `organization_selection_required` ve yalnız display name + opaque choice döndürür.
 
 Response:
 
@@ -463,9 +470,24 @@ verilir ve staging/production'da `Secure` + `__Host-` policy zorunludur.
 
 Hatalar:
 
-- `401 invalid_credentials`: unknown tenant/email, wrong password and unavailable account/tenant
+- `401 invalid_credentials`: unknown email, wrong password and unavailable identity/membership
   aynı generic response'u kullanır.
 - `422 auth_validation_error`: malformed/extra credential payload.
+
+### `POST /api/v1/auth/password-reset/request`
+
+Request yalnız `{"email":"ayse@example.com"}` alanıdır. Known, unknown, locked ve disabled hesap
+aynı `202` + `{"data":{"status":"accepted"},"meta":...}` zarfını alır; kullanıcı, tenant,
+identity veya reset URL dönmez. Local/dev fake mail adapter linki API terminaline teslim eder.
+
+### `POST /api/v1/auth/password-reset/confirm`
+
+Request `{"token":"fragment-degeri","password":"en-az-12-karakter"}` şeklindedir. Token URL
+fragmentinden bir kez okunup browser history'den kaldırılır. Başarı `200` +
+`{"data":{"status":"completed"},"meta":...}` döndürür; expired/reused/unknown değerler aynı
+`400 password_reset_invalid` sözleşmesini kullanır. Confirm global credential'ı ve legacy
+projection'ları atomik yeniler; tenant/platform refresh family'leri ve açık kurum seçimleri iptal
+edilir.
 
 ### `POST /api/v1/auth/refresh`
 

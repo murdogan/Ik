@@ -806,6 +806,37 @@ def test_p3b_login_contract_is_email_first_and_discriminates_safe_outcomes() -> 
     }
 
 
+def test_p3e_password_recovery_contract_is_public_and_non_enumerating() -> None:
+    openapi = create_app().openapi()
+    paths = openapi["paths"]
+    schemas = openapi["components"]["schemas"]
+    start = schemas["PasswordResetStartRequest"]
+    confirm = schemas["PasswordResetConfirmRequest"]
+
+    assert set(start["properties"]) == {"email"}
+    assert start["required"] == ["email"]
+    assert start["additionalProperties"] is False
+    assert set(confirm["properties"]) == {"token", "password"}
+    assert set(confirm["required"]) == {"token", "password"}
+    assert confirm["additionalProperties"] is False
+
+    request_operation = paths["/api/v1/auth/password-reset/request"]["post"]
+    confirm_operation = paths["/api/v1/auth/password-reset/confirm"]["post"]
+    assert "security" not in request_operation
+    assert "security" not in confirm_operation
+    request_references = _transitive_schema_references(
+        request_operation["responses"]["202"],
+        schemas,
+    )
+    assert "PasswordResetAcceptedRead" in request_references
+    assert not request_references & {
+        "AuthTenantRead",
+        "AuthUserRead",
+        "InvitationRead",
+        "OrganizationSelectionRead",
+    }
+
+
 def _transitive_schema_references(
     value: object,
     schemas: dict[str, object],

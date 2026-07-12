@@ -81,6 +81,37 @@ class ActivationRequest(_AuthPayload):
         return value
 
 
+class PasswordResetStartRequest(_AuthPayload):
+    email: EmailValue
+
+    @field_validator("email")
+    @classmethod
+    def canonicalize_email(cls, value: str) -> str:
+        return normalize_email(value)
+
+
+class PasswordResetConfirmRequest(_AuthPayload):
+    token: SecretStr
+    password: SecretStr
+
+    @field_validator("token")
+    @classmethod
+    def validate_token_length(cls, value: SecretStr) -> SecretStr:
+        if not 1 <= len(value.get_secret_value()) <= 160:
+            raise ValueError("Password-reset token length is invalid")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_policy(cls, value: SecretStr) -> SecretStr:
+        password = value.get_secret_value()
+        if not 12 <= len(password) <= 128:
+            raise ValueError("Password must be between 12 and 128 characters")
+        if password.isspace():
+            raise ValueError("Password cannot contain only whitespace")
+        return value
+
+
 class InvitationRequest(_AuthPayload):
     email: EmailValue
     full_name: FullNameValue
@@ -172,6 +203,18 @@ class ActivationRead(BaseModel):
     user: AuthUserRead
 
 
+class PasswordResetAcceptedRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["accepted"] = "accepted"
+
+
+class PasswordResetCompletedRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed"] = "completed"
+
+
 class MeRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -212,5 +255,9 @@ __all__ = [
     "OrganizationSelectionRead",
     "OrganizationSelectionRequest",
     "OrganizationSwitchRequest",
+    "PasswordResetAcceptedRead",
+    "PasswordResetCompletedRead",
+    "PasswordResetConfirmRequest",
+    "PasswordResetStartRequest",
     "normalize_email",
 ]

@@ -88,13 +88,28 @@ def test_demo_seed_command_can_print_one_hashed_local_activation_path(
             admin = connection.execute(
                 text(
                     "select status, password_hash, can_invite_users from users "
-                    "where email = 'admin@wealthyfalcon.demo'"
+                    "where full_name = 'Maya Stone'"
                 )
             ).one()
+            identity = connection.execute(
+                text(
+                    "select status, password_hash from identities "
+                    "where email_normalized = 'admin@wealthyfalcon.demo'"
+                )
+            ).one()
+            membership_count = connection.scalar(
+                text(
+                    "select count(*) from tenant_memberships where identity_id = "
+                    "(select id from identities where "
+                    "email_normalized = 'admin@wealthyfalcon.demo')"
+                )
+            )
             token_hash = connection.execute(
                 text("select token_hash from user_activation_tokens")
             ).scalar_one()
         assert admin == ("invited", None, True)
+        assert identity == ("pending", None)
+        assert membership_count == 2
         assert token_hash == hash_activation_token(token)
         assert token not in token_hash
     finally:

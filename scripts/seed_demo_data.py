@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -21,7 +21,14 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.config import get_settings
-from app.models.auth import UserActivationToken
+from app.models.auth import (
+    OrganizationSelectionTransaction,
+    PasswordResetToken,
+    PlatformRefreshSessionFamily,
+    RefreshSessionFamily,
+    UserActivationToken,
+)
+from app.models.identity import Identity, IdentityStatus, TenantMembership
 from app.models.user import User, UserStatus
 from app.platform.identity import issue_activation_token
 from app.services.demo_seed_service import (
@@ -155,6 +162,57 @@ async def _reset_demo_admin_activation(
     user.status = UserStatus.INVITED.value
     user.password_hash = None
     user.can_invite_users = True
+    identity = await session.scalar(
+        select(Identity).where(Identity.email_normalized == user.email_normalized)
+    )
+    if identity is None:  # pragma: no cover - canonical demo seed invariant
+        raise DemoSeedConflictError("Wealthy Falcon demo identity was not seeded")
+    identity.status = IdentityStatus.PENDING.value
+    identity.password_hash = None
+    membership_ids = select(TenantMembership.id).where(
+        TenantMembership.identity_id == identity.id
+    )
+    legacy_user_ids = select(TenantMembership.legacy_user_id).where(
+        TenantMembership.identity_id == identity.id
+    )
+    await session.execute(
+        update(User)
+        .where(User.id.in_(legacy_user_ids))
+        .values(password_hash=None)
+    )
+    await session.execute(
+        update(RefreshSessionFamily)
+        .where(
+            RefreshSessionFamily.membership_id.in_(membership_ids),
+            RefreshSessionFamily.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    await session.execute(
+        update(PlatformRefreshSessionFamily)
+        .where(
+            PlatformRefreshSessionFamily.identity_id == identity.id,
+            PlatformRefreshSessionFamily.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    await session.execute(
+        update(OrganizationSelectionTransaction)
+        .where(
+            OrganizationSelectionTransaction.identity_id == identity.id,
+            OrganizationSelectionTransaction.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
+    await session.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.identity_id == identity.id,
+            PasswordResetToken.consumed_at.is_(None),
+            PasswordResetToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
     await session.execute(
         update(UserActivationToken)
         .where(

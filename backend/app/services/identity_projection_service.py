@@ -17,11 +17,17 @@ from app.models.user import User, UserStatus
 from app.platform.db import sqlstate_from_error
 
 _POSTGRES_SYNC_FUNCTION = "sync_current_tenant_identity_membership"
+_POSTGRES_ACCEPT_EXISTING_FUNCTION = "accept_existing_identity_membership"
 _IDENTITY_ACTIVATION_CONFLICT_SQLSTATE = "WF001"
+_IDENTITY_CREDENTIAL_CONFLICT_SQLSTATE = "WF002"
 
 
 class IdentityProjectionConflictError(RuntimeError):
     """The canonical credential changed before activation projection committed."""
+
+
+class IdentityCredentialConflictError(RuntimeError):
+    """The verified existing credential changed before membership acceptance."""
 
 
 async def sync_identity_membership_projection(
@@ -64,7 +70,7 @@ async def sync_identity_membership_projection(
             email=user.email,
             status=(
                 IdentityStatus.PENDING.value
-                if user.status == UserStatus.INVITED.value
+                if user.status == UserStatus.INVITED.value or user.password_hash is None
                 else user.status
             ),
             password_hash=user.password_hash,
@@ -80,6 +86,7 @@ async def sync_identity_membership_projection(
     elif (
         identity.status == IdentityStatus.PENDING.value
         and user.status == UserStatus.ACTIVE.value
+        and user.password_hash is not None
     ):
         identity.email = user.email
         identity.status = IdentityStatus.ACTIVE.value
@@ -140,6 +147,46 @@ async def sync_identity_membership_projection(
         else:
             projected.active = assignment.active
     await session.flush()
+
+
+async def accept_existing_identity_membership_projection(
+    session: AsyncSession,
+    user: User,
+    *,
+    verified_password_hash: str,
+) -> None:
+    """Promote one invited membership only if the verified global hash is unchanged."""
+
+    if session.get_bind().dialect.name == "postgresql":
+        try:
+            await session.execute(
+                text(
+                    f"select public.{_POSTGRES_ACCEPT_EXISTING_FUNCTION}("
+                    ":user_id, :verified_password_hash)"
+                ),
+                {
+                    "user_id": user.id,
+                    "verified_password_hash": verified_password_hash,
+                },
+            )
+        except DBAPIError as exc:
+            if sqlstate_from_error(exc) == _IDENTITY_CREDENTIAL_CONFLICT_SQLSTATE:
+                raise IdentityCredentialConflictError() from exc
+            raise
+        return
+
+    identity = await session.scalar(
+        select(Identity)
+        .where(Identity.email_normalized == user.email.strip().lower())
+        .with_for_update()
+    )
+    if (
+        identity is None
+        or identity.status != IdentityStatus.ACTIVE.value
+        or identity.password_hash != verified_password_hash
+    ):
+        raise IdentityCredentialConflictError()
+    await sync_identity_membership_projection(session, user)
 
 
 async def sync_existing_membership_projection(
@@ -207,7 +254,9 @@ async def sync_existing_membership_projection(
 
 
 __all__ = [
+    "IdentityCredentialConflictError",
     "IdentityProjectionConflictError",
+    "accept_existing_identity_membership_projection",
     "sync_existing_membership_projection",
     "sync_identity_membership_projection",
 ]

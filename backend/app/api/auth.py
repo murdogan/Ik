@@ -11,6 +11,7 @@ from app.api.auth_dependencies import (
     get_auth_session_service,
     get_authentication_rate_limit_service,
     get_authentication_service,
+    get_password_recovery_service,
     require_authenticated_session,
 )
 from app.api.dependencies import get_request_context
@@ -45,6 +46,10 @@ from app.schemas.auth import (
     OrganizationSelectionRead,
     OrganizationSelectionRequest,
     OrganizationSwitchRequest,
+    PasswordResetAcceptedRead,
+    PasswordResetCompletedRead,
+    PasswordResetConfirmRequest,
+    PasswordResetStartRequest,
 )
 from app.schemas.authorization import RoleSummaryRead
 from app.services.auth_session_service import AuthSessionService, InvalidSessionError, SessionGrant
@@ -57,6 +62,7 @@ from app.services.authentication_service import (
     AuthenticationService,
     OrganizationSelectionRequired,
 )
+from app.services.password_recovery_service import PasswordRecoveryService
 
 router = APIRouter(
     prefix="/api/v1/auth",
@@ -89,9 +95,7 @@ me_router = APIRouter(
         "membership starts a tenant-bound session; multiple memberships return only safe display "
         "metadata and a short-lived selection transaction."
     ),
-    responses=with_correlation_response_headers(
-        {200: {}, **AUTHENTICATION_RATE_LIMIT_RESPONSES}
-    ),
+    responses=with_correlation_response_headers({200: {}, **AUTHENTICATION_RATE_LIMIT_RESPONSES}),
 )
 async def login(
     payload: LoginRequest,
@@ -354,19 +358,32 @@ async def me(
 @router.post(
     "/activate",
     response_model=DataEnvelope[ActivationRead],
-    summary="Activate an invited user and set a password",
+    summary="Complete an invitation",
     description=(
-        "Consumes one hashed, expiring activation credential exactly once and stores the new "
-        "password only as Argon2id within the same transaction."
+        "Consumes one hashed, expiring activation credential exactly once. A new identity "
+        "establishes its Argon2id password; an existing active identity proves its current "
+        "password and activates only the pending tenant membership without replacing it."
     ),
-    responses=with_correlation_response_headers({200: {}}),
+    responses=with_correlation_response_headers({200: {}, **AUTHENTICATION_RATE_LIMIT_RESPONSES}),
 )
 async def activate(
     payload: ActivationRequest,
     response: Response,
+    request: Request,
     request_context: Annotated[RequestContext, Depends(get_request_context)],
     service: Annotated[AuthenticationService, Depends(get_authentication_service)],
-) -> DataEnvelope[ActivationRead]:
+    rate_limits: Annotated[
+        AuthenticationRateLimitService,
+        Depends(get_authentication_rate_limit_service),
+    ],
+) -> DataEnvelope[ActivationRead] | Response:
+    try:
+        await rate_limits.consume_activation_attempt(
+            source_address=_request_source_address(request),
+            raw_token=payload.token.get_secret_value(),
+        )
+    except AuthenticationRateLimitExceededError as exc:
+        return await _authentication_rate_limit_response(request, exc)
     user = await service.activate(
         raw_token=payload.token.get_secret_value(),
         password=payload.password.get_secret_value(),
@@ -377,6 +394,90 @@ async def activate(
         ActivationRead(user=_auth_user_read(user)),
         request_context,
     )
+
+
+@router.post(
+    "/password-reset/request",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=DataEnvelope[PasswordResetAcceptedRead],
+    summary="Request a password reset",
+    description=(
+        "Always returns the same accepted response and discloses no account or organization "
+        "metadata. Eligible identities receive a separate hashed, expiring recovery credential "
+        "through the configured delivery adapter."
+    ),
+    responses=with_correlation_response_headers({202: {}, **AUTHENTICATION_RATE_LIMIT_RESPONSES}),
+)
+async def request_password_reset(
+    payload: PasswordResetStartRequest,
+    response: Response,
+    request: Request,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    service: Annotated[
+        PasswordRecoveryService,
+        Depends(get_password_recovery_service),
+    ],
+    rate_limits: Annotated[
+        AuthenticationRateLimitService,
+        Depends(get_authentication_rate_limit_service),
+    ],
+) -> DataEnvelope[PasswordResetAcceptedRead] | Response:
+    try:
+        await rate_limits.consume_password_reset_attempt(
+            source_address=_request_source_address(request),
+            normalized_email=payload.email,
+        )
+    except AuthenticationRateLimitExceededError as exc:
+        return await _authentication_rate_limit_response(request, exc)
+    await service.request_reset(
+        email=payload.email,
+        audit_context=AuditContext.from_request_context(request_context),
+    )
+    _prevent_credential_caching(response)
+    return data_envelope(PasswordResetAcceptedRead(), request_context)
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=DataEnvelope[PasswordResetCompletedRead],
+    summary="Complete a password reset",
+    description=(
+        "Consumes one hashed, expiring recovery credential exactly once, replaces the global "
+        "Argon2id credential, and revokes outstanding tenant, platform, and organization-selection "
+        "sessions."
+    ),
+    responses=with_correlation_response_headers(
+        {200: {}, 400: {}, **AUTHENTICATION_RATE_LIMIT_RESPONSES}
+    ),
+)
+async def confirm_password_reset(
+    payload: PasswordResetConfirmRequest,
+    response: Response,
+    request: Request,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    service: Annotated[
+        PasswordRecoveryService,
+        Depends(get_password_recovery_service),
+    ],
+    rate_limits: Annotated[
+        AuthenticationRateLimitService,
+        Depends(get_authentication_rate_limit_service),
+    ],
+) -> DataEnvelope[PasswordResetCompletedRead] | Response:
+    try:
+        await rate_limits.consume_password_reset_confirmation(
+            source_address=_request_source_address(request),
+            raw_token=payload.token.get_secret_value(),
+        )
+    except AuthenticationRateLimitExceededError as exc:
+        return await _authentication_rate_limit_response(request, exc)
+    await service.confirm_reset(
+        raw_token=payload.token.get_secret_value(),
+        password=payload.password.get_secret_value(),
+        audit_context=AuditContext.from_request_context(request_context),
+    )
+    _prevent_credential_caching(response)
+    return data_envelope(PasswordResetCompletedRead(), request_context)
 
 
 def _auth_user_read(user: AuthenticatedUser) -> AuthUserRead:
@@ -414,6 +515,19 @@ def _request_source_address(request: Request) -> str:
     if client is None or not client.host:
         return "unknown"
     return client.host[:128]
+
+
+async def _authentication_rate_limit_response(
+    request: Request,
+    exc: AuthenticationRateLimitExceededError,
+) -> Response:
+    error_response = await api_error_handler(
+        request,
+        authentication_rate_limit_error(),
+    )
+    error_response.headers["Retry-After"] = str(exc.retry_after_seconds)
+    _prevent_credential_caching(error_response)
+    return error_response
 
 
 def _set_refresh_cookie(

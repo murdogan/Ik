@@ -6,7 +6,7 @@ Bu doküman, IK Platform'un login, oturum, JWT, refresh token, MFA, RBAC, scope 
 
 | Hedef | Karar |
 |---|---|
-| Güvenli login | Tenant-aware e-posta/şifre ve MFA hazırlığı |
+| Güvenli login | Global e-posta/şifre doğrulaması, sonrasında membership discovery ve MFA hazırlığı |
 | Kısa ömürlü access | Access token kısa süreli olmalı |
 | Merkezi revoke | Refresh token ve session server-side izlenmeli |
 | Tenant izolasyonu | JWT/session tenant context taşır |
@@ -17,13 +17,13 @@ Bu doküman, IK Platform'un login, oturum, JWT, refresh token, MFA, RBAC, scope 
 
 | Konu | Karar |
 |---|---|
-| Tenant bazlı giriş | Subdomain, kurum kodu veya e-posta domain discovery |
-| E-posta unique | Tenant içinde unique, global unique zorunlu değil |
+| Tenant girişi | Yalnız e-posta/parola; kurum kodu istenmez, membership yalnız credential doğrulamasından sonra gösterilir |
+| E-posta unique | Canonical `identities.email_normalized` global unique; tenant-local membership ayrı |
 | Şifre hash | Argon2id veya eşdeğer güçlü hash |
 | Şifre politikası | Minimum uzunluk, sızmış parola kontrolü V1 |
-| Rate limit | IP + tenant + e-posta bazlı |
-| Şifre sıfırlama | Tek kullanımlık, kısa ömürlü, hashli token |
-| İlk aktivasyon | Davet linki veya alternatif mavi yaka aktivasyon akışı |
+| Rate limit | HMAC-keyed kaynak + global identity/token bucket; raw IP/e-posta/token saklanmaz |
+| Şifre sıfırlama | P3E: enumeration-resistant request, 15 dk, tek kullanımlık hashli token ve bütün realm session revoke |
+| İlk aktivasyon | Yeni identity ilk parolayı kurar; mevcut identity kendi parolasıyla yalnız pending membership'i kabul eder |
 
 ## 3. Token ve session mimarisi
 

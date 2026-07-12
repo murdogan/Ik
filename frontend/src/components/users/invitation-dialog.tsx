@@ -126,8 +126,8 @@ export function InvitationDialog({ onClose, onInvited }: InvitationDialogProps) 
               <div className={styles.resultHeading}>
                 <h3>{invitation.user.full_name} için davet oluşturuldu</h3>
                 <p>
-                  Kullanıcı davet bekliyor. Güvenli etkinleştirme bağlantısını kullanıcıyla
-                  paylaşın.
+                  Kullanıcının bu çalışma alanı üyeliği davet bekliyor. Güvenli bağlantıyı
+                  yalnızca kullanıcıyla paylaşın.
                 </p>
               </div>
 
@@ -158,8 +158,9 @@ export function InvitationDialog({ onClose, onInvited }: InvitationDialogProps) 
           ) : (
             <form className={styles.invitationForm} onSubmit={handleSubmit}>
               <p>
-                Kullanıcı yalnızca bu çalışma alanına davet edilir. Hesabını bağlantı üzerinden
-                etkinleştirdikten sonra giriş yapabilir.
+                Kullanıcı yalnızca bu çalışma alanına davet edilir. Yeni kullanıcı bağlantıdan
+                bir parola seçer; mevcut hesabı olan kullanıcı kendi parolasıyla üyeliği kabul
+                eder.
               </p>
 
               <div className={styles.formField}>

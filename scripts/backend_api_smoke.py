@@ -35,8 +35,8 @@ from app.models.leave_request import LeaveRequestStatus
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.authorization import ROLES_BY_CODE
-from app.platform.identity import PasswordManager
 from app.platform.db import configure_tenant_database_access
+from app.platform.identity import PasswordManager, issue_password_reset_token
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
 from app.services.authorization_service import (
     assign_system_role,
@@ -187,6 +187,8 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("post", "/api/v1/auth/login"),
     ("post", "/api/v1/auth/logout"),
     ("post", "/api/v1/auth/organization-selection"),
+    ("post", "/api/v1/auth/password-reset/confirm"),
+    ("post", "/api/v1/auth/password-reset/request"),
     ("post", "/api/v1/auth/refresh"),
     ("post", "/api/v1/auth/select-organization"),
     ("get", "/api/v1/me"),
@@ -279,7 +281,7 @@ async def main(database_url: str | None = None) -> None:
         _ensure_disposable_postgresql_database(database_url)
     settings = Settings(
         _env_file=None,
-        environment="local",
+        environment="test",
         database_url=database_url or "sqlite+aiosqlite:///:memory:",
     )
     app = create_app(settings=settings)
@@ -654,6 +656,33 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
 
 
 async def _smoke_auth_endpoints(client: AsyncClient) -> None:
+    reset_request = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/password-reset/request",
+            json={"email": "unknown.recovery@wealthyfalcon.test"},
+        ),
+        202,
+        "POST /api/v1/auth/password-reset/request",
+        {"status"},
+    )
+    _assert_equal(reset_request["status"], "accepted", "password reset request")
+    _expect_phase1_error_code(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/password-reset/confirm",
+            json={
+                "token": issue_password_reset_token(uuid4()).raw_token,
+                "password": SMOKE_ACTIVATED_CREDENTIAL,
+            },
+        ),
+        400,
+        "password_reset_invalid",
+        "POST /api/v1/auth/password-reset/confirm rejects unknown credential",
+    )
+
     admin_login = _expect_phase1_data(
         await _request_documented(
             client,
@@ -1632,6 +1661,8 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
 
     login = paths["/api/v1/auth/login"]["post"]
     activation = paths["/api/v1/auth/activate"]["post"]
+    password_reset_request = paths["/api/v1/auth/password-reset/request"]["post"]
+    password_reset_confirm = paths["/api/v1/auth/password-reset/confirm"]["post"]
     invitation = paths["/api/v1/users/invitations"]["post"]
     refresh = paths["/api/v1/auth/refresh"]["post"]
     logout = paths["/api/v1/auth/logout"]["post"]
@@ -1645,6 +1676,8 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
     for operation, label in (
         (login, "F2A login"),
         (activation, "F2A activation"),
+        (password_reset_request, "P3E password reset request"),
+        (password_reset_confirm, "P3E password reset confirmation"),
         (refresh, "F2B refresh"),
         (logout, "F2B logout"),
         (select_organization, "P3C organization selection"),
@@ -1674,6 +1707,8 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
     for operation, success_status, label in (
         (login, "200", "F2A login"),
         (activation, "200", "F2A activation"),
+        (password_reset_request, "202", "P3E password reset request"),
+        (password_reset_confirm, "200", "P3E password reset confirmation"),
         (invitation, "201", "F2A invitation"),
         (refresh, "200", "F2B refresh"),
         (select_organization, "200", "P3C organization selection"),

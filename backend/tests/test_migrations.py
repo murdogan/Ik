@@ -488,8 +488,11 @@ def test_core_migration_chain_is_linear() -> None:
     p3d_platform_authentication_revision = script.get_revision(
         "0025_p3d_platform_authentication"
     )
+    p3e_identity_checkpoint_revision = script.get_revision(
+        "0026_p3e_identity_checkpoint"
+    )
 
-    assert script.get_heads() == ["0025_p3d_platform_authentication"]
+    assert script.get_heads() == ["0026_p3e_identity_checkpoint"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -551,6 +554,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3d_platform_authentication_revision is not None
     assert p3d_platform_authentication_revision.down_revision == (
         "0024_p3c_organization_selection"
+    )
+    assert p3e_identity_checkpoint_revision is not None
+    assert p3e_identity_checkpoint_revision.down_revision == (
+        "0025_p3d_platform_authentication"
     )
 
 
@@ -1487,7 +1494,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0025_p3d_platform_authentication"
+        assert revision == "0026_p3e_identity_checkpoint"
     finally:
         engine.dispose()
 

@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+from app.api.auth_dependencies import get_password_recovery_service
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, AuthRuntime
 from app.core.config import Settings
 from app.db.base import Base
@@ -18,10 +19,12 @@ from app.models.auth import (
     AuthenticationRateLimitBucket,
     OrganizationSelectionChoice,
     OrganizationSelectionTransaction,
+    PasswordResetToken,
     RefreshSessionFamily,
     RefreshSessionToken,
     UserActivationToken,
 )
+from app.models.identity import Identity, TenantMembership
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.authorization import ROLE_PERMISSION_CODES, ROLES_BY_CODE
@@ -30,7 +33,10 @@ from app.platform.identity import (
     PasswordManager,
     hash_activation_token,
     hash_organization_selection_token,
+    hash_password_reset_token,
     hash_refresh_token,
+    issue_activation_token,
+    issue_password_reset_token,
 )
 from app.services.authentication_rate_limit_service import (
     AuthenticationRateLimitExceededError,
@@ -38,8 +44,11 @@ from app.services.authentication_rate_limit_service import (
 )
 from app.services.authorization_service import assign_system_role, seed_authorization_catalog
 from app.services.identity_projection_service import (
-    IdentityProjectionConflictError,
     sync_identity_membership_projection,
+)
+from app.services.password_recovery_service import (
+    PasswordRecoveryService,
+    PasswordResetDeliveryMessage,
 )
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -64,6 +73,7 @@ NON_CAPABLE_PASSWORD = "Employee credential for F2A tests"
 ACTIVATED_PASSWORD = "Activated credential for F2A tests"
 OTHER_TENANT_PASSWORD = "Other tenant credential for F2A tests"
 SECOND_MEMBERSHIP_PASSWORD = "Replacement global credential for P3B tests"
+RESET_PASSWORD = "Recovered global credential for P3E tests"
 OTHER_TENANT_ACTIVE_EMAIL = "active.user@otherfalcon.test"
 SHARED_INVITED_EMAIL = "shared.invitee@falcon.test"
 
@@ -74,6 +84,14 @@ class AuthApiHarness:
     client: AsyncClient
     session_factory: async_sessionmaker[AsyncSession]
     password_manager: PasswordManager
+
+
+@dataclass(slots=True)
+class CapturingPasswordResetDelivery:
+    messages: list[PasswordResetDeliveryMessage]
+
+    async def deliver(self, message: PasswordResetDeliveryMessage) -> None:
+        self.messages.append(message)
 
 
 @asynccontextmanager
@@ -418,22 +436,17 @@ async def test_login_uses_one_generic_error_without_revealing_memberships() -> N
         assert error_contracts == [error_contracts[0]] * len(attempts)
         assert error_contracts[0][0] == "invalid_credentials"
         async with harness.session_factory() as session:
-            assert await session.scalar(
-                select(OrganizationSelectionTransaction).limit(1)
-            ) is None
+            assert await session.scalar(select(OrganizationSelectionTransaction).limit(1)) is None
             failures = tuple(
                 await session.scalars(
-                    select(AuditEvent).where(
-                        AuditEvent.event_type == "auth.login.failed"
-                    )
+                    select(AuditEvent).where(AuditEvent.event_type == "auth.login.failed")
                 )
             )
         assert len(failures) == len(attempts)
         assert all(event.scope_type == "platform" for event in failures)
         assert all(event.tenant_id is None for event in failures)
         assert all(
-            event.metadata_ == {"failure_reason": "authentication_failed"}
-            for event in failures
+            event.metadata_ == {"failure_reason": "authentication_failed"} for event in failures
         )
 
 
@@ -478,8 +491,7 @@ async def test_multiple_memberships_return_only_safe_names_and_hashed_transactio
             "Wealthy Falcon HR",
         ]
         assert all(
-            set(choice) == {"selection_key", "display_name"}
-            for choice in data["organizations"]
+            set(choice) == {"selection_key", "display_name"} for choice in data["organizations"]
         )
         assert TENANT_SLUG not in response.text
         assert OTHER_TENANT_SLUG not in response.text
@@ -488,16 +500,12 @@ async def test_multiple_memberships_return_only_safe_names_and_hashed_transactio
         raw_transaction = data["selection_transaction"]
 
         async with harness.session_factory() as session:
-            transaction = await session.scalar(
-                select(OrganizationSelectionTransaction)
-            )
+            transaction = await session.scalar(select(OrganizationSelectionTransaction))
             choices = tuple(await session.scalars(select(OrganizationSelectionChoice)))
             families = tuple(await session.scalars(select(RefreshSessionFamily)))
             successes = tuple(
                 await session.scalars(
-                    select(AuditEvent).where(
-                        AuditEvent.event_type == "auth.login.succeeded"
-                    )
+                    select(AuditEvent).where(AuditEvent.event_type == "auth.login.succeeded")
                 )
             )
 
@@ -510,8 +518,9 @@ async def test_multiple_memberships_return_only_safe_names_and_hashed_transactio
         assert len(successes) == 0
 
 
-async def test_multi_membership_selection_binds_session_and_rejects_replay_or_wrong_choice(
-) -> None:
+async def test_multi_membership_selection_binds_session_and_rejects_replay_or_wrong_choice() -> (
+    None
+):
     async with _auth_api() as harness:
         await _add_admin_membership_in_other_tenant(harness)
 
@@ -619,14 +628,12 @@ async def test_multi_membership_selection_binds_session_and_rejects_replay_or_wr
             expiring_transaction = await session.scalar(
                 select(OrganizationSelectionTransaction).where(
                     OrganizationSelectionTransaction.token_hash
-                    == hash_organization_selection_token(
-                        second_selection["selection_transaction"]
-                    )
+                    == hash_organization_selection_token(second_selection["selection_transaction"])
                 )
             )
             assert expiring_transaction is not None
-            expiring_transaction.expires_at = (
-                expiring_transaction.created_at + timedelta(microseconds=1)
+            expiring_transaction.expires_at = expiring_transaction.created_at + timedelta(
+                microseconds=1
             )
         expired = await harness.client.post(
             "/api/v1/auth/select-organization",
@@ -641,8 +648,9 @@ async def test_multi_membership_selection_binds_session_and_rejects_replay_or_wr
             assert len(tuple(await session.scalars(select(RefreshSessionFamily)))) == 1
 
 
-async def test_controlled_switch_revokes_source_and_selects_only_other_identity_membership(
-) -> None:
+async def test_controlled_switch_revokes_source_and_selects_only_other_identity_membership() -> (
+    None
+):
     async with _auth_api() as harness:
         original_access, original_login = await _login(
             harness.client,
@@ -778,14 +786,10 @@ async def test_login_rate_limit_is_global_identity_and_source_scoped() -> None:
         assert int(limited.headers["Retry-After"]) >= 1
         assert "organizations" not in limited.text
         async with harness.session_factory() as session:
-            buckets = tuple(
-                await session.scalars(select(AuthenticationRateLimitBucket))
-            )
+            buckets = tuple(await session.scalars(select(AuthenticationRateLimitBucket)))
             failures = tuple(
                 await session.scalars(
-                    select(AuditEvent).where(
-                        AuditEvent.event_type == "auth.login.failed"
-                    )
+                    select(AuditEvent).where(AuditEvent.event_type == "auth.login.failed")
                 )
             )
         assert {bucket.scope for bucket in buckets} == {
@@ -824,21 +828,15 @@ async def test_identity_rate_limit_cannot_be_bypassed_by_source_rotation() -> No
             )
 
         async with harness.session_factory() as session:
-            buckets = tuple(
-                await session.scalars(select(AuthenticationRateLimitBucket))
-            )
-        identity_bucket = next(
-            bucket for bucket in buckets if bucket.scope == "login_identity"
-        )
-        source_buckets = [
-            bucket for bucket in buckets if bucket.scope == "login_source"
-        ]
+            buckets = tuple(await session.scalars(select(AuthenticationRateLimitBucket)))
+        identity_bucket = next(bucket for bucket in buckets if bucket.scope == "login_identity")
+        source_buckets = [bucket for bucket in buckets if bucket.scope == "login_source"]
         assert identity_bucket.attempt_count == 3
         assert len(source_buckets) == 3
         assert {bucket.attempt_count for bucket in source_buckets} == {1}
 
 
-async def test_existing_identity_invitation_cannot_reset_the_global_password() -> None:
+async def test_existing_identity_invitation_accepts_only_the_verified_global_password() -> None:
     async with _auth_api() as harness:
         async with harness.session_factory.begin() as session:
             other_admin = User(
@@ -874,9 +872,7 @@ async def test_existing_identity_invitation_cannot_reset_the_global_password() -
             },
         )
         assert invitation.status_code == 201
-        raw_activation_token = _activation_token(
-            invitation.json()["data"]["activation_url"]
-        )
+        raw_activation_token = _activation_token(invitation.json()["data"]["activation_url"])
 
         activation = await harness.client.post(
             "/api/v1/auth/activate",
@@ -888,12 +884,27 @@ async def test_existing_identity_invitation_cannot_reset_the_global_password() -
         assert activation.status_code == 400
         assert activation.json()["error"]["code"] == "activation_invalid"
 
+        accepted = await harness.client.post(
+            "/api/v1/auth/activate",
+            json={
+                "token": raw_activation_token,
+                "password": ADMIN_PASSWORD,
+            },
+        )
+        assert accepted.status_code == 200
+        assert accepted.json()["data"]["user"]["tenant_id"] == str(OTHER_TENANT_ID)
+
         original_password = await harness.client.post(
             "/api/v1/auth/login",
             json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
         )
         assert original_password.status_code == 200
-        assert original_password.json()["data"]["status"] == "authenticated"
+        login_data = original_password.json()["data"]
+        assert login_data["status"] == "organization_selection_required"
+        assert {choice["display_name"] for choice in login_data["organizations"]} == {
+            "Other Falcon HR",
+            "Wealthy Falcon HR",
+        }
         attacker_password = await harness.client.post(
             "/api/v1/auth/login",
             json={
@@ -912,46 +923,222 @@ async def test_existing_identity_invitation_cannot_reset_the_global_password() -
             )
             activation_row = await session.scalar(
                 select(UserActivationToken).where(
-                    UserActivationToken.token_hash
-                    == hash_activation_token(raw_activation_token)
+                    UserActivationToken.token_hash == hash_activation_token(raw_activation_token)
+                )
+            )
+            identities = tuple(
+                await session.scalars(
+                    select(Identity).where(Identity.email_normalized == ADMIN_EMAIL)
+                )
+            )
+            memberships = tuple(
+                await session.scalars(
+                    select(TenantMembership).where(TenantMembership.identity_id == identities[0].id)
                 )
             )
         assert invited_user is not None
-        assert invited_user.status == UserStatus.INVITED.value
-        assert invited_user.password_hash is None
+        assert invited_user.status == UserStatus.ACTIVE.value
+        assert invited_user.password_hash is not None
+        assert harness.password_manager.verify(
+            ADMIN_PASSWORD,
+            invited_user.password_hash,
+        )
+        assert len(identities) == 1
+        assert identities[0].password_hash == invited_user.password_hash
+        assert len(memberships) == 2
+        assert {membership.status for membership in memberships} == {UserStatus.ACTIVE.value}
         assert activation_row is not None
-        assert activation_row.consumed_at is None
+        assert activation_row.consumed_at is not None
 
-        with pytest.raises(IdentityProjectionConflictError):
-            async with harness.session_factory.begin() as session:
-                raced_user = await session.scalar(
-                    select(User).where(
-                        User.tenant_id == OTHER_TENANT_ID,
-                        User.email_normalized == ADMIN_EMAIL,
-                    )
-                )
-                assert raced_user is not None
-                raced_user.status = UserStatus.ACTIVE.value
-                raced_user.password_hash = harness.password_manager.hash(
-                    SECOND_MEMBERSHIP_PASSWORD
-                )
-                await session.flush()
-                await sync_identity_membership_projection(
-                    session,
-                    raced_user,
-                    require_pending_identity=True,
-                )
+        reused = await harness.client.post(
+            "/api/v1/auth/activate",
+            json={"token": raw_activation_token, "password": ADMIN_PASSWORD},
+        )
+        assert reused.status_code == 400
+        assert reused.json()["error"]["code"] == "activation_invalid"
+
+
+async def test_password_reset_is_non_enumerating_single_use_and_revokes_sessions() -> None:
+    async with _auth_api() as harness:
+        delivery = CapturingPasswordResetDelivery(messages=[])
+        recovery = PasswordRecoveryService(
+            session_factory=harness.session_factory,
+            password_manager=harness.password_manager,
+            reset_ttl=timedelta(minutes=15),
+            frontend_base_url="http://frontend.test",
+            delivery=delivery,
+        )
+        harness.app.dependency_overrides[get_password_recovery_service] = lambda: recovery
+        old_access_token, _ = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+        correlation_headers = {
+            "X-Request-Id": "req_p3e_password_reset",
+            "X-Trace-Id": "1234567890abcdef1234567890abcdef",
+        }
+
+        known = await harness.client.post(
+            "/api/v1/auth/password-reset/request",
+            headers=correlation_headers,
+            json={"email": f" {ADMIN_EMAIL.upper()} "},
+        )
+        unknown = await harness.client.post(
+            "/api/v1/auth/password-reset/request",
+            headers=correlation_headers,
+            json={"email": "unknown@wealthyfalcon.test"},
+        )
+
+        assert known.status_code == unknown.status_code == 202
+        assert known.json() == unknown.json()
+        assert known.json()["data"] == {"status": "accepted"}
+        assert known.headers["Cache-Control"] == "no-store"
+        assert len(delivery.messages) == 2
+        assert delivery.messages[0].email == ADMIN_EMAIL
+        assert delivery.messages[1].email == "unknown@wealthyfalcon.test"
+        raw_token = parse_qs(urlsplit(delivery.messages[0].reset_url).fragment)["token"][0]
 
         async with harness.session_factory() as session:
-            rolled_back_user = await session.scalar(
-                select(User).where(
-                    User.tenant_id == OTHER_TENANT_ID,
-                    User.email_normalized == ADMIN_EMAIL,
+            reset_tokens = tuple(await session.scalars(select(PasswordResetToken)))
+        assert len(reset_tokens) == 1
+        assert reset_tokens[0].token_hash == hash_password_reset_token(raw_token)
+        assert raw_token not in reset_tokens[0].token_hash
+
+        confirmed = await harness.client.post(
+            "/api/v1/auth/password-reset/confirm",
+            json={"token": raw_token, "password": RESET_PASSWORD},
+        )
+        assert confirmed.status_code == 200
+        assert confirmed.json()["data"] == {"status": "completed"}
+        assert confirmed.headers["Cache-Control"] == "no-store"
+
+        revoked_session = await harness.client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {old_access_token}"},
+        )
+        assert revoked_session.status_code == 401
+        assert revoked_session.json()["error"]["code"] == "session_invalid"
+        old_password = await harness.client.post(
+            "/api/v1/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        assert old_password.status_code == 401
+        replacement_login = await harness.client.post(
+            "/api/v1/auth/login",
+            json={"email": ADMIN_EMAIL, "password": RESET_PASSWORD},
+        )
+        assert replacement_login.status_code == 200
+        assert replacement_login.json()["data"]["status"] == "authenticated"
+
+        async with harness.session_factory() as session:
+            identity = await session.scalar(
+                select(Identity).where(Identity.email_normalized == ADMIN_EMAIL)
+            )
+            legacy_user = await session.get(User, ADMIN_ID)
+            persisted_reset = await session.scalar(
+                select(PasswordResetToken).where(
+                    PasswordResetToken.token_hash == hash_password_reset_token(raw_token)
                 )
             )
-        assert rolled_back_user is not None
-        assert rolled_back_user.status == UserStatus.INVITED.value
-        assert rolled_back_user.password_hash is None
+        assert identity is not None and identity.password_hash is not None
+        assert legacy_user is not None and legacy_user.password_hash is not None
+        assert identity.password_hash == legacy_user.password_hash
+        assert harness.password_manager.verify(RESET_PASSWORD, identity.password_hash)
+        assert persisted_reset is not None and persisted_reset.consumed_at is not None
+
+        replayed = await harness.client.post(
+            "/api/v1/auth/password-reset/confirm",
+            json={"token": raw_token, "password": RESET_PASSWORD},
+        )
+        assert replayed.status_code == 400
+        assert replayed.json()["error"]["code"] == "password_reset_invalid"
+
+        await harness.client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": ADMIN_EMAIL},
+        )
+        expiring_token = parse_qs(urlsplit(delivery.messages[-1].reset_url).fragment)["token"][0]
+        now = datetime.now(UTC)
+        async with harness.session_factory.begin() as session:
+            expiring = await session.scalar(
+                select(PasswordResetToken).where(
+                    PasswordResetToken.token_hash == hash_password_reset_token(expiring_token)
+                )
+            )
+            assert expiring is not None
+            expiring.created_at = now - timedelta(hours=2)
+            expiring.expires_at = now - timedelta(hours=1)
+        expired = await harness.client.post(
+            "/api/v1/auth/password-reset/confirm",
+            json={"token": expiring_token, "password": ADMIN_PASSWORD},
+        )
+        assert expired.status_code == 400
+        assert expired.json()["error"]["code"] == "password_reset_invalid"
+
+
+async def test_activation_and_recovery_public_attempts_are_rate_limited() -> None:
+    async with _auth_api(
+        identity_rate_limit_attempts=2,
+        source_rate_limit_attempts=10,
+    ) as harness:
+        unknown_activation = issue_activation_token(TENANT_ID).raw_token
+        activation_responses = [
+            await harness.client.post(
+                "/api/v1/auth/activate",
+                json={"token": unknown_activation, "password": ACTIVATED_PASSWORD},
+            )
+            for _ in range(3)
+        ]
+        assert [response.status_code for response in activation_responses] == [
+            400,
+            400,
+            429,
+        ]
+        assert activation_responses[-1].json()["error"]["code"] == ("authentication_rate_limited")
+        assert int(activation_responses[-1].headers["Retry-After"]) >= 1
+
+        recovery_responses = [
+            await harness.client.post(
+                "/api/v1/auth/password-reset/request",
+                json={"email": "rate-limited-recovery@wealthyfalcon.test"},
+            )
+            for _ in range(3)
+        ]
+        assert [response.status_code for response in recovery_responses] == [
+            202,
+            202,
+            429,
+        ]
+        assert recovery_responses[-1].json()["error"]["code"] == ("authentication_rate_limited")
+        assert int(recovery_responses[-1].headers["Retry-After"]) >= 1
+
+        unknown_reset = issue_password_reset_token(uuid4()).raw_token
+        confirmation_responses = [
+            await harness.client.post(
+                "/api/v1/auth/password-reset/confirm",
+                json={"token": unknown_reset, "password": RESET_PASSWORD},
+            )
+            for _ in range(3)
+        ]
+        assert [response.status_code for response in confirmation_responses] == [
+            400,
+            400,
+            429,
+        ]
+        assert confirmation_responses[-1].json()["error"]["code"] == ("authentication_rate_limited")
+        assert int(confirmation_responses[-1].headers["Retry-After"]) >= 1
+
+        async with harness.session_factory() as session:
+            scopes = set(await session.scalars(select(AuthenticationRateLimitBucket.scope)))
+        assert scopes == {
+            "activation_source",
+            "activation_token",
+            "password_reset_source",
+            "password_reset_identity",
+            "password_reset_confirm_source",
+            "password_reset_confirm_token",
+        }
 
 
 async def test_email_first_login_and_invitations_remain_tenant_isolated() -> None:

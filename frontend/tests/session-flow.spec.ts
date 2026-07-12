@@ -305,10 +305,10 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
 
   await inviteePage.goto(invitationUrl);
   await expect(inviteePage).toHaveURL(/\/activate$/);
-  await inviteePage.getByLabel("Yeni parola", { exact: true }).fill(password);
-  await inviteePage.getByLabel("Yeni parolayı doğrulayın").fill(password);
-  await inviteePage.getByRole("button", { name: "Hesabımı etkinleştir" }).click();
-  await expect(inviteePage.getByText("Hesabınız hazır")).toBeVisible();
+  await inviteePage.getByLabel("Hesap parolası", { exact: true }).fill(password);
+  await inviteePage.getByLabel("Hesap parolasını doğrulayın").fill(password);
+  await inviteePage.getByRole("button", { name: "Davetimi tamamla" }).click();
+  await expect(inviteePage.getByText("Üyeliğiniz hazır")).toBeVisible();
   expect(activationCount).toBe(1);
   expect(await inviteePage.evaluate(() => window.location.hash)).toBe("");
   expect(await inviteePage.evaluate(() => window.history.state?.token)).toBeUndefined();
@@ -386,12 +386,13 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
   await inviteeContext.close();
 });
 
-test("verified multi-organization identity selects a company and reaches its dashboard", async ({
+test("existing identity accepts a membership then selects an organization", async ({
   context,
   page,
 }) => {
   const email = "multi@wealthyfalcon.demo";
   const password = "A safe multi organization password";
+  const activationToken = "existing-identity-invitation-token";
   const selectionTransaction =
     "os1.f1000000-0000-4000-8000-000000000020.safe-single-purpose-selection-material-000001";
   const organizations = [
@@ -416,6 +417,7 @@ test("verified multi-organization identity selects a company and reaches its das
     },
   };
   let accessToken = "";
+  let activationCount = 0;
   let loginCount = 0;
   let selectionCount = 0;
   let meCount = 0;
@@ -423,6 +425,21 @@ test("verified multi-organization identity selects a company and reaches its das
   await page.route("**/api/v1/**", async (route: Route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/auth/activate") {
+      expect(request.method()).toBe("POST");
+      expect(request.postDataJSON()).toEqual({
+        token: activationToken,
+        password,
+      });
+      activationCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: dataEnvelope({ user: selectedUser }),
+      });
+      return;
+    }
 
     if (path === "/api/v1/auth/login") {
       expect(request.method()).toBe("POST");
@@ -480,7 +497,21 @@ test("verified multi-organization identity selects a company and reaches its das
     await route.fulfill({ status: 404 });
   });
 
-  await page.goto("/login");
+  await page.goto(`/activate#token=${activationToken}`);
+  await expect(
+    page.getByText("mevcut hesabınız varsa kullandığınız parolayı girin", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await page.getByLabel("Hesap parolası", { exact: true }).fill(password);
+  await page.getByLabel("Hesap parolasını doğrulayın").fill(password);
+  await page.getByRole("button", { name: "Davetimi tamamla" }).click();
+  await expect(page.getByText("Üyeliğiniz hazır")).toBeVisible();
+  expect(activationCount).toBe(1);
+  expect(await page.evaluate(() => window.location.hash)).toBe("");
+  await page.getByRole("link", { name: "Giriş ekranına git" }).click();
+
+  await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByLabel("Kurum kodu")).toHaveCount(0);
   await page.getByLabel("E-posta adresi").fill(email);
   await page.getByLabel("Parola").fill(password);

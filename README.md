@@ -285,7 +285,11 @@ ekler. Normalized e-posta başına deterministic identity ve her legacy user/rol
 projection backfill edilir; bir e-postada farklı non-null parola hash'leri varsa migration açık
 onarım için fail eder. Global credential tablosu mevcut tenant/platform capability'lerine kapalı,
 membership tabloları tenant RLS altında read-only'dir. Güncel tek Alembic head
-`0022_p3a_identity_memberships`'tır.
+`0026_p3e_identity_checkpoint`'tır. P3B global e-posta/parola login'i, P3C güvenli kurum seçimini,
+P3D ayrı platform auth realm'ini ve P3E existing-identity membership kabulü ile global password
+recovery'yi tamamlar. `password_reset_tokens` yalnız hash/süre/tek-kullanım durumu saklar; P3E
+reset confirm bütün tenant/platform session family'lerini ve açık kurum seçimlerini geçersiz kılar.
+P3A–P3E Phase 3A identity checkpoint'i kapalıdır; P3F organization work bu committe başlamaz.
 
 Veritabanı migration komutları:
 
@@ -310,7 +314,7 @@ uv run python scripts/seed_demo_data.py
 ```
 
 Seed komutu yalnız `IK_ENVIRONMENT=local` veya `IK_ENVIRONMENT=dev` iken çalışır. Komut
-idempotenttir; iki demo tenant, beş kullanıcı, sekiz çalışan ve beş izin talebini stabil UUID'ler
+idempotenttir; iki demo tenant, beş membership kullanıcısı, dört global identity, sekiz çalışan ve beş izin talebini stabil UUID'ler
 ile oluşturur veya demo fixture değerlerine geri günceller. Lokal test/smoke kullanımında hedef
 veritabanı `--database-url` ile geçici olarak override edilebilir; komut SQLite veya local host
 veritabanı dışındaki hedefleri reddeder. Production/staging deploy, cron, token, credential veya
@@ -916,8 +920,9 @@ npm --prefix frontend run dev
 
 Open the printed `DEMO_AUTH_ACTIVATION_URL`, choose a password of at least 12 characters, then log
 in at `http://localhost:3000/login` with email `admin@wealthyfalcon.demo` and that password. The
-organization is discovered only after the credential succeeds; this single-membership demo opens
-the protected `/dashboard` tenant shell automatically. Reloading the
+organizations are discovered only after the credential succeeds. The shared demo admin identity
+has one membership in each seeded organization, so login opens the safe organization-selection
+screen before the protected `/dashboard` tenant shell. Reloading the
 page rotates the HttpOnly refresh credential and restores the in-memory access credential; **Çıkış
 yap** revokes the server-side session family and returns to login.
 
@@ -936,6 +941,13 @@ the new user's fragment-based activation URL once. Caller-supplied tenant header
 do not select the invitation tenant. The refresh credential is never returned in JSON or stored in
 browser local storage: same-origin web requests use the host-only HttpOnly cookie for
 `POST /api/v1/auth/refresh`, while `GET /api/v1/me` validates both bearer and live server session.
+
+Tenant login also links to `/forgot-password`. Both known and unknown addresses receive the same
+accepted browser/API response. In `local|dev`, the fake mail adapter prints one
+`LOCAL_PASSWORD_RESET_DELIVERY` line to the API terminal; open that fragment URL to choose a new
+password. The browser removes the fragment immediately, and confirm consumes the DB hash once.
+Test/staging/prod responses never contain the raw reset URL; an approved real mail adapter remains
+an external-integration decision outside P3E.
 
 Local/dev uses a process-local random signing key. Staging/production deliberately refuses to
 start without `IK_AUTH_SIGNING_KEY` supplied out of band and an HTTPS `IK_FRONTEND_BASE_URL`; no

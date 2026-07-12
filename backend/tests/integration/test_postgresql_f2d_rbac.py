@@ -88,7 +88,8 @@ async def test_rbac_catalog_is_seeded_read_only_and_assignments_are_force_rls(
                     text(
                         "select policyname, roles, cmd, qual, with_check "
                         "from pg_catalog.pg_policies "
-                        "where schemaname = 'public' and tablename = 'user_roles'"
+                        "where schemaname = 'public' and tablename = 'user_roles' "
+                        "and policyname = 'tenant_isolation_app'"
                     )
                 )
             ).mappings().one()

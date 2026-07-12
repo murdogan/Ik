@@ -1,76 +1,81 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
-import { useOrganizationSelection } from "@/components/auth/organization-selection-provider";
 import {
-  type LoginResponseData,
-  loginErrorPresentation,
+  type PasswordResetRequestResponseData,
+  passwordResetRequestErrorPresentation,
 } from "@/lib/auth-contracts";
 import { postApi } from "@/lib/api-client";
-import { homePathForUser } from "@/lib/authorization";
-import { establishSession } from "@/lib/session";
 
 import styles from "./auth.module.css";
 import { FormAlert } from "./form-alert";
 
-export function LoginForm() {
-  const router = useRouter();
-  const { beginSelection, clearSelection } = useOrganizationSelection();
+export function ForgotPasswordForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<ReturnType<typeof loginErrorPresentation> | null>(
-    null,
-  );
+  const [isAccepted, setIsAccepted] = useState(false);
+  const [error, setError] = useState<
+    ReturnType<typeof passwordResetRequestErrorPresentation> | null
+  >(null);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
     const email = String(formData.get("email") ?? "").trim();
-    const password = String(formData.get("password") ?? "");
 
     setError(null);
     setIsSubmitting(true);
-    clearSelection();
 
     try {
-      const data = await postApi<
-        { email: string; password: string },
-        LoginResponseData
-      >("/api/v1/auth/login", {
-        email,
-        password,
-      });
-
+      await postApi<{ email: string }, PasswordResetRequestResponseData>(
+        "/api/v1/auth/password-reset/request",
+        { email },
+      );
       form.reset();
-      if (data.status === "organization_selection_required") {
-        beginSelection(data, "login");
-        router.replace("/select-organization");
-        return;
-      }
-
-      establishSession(data);
-      router.replace(homePathForUser(data.user));
+      setIsAccepted(true);
     } catch (cause) {
-      setError(loginErrorPresentation(cause));
+      setError(passwordResetRequestErrorPresentation(cause));
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (isAccepted) {
+    return (
+      <div className={styles.resultPanel}>
+        <FormAlert
+          tone="success"
+          title="İsteğiniz alındı"
+          message="Bu e-posta adresiyle eşleşen bir hesap varsa parola yenileme bağlantısını gönderdik. Gelen kutunuzu ve istenmeyen e-posta klasörünü kontrol edin."
+        />
+        <Link className={styles.primaryLink} href="/login">
+          Giriş ekranına dön
+        </Link>
+        <button
+          className={styles.secondaryButton}
+          type="button"
+          onClick={() => setIsAccepted(false)}
+        >
+          Başka bir e-posta için iste
+        </button>
+      </div>
+    );
   }
 
   return (
     <form
       className={styles.form}
       method="post"
-      action="/login"
+      action="/forgot-password"
       onSubmit={handleSubmit}
       aria-busy={isSubmitting}
     >
       {error ? (
         <FormAlert
           tone="error"
-          title="Giriş tamamlanamadı"
+          title="İstek gönderilemedi"
           message={error.message}
           reference={error.reference}
         />
@@ -90,36 +95,24 @@ export function LoginForm() {
             placeholder="ad@ornek.com"
             required
             maxLength={320}
+            autoFocus
           />
-        </div>
-
-        <div className={styles.field}>
-          <label htmlFor="password">Parola</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            placeholder="Parolanız"
-            required
-            maxLength={128}
-          />
-        </div>
-
-        <div className={styles.formLinkRow}>
-          <Link href="/forgot-password">Parolanızı mı unuttunuz?</Link>
         </div>
 
         <button className={styles.primaryButton} type="submit">
           {isSubmitting ? (
             <>
               <span className={styles.spinner} aria-hidden="true" />
-              Giriş yapılıyor…
+              İstek gönderiliyor…
             </>
           ) : (
-            "Giriş yap"
+            "Yenileme bağlantısı iste"
           )}
         </button>
+
+        <Link className={styles.secondaryLink} href="/login">
+          Giriş ekranına dön
+        </Link>
       </fieldset>
     </form>
   );

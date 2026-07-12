@@ -33,6 +33,10 @@ from app.services.authorization_service import (
     AuthorizationAccessDeniedError,
     AuthorizationService,
 )
+from app.services.password_recovery_service import (
+    LocalConsolePasswordResetDelivery,
+    PasswordRecoveryService,
+)
 from app.services.platform_auth_session_service import (
     PlatformAuthenticatedUser,
     PlatformAuthSessionService,
@@ -96,6 +100,27 @@ def get_authentication_rate_limit_service(
         session_factory=database_runtime.session_factory,
         key_hasher=auth_runtime.rate_limit_key_hasher,
         policy=auth_runtime.rate_limit_policy,
+    )
+
+
+def get_password_recovery_service(
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+    database_runtime: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+    settings: Annotated[Settings, Depends(get_application_settings)],
+) -> PasswordRecoveryService:
+    delivery = (
+        LocalConsolePasswordResetDelivery()
+        if settings.environment in {"local", "dev"}
+        else None
+    )
+    return PasswordRecoveryService(
+        session_factory=database_runtime.session_factory,
+        password_manager=auth_runtime.password_manager,
+        reset_ttl=timedelta(
+            minutes=settings.auth_password_reset_token_ttl_minutes
+        ),
+        frontend_base_url=settings.frontend_base_url,
+        delivery=delivery,
     )
 
 

@@ -97,7 +97,11 @@ bound, cursor `rows removed` sınırı ve kullanılan kritik index adları regre
 
 ## 2. Kritik E2E akışları
 
-- Login + MFA hazırlığı.
+- Yeni identity invite → activation → login.
+- Mevcut identity invite → current-password membership kabulü → çoklu kurum seçimi.
+- Forgot/reset password known/unknown aynı request response'u, fragment scrub, expiry/replay ve
+  tenant/platform session revoke.
+- Tenant email/password login + MFA hazırlığı; kurum kodu alanı yok.
 - Personel oluşturma.
 - Belge yükleme ve görüntüleme.
 - İzin talebi → onay → bakiye kontrolü.

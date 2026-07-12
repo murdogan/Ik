@@ -10,9 +10,9 @@ export const metadata: Metadata = {
 export default function ActivatePage() {
   return (
     <AuthShell
-      eyebrow="Hesap kurulumu"
+      eyebrow="Kurum daveti"
       title="Davetinizi tamamlayın"
-      description="Güçlü bir parola belirleyin. Davet bağlantınız hesabınızı doğru kurumla güvenli biçimde eşleştirir."
+      description="İlk kez hesap oluşturuyorsanız yeni bir parola seçin; mevcut hesabınız varsa kullandığınız parolayı girin. Davet bağlantısı üyeliğinizi doğru kurumla eşleştirir."
     >
       <ActivationForm />
     </AuthShell>

@@ -66,6 +66,8 @@ class AuditEventType(StrEnum):
     PLATFORM_LOGIN_FAILED = "platform.auth.login.failed"
     PLATFORM_LOGIN_DENIED = "platform.auth.login.denied"
     ACTIVATION_COMPLETED = "auth.activation.completed"
+    PASSWORD_RESET_REQUESTED = "auth.password_reset.requested"
+    PASSWORD_RESET_COMPLETED = "auth.password_reset.completed"
     INVITATION_CREATED = "user.invitation.created"
     ROLES_REPLACED = "user.roles.replaced"
     USER_STATUS_CHANGED = "user.status.changed"
