@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -11,6 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.authorization import Permission, Role, RolePermission, UserRole
 from app.models.user import User
+from app.platform.audit import (
+    AuditActorType,
+    AuditCategory,
+    AuditContext,
+    AuditDataClassification,
+    AuditEventDraft,
+    AuditEventType,
+    AuditRecorder,
+    AuditResult,
+    AuditScopeType,
+    AuditVisibilityClass,
+)
 from app.platform.authorization import (
     PERMISSIONS,
     PERMISSIONS_BY_CODE,
@@ -20,6 +33,7 @@ from app.platform.authorization import (
 )
 from app.platform.db import SqlAlchemyUnitOfWork, configure_tenant_database_access
 from app.platform.errors.application import ApplicationError
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
 
 
 class AuthorizationAccessDeniedError(ApplicationError):
@@ -96,8 +110,7 @@ async def load_authorization_snapshot(
             select(Role, Permission.code)
             .join(
                 UserRole,
-                (UserRole.role_id == Role.id)
-                & (UserRole.role_scope_type == Role.scope_type),
+                (UserRole.role_id == Role.id) & (UserRole.role_scope_type == Role.scope_type),
             )
             .outerjoin(RolePermission, RolePermission.role_id == Role.id)
             .outerjoin(Permission, Permission.id == RolePermission.permission_id)
@@ -152,8 +165,7 @@ async def load_assigned_roles(
             select(UserRole.user_id, Role)
             .join(
                 Role,
-                (Role.id == UserRole.role_id)
-                & (Role.scope_type == UserRole.role_scope_type),
+                (Role.id == UserRole.role_id) & (Role.scope_type == UserRole.role_scope_type),
             )
             .where(
                 UserRole.tenant_id == tenant_id,
@@ -181,8 +193,10 @@ class AuthorizationService:
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
+        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = SqlAlchemyAuditRecorder,
     ) -> None:
         self._session_factory = session_factory
+        self._audit_recorder_factory = audit_recorder_factory
 
     async def list_tenant_roles(
         self,
@@ -237,7 +251,10 @@ class AuthorizationService:
         actor_id: UUID,
         user_id: UUID,
         role_ids: tuple[UUID, ...],
+        actor_session_id: UUID | None = None,
+        audit_context: AuditContext | None = None,
     ) -> RoleReplacementRecord:
+        context = audit_context or AuditContext.internal()
         desired_ids = frozenset(role_ids)
         async with self._session_factory() as session:
             configure_tenant_database_access(session, tenant_id)
@@ -252,18 +269,20 @@ class AuthorizationService:
                 if user is None:
                     raise RoleAssignmentUserNotFoundError()
 
-                roles = tuple(
-                    await session.scalars(
-                        select(Role)
-                        .where(Role.id.in_(desired_ids), Role.scope_type == "tenant")
-                        .order_by(Role.code)
+                roles = (
+                    tuple(
+                        await session.scalars(
+                            select(Role)
+                            .where(Role.id.in_(desired_ids), Role.scope_type == "tenant")
+                            .order_by(Role.code)
+                        )
                     )
-                ) if desired_ids else ()
+                    if desired_ids
+                    else ()
+                )
                 if {role.id for role in roles} != desired_ids:
                     raise RoleAssignmentInvalidError()
-                if user_id == actor_id and not any(
-                    role.code == "tenant_admin" for role in roles
-                ):
+                if user_id == actor_id and not any(role.code == "tenant_admin" for role in roles):
                     raise RoleAssignmentConflictError(
                         "The authenticated administrator cannot remove their own tenant-admin role"
                     )
@@ -278,10 +297,16 @@ class AuthorizationService:
                         .with_for_update()
                     )
                 )
+                before_snapshot = await load_authorization_snapshot(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
                 current_ids = {
                     assignment.role_id for assignment in assignments if assignment.active
                 }
-                if current_ids != desired_ids:
+                roles_changed = current_ids != desired_ids
+                if roles_changed:
                     by_role_id = {assignment.role_id: assignment for assignment in assignments}
                     for assignment in assignments:
                         assignment.active = assignment.role_id in desired_ids
@@ -306,6 +331,33 @@ class AuthorizationService:
                     tenant_id=tenant_id,
                     user_id=user_id,
                 )
+                if roles_changed:
+                    await self._audit_recorder_factory(session).record(
+                        AuditEventDraft(
+                            scope_type=AuditScopeType.TENANT,
+                            tenant_id=tenant_id,
+                            actor_type=AuditActorType.USER,
+                            actor_user_id=actor_id,
+                            event_type=AuditEventType.ROLES_REPLACED,
+                            category=AuditCategory.TENANT_ADMIN,
+                            resource_type="user",
+                            resource_id=user_id,
+                            action="replace_roles",
+                            result=AuditResult.SUCCESS,
+                            context=context,
+                            session_id=actor_session_id,
+                            changed_fields=("roles", "permission_version"),
+                            metadata={
+                                "before_role_codes": tuple(
+                                    role.code for role in before_snapshot.roles
+                                ),
+                                "after_role_codes": tuple(role.code for role in snapshot.roles),
+                                "permission_version": user.permission_version,
+                            },
+                            data_classification=AuditDataClassification.TENANT_ADMINISTRATION,
+                            visibility_class=AuditVisibilityClass.TENANT_ADMIN,
+                        )
+                    )
                 return RoleReplacementRecord(
                     id=user.id,
                     email=user.email,

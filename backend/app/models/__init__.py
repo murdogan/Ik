@@ -1,5 +1,6 @@
 """Database models."""
 
+from app.models.audit import AuditEvent
 from app.models.auth import (
     RefreshSessionFamily,
     RefreshSessionToken,
@@ -14,6 +15,7 @@ from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
 from app.models.user import User, UserStatus
 
 __all__ = [
+    "AuditEvent",
     "CommandIdempotency",
     "Employee",
     "EmployeeStatus",

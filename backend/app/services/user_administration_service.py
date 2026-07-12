@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -11,6 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.auth import RefreshSessionFamily, UserActivationToken
 from app.models.user import User, UserStatus
+from app.platform.audit import (
+    AuditActorType,
+    AuditCategory,
+    AuditContext,
+    AuditDataClassification,
+    AuditEventDraft,
+    AuditEventType,
+    AuditRecorder,
+    AuditResult,
+    AuditScopeType,
+    AuditVisibilityClass,
+)
 from app.platform.authorization import DenyByDefaultPolicy
 from app.platform.db import SqlAlchemyUnitOfWork, configure_tenant_database_access
 from app.platform.errors.application import ApplicationError
@@ -21,6 +34,7 @@ from app.schemas.user_administration import (
     UserListCursor,
     UserListPagination,
 )
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.authorization_service import AssignedRole, load_assigned_roles
 
 _authorization_policy = DenyByDefaultPolicy()
@@ -57,8 +71,10 @@ class UserAdministrationService:
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
+        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = SqlAlchemyAuditRecorder,
     ) -> None:
         self._session_factory = session_factory
+        self._audit_recorder_factory = audit_recorder_factory
 
     async def list_users(
         self,
@@ -140,7 +156,9 @@ class UserAdministrationService:
         user_id: UUID,
         update: UserAdministrationUpdate,
         granted_permissions: tuple[str, ...],
+        audit_context: AuditContext | None = None,
     ) -> UserAdministrationRecord:
+        context = audit_context or AuditContext.internal()
         tenant_id, actor_id = _scope_from_context(request_context)
         _require_permission(granted_permissions, "user:update:tenant")
         async with self._session_factory() as session:
@@ -159,6 +177,9 @@ class UserAdministrationService:
                 if user is None:
                     raise UserAdministrationUserNotFoundError()
 
+                before_status = user.status
+                before_full_name = user.full_name
+                sessions_revoked = 0
                 if "status" in update.model_fields_set:
                     assert update.status is not None
                     _validate_status_change(
@@ -167,7 +188,7 @@ class UserAdministrationService:
                         actor_id=actor_id,
                     )
                     user.status = update.status.value
-                    await _revoke_credentials_for_status(
+                    sessions_revoked = await _revoke_credentials_for_status(
                         session,
                         user=user,
                         status=update.status,
@@ -183,6 +204,62 @@ class UserAdministrationService:
                     tenant_id=tenant_id,
                     user_ids=(user.id,),
                 )
+                if before_status != user.status:
+                    changed_fields = ["status"]
+                    if before_full_name != user.full_name:
+                        changed_fields.append("full_name")
+                    recorder = self._audit_recorder_factory(session)
+                    await recorder.record(
+                        AuditEventDraft(
+                            scope_type=AuditScopeType.TENANT,
+                            tenant_id=tenant_id,
+                            actor_type=AuditActorType.USER,
+                            actor_user_id=actor_id,
+                            event_type=AuditEventType.USER_STATUS_CHANGED,
+                            category=AuditCategory.TENANT_ADMIN,
+                            resource_type="user",
+                            resource_id=user.id,
+                            action="change_status",
+                            result=AuditResult.SUCCESS,
+                            context=context,
+                            session_id=request_context.session_id,
+                            changed_fields=tuple(changed_fields),
+                            metadata={
+                                "before_status": before_status,
+                                "after_status": user.status,
+                                "sessions_revoked": sessions_revoked,
+                            },
+                            data_classification=AuditDataClassification.TENANT_ADMINISTRATION,
+                            visibility_class=AuditVisibilityClass.TENANT_ADMIN,
+                        )
+                    )
+                    if sessions_revoked:
+                        await recorder.record(
+                            AuditEventDraft(
+                                scope_type=AuditScopeType.TENANT,
+                                tenant_id=tenant_id,
+                                actor_type=AuditActorType.USER,
+                                actor_user_id=actor_id,
+                                event_type=AuditEventType.SESSION_REVOKED,
+                                category=AuditCategory.TENANT_SECURITY,
+                                resource_type="user",
+                                resource_id=user.id,
+                                action="revoke",
+                                result=AuditResult.SUCCESS,
+                                context=context,
+                                session_id=request_context.session_id,
+                                metadata={
+                                    "revocation_reason": (
+                                        "account_locked"
+                                        if user.status == UserStatus.LOCKED.value
+                                        else "account_disabled"
+                                    ),
+                                    "source": "account_status",
+                                },
+                                data_classification=AuditDataClassification.SECURITY_METADATA,
+                                visibility_class=AuditVisibilityClass.TENANT_SECURITY,
+                            )
+                        )
                 return _record_from_user(user, roles=roles_by_user.get(user.id, ()))
 
             return await unit_of_work.execute(operation)
@@ -230,19 +307,30 @@ async def _revoke_credentials_for_status(
     *,
     user: User,
     status: UserStatus,
-) -> None:
+) -> int:
     if status not in {UserStatus.LOCKED, UserStatus.DISABLED}:
-        return
+        return 0
     now = datetime.now(UTC)
-    await session.execute(
-        update(RefreshSessionFamily)
-        .where(
-            RefreshSessionFamily.tenant_id == user.tenant_id,
-            RefreshSessionFamily.user_id == user.id,
-            RefreshSessionFamily.revoked_at.is_(None),
+    family_ids = tuple(
+        await session.scalars(
+            select(RefreshSessionFamily.id)
+            .where(
+                RefreshSessionFamily.tenant_id == user.tenant_id,
+                RefreshSessionFamily.user_id == user.id,
+                RefreshSessionFamily.revoked_at.is_(None),
+            )
+            .with_for_update()
         )
-        .values(revoked_at=now)
     )
+    if family_ids:
+        await session.execute(
+            update(RefreshSessionFamily)
+            .where(
+                RefreshSessionFamily.tenant_id == user.tenant_id,
+                RefreshSessionFamily.id.in_(family_ids),
+            )
+            .values(revoked_at=now)
+        )
     if status == UserStatus.DISABLED:
         await session.execute(
             update(UserActivationToken)
@@ -254,6 +342,7 @@ async def _revoke_credentials_for_status(
             )
             .values(revoked_at=now)
         )
+    return len(family_ids)
 
 
 def _user_projection():

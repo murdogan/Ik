@@ -16,6 +16,7 @@ from app.api.errors import (
     UNEXPECTED_ERROR_RESPONSES,
 )
 from app.api.openapi import USER_ADMINISTRATION_TAG, with_correlation_response_headers
+from app.platform.audit import AuditContext
 from app.platform.request_context import RequestContext
 from app.platform.responses import DataEnvelope, data_envelope
 from app.schemas.auth import InvitationRead, InvitationRequest, InvitationUserRead
@@ -24,13 +25,15 @@ from app.services.user_invitation_service import InvitationAccessDeniedError, Us
 router = APIRouter(
     prefix="/api/v1/users",
     tags=[USER_ADMINISTRATION_TAG],
-    responses=with_correlation_response_headers({
-        **AUTHENTICATION_REQUIRED_RESPONSES,
-        **INVITATION_AUTHORIZATION_RESPONSES,
-        **AUTH_VALIDATION_RESPONSES,
-        **INVITATION_CONFLICT_RESPONSES,
-        **UNEXPECTED_ERROR_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            **AUTHENTICATION_REQUIRED_RESPONSES,
+            **INVITATION_AUTHORIZATION_RESPONSES,
+            **AUTH_VALIDATION_RESPONSES,
+            **INVITATION_CONFLICT_RESPONSES,
+            **UNEXPECTED_ERROR_RESPONSES,
+        }
+    ),
 )
 
 
@@ -68,6 +71,7 @@ async def create_invitation(
         principal=authorized.principal,
         email=payload.email,
         full_name=payload.full_name,
+        audit_context=AuditContext.from_request_context(request_context),
     )
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
@@ -13,18 +14,29 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.auth import UserActivationToken
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.audit import (
+    AuditActorType,
+    AuditCategory,
+    AuditContext,
+    AuditDataClassification,
+    AuditEventDraft,
+    AuditEventType,
+    AuditRecorder,
+    AuditResult,
+    AuditScopeType,
+    AuditVisibilityClass,
+)
 from app.platform.authorization import DenyByDefaultPolicy
 from app.platform.db import SqlAlchemyUnitOfWork, configure_tenant_database_access
 from app.platform.errors.application import ApplicationError
 from app.platform.identity import AccessPrincipal, issue_activation_token
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.authorization_service import (
     assign_system_role,
     load_authorization_snapshot,
 )
 
-_INVITABLE_TENANT_STATUSES = frozenset(
-    {TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value}
-)
+_INVITABLE_TENANT_STATUSES = frozenset({TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value})
 _authorization_policy = DenyByDefaultPolicy()
 
 
@@ -52,10 +64,12 @@ class UserInvitationService:
         session_factory: async_sessionmaker[AsyncSession],
         activation_ttl: timedelta,
         frontend_base_url: str,
+        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = SqlAlchemyAuditRecorder,
     ) -> None:
         self._session_factory = session_factory
         self._activation_ttl = activation_ttl
         self._frontend_base_url = frontend_base_url.rstrip("/")
+        self._audit_recorder_factory = audit_recorder_factory
 
     async def invite(
         self,
@@ -63,7 +77,9 @@ class UserInvitationService:
         principal: AccessPrincipal,
         email: str,
         full_name: str,
+        audit_context: AuditContext | None = None,
     ) -> InvitationResult:
+        context = audit_context or AuditContext.internal()
         token_material = issue_activation_token(principal.tenant_id)
         now = datetime.now(UTC)
         expires_at = now + self._activation_ttl
@@ -157,6 +173,29 @@ class UserInvitationService:
                     )
                 )
                 await session.flush()
+                await self._audit_recorder_factory(session).record(
+                    AuditEventDraft(
+                        scope_type=AuditScopeType.TENANT,
+                        tenant_id=principal.tenant_id,
+                        actor_type=AuditActorType.USER,
+                        actor_user_id=principal.user_id,
+                        event_type=AuditEventType.INVITATION_CREATED,
+                        category=AuditCategory.TENANT_ADMIN,
+                        resource_type="user",
+                        resource_id=user.id,
+                        action="invite",
+                        result=AuditResult.SUCCESS,
+                        context=context,
+                        session_id=principal.session_family_id,
+                        changed_fields=("status", "roles") if is_new_user else (),
+                        metadata={
+                            "is_reinvite": not is_new_user,
+                            **({"initial_role": "employee"} if is_new_user else {}),
+                        },
+                        data_classification=AuditDataClassification.TENANT_ADMINISTRATION,
+                        visibility_class=AuditVisibilityClass.TENANT_ADMIN,
+                    )
+                )
                 return InvitationResult(
                     user_id=user.id,
                     email=user.email,

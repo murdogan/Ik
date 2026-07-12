@@ -25,6 +25,12 @@ const navigationItems = [
     icon: "K",
     permission: AUTHORIZATION_PERMISSIONS.readUsers,
   },
+  {
+    href: "/audit",
+    label: "Denetim kayıtları",
+    icon: "D",
+    permission: AUTHORIZATION_PERMISSIONS.readTenantAudit,
+  },
 ] as const;
 
 function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {

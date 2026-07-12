@@ -50,6 +50,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 | GET | `/api/v1/roles` | F2D uygulandı | Seeded tenant rolleri ve explicit permission kodları; platform rolü yok |
 | GET | `/api/v1/permissions` | F2D uygulandı | Seeded tenant permission katalogu; platform permission yok |
 | PUT | `/api/v1/users/{user_id}/roles` | F2D uygulandı | Atomik replace, tenant isolation, platform-role reddi ve permission-version artışı |
+| GET | `/api/v1/audit-events` | F2E uygulandı | Bearer + `audit:read:tenant`; role/category filtreli, redakte cursor sayfası |
+| GET | `/api/v1/audit-events/{event_id}` | F2E uygulandı | Yalnız current tenant ve görünür kategoride salt-okunur güvenli detay |
+| GET | `/api/v1/platform/audit-events` | F2E uygulandı | Ayrı trusted platform principal; yalnız `platform_operations`, HR payload yok |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |

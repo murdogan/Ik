@@ -411,8 +411,9 @@ def test_core_migration_chain_is_linear() -> None:
         "0018_f2c_user_administration"
     )
     f2d_rbac_revision = script.get_revision("0019_f2d_rbac")
+    f2e_audit_revision = script.get_revision("0020_f2e_audit_events")
 
-    assert script.get_heads() == ["0019_f2d_rbac"]
+    assert script.get_heads() == ["0020_f2e_audit_events"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -455,6 +456,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert f2c_user_administration_revision.down_revision == "0017_f2b_secure_sessions"
     assert f2d_rbac_revision is not None
     assert f2d_rbac_revision.down_revision == "0018_f2c_user_administration"
+    assert f2e_audit_revision is not None
+    assert f2e_audit_revision.down_revision == "0019_f2d_rbac"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:

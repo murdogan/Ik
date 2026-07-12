@@ -23,6 +23,7 @@ from app.api.errors import (
 from app.api.openapi import AUTHENTICATION_TAG, with_correlation_response_headers
 from app.core.auth_runtime import AuthRuntime
 from app.core.config import Settings
+from app.platform.audit import AuditContext
 from app.platform.errors import api_error_handler
 from app.platform.identity import AccessPrincipal, InvalidAccessTokenError
 from app.platform.request_context import RequestContext
@@ -43,18 +44,22 @@ from app.services.authentication_service import AuthenticatedUser, Authenticatio
 router = APIRouter(
     prefix="/api/v1/auth",
     tags=[AUTHENTICATION_TAG],
-    responses=with_correlation_response_headers({
-        **AUTH_VALIDATION_RESPONSES,
-        **UNEXPECTED_ERROR_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            **AUTH_VALIDATION_RESPONSES,
+            **UNEXPECTED_ERROR_RESPONSES,
+        }
+    ),
 )
 me_router = APIRouter(
     prefix="/api/v1",
     tags=[AUTHENTICATION_TAG],
-    responses=with_correlation_response_headers({
-        **AUTHENTICATION_REQUIRED_RESPONSES,
-        **UNEXPECTED_ERROR_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            **AUTHENTICATION_REQUIRED_RESPONSES,
+            **UNEXPECTED_ERROR_RESPONSES,
+        }
+    ),
 )
 
 
@@ -80,6 +85,7 @@ async def login(
         tenant_slug=payload.tenant_slug,
         email=payload.email,
         password=payload.password.get_secret_value(),
+        audit_context=AuditContext.from_request_context(request_context),
     )
     _set_refresh_cookie(response, result, auth_runtime)
     _prevent_credential_caching(response)
@@ -117,7 +123,10 @@ async def refresh(
     try:
         if raw_token is None:
             raise InvalidSessionError()
-        result = await service.refresh(raw_token)
+        result = await service.refresh(
+            raw_token,
+            audit_context=AuditContext.from_request_context(request_context),
+        )
     except InvalidSessionError:
         error_response = await api_error_handler(request, session_invalid_error())
         _clear_refresh_cookie(error_response, auth_runtime)
@@ -142,6 +151,7 @@ async def refresh(
 async def logout(
     request: Request,
     response: Response,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
     service: Annotated[AuthSessionService, Depends(get_auth_session_service)],
     auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
     settings: Annotated[Settings, Depends(get_application_settings)],
@@ -150,6 +160,7 @@ async def logout(
     await service.revoke(
         request.cookies.get(auth_runtime.refresh_cookie.name),
         principal=_optional_access_principal(request, auth_runtime),
+        audit_context=AuditContext.from_request_context(request_context),
     )
     _clear_refresh_cookie(response, auth_runtime)
     _prevent_credential_caching(response)
@@ -201,6 +212,7 @@ async def activate(
     user = await service.activate(
         raw_token=payload.token.get_secret_value(),
         password=payload.password.get_secret_value(),
+        audit_context=AuditContext.from_request_context(request_context),
     )
     _prevent_credential_caching(response)
     return data_envelope(

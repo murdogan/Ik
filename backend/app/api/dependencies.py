@@ -24,7 +24,6 @@ from app.platform.db import (
 )
 from app.platform.db.tenant_access import DATABASE_ACCESS_CONTEXT_STATE_KEY
 from app.platform.events import (
-    DiscardingPlatformEventRecorder,
     PlatformEventRecorder,
 )
 from app.platform.observability.correlation import (
@@ -34,7 +33,9 @@ from app.platform.observability.correlation import (
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
 from app.platform.request_context import RequestContext
 from app.platform.tenancy import TenantContext
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.command_idempotency import CommandIdempotencyService
+from app.services.platform_event_audit_recorder import PlatformEventAuditRecorder
 from app.services.platform_tenant_queries import PlatformTenantQueryService
 from app.services.tenant_commands import TenantCommandHandler
 from app.services.tenant_feature_service import TenantFeatureService
@@ -142,10 +143,12 @@ def get_tenant_feature_service(
     return TenantFeatureService(session=session)
 
 
-def get_platform_event_recorder() -> PlatformEventRecorder:
-    """Contract-only Phase-1 seam; Phase 2 replaces it with same-session persistence."""
+def get_platform_event_recorder(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> PlatformEventRecorder:
+    """Persist closed platform events through the command's same database session."""
 
-    return DiscardingPlatformEventRecorder()
+    return PlatformEventAuditRecorder(SqlAlchemyAuditRecorder(session))
 
 
 def get_tenant_command_handler(

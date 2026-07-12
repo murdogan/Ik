@@ -5,27 +5,50 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { useSession } from "@/components/session/session-provider";
+import type { AuthUser } from "@/lib/auth-contracts";
+import {
+  AUTHORIZATION_PERMISSIONS,
+  hasPermission,
+} from "@/lib/authorization";
 
 import styles from "./platform-shell.module.css";
 
 const platformNavigation = [
-  { href: "/platform", label: "Platform genel bakış", icon: "P" },
+  {
+    href: "/platform",
+    label: "Platform genel bakış",
+    icon: "P",
+    permission: null,
+    exact: true,
+  },
+  {
+    href: "/platform/audit",
+    label: "Denetim kayıtları",
+    icon: "D",
+    permission: AUTHORIZATION_PERMISSIONS.readPlatformAudit,
+    exact: false,
+  },
 ] as const;
 
 function displayName(fullName: string | null, email: string): string {
   return fullName?.trim() || email;
 }
 
-function Navigation({ mobile = false }: { mobile?: boolean }) {
+function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
   const pathname = usePathname();
+  const visibleItems = platformNavigation.filter(
+    (item) => item.permission === null || hasPermission(user, item.permission),
+  );
 
   return (
     <nav
       className={mobile ? styles.mobileNavigation : styles.navigation}
       aria-label={mobile ? "Mobil platform menüsü" : "Platform menüsü"}
     >
-      {platformNavigation.map((item) => {
-        const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+      {visibleItems.map((item) => {
+        const isActive = item.exact
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
             className={`${styles.navigationItem} ${isActive ? styles.activeNavigationItem : ""}`}
@@ -63,7 +86,7 @@ export function PlatformShell({ children }: { children: ReactNode }) {
           <small>Müşteri HR alanlarından ayrılmış yönetim kabuğu</small>
         </div>
 
-        <Navigation />
+        <Navigation user={user} />
 
         <p className={styles.sidebarNote}>Platform oturumu · varsayılan erişim kapalı</p>
       </aside>
@@ -85,7 +108,7 @@ export function PlatformShell({ children }: { children: ReactNode }) {
           </button>
         </header>
 
-        <Navigation mobile />
+        <Navigation user={user} mobile />
 
         <div className={styles.content}>
           {logoutError ? (

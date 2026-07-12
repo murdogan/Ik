@@ -26,6 +26,7 @@ from app.api.errors import (
 )
 from app.api.openapi import USER_ADMINISTRATION_TAG, with_correlation_response_headers
 from app.models.user import UserStatus
+from app.platform.audit import AuditContext
 from app.platform.pagination import MAX_CURSOR_LENGTH, InvalidCursorError
 from app.platform.request_context import RequestContext
 from app.platform.responses import (
@@ -259,6 +260,7 @@ async def update_user(
         user_id=user_id,
         update=payload,
         granted_permissions=authorized.user.permissions,
+        audit_context=AuditContext.from_request_context(request_context),
     )
     return data_envelope(_user_read(user), request_context)
 
@@ -306,6 +308,8 @@ async def replace_user_roles(
         actor_id=authorized.user.id,
         user_id=user_id,
         role_ids=tuple(payload.role_ids),
+        actor_session_id=request_context.session_id,
+        audit_context=AuditContext.from_request_context(request_context),
     )
     return data_envelope(_user_read(user), request_context)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -12,6 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.auth import UserActivationToken
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.audit import (
+    AuditActorType,
+    AuditCategory,
+    AuditContext,
+    AuditDataClassification,
+    AuditEventDraft,
+    AuditEventType,
+    AuditRecorder,
+    AuditResult,
+    AuditScopeType,
+    AuditVisibilityClass,
+)
 from app.platform.db import (
     SqlAlchemyUnitOfWork,
     configure_platform_database_access,
@@ -24,6 +37,7 @@ from app.platform.identity import (
     PasswordManager,
     parse_activation_token,
 )
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.auth_session_service import (
     AuthenticatedUser,
     AuthSessionService,
@@ -32,9 +46,7 @@ from app.services.auth_session_service import (
 )
 from app.services.authorization_service import load_authorization_snapshot
 
-_LOGIN_TENANT_STATUSES = frozenset(
-    {TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value}
-)
+_LOGIN_TENANT_STATUSES = frozenset({TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value})
 LoginResult = SessionGrant
 
 
@@ -62,29 +74,39 @@ class AuthenticationService:
         password_manager: PasswordManager,
         access_tokens: AccessTokenCodec,
         refresh_ttl: timedelta = timedelta(days=14),
+        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = SqlAlchemyAuditRecorder,
     ) -> None:
         self._session_factory = session_factory
         self._password_manager = password_manager
+        self._audit_recorder_factory = audit_recorder_factory
         self._sessions = AuthSessionService(
             session_factory=session_factory,
             access_tokens=access_tokens,
             refresh_ttl=refresh_ttl,
+            audit_recorder_factory=audit_recorder_factory,
         )
 
-    async def login(self, *, tenant_slug: str, email: str, password: str) -> SessionGrant:
+    async def login(
+        self,
+        *,
+        tenant_slug: str,
+        email: str,
+        password: str,
+        audit_context: AuditContext | None = None,
+    ) -> SessionGrant:
+        context = audit_context or AuditContext.internal()
         tenant = await self._discover_tenant(tenant_slug)
         if tenant is None or tenant.status not in _LOGIN_TENANT_STATUSES:
             await self._password_manager.verify_async(password, None)
+            if tenant is not None:
+                await self._record_login_failure(tenant.id, context)
             raise InvalidCredentialsError()
 
         user = await self._find_login_user(tenant.id, email)
         password_hash = user.password_hash if user is not None else None
         valid_password = await self._password_manager.verify_async(password, password_hash)
-        if (
-            user is None
-            or user.status != UserStatus.ACTIVE.value
-            or not valid_password
-        ):
+        if user is None or user.status != UserStatus.ACTIVE.value or not valid_password:
+            await self._record_login_failure(tenant.id, context)
             raise InvalidCredentialsError()
 
         try:
@@ -92,13 +114,22 @@ class AuthenticationService:
                 tenant_id=tenant.id,
                 tenant_slug=tenant.slug,
                 user_id=user.id,
+                audit_context=context,
             )
         except InvalidSessionError as exc:
             # Preserve login's one generic credential/account failure contract even if account
             # state changes between password verification and transactional session creation.
+            await self._record_login_failure(tenant.id, context)
             raise InvalidCredentialsError() from exc
 
-    async def activate(self, *, raw_token: str, password: str) -> AuthenticatedUser:
+    async def activate(
+        self,
+        *,
+        raw_token: str,
+        password: str,
+        audit_context: AuditContext | None = None,
+    ) -> AuthenticatedUser:
+        context = audit_context or AuditContext.internal()
         try:
             token_material = parse_activation_token(raw_token)
         except InvalidActivationTokenFormatError as exc:
@@ -150,6 +181,28 @@ class AuthenticationService:
                     tenant_id=user.tenant_id,
                     user_id=user.id,
                 )
+                await self._audit_recorder_factory(session).record(
+                    AuditEventDraft(
+                        scope_type=AuditScopeType.TENANT,
+                        tenant_id=user.tenant_id,
+                        actor_type=AuditActorType.USER,
+                        actor_user_id=user.id,
+                        event_type=AuditEventType.ACTIVATION_COMPLETED,
+                        category=AuditCategory.TENANT_SECURITY,
+                        resource_type="user",
+                        resource_id=user.id,
+                        action="activate",
+                        result=AuditResult.SUCCESS,
+                        context=context,
+                        changed_fields=("status",),
+                        metadata={
+                            "before_status": UserStatus.INVITED.value,
+                            "after_status": UserStatus.ACTIVE.value,
+                        },
+                        data_classification=AuditDataClassification.SECURITY_METADATA,
+                        visibility_class=AuditVisibilityClass.TENANT_SECURITY,
+                    )
+                )
                 return AuthenticatedUser(
                     id=user.id,
                     tenant_id=user.tenant_id,
@@ -164,6 +217,36 @@ class AuthenticationService:
                 )
 
             return await unit_of_work.execute(operation)
+
+    async def _record_login_failure(
+        self,
+        tenant_id: UUID,
+        context: AuditContext,
+    ) -> None:
+        async with self._session_factory() as session:
+            configure_tenant_database_access(session, tenant_id)
+            unit_of_work = SqlAlchemyUnitOfWork(session)
+
+            async def operation() -> None:
+                await self._audit_recorder_factory(session).record(
+                    AuditEventDraft(
+                        scope_type=AuditScopeType.TENANT,
+                        tenant_id=tenant_id,
+                        actor_type=AuditActorType.USER,
+                        event_type=AuditEventType.LOGIN_FAILED,
+                        category=AuditCategory.TENANT_SECURITY,
+                        resource_type="authentication",
+                        resource_id=None,
+                        action="login",
+                        result=AuditResult.FAILURE,
+                        context=context,
+                        metadata={"failure_reason": "authentication_failed"},
+                        data_classification=AuditDataClassification.SECURITY_METADATA,
+                        visibility_class=AuditVisibilityClass.TENANT_SECURITY,
+                    )
+                )
+
+            await unit_of_work.execute(operation)
 
     async def _discover_tenant(self, tenant_slug: str) -> TenantDiscovery | None:
         async with self._session_factory() as session:

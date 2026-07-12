@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -12,6 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.auth import RefreshSessionFamily, RefreshSessionToken
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.audit import (
+    AuditActorType,
+    AuditCategory,
+    AuditContext,
+    AuditDataClassification,
+    AuditEventDraft,
+    AuditEventType,
+    AuditRecorder,
+    AuditResult,
+    AuditScopeType,
+    AuditSeverity,
+    AuditVisibilityClass,
+)
 from app.platform.db import SqlAlchemyUnitOfWork, configure_tenant_database_access
 from app.platform.errors.application import ApplicationError
 from app.platform.identity import (
@@ -22,15 +36,14 @@ from app.platform.identity import (
     issue_refresh_token,
     parse_refresh_token,
 )
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.authorization_service import (
     AssignedRole,
     AuthorizationSnapshot,
     load_authorization_snapshot,
 )
 
-_SESSION_TENANT_STATUSES = frozenset(
-    {TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value}
-)
+_SESSION_TENANT_STATUSES = frozenset({TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value})
 
 
 class InvalidSessionError(ApplicationError):
@@ -76,12 +89,14 @@ class AuthSessionService:
         session_factory: async_sessionmaker[AsyncSession],
         access_tokens: AccessTokenCodec,
         refresh_ttl: timedelta,
+        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = SqlAlchemyAuditRecorder,
     ) -> None:
         if refresh_ttl <= timedelta(0):
             raise ValueError("Refresh session TTL must be positive")
         self._session_factory = session_factory
         self._access_tokens = access_tokens
         self._refresh_ttl = refresh_ttl
+        self._audit_recorder_factory = audit_recorder_factory
 
     async def start_session(
         self,
@@ -89,7 +104,9 @@ class AuthSessionService:
         tenant_id: UUID,
         tenant_slug: str,
         user_id: UUID,
+        audit_context: AuditContext | None = None,
     ) -> SessionGrant:
+        context = audit_context or AuditContext.internal()
         family_id = uuid4()
         refresh = issue_refresh_token(tenant_id)
         now = datetime.now(UTC)
@@ -144,6 +161,37 @@ class AuthSessionService:
                     tenant_id=user.tenant_id,
                     user_id=user.id,
                 )
+                recorder = self._audit_recorder_factory(session)
+                await recorder.record(
+                    AuditEventDraft(
+                        scope_type=AuditScopeType.TENANT,
+                        tenant_id=tenant_id,
+                        actor_type=AuditActorType.USER,
+                        actor_user_id=user_id,
+                        event_type=AuditEventType.LOGIN_SUCCEEDED,
+                        category=AuditCategory.TENANT_SECURITY,
+                        resource_type="user",
+                        resource_id=user_id,
+                        action="login",
+                        result=AuditResult.SUCCESS,
+                        context=context,
+                        session_id=family_id,
+                        metadata={"authentication_method": "local"},
+                        data_classification=AuditDataClassification.SECURITY_METADATA,
+                        visibility_class=AuditVisibilityClass.TENANT_SECURITY,
+                    )
+                )
+                await recorder.record(
+                    _session_audit_event(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        family_id=family_id,
+                        event_type=AuditEventType.SESSION_STARTED,
+                        action="start",
+                        context=context,
+                        metadata={"authentication_method": "local"},
+                    )
+                )
                 return _authenticated_user(user, tenant, authorization)
 
             user = await unit_of_work.execute(operation)
@@ -157,7 +205,13 @@ class AuthSessionService:
             )
         )
 
-    async def refresh(self, raw_token: str) -> SessionGrant:
+    async def refresh(
+        self,
+        raw_token: str,
+        *,
+        audit_context: AuditContext | None = None,
+    ) -> SessionGrant:
+        context = audit_context or AuditContext.internal()
         try:
             presented = parse_refresh_token(raw_token)
         except InvalidRefreshTokenFormatError as exc:
@@ -175,8 +229,7 @@ class AuthSessionService:
                         .join(
                             RefreshSessionFamily,
                             and_(
-                                RefreshSessionFamily.tenant_id
-                                == RefreshSessionToken.tenant_id,
+                                RefreshSessionFamily.tenant_id == RefreshSessionToken.tenant_id,
                                 RefreshSessionFamily.id == RefreshSessionToken.family_id,
                             ),
                         )
@@ -193,9 +246,7 @@ class AuthSessionService:
                             RefreshSessionToken.id == presented.token_id,
                             RefreshSessionToken.token_hash == presented.token_hash,
                         )
-                        .with_for_update(
-                            of=(RefreshSessionToken, RefreshSessionFamily, User)
-                        )
+                        .with_for_update(of=(RefreshSessionToken, RefreshSessionFamily, User))
                     )
                 ).one_or_none()
                 if row is None:
@@ -206,7 +257,19 @@ class AuthSessionService:
                 if token.consumed_at is not None:
                     if family.revoked_at is None:
                         family.revoked_at = now
-                        await session.flush()
+                    await self._audit_recorder_factory(session).record(
+                        _session_audit_event(
+                            tenant_id=family.tenant_id,
+                            user_id=user.id,
+                            family_id=family.id,
+                            event_type=AuditEventType.SESSION_REUSE_DETECTED,
+                            action="detect_reuse",
+                            context=context,
+                            result=AuditResult.DENIED,
+                            severity=AuditSeverity.WARNING,
+                            metadata={"revocation_reason": "refresh_reuse"},
+                        )
+                    )
                     # Returning commits reuse-triggered family revocation. Raising here would
                     # roll it back and leave the stolen successor usable.
                     return None
@@ -219,7 +282,16 @@ class AuthSessionService:
                 ):
                     if family.revoked_at is None:
                         family.revoked_at = now
-                        await session.flush()
+                        await self._audit_recorder_factory(session).record(
+                            _session_audit_event(
+                                tenant_id=family.tenant_id,
+                                user_id=user.id,
+                                family_id=family.id,
+                                event_type=AuditEventType.SESSION_REVOKED,
+                                action="revoke",
+                                context=context,
+                            )
+                        )
                     return None
 
                 token.consumed_at = now
@@ -236,6 +308,16 @@ class AuthSessionService:
                     session,
                     tenant_id=user.tenant_id,
                     user_id=user.id,
+                )
+                await self._audit_recorder_factory(session).record(
+                    _session_audit_event(
+                        tenant_id=family.tenant_id,
+                        user_id=user.id,
+                        family_id=family.id,
+                        event_type=AuditEventType.SESSION_REFRESHED,
+                        action="refresh",
+                        context=context,
+                    )
                 )
                 return _PersistedSessionGrant(
                     family_id=family.id,
@@ -299,18 +381,24 @@ class AuthSessionService:
         raw_token: str | None,
         *,
         principal: AccessPrincipal | None = None,
+        audit_context: AuditContext | None = None,
     ) -> None:
+        context = audit_context or AuditContext.internal()
         if raw_token is not None:
             try:
                 presented = parse_refresh_token(raw_token)
             except InvalidRefreshTokenFormatError:
                 presented = None
             if presented is not None:
-                await self._revoke_presented_token(presented)
+                await self._revoke_presented_token(presented, context)
         if principal is not None:
-            await self._revoke_principal_family(principal)
+            await self._revoke_principal_family(principal, context)
 
-    async def _revoke_presented_token(self, presented: RefreshTokenMaterial) -> None:
+    async def _revoke_presented_token(
+        self,
+        presented: RefreshTokenMaterial,
+        context: AuditContext,
+    ) -> None:
         async with self._session_factory() as session:
             configure_tenant_database_access(session, presented.tenant_id)
             unit_of_work = SqlAlchemyUnitOfWork(session)
@@ -321,8 +409,7 @@ class AuthSessionService:
                     .join(
                         RefreshSessionToken,
                         and_(
-                            RefreshSessionToken.tenant_id
-                            == RefreshSessionFamily.tenant_id,
+                            RefreshSessionToken.tenant_id == RefreshSessionFamily.tenant_id,
                             RefreshSessionToken.family_id == RefreshSessionFamily.id,
                         ),
                     )
@@ -335,11 +422,25 @@ class AuthSessionService:
                 )
                 if family is not None and family.revoked_at is None:
                     family.revoked_at = datetime.now(UTC)
-                    await session.flush()
+                    await self._audit_recorder_factory(session).record(
+                        _session_audit_event(
+                            tenant_id=family.tenant_id,
+                            user_id=family.user_id,
+                            family_id=family.id,
+                            event_type=AuditEventType.SESSION_REVOKED,
+                            action="revoke",
+                            context=context,
+                            metadata={"revocation_reason": "logout"},
+                        )
+                    )
 
             await unit_of_work.execute(operation)
 
-    async def _revoke_principal_family(self, principal: AccessPrincipal) -> None:
+    async def _revoke_principal_family(
+        self,
+        principal: AccessPrincipal,
+        context: AuditContext,
+    ) -> None:
         async with self._session_factory() as session:
             configure_tenant_database_access(session, principal.tenant_id)
             unit_of_work = SqlAlchemyUnitOfWork(session)
@@ -356,7 +457,20 @@ class AuthSessionService:
                 )
                 if family is not None and family.revoked_at is None:
                     family.revoked_at = datetime.now(UTC)
-                    await session.flush()
+                    await self._audit_recorder_factory(session).record(
+                        _session_audit_event(
+                            tenant_id=family.tenant_id,
+                            user_id=family.user_id,
+                            family_id=family.id,
+                            event_type=AuditEventType.SESSION_REVOKED,
+                            action="revoke",
+                            context=context,
+                            metadata={
+                                "revocation_reason": "logout",
+                                "source": "access_session",
+                            },
+                        )
+                    )
 
             await unit_of_work.execute(operation)
 
@@ -396,6 +510,38 @@ def _authenticated_user(
         roles=authorization.roles,
         permissions=authorization.permissions,
         permission_version=user.permission_version,
+    )
+
+
+def _session_audit_event(
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    family_id: UUID,
+    event_type: AuditEventType,
+    action: str,
+    context: AuditContext,
+    result: AuditResult = AuditResult.SUCCESS,
+    severity: AuditSeverity = AuditSeverity.INFO,
+    metadata: Mapping[str, object] | None = None,
+) -> AuditEventDraft:
+    return AuditEventDraft(
+        scope_type=AuditScopeType.TENANT,
+        tenant_id=tenant_id,
+        actor_type=AuditActorType.USER,
+        actor_user_id=user_id,
+        event_type=event_type,
+        category=AuditCategory.TENANT_SECURITY,
+        resource_type="session",
+        resource_id=family_id,
+        action=action,
+        result=result,
+        context=context,
+        session_id=family_id,
+        severity=severity,
+        metadata=metadata or {},
+        data_classification=AuditDataClassification.SECURITY_METADATA,
+        visibility_class=AuditVisibilityClass.TENANT_SECURITY,
     )
 
 

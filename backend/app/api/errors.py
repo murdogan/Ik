@@ -34,6 +34,7 @@ from app.platform.idempotency import (
     IdempotencyKeyMismatchError,
     IdempotencyReplayUnavailableError,
 )
+from app.services.audit_query_service import AuditAccessDeniedError, AuditEventNotFoundError
 from app.services.auth_session_service import InvalidSessionError
 from app.services.authentication_service import (
     InvalidActivationError,
@@ -170,6 +171,10 @@ ROLE_ASSIGNMENT_INVALID_ERROR_CODE = "role_assignment_invalid"
 ROLE_ASSIGNMENT_INVALID_ERROR_MESSAGE = "The requested tenant role set is invalid"
 ROLE_ASSIGNMENT_CONFLICT_ERROR_CODE = "role_assignment_conflict"
 ROLE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE = "The requested role replacement is not allowed"
+AUDIT_EVENT_NOT_FOUND_ERROR_CODE = "audit_event_not_found"
+AUDIT_EVENT_NOT_FOUND_ERROR_MESSAGE = "Audit event was not found"
+AUDIT_VALIDATION_ERROR_CODE = "audit_validation_error"
+AUDIT_VALIDATION_ERROR_MESSAGE = "Audit query validation failed"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -610,6 +615,10 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return invalid_activation_error()
     if isinstance(exc, InvalidSessionError):
         return session_invalid_error()
+    if isinstance(exc, AuditAccessDeniedError):
+        return authorization_access_denied_error()
+    if isinstance(exc, AuditEventNotFoundError):
+        return audit_event_not_found_error()
     if isinstance(exc, AuthorizationAccessDeniedError):
         return authorization_access_denied_error()
     if isinstance(exc, RoleAssignmentInvalidError):
@@ -834,6 +843,22 @@ def authorization_access_denied_error() -> ApiError:
         status_code=status.HTTP_403_FORBIDDEN,
         code=AUTHORIZATION_ACCESS_DENIED_ERROR_CODE,
         message=AUTHORIZATION_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def audit_event_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=AUDIT_EVENT_NOT_FOUND_ERROR_CODE,
+        message=AUDIT_EVENT_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def audit_pagination_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=AUDIT_VALIDATION_ERROR_CODE,
+        message=AUDIT_VALIDATION_ERROR_MESSAGE,
     )
 
 

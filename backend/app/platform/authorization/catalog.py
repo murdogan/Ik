@@ -242,11 +242,12 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     _permission(27, "tenant:update:platform", "Update platform-safe tenant metadata."),
     _permission(28, "feature:read:platform", "Read platform feature rollout metadata."),
     _permission(29, "feature:update:platform", "Update platform feature rollout metadata."),
+    _permission(30, "audit:read:platform", "Read platform operations audit history."),
 )
 
 
 # Explicit grants are intentionally exact. In particular, role names never imply privileges and
-# the tenant administrator receives no employee, leave, audit, session, or platform permission.
+# the tenant administrator receives no employee, leave, session-management, or platform permission.
 ROLE_PERMISSION_CODES = MappingProxyType(
     {
         "super_admin": frozenset(
@@ -256,6 +257,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "tenant:update:platform",
                 "feature:read:platform",
                 "feature:update:platform",
+                "audit:read:platform",
             }
         ),
         "tenant_admin": frozenset(
@@ -270,6 +272,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "role:read:tenant",
                 "role:assign:tenant",
                 "permission:read:tenant",
+                "audit:read:tenant",
             }
         ),
         "hr_director": frozenset(
@@ -310,6 +313,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "dashboard:read:own",
                 "user:read:tenant",
                 "session:manage:tenant",
+                "audit:read:tenant",
             }
         ),
         "auditor": frozenset(

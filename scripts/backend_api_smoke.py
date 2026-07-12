@@ -108,6 +108,35 @@ USER_ADMIN_FIELDS = {
     "created_at",
     "updated_at",
 }
+AUDIT_EVENT_FIELDS = {
+    "id",
+    "occurred_at",
+    "scope_type",
+    "tenant_id",
+    "actor_type",
+    "actor_user_id",
+    "impersonator_user_id",
+    "event_type",
+    "category",
+    "severity",
+    "resource_type",
+    "resource_id",
+    "action",
+    "result",
+    "request_id",
+    "trace_id",
+    "session_id",
+    "ip_address",
+    "user_agent",
+    "reason",
+    "support_ticket_id",
+    "changed_fields",
+    "before_data",
+    "after_data",
+    "metadata",
+    "data_classification",
+    "visibility_class",
+}
 FEATURE_FLAG_ITEM_FIELDS = {"key", "enabled", "source"}
 FEATURE_DEFAULTS = {
     "organization": False,
@@ -155,6 +184,9 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("post", "/api/v1/auth/refresh"),
     ("get", "/api/v1/me"),
     ("get", "/api/v1/permissions"),
+    ("get", "/api/v1/audit-events"),
+    ("get", "/api/v1/audit-events/{event_id}"),
+    ("get", "/api/v1/platform/audit-events"),
     ("post", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants"),
     ("get", "/api/v1/platform/tenants/{tenant_id}"),
@@ -195,6 +227,7 @@ PHASE1_SUCCESS_RESPONSES = {
     ("patch", "/api/v1/platform/tenants/{tenant_id}"): "200",
     ("get", "/api/v1/platform/tenants/{tenant_id}/features"): "200",
     ("patch", "/api/v1/platform/tenants/{tenant_id}/features"): "200",
+    ("get", "/api/v1/platform/audit-events"): "200",
     ("get", "/api/v1/tenant"): "200",
     ("get", "/api/v1/tenant/settings"): "200",
     ("patch", "/api/v1/tenant/settings"): "200",
@@ -290,6 +323,7 @@ async def main(database_url: str | None = None) -> None:
         "checked=health,landing,openapi,documented_endpoint_tables,"
         "principal_default_and_opposite_denial,"
         "correlation_middleware,phase1_envelopes,platform_cursor_pagination,platform_tenants,"
+        "tenant_audit,platform_audit,audit_redaction,"
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
@@ -852,6 +886,77 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         "session_invalid",
         "POST /api/v1/auth/refresh after logout",
     )
+    await _smoke_tenant_audit_endpoints(client, admin_headers)
+
+
+async def _smoke_tenant_audit_endpoints(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+) -> None:
+    events, next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/audit-events",
+            headers=admin_headers,
+            params={"limit": 100},
+        ),
+        200,
+        "GET /api/v1/audit-events",
+        expected_limit=100,
+    )
+    _assert_equal(next_cursor, None, "tenant audit terminal cursor")
+    if not events:
+        raise AssertionError("tenant audit explorer returned no working-flow events")
+    required_types = {
+        "auth.login.succeeded",
+        "auth.activation.completed",
+        "user.invitation.created",
+        "user.roles.replaced",
+        "session.started",
+        "session.refreshed",
+        "session.revoked",
+    }
+    event_types = {event["event_type"] for event in events}
+    if not required_types <= event_types:
+        raise AssertionError(
+            f"tenant audit explorer omitted working-flow event types: "
+            f"{sorted(required_types - event_types)}"
+        )
+    for index, event in enumerate(events):
+        _assert_exact_fields(event, AUDIT_EVENT_FIELDS, f"tenant audit item {index}")
+        _assert_equal(event["scope_type"], "tenant", "tenant audit scope")
+        _assert_equal(event["tenant_id"], str(TENANT_ID), "tenant audit isolation")
+        _assert_equal(event["before_data"], {}, "tenant audit before snapshot redaction")
+        _assert_equal(event["after_data"], {}, "tenant audit after snapshot redaction")
+
+    invitation = next(
+        event for event in events if event["event_type"] == "user.invitation.created"
+    )
+    detail = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/audit-events/{invitation['id']}",
+            documented_path="/api/v1/audit-events/{event_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/audit-events/{event_id}",
+        AUDIT_EVENT_FIELDS,
+    )
+    _assert_equal(detail, invitation, "tenant audit safe detail")
+
+    serialized = repr([events, detail]).lower()
+    for forbidden_value in (
+        SMOKE_ADMIN_CREDENTIAL.lower(),
+        SMOKE_ACTIVATED_CREDENTIAL.lower(),
+        "wf_refresh=",
+        "argon2",
+        SMOKE_INVITED_EMAIL.lower(),
+    ):
+        if forbidden_value in serialized:
+            raise AssertionError("tenant audit response exposed credential or identity payload")
 
 
 async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
@@ -1058,7 +1163,44 @@ async def _smoke_platform_tenant_endpoints(client: AsyncClient) -> UUID:
         [created, listed, detail, updated, default_features, updated_features],
         "platform tenant responses",
     )
+    await _smoke_platform_audit_endpoints(client)
     return provisioned_tenant_id
+
+
+async def _smoke_platform_audit_endpoints(client: AsyncClient) -> None:
+    events, _next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/platform/audit-events",
+            params={"limit": 100},
+        ),
+        200,
+        "GET /api/v1/platform/audit-events",
+        expected_limit=100,
+    )
+    required_types = {
+        "platform.tenant.created",
+        "platform.tenant.status_changed",
+        "platform.tenant.setting_changed",
+        "platform.feature_flag.changed",
+    }
+    event_types = {event["event_type"] for event in events}
+    if not required_types <= event_types:
+        raise AssertionError(
+            f"platform audit explorer omitted platform command events: "
+            f"{sorted(required_types - event_types)}"
+        )
+    for index, event in enumerate(events):
+        _assert_exact_fields(event, AUDIT_EVENT_FIELDS, f"platform audit item {index}")
+        _assert_equal(event["scope_type"], "platform", "platform audit scope")
+        _assert_equal(event["tenant_id"], None, "platform audit tenant payload boundary")
+        _assert_equal(
+            event["category"],
+            "platform_operations",
+            "platform audit category boundary",
+        )
+    _assert_no_hr_fields(events, "platform audit responses")
 
 
 async def _smoke_current_tenant_endpoints(

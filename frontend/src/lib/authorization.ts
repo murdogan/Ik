@@ -5,6 +5,8 @@ export const AUTHORIZATION_PERMISSIONS = {
   inviteUsers: "user:invite:tenant",
   updateUsers: "user:update:tenant",
   assignRoles: "role:assign:tenant",
+  readTenantAudit: "audit:read:tenant",
+  readPlatformAudit: "audit:read:platform",
 } as const;
 
 export function hasPermission(user: AuthUser, permission: string): boolean {

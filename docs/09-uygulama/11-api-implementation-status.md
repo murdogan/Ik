@@ -561,6 +561,9 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/roles` | Implemented for F2D | Seeded tenant-assignable roles with explicit permission codes; platform role excluded |
 | GET | `/api/v1/permissions` | Implemented for F2D | Seeded tenant permission catalog; platform permissions excluded |
 | PUT | `/api/v1/users/{user_id}/roles` | Implemented for F2D | Atomic replace semantics, tenant isolation, platform-role rejection and permission-version bump |
+| GET | `/api/v1/audit-events` | Implemented for F2E | Bearer + tenant audit permission, role/category filtering, redacted cursor page |
+| GET | `/api/v1/audit-events/{event_id}` | Implemented for F2E | Read-only safe detail with identical hidden/cross-tenant not-found behavior |
+| GET | `/api/v1/platform/audit-events` | Implemented for F2E | Separate trusted platform principal and platform-operations-only projection |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |

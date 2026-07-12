@@ -6,6 +6,7 @@ from alembic import context
 from alembic.ddl.postgresql import PostgresqlImpl
 from app.db.base import Base
 from app.models import (  # noqa: F401
+    AuditEvent,
     CommandIdempotency,
     Employee,
     LeaveBalanceSummary,

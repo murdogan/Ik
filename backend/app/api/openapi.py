@@ -4,6 +4,8 @@ SYSTEM_TAG = "System"
 PUBLIC_TAG = "Public"
 AUTHENTICATION_TAG = "Authentication"
 AUTHORIZATION_TAG = "Authorization"
+AUDIT_TAG = "Audit"
+PLATFORM_AUDIT_TAG = "Platform Audit"
 USER_ADMINISTRATION_TAG = "User Administration"
 PLATFORM_TENANTS_TAG = "Platform Tenants"
 TENANT_SETTINGS_TAG = "Tenant Settings"
@@ -78,6 +80,19 @@ OPENAPI_TAGS = [
         "description": (
             "Seeded deny-by-default role and permission catalogs for tenant administration. "
             "Platform roles are kept outside tenant assignment surfaces."
+        ),
+    },
+    {
+        "name": AUDIT_TAG,
+        "description": (
+            "Permission- and category-filtered append-only tenant security and administration "
+            "history with redacted metadata and cursor pagination."
+        ),
+    },
+    {
+        "name": PLATFORM_AUDIT_TAG,
+        "description": (
+            "Platform-operations audit history kept separate from tenant security and HR data."
         ),
     },
     {
