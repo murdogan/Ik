@@ -201,3 +201,33 @@ SQLite hattı deterministic projection, unique/check/FK metadata ve guarded down
 kanıttır. FORCE RLS, exact ACL, platform denial ve cross-tenant visibility iddiaları yalnız
 `backend/tests/integration/test_postgresql_p3a_identity_memberships.py` ile gerçek PostgreSQL'de
 kanıtlanır.
+
+## P3B email-first tenant login capability
+
+`0023_p3b_email_first_login`, P3A target projection'ını tenant login'in credential kaynağı yapar.
+
+- `wealthy_falcon_authentication`, tenant ve platform rollerinden ayrı `NOLOGIN`, `NOINHERIT`,
+  `NOBYPASSRLS` capability'sidir. Yalnız global identity doğrulaması, aktif membership discovery,
+  güvenli tenant ad/slug okuması, global-safe başarısız login audit INSERT'i ve PII-free rate-limit
+  bucket'ları için exact column grant/policy alır. Önceden var olan rolün stale table, column,
+  sequence ve function grant'ları önce sıfırlanır; employee/leave veya başka HR tablolarına erişmez.
+- Birden fazla aktif membership yalnız hash olarak saklanan, beş dakikalık
+  `organization_selection_transactions` credential'ı ve transaction'a bağlı random choice
+  anahtarları üretir. Tenant/platform capability'leri bu tabloları okuyamaz; raw transaction
+  credential'ı hiçbir audit/DB alanına yazılmaz.
+- Tenant invitation/activation expand compatibility'si
+  `sync_current_tenant_identity_membership(uuid, boolean)` SECURITY DEFINER sınırıyla aynı
+  transaction'da korunur. Fonksiyon yalnız aktif `app.tenant_id` içindeki gerçek legacy user'ı
+  projekte eder ve dışarıdan `SET ROLE` edilemeyen `wealthy_falcon_identity_projection` owner
+  capability'siyle çalışır. Tenant invitation token'ı aktif global identity parolasını
+  değiştiremez; bu durum token tüketilmeden generic activation hatasıyla kapanır. Pending identity
+  activation'ı yarış sırasında active/locked/disabled duruma geçerse fonksiyon aynı transaction'ı
+  `WF001` ile geri alır; mevcut identity kabulü sonraki identity-authenticated akışa bırakılır.
+- Cluster-global roller migration downgrade'da düşürülmez. Production/runtime gateway'in yeni
+  authentication rolünü assume etme üyeliği, önceki capability'lerde olduğu gibi migration ve repo
+  secret kapsamı dışındaki kontrollü database provisioning sorumluluğudur.
+
+SQLite testleri contract/constraint ve ürün akışı kanıtıdır. FORCE RLS, exact ACL, HR denial,
+tenant/platform selection-table denial ve projection-function sınırı
+`backend/tests/integration/test_postgresql_p3b_email_first_login.py` ile disposable PostgreSQL
+hattında kanıtlanır.

@@ -107,7 +107,10 @@ EXPECTED_PLATFORM_PRIVILEGES = {
 
 @pytest.fixture
 def f1c_postgres_database(postgres_database_url: URL) -> URL:
-    alembic_command.upgrade(_alembic_config(postgres_database_url), "head")
+    alembic_command.upgrade(
+        _alembic_config(postgres_database_url),
+        "0022_p3a_identity_memberships",
+    )
     return postgres_database_url
 
 

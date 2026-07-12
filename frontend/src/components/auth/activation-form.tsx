@@ -15,7 +15,6 @@ import { FormAlert } from "./form-alert";
 interface ActivationSuccess {
   displayName: string;
   tenantName: string;
-  tenantSlug: string;
 }
 
 function tokenFromFragment(fragment: string): string | null {
@@ -98,7 +97,6 @@ export function ActivationForm() {
       setSuccess({
         displayName: data.user.full_name?.trim() || data.user.email,
         tenantName: data.user.tenant.name,
-        tenantSlug: data.user.tenant.slug,
       });
     } catch (cause) {
       setError(activationErrorPresentation(cause));
@@ -124,10 +122,7 @@ export function ActivationForm() {
           title="Hesabınız hazır"
           message={`${success.displayName}, ${success.tenantName} hesabınız etkinleştirildi. Artık belirlediğiniz parolayla giriş yapabilirsiniz.`}
         />
-        <Link
-          className={styles.primaryLink}
-          href={`/login?tenant=${encodeURIComponent(success.tenantSlug)}`}
-        >
+        <Link className={styles.primaryLink} href="/login">
           Giriş ekranına git
         </Link>
       </div>

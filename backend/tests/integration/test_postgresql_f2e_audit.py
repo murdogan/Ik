@@ -41,7 +41,10 @@ PLATFORM_EVENT_ID = UUID("92000000-0000-4000-8000-000000000003")
 
 @pytest.fixture
 def f2e_postgres_database(postgres_database_url: URL) -> URL:
-    alembic_command.upgrade(_alembic_config(postgres_database_url), "head")
+    alembic_command.upgrade(
+        _alembic_config(postgres_database_url),
+        "0020_f2e_audit_events",
+    )
     return postgres_database_url
 
 

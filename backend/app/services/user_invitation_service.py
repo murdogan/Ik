@@ -35,6 +35,7 @@ from app.services.authorization_service import (
     assign_system_role,
     load_authorization_snapshot,
 )
+from app.services.identity_projection_service import sync_identity_membership_projection
 
 _INVITABLE_TENANT_STATUSES = frozenset({TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value})
 _authorization_policy = DenyByDefaultPolicy()
@@ -152,6 +153,8 @@ class UserInvitationService:
                         user_id=user.id,
                         role_code="employee",
                     )
+
+                await sync_identity_membership_projection(session, user)
 
                 await session.execute(
                     update(UserActivationToken)

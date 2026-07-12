@@ -8,6 +8,10 @@ from secrets import token_bytes
 
 from app.core.config import Settings
 from app.platform.identity import AccessTokenCodec, PasswordManager
+from app.services.authentication_rate_limit_service import (
+    AuthenticationRateLimitKeyHasher,
+    AuthenticationRateLimitPolicy,
+)
 
 AUTH_RUNTIME_STATE_KEY = "auth_runtime"
 
@@ -17,6 +21,9 @@ class AuthRuntime:
     access_tokens: AccessTokenCodec
     password_manager: PasswordManager
     refresh_ttl: timedelta
+    organization_selection_ttl: timedelta
+    rate_limit_key_hasher: AuthenticationRateLimitKeyHasher
+    rate_limit_policy: AuthenticationRateLimitPolicy
     refresh_cookie: RefreshCookiePolicy
 
 
@@ -56,6 +63,19 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
             max_concurrent_operations=settings.auth_argon2_max_concurrency
         ),
         refresh_ttl=timedelta(days=settings.auth_refresh_token_ttl_days),
+        organization_selection_ttl=timedelta(
+            minutes=settings.auth_organization_selection_ttl_minutes
+        ),
+        rate_limit_key_hasher=AuthenticationRateLimitKeyHasher(
+            signing_key + b"/authentication-rate-limit"
+        ),
+        rate_limit_policy=AuthenticationRateLimitPolicy(
+            window=timedelta(
+                seconds=settings.auth_login_rate_limit_window_seconds
+            ),
+            source_attempts=settings.auth_login_rate_limit_source_attempts,
+            identity_attempts=settings.auth_login_rate_limit_identity_attempts,
+        ),
         refresh_cookie=RefreshCookiePolicy(
             name="__Host-wf_refresh" if secure_cookie else "wf_refresh",
             secure=secure_cookie,

@@ -40,6 +40,7 @@ from app.services.authorization_service import (
     assign_system_role,
     seed_authorization_catalog,
 )
+from app.services.identity_projection_service import sync_identity_membership_projection
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from httpx import Response as HttpxResponse
@@ -194,6 +195,13 @@ async def _seed(
             user_id=OTHER_TENANT_USER_ID,
             role_code="employee",
         )
+        for user_id in (
+            *(user_id for _role_code, user_id, _email in TENANT_ROLE_USERS),
+            OTHER_TENANT_USER_ID,
+        ):
+            user = await session.get(User, user_id)
+            assert user is not None
+            await sync_identity_membership_projection(session, user)
         recorder = SqlAlchemyAuditRecorder(session)
         await recorder.record(
             _event(
@@ -325,7 +333,7 @@ def _event(
 async def _login(client: AsyncClient, email: str) -> str:
     response = await client.post(
         "/api/v1/auth/login",
-        json={"tenant_slug": "audit-a", "email": email, "password": PASSWORD},
+        json={"email": email, "password": PASSWORD},
     )
     assert response.status_code == 200
     return response.json()["data"]["access_token"]

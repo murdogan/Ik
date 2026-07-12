@@ -1,9 +1,9 @@
 """Transaction-local PostgreSQL capability and tenant binding.
 
 The application login is expected to be an unprivileged ``NOINHERIT`` gateway that may
-``SET ROLE`` to exactly one of the two capability roles below.  The role and tenant GUC are
+``SET ROLE`` to exactly one of the capability roles below.  The role and tenant GUC are
 always local to the active transaction, so returning a connection to the pool cannot retain
-either access path.
+any access path.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 TENANT_APPLICATION_ROLE = "wealthy_falcon_app"
 PLATFORM_APPLICATION_ROLE = "wealthy_falcon_platform"
+AUTHENTICATION_APPLICATION_ROLE = "wealthy_falcon_authentication"
 
 _DATABASE_ACCESS_CONTEXT_KEY = "wealthy_falcon.database_access_context"
 _DATABASE_ACCESS_RESOLVER_KEY = "wealthy_falcon.database_access_resolver"
@@ -32,6 +33,7 @@ class DatabaseAccessPath(StrEnum):
 
     TENANT = "tenant"
     PLATFORM = "platform"
+    AUTHENTICATION = "authentication"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +50,7 @@ class DatabaseAccessContext:
             if not isinstance(self.tenant_id, UUID) or self.tenant_id.int == 0:
                 raise ValueError("tenant database access requires a non-zero UUID")
         elif self.tenant_id is not None:
-            raise ValueError("platform database access cannot carry a tenant ID")
+            raise ValueError("non-tenant database access cannot carry a tenant ID")
 
 
 class MissingDatabaseAccessContextError(RuntimeError):
@@ -70,6 +72,15 @@ def configure_platform_database_access(session: AsyncSession) -> None:
     _configure_database_access(
         session,
         DatabaseAccessContext(path=DatabaseAccessPath.PLATFORM),
+    )
+
+
+def configure_authentication_database_access(session: AsyncSession) -> None:
+    """Use the global-identity capability without gaining platform or HR access."""
+
+    _configure_database_access(
+        session,
+        DatabaseAccessContext(path=DatabaseAccessPath.AUTHENTICATION),
     )
 
 
@@ -162,11 +173,11 @@ def _bind_transaction_database_access(
     if not isinstance(context, DatabaseAccessContext):  # pragma: no cover - internal invariant
         raise RuntimeError("Database access context is corrupt")
 
-    role = (
-        TENANT_APPLICATION_ROLE
-        if context.path is DatabaseAccessPath.TENANT
-        else PLATFORM_APPLICATION_ROLE
-    )
+    role = {
+        DatabaseAccessPath.TENANT: TENANT_APPLICATION_ROLE,
+        DatabaseAccessPath.PLATFORM: PLATFORM_APPLICATION_ROLE,
+        DatabaseAccessPath.AUTHENTICATION: AUTHENTICATION_APPLICATION_ROLE,
+    }[context.path]
     _set_local_role(connection, role)
     if context.path is DatabaseAccessPath.TENANT:
         tenant_id = context.tenant_id
@@ -183,6 +194,7 @@ def _set_local_role(connection: Connection, role: str) -> None:
 
 
 __all__ = [
+    "AUTHENTICATION_APPLICATION_ROLE",
     "DatabaseAccessContext",
     "DATABASE_ACCESS_CONTEXT_STATE_KEY",
     "DatabaseAccessPath",
@@ -191,6 +203,7 @@ __all__ = [
     "PLATFORM_APPLICATION_ROLE",
     "TENANT_APPLICATION_ROLE",
     "attach_database_access_resolver",
+    "configure_authentication_database_access",
     "configure_platform_database_access",
     "configure_tenant_database_access",
     "database_access_context",

@@ -81,7 +81,6 @@ async def test_login_user_list_and_audit_list_stay_bounded(
             )
             statements.clear()
             grant = await authentication.login(
-                tenant_slug=TENANT_SLUG,
                 email=ADMIN_EMAIL,
                 password=PASSWORD,
             )
@@ -209,6 +208,15 @@ async def _seed_query_smoke_dataset(
             user_predicate="users.id = :admin_id",
             role_code="tenant_admin",
             parameters={"admin_id": ADMIN_ID},
+        )
+        await connection.exec_driver_sql('SET LOCAL ROLE "wealthy_falcon_app"')
+        await connection.execute(
+            text("select set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(TENANT_ID)},
+        )
+        await connection.execute(
+            text("select public.sync_current_tenant_identity_membership(:user_id)"),
+            {"user_id": ADMIN_ID},
         )
         await _assign_role(
             connection,

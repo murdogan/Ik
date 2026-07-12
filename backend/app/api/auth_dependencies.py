@@ -18,6 +18,7 @@ from app.platform.observability.correlation import replace_request_context
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
 from app.services.auth_session_service import AuthenticatedUser, AuthSessionService
+from app.services.authentication_rate_limit_service import AuthenticationRateLimitService
 from app.services.authentication_service import AuthenticationService
 from app.services.authorization_service import (
     AuthorizationAccessDeniedError,
@@ -64,6 +65,18 @@ def get_authentication_service(
         password_manager=auth_runtime.password_manager,
         access_tokens=auth_runtime.access_tokens,
         refresh_ttl=auth_runtime.refresh_ttl,
+        organization_selection_ttl=auth_runtime.organization_selection_ttl,
+    )
+
+
+def get_authentication_rate_limit_service(
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+    database_runtime: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+) -> AuthenticationRateLimitService:
+    return AuthenticationRateLimitService(
+        session_factory=database_runtime.session_factory,
+        key_hasher=auth_runtime.rate_limit_key_hasher,
+        policy=auth_runtime.rate_limit_policy,
     )
 
 

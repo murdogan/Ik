@@ -24,7 +24,11 @@ class Settings(BaseSettings):
     auth_access_token_ttl_minutes: int = Field(default=15, ge=1, le=60)
     auth_refresh_token_ttl_days: int = Field(default=14, ge=7, le=30)
     auth_activation_token_ttl_hours: int = Field(default=48, ge=1, le=168)
+    auth_organization_selection_ttl_minutes: int = Field(default=5, ge=1, le=15)
     auth_argon2_max_concurrency: int = Field(default=2, ge=1, le=8)
+    auth_login_rate_limit_window_seconds: int = Field(default=300, ge=10, le=3600)
+    auth_login_rate_limit_source_attempts: int = Field(default=40, ge=1, le=1000)
+    auth_login_rate_limit_identity_attempts: int = Field(default=8, ge=1, le=100)
     frontend_base_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_prefix="IK_", env_file=".env", extra="ignore")

@@ -6,6 +6,7 @@ from app.platform.db import (
     DatabaseAccessContext,
     DatabaseAccessPath,
     attach_database_access_resolver,
+    configure_authentication_database_access,
     configure_platform_database_access,
     configure_tenant_database_access,
     database_access_context,
@@ -70,6 +71,18 @@ async def test_platform_database_access_has_no_tenant_identity(
     assert database_access_context(sqlite_session) == DatabaseAccessContext(
         path=DatabaseAccessPath.PLATFORM,
     )
+
+
+async def test_authentication_database_access_is_global_but_not_platform(
+    sqlite_session: AsyncSession,
+) -> None:
+    configure_authentication_database_access(sqlite_session)
+
+    assert database_access_context(sqlite_session) == DatabaseAccessContext(
+        path=DatabaseAccessPath.AUTHENTICATION,
+    )
+    with pytest.raises(RuntimeError, match="immutable"):
+        configure_platform_database_access(sqlite_session)
 
 
 async def test_request_access_resolves_lazily_then_remains_immutable(

@@ -9,14 +9,17 @@ from app.api.auth_dependencies import (
     get_application_settings,
     get_auth_runtime,
     get_auth_session_service,
+    get_authentication_rate_limit_service,
     get_authentication_service,
     require_authenticated_session,
 )
 from app.api.dependencies import get_request_context
 from app.api.errors import (
     AUTH_VALIDATION_RESPONSES,
+    AUTHENTICATION_RATE_LIMIT_RESPONSES,
     AUTHENTICATION_REQUIRED_RESPONSES,
     UNEXPECTED_ERROR_RESPONSES,
+    authentication_rate_limit_error,
     authentication_required_error,
     session_invalid_error,
 )
@@ -31,15 +34,27 @@ from app.platform.responses import DataEnvelope, data_envelope
 from app.schemas.auth import (
     ActivationRead,
     ActivationRequest,
+    AuthenticatedLoginRead,
     AuthTenantRead,
     AuthUserRead,
+    LoginOutcomeRead,
     LoginRead,
     LoginRequest,
     MeRead,
+    OrganizationChoiceRead,
+    OrganizationSelectionRead,
 )
 from app.schemas.authorization import RoleSummaryRead
 from app.services.auth_session_service import AuthSessionService, InvalidSessionError, SessionGrant
-from app.services.authentication_service import AuthenticatedUser, AuthenticationService
+from app.services.authentication_rate_limit_service import (
+    AuthenticationRateLimitExceededError,
+    AuthenticationRateLimitService,
+)
+from app.services.authentication_service import (
+    AuthenticatedUser,
+    AuthenticationService,
+    OrganizationSelectionRequired,
+)
 
 router = APIRouter(
     prefix="/api/v1/auth",
@@ -65,32 +80,70 @@ me_router = APIRouter(
 
 @router.post(
     "/login",
-    response_model=DataEnvelope[LoginRead],
-    summary="Log in with tenant-aware credentials",
+    response_model=DataEnvelope[LoginOutcomeRead],
+    summary="Log in with a global email identity",
     description=(
-        "Uses the organization code only as a public discovery selector, then verifies the "
-        "password in a separately tenant-bound database session. All credential and account "
-        "failures share one generic response."
+        "Verifies email and password before discovering active organization memberships. One "
+        "membership starts a tenant-bound session; multiple memberships return only safe display "
+        "metadata and a short-lived selection transaction."
     ),
-    responses=with_correlation_response_headers({200: {}}),
+    responses=with_correlation_response_headers(
+        {200: {}, **AUTHENTICATION_RATE_LIMIT_RESPONSES}
+    ),
 )
 async def login(
     payload: LoginRequest,
     response: Response,
+    request: Request,
     request_context: Annotated[RequestContext, Depends(get_request_context)],
     service: Annotated[AuthenticationService, Depends(get_authentication_service)],
     auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
-) -> DataEnvelope[LoginRead]:
+    rate_limits: Annotated[
+        AuthenticationRateLimitService,
+        Depends(get_authentication_rate_limit_service),
+    ],
+) -> DataEnvelope[LoginOutcomeRead] | Response:
+    audit_context = AuditContext.from_request_context(request_context)
+    try:
+        await rate_limits.consume_login_attempt(
+            source_address=_request_source_address(request),
+            normalized_email=payload.email,
+        )
+    except AuthenticationRateLimitExceededError as exc:
+        await service.record_global_login_failure(audit_context)
+        error_response = await api_error_handler(
+            request,
+            authentication_rate_limit_error(),
+        )
+        error_response.headers["Retry-After"] = str(exc.retry_after_seconds)
+        _prevent_credential_caching(error_response)
+        return error_response
     result = await service.login(
-        tenant_slug=payload.tenant_slug,
         email=payload.email,
         password=payload.password.get_secret_value(),
-        audit_context=AuditContext.from_request_context(request_context),
+        audit_context=audit_context,
     )
-    _set_refresh_cookie(response, result, auth_runtime)
     _prevent_credential_caching(response)
+    if isinstance(result, OrganizationSelectionRequired):
+        return data_envelope(
+            OrganizationSelectionRead(
+                status="organization_selection_required",
+                selection_transaction=result.selection_transaction,
+                expires_in=result.expires_in,
+                organizations=[
+                    OrganizationChoiceRead(
+                        selection_key=choice.selection_key,
+                        display_name=choice.display_name,
+                    )
+                    for choice in result.organizations
+                ],
+            ),
+            request_context,
+        )
+    _set_refresh_cookie(response, result, auth_runtime)
     return data_envelope(
-        LoginRead(
+        AuthenticatedLoginRead(
+            status="authenticated",
             access_token=result.access_token,
             expires_in=result.expires_in,
             user=_auth_user_read(result.user),
@@ -249,6 +302,13 @@ def _login_read(result: SessionGrant) -> LoginRead:
         expires_in=result.expires_in,
         user=_auth_user_read(result.user),
     )
+
+
+def _request_source_address(request: Request) -> str:
+    client = request.client
+    if client is None or not client.host:
+        return "unknown"
+    return client.host[:128]
 
 
 def _set_refresh_cookie(

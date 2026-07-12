@@ -410,6 +410,56 @@
   gap: 18px;
 }
 
+.selectionPanel {
+  display: grid;
+  gap: 20px;
+}
+
+.selectionHeading {
+  display: grid;
+  gap: 8px;
+}
+
+.selectionHeading span {
+  color: var(--wf-green);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.selectionHeading h2 {
+  margin: 0;
+  color: var(--wf-ink);
+  font-size: 25px;
+  letter-spacing: -0.035em;
+}
+
+.selectionHeading p {
+  margin: 0;
+  color: var(--wf-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.organizationList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.organizationList li {
+  padding: 14px 16px;
+  border: 1px solid var(--wf-line);
+  border-radius: 14px;
+  color: var(--wf-ink);
+  background: #f8fcfa;
+  font-size: 14px;
+  font-weight: 750;
+}
+
 .loadingPanel {
   display: flex;
   min-height: 110px;

@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import {
   type LoginResponseData,
+  type OrganizationSelectionOption,
   loginErrorPresentation,
 } from "@/lib/auth-contracts";
 import { postApi } from "@/lib/api-client";
@@ -14,23 +15,41 @@ import { establishSession } from "@/lib/session";
 import styles from "./auth.module.css";
 import { FormAlert } from "./form-alert";
 
-interface LoginFormProps {
-  initialTenantSlug?: string;
+interface OrganizationSelectionState {
+  selectionTransaction: string;
+  expiresIn: number;
+  organizations: OrganizationSelectionOption[];
 }
 
-export function LoginForm({ initialTenantSlug = "" }: LoginFormProps) {
+const EXPIRED_SELECTION_MESSAGE =
+  "Güvenli kurum seçimi süresi doldu. E-posta ve parolanızla yeniden giriş yapın.";
+
+export function LoginForm() {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<ReturnType<typeof loginErrorPresentation> | null>(
     null,
   );
+  const [organizationSelection, setOrganizationSelection] =
+    useState<OrganizationSelectionState | null>(null);
+
+  useEffect(() => {
+    if (!organizationSelection) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setOrganizationSelection(null);
+      setError({ message: EXPIRED_SELECTION_MESSAGE });
+    }, Math.max(1, organizationSelection.expiresIn) * 1_000);
+
+    return () => window.clearTimeout(timeout);
+  }, [organizationSelection]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const tenantSlug = String(formData.get("tenant_slug") ?? "")
-      .trim()
-      .toLowerCase();
     const email = String(formData.get("email") ?? "").trim();
     const password = String(formData.get("password") ?? "");
 
@@ -39,15 +58,23 @@ export function LoginForm({ initialTenantSlug = "" }: LoginFormProps) {
 
     try {
       const data = await postApi<
-        { tenant_slug: string; email: string; password: string },
+        { email: string; password: string },
         LoginResponseData
       >("/api/v1/auth/login", {
-        tenant_slug: tenantSlug,
         email,
         password,
       });
 
       form.reset();
+      if (data.status === "organization_selection_required") {
+        setOrganizationSelection({
+          selectionTransaction: data.selection_transaction,
+          expiresIn: data.expires_in,
+          organizations: data.organizations,
+        });
+        return;
+      }
+
       establishSession(data);
       router.replace(homePathForUser(data.user));
     } catch (cause) {
@@ -55,6 +82,43 @@ export function LoginForm({ initialTenantSlug = "" }: LoginFormProps) {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function returnToCredentials() {
+    setOrganizationSelection(null);
+    setError(null);
+  }
+
+  if (organizationSelection) {
+    return (
+      <section
+        className={styles.selectionPanel}
+        aria-labelledby="organization_selection_title"
+      >
+        <div className={styles.selectionHeading}>
+          <span>Kimliğiniz doğrulandı</span>
+          <h2 id="organization_selection_title">Kurum seçimi gerekiyor</h2>
+          <p>
+            Hesabınız birden fazla kurumla eşleşiyor. Devam etmek için güvenli kurum
+            seçimi gerekiyor; bu adım şu anda kullanılamıyor.
+          </p>
+        </div>
+
+        <ul className={styles.organizationList} aria-label="Erişilebilir kurumlar">
+          {organizationSelection.organizations.map((organization) => (
+            <li key={organization.selection_key}>{organization.display_name}</li>
+          ))}
+        </ul>
+
+        <button
+          className={styles.secondaryButton}
+          type="button"
+          onClick={returnToCredentials}
+        >
+          Giriş ekranına dön
+        </button>
+      </section>
+    );
   }
 
   return (
@@ -75,26 +139,6 @@ export function LoginForm({ initialTenantSlug = "" }: LoginFormProps) {
       ) : null}
 
       <fieldset className={styles.fieldset} disabled={isSubmitting}>
-        <div className={styles.field}>
-          <label htmlFor="tenant_slug">Kurum kodu</label>
-          <input
-            id="tenant_slug"
-            name="tenant_slug"
-            type="text"
-            autoComplete="organization"
-            autoCapitalize="none"
-            spellCheck={false}
-            placeholder="ornek-sirket"
-            required
-            maxLength={80}
-            defaultValue={initialTenantSlug}
-            aria-describedby="tenant_slug_hint"
-          />
-          <small id="tenant_slug_hint">
-            Yöneticinizin paylaştığı kısa kurum kodunu girin.
-          </small>
-        </div>
-
         <div className={styles.field}>
           <label htmlFor="email">E-posta adresi</label>
           <input

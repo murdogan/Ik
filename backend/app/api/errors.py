@@ -36,6 +36,9 @@ from app.platform.idempotency import (
 )
 from app.services.audit_query_service import AuditAccessDeniedError, AuditEventNotFoundError
 from app.services.auth_session_service import InvalidSessionError
+from app.services.authentication_rate_limit_service import (
+    AuthenticationRateLimitExceededError,
+)
 from app.services.authentication_service import (
     InvalidActivationError,
     InvalidCredentialsError,
@@ -143,7 +146,11 @@ AUTH_VALIDATION_ERROR_CODE = "auth_validation_error"
 AUTH_VALIDATION_ERROR_MESSAGE = "Authentication request validation failed"
 INVALID_CREDENTIALS_ERROR_CODE = "invalid_credentials"
 INVALID_CREDENTIALS_ERROR_MESSAGE = (
-    "The email, password, or organization code is incorrect"
+    "The email or password is incorrect"
+)
+AUTHENTICATION_RATE_LIMIT_ERROR_CODE = "authentication_rate_limited"
+AUTHENTICATION_RATE_LIMIT_ERROR_MESSAGE = (
+    "Too many login attempts were made; retry after a short wait"
 )
 INVALID_ACTIVATION_ERROR_CODE = "activation_invalid"
 INVALID_ACTIVATION_ERROR_MESSAGE = (
@@ -423,6 +430,30 @@ AUTH_VALIDATION_RESPONSES = {
         "description": "Credential-safe authentication validation error envelope.",
     }
 }
+AUTHENTICATION_RATE_LIMIT_RESPONSES = {
+    status.HTTP_429_TOO_MANY_REQUESTS: {
+        "model": ApiErrorResponse,
+        "description": "Authentication attempt rate-limit envelope.",
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until this login bucket can be retried.",
+                "schema": {"type": "integer", "minimum": 1},
+            }
+        },
+        "content": {
+            "application/json": {
+                "example": {
+                    "error": {
+                        "code": AUTHENTICATION_RATE_LIMIT_ERROR_CODE,
+                        "message": AUTHENTICATION_RATE_LIMIT_ERROR_MESSAGE,
+                        "details": None,
+                        "correlation_id": "req_wf_demo_001",
+                    }
+                }
+            }
+        },
+    }
+}
 AUTHENTICATION_REQUIRED_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {
         "model": ApiErrorResponse,
@@ -609,6 +640,8 @@ async def unexpected_error_handler(request: Request, _exc: Exception) -> Respons
 
 
 def application_error_to_api_error(exc: ApplicationError) -> ApiError:
+    if isinstance(exc, AuthenticationRateLimitExceededError):
+        return authentication_rate_limit_error()
     if isinstance(exc, InvalidCredentialsError):
         return invalid_credentials_error()
     if isinstance(exc, InvalidActivationError):
@@ -787,6 +820,14 @@ def invalid_credentials_error() -> ApiError:
         status_code=status.HTTP_401_UNAUTHORIZED,
         code=INVALID_CREDENTIALS_ERROR_CODE,
         message=INVALID_CREDENTIALS_ERROR_MESSAGE,
+    )
+
+
+def authentication_rate_limit_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        code=AUTHENTICATION_RATE_LIMIT_ERROR_CODE,
+        message=AUTHENTICATION_RATE_LIMIT_ERROR_MESSAGE,
     )
 
 

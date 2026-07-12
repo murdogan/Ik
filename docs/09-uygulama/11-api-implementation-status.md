@@ -1,13 +1,63 @@
 # API Implementation Status Report
 
 Date: 2026-07-12
-Branch: `codex/mvp-phase2-product-first-until-20260713-0900`
-Task: `F2F Phase 2 product hardening, manual-demo gate and focused regression`
-Review checkpoint: `STOP — local F2F gates passed; supervisor push pending; awaiting Murat review`
-Review decision: `Phase 2 focused product/security gates are green; do not start Phase 3`
-Push state: `F2E base 4b654a4 is pushed; F2F HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
+Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
+Task: `P3B email-first tenant login and post-auth membership discovery`
+Review checkpoint: `STOP — local P3B gates passed; supervisor push pending`
+Review decision: `P3B product/security scope is green; do not start P3C or later work in this task`
+Push state: `P3A base is pushed; P3B HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
+
+### P3B email-first tenant login and post-auth membership discovery
+
+- `POST /api/v1/auth/login` accepts exactly normalized email and password. It reads the global
+  credential projection and completes constant-work Argon verification before any membership
+  query. Unknown identity, wrong password, inactive identity and no eligible membership all use
+  the same tenantless `401 invalid_credentials` contract and platform-safe failure audit shape.
+- One active membership is rechecked inside the tenant transaction and creates the existing
+  tenant-bound access/refresh session. Multiple active memberships create no session or cookie;
+  they return only tenant display names, random choice keys and a hash-at-rest selection
+  transaction with a five-minute default expiry. Selection consumption is intentionally left to
+  the next authorized identity slice.
+- The public login path has database-backed HMAC-keyed source and global-identity fixed-window
+  buckets. Raw network/email values are not persisted, rotating source addresses cannot reset the
+  identity bucket, `429` responses carry `Retry-After`, and credential/rate-limit denials retain
+  the allowlisted global login-failure audit event.
+- PostgreSQL uses a third, mutually exclusive `wealthy_falcon_authentication` capability. Its
+  pre-existing object/column grants are reset before exact column grants are applied; it cannot
+  read HR data, private identity/membership display fields, selection rows or platform data beyond
+  the login projection. Its audit `INSERT` policy accepts only the exact redacted login-failure
+  shape. Tenant and platform capabilities cannot read selection credentials.
+- Invitation and activation remain expand-compatible for absent/pending identities and project the
+  legacy user/membership/roles in the same transaction. A tenant invitation cannot reset an
+  already-active global identity: that activation is rejected without consuming its token or
+  changing either credential. If a pending identity changes state concurrently, the projection
+  function rejects and rolls back the whole activation transaction. Existing-identity membership
+  acceptance requires a later identity-authenticated flow.
+- `/login` now asks only for email and password. A single-organization user reaches the dashboard
+  automatically; a verified multi-organization user sees safe organization names while the raw
+  selection transaction remains only in expiring component memory and is never rendered or stored
+  in browser storage.
+
+The Phase-2 local/manual invitation response still contains its raw activation URL. An authorized
+tenant inviter can therefore distinguish a new/pending global account (activatable) from an
+already-active/locked/disabled account (generic rejection), although no organization membership
+metadata is returned. Removing that account-existence signal requires the later identity-owned
+invitation-delivery/acceptance flow; P3B keeps the existing manual invitation contract and fails
+closed against credential takeover.
+
+### P3B local gate evidence
+
+| Gate | Command | Result |
+|---|---|---|
+| Ruff | `uv run ruff check backend` | Passed, `All checks passed!` |
+| Fast SQLite | `uv run pytest -q` | Passed, 809 tests; 46 PostgreSQL tests deselected; one known Starlette warning |
+| Focused auth/migration/OpenAPI | `uv run pytest -q backend/tests/test_auth_api.py backend/tests/test_migrations.py backend/tests/test_openapi_metadata.py backend/tests/test_database_tenant_access.py` | Passed, 91 tests; one known Starlette warning |
+| PostgreSQL 17.10 | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_baseline.py backend/tests/integration/test_postgresql_p3a_identity_memberships.py backend/tests/integration/test_postgresql_p3b_email_first_login.py backend/tests/integration/test_postgresql_f2e_audit.py backend/tests/integration/test_postgresql_f2f_query_smoke.py` | Passed, 17 focused migration/RLS/auth/audit/query tests; two known computed-default warnings |
+| Backend smoke | `uv run python scripts/backend_api_smoke.py` | Passed, `BACKEND_SMOKE_OK`; 40 documented endpoints |
+| Frontend | `npm run lint`, `npm run typecheck`, `npm run build` | Passed with Next.js 16.2.10 |
+| Focused browser | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npm run test:e2e -- session-flow.spec.ts role-aware-navigation.spec.ts` | Passed, 5 Chromium tests |
 
 ### F2F Phase 2 product hardening, manual-demo gate and focused regression
 
@@ -43,7 +93,7 @@ Push state: `F2E base 4b654a4 is pushed; F2F HEAD is intentionally left unpushed
 | Route | Visible outcome | Access boundary |
 |---|---|---|
 | `/activate#token=…` | One-time invitation activation and password setup; fragment is removed before API submission | Invitation credential only |
-| `/login` | Tenant-aware login; access credential stays in memory and refresh credential stays HttpOnly | Public credential exchange |
+| `/login` | Email-first global credential verification; one membership auto-selects and multi-membership output is display-safe | Public credential exchange followed by post-auth membership discovery |
 | `/dashboard` | Protected tenant shell and session restore/refresh | Authenticated tenant user |
 | `/users` | Search/page/detail, invite, status/name update and exact role replacement | Tenant admin permissions; employee redirects before admin API mount |
 | `/audit` | Read-only filtered/paged redacted tenant security and administration history | `audit:read:tenant`; employee redirects before audit API mount |

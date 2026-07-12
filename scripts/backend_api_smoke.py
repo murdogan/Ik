@@ -34,11 +34,13 @@ from app.models.leave_request import LeaveRequestStatus
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.identity import PasswordManager
+from app.platform.db import configure_tenant_database_access
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
 from app.services.authorization_service import (
     assign_system_role,
     seed_authorization_catalog,
 )
+from app.services.identity_projection_service import sync_identity_membership_projection
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
@@ -411,7 +413,19 @@ async def _prepare_smoke_database(
                 user_id=user_id,
                 role_code="employee",
             )
+        if engine.dialect.name != "postgresql":
+            requesting_user = await session.get(User, REQUESTING_USER_ID)
+            assert requesting_user is not None
+            await sync_identity_membership_projection(session, requesting_user)
         await session.commit()
+
+    if engine.dialect.name == "postgresql":
+        async with bootstrap_sessions() as session:
+            configure_tenant_database_access(session, TENANT_ID)
+            async with session.begin():
+                requesting_user = await session.get(User, REQUESTING_USER_ID)
+                assert requesting_user is not None
+                await sync_identity_membership_projection(session, requesting_user)
 
 
 async def _smoke_correlation_middleware(client: AsyncClient) -> None:
@@ -610,14 +624,13 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
             "post",
             "/api/v1/auth/login",
             json={
-                "tenant_slug": "wealthy-falcon",
                 "email": "requester@wealthyfalcon.test",
                 "password": SMOKE_ADMIN_CREDENTIAL,
             },
         ),
         200,
         "POST /api/v1/auth/login for invitation admin",
-        {"access_token", "token_type", "expires_in", "user"},
+        {"status", "access_token", "token_type", "expires_in", "user"},
     )
     _assert_equal(admin_login["token_type"], "bearer", "auth login token type")
     _assert_equal(
@@ -830,14 +843,13 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
             "post",
             "/api/v1/auth/login",
             json={
-                "tenant_slug": "wealthy-falcon",
                 "email": SMOKE_INVITED_EMAIL,
                 "password": SMOKE_ACTIVATED_CREDENTIAL,
             },
         ),
         200,
         "POST /api/v1/auth/login for activated user",
-        {"access_token", "token_type", "expires_in", "user"},
+        {"status", "access_token", "token_type", "expires_in", "user"},
     )
     _assert_equal(
         activated_login["user"]["id"],

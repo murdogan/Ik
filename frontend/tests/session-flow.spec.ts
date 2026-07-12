@@ -218,7 +218,6 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
     if (path === "/api/v1/auth/login") {
       expect(request.method()).toBe("POST");
       expect(request.postDataJSON()).toEqual({
-        tenant_slug: tenant.slug,
         email: invitedEmployee.email,
         password,
       });
@@ -229,6 +228,7 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
         contentType: "application/json",
         headers: { "set-cookie": refreshCookie(refreshCredential) },
         body: dataEnvelope({
+          status: "authenticated",
           access_token: accessToken,
           token_type: "bearer",
           expires_in: 900,
@@ -314,8 +314,8 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
   expect(await inviteePage.evaluate(() => window.history.state?.token)).toBeUndefined();
 
   await inviteePage.getByRole("link", { name: "Giriş ekranına git" }).click();
-  await expect(inviteePage).toHaveURL(/\/login\?tenant=wealthy-falcon-demo$/);
-  await expect(inviteePage.getByLabel("Kurum kodu")).toHaveValue(tenant.slug);
+  await expect(inviteePage).toHaveURL(/\/login$/);
+  await expect(inviteePage.getByLabel("Kurum kodu")).toHaveCount(0);
   await inviteePage.getByLabel("E-posta adresi").fill(invitedEmployee.email);
   await inviteePage.getByLabel("Parola").fill(password);
   await inviteePage.getByRole("button", { name: "Giriş yap" }).click();
@@ -384,4 +384,128 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
   await expect(inviteePage).toHaveURL(/\/login$/);
   expect(refreshCount).toBe(2);
   await inviteeContext.close();
+});
+
+test("verified multi-organization identity sees only safe organization names", async ({
+  context,
+  page,
+}) => {
+  const email = "multi@wealthyfalcon.demo";
+  const password = "A safe multi organization password";
+  const selectionTransaction =
+    "os1.f1000000-0000-4000-8000-000000000020.safe-single-purpose-selection-material-000001";
+  const organizations = [
+    {
+      selection_key: "f1000000-0000-4000-8000-000000000021",
+      display_name: "Wealthy Falcon Türkiye",
+    },
+    {
+      selection_key: "f1000000-0000-4000-8000-000000000022",
+      display_name: "Wealthy Falcon Avrupa",
+    },
+  ];
+  let loginCount = 0;
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/auth/login") {
+      expect(request.method()).toBe("POST");
+      expect(request.postDataJSON()).toEqual({ email, password });
+      loginCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: dataEnvelope({
+          status: "organization_selection_required",
+          selection_transaction: selectionTransaction,
+          expires_in: 120,
+          organizations,
+        }),
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404 });
+  });
+
+  await page.goto("/login");
+  await expect(page.getByLabel("Kurum kodu")).toHaveCount(0);
+  await page.getByLabel("E-posta adresi").fill(email);
+  await page.getByLabel("Parola").fill(password);
+  await page.getByRole("button", { name: "Giriş yap" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Kurum seçimi gerekiyor" }),
+  ).toBeVisible();
+  const organizationList = page.getByRole("list", { name: "Erişilebilir kurumlar" });
+  await expect(organizationList.getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByText(selectionTransaction)).toHaveCount(0);
+  for (const organization of organizations) {
+    await expect(page.getByText(organization.display_name, { exact: true })).toBeVisible();
+    await expect(page.getByText(organization.selection_key)).toHaveCount(0);
+  }
+  expect(loginCount).toBe(1);
+  expect((await context.cookies()).some((cookie) => cookie.name === "wf_refresh")).toBe(
+    false,
+  );
+
+  const browserStorage = await page.evaluate(() =>
+    JSON.stringify({
+      local: { ...localStorage },
+      session: { ...sessionStorage },
+    }),
+  );
+  expect(browserStorage).not.toContain(selectionTransaction);
+  expect(browserStorage).not.toContain(email);
+
+  await page.getByRole("button", { name: "Giriş ekranına dön" }).click();
+  await expect(page.getByLabel("E-posta adresi")).toHaveValue("");
+  await expect(page.getByLabel("Parola")).toHaveValue("");
+  await expect(page.getByText(organizations[0].display_name)).toHaveCount(0);
+});
+
+test("invalid credentials stay generic and never reveal organizations", async ({
+  page,
+}) => {
+  const email = "unknown@wealthyfalcon.demo";
+  const password = "An incorrect but safe length password";
+  let requestCount = 0;
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/auth/login") {
+      expect(request.method()).toBe("POST");
+      expect(request.postDataJSON()).toEqual({ email, password });
+      requestCount += 1;
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: errorEnvelope("invalid_credentials"),
+      });
+      return;
+    }
+
+    requestCount += 1;
+    await route.fulfill({ status: 404 });
+  });
+
+  await page.goto("/login");
+  await expect(page.getByLabel("Kurum kodu")).toHaveCount(0);
+  await page.getByLabel("E-posta adresi").fill(email);
+  await page.getByLabel("Parola").fill(password);
+  await page.getByRole("button", { name: "Giriş yap" }).click();
+
+  await expect(page.getByText("Giriş tamamlanamadı")).toBeVisible();
+  await expect(
+    page.getByText(
+      "E-posta veya parola eşleşmedi. Bilgilerinizi kontrol edip yeniden deneyin.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("Kurum seçimi gerekiyor")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Erişilebilir kurumlar" })).toHaveCount(0);
+  expect(requestCount).toBe(1);
 });

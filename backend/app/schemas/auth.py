@@ -15,7 +15,6 @@ from pydantic import (
 )
 
 from app.schemas.authorization import RoleSummaryRead
-from app.schemas.tenant import TenantSlug
 
 EmailValue = Annotated[
     StrictStr,
@@ -44,7 +43,6 @@ class _AuthPayload(BaseModel):
 
 
 class LoginRequest(_AuthPayload):
-    tenant_slug: TenantSlug
     email: EmailValue
     password: SecretStr
 
@@ -123,6 +121,35 @@ class LoginRead(BaseModel):
     user: AuthUserRead
 
 
+class AuthenticatedLoginRead(LoginRead):
+    status: Literal["authenticated"]
+
+
+class OrganizationChoiceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selection_key: UUID
+    display_name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+
+
+class OrganizationSelectionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["organization_selection_required"]
+    selection_transaction: Annotated[
+        str,
+        StringConstraints(min_length=80, max_length=160),
+    ]
+    expires_in: int = Field(gt=0, le=900)
+    organizations: list[OrganizationChoiceRead] = Field(min_length=2)
+
+
+LoginOutcomeRead = Annotated[
+    AuthenticatedLoginRead | OrganizationSelectionRead,
+    Field(discriminator="status"),
+]
+
+
 class ActivationRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -157,11 +184,15 @@ __all__ = [
     "ActivationRequest",
     "AuthTenantRead",
     "AuthUserRead",
+    "AuthenticatedLoginRead",
     "InvitationRead",
     "InvitationRequest",
     "InvitationUserRead",
     "LoginRead",
+    "LoginOutcomeRead",
     "LoginRequest",
     "MeRead",
+    "OrganizationChoiceRead",
+    "OrganizationSelectionRead",
     "normalize_email",
 ]

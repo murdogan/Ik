@@ -195,7 +195,6 @@ test("platform login lands in a separate shell without tenant navigation", async
     if (path === "/api/v1/auth/login") {
       expect(request.method()).toBe("POST");
       expect(request.postDataJSON()).toEqual({
-        tenant_slug: "internal-platform",
         email: "platform@wealthyfalcon.demo",
         password: "A safe platform browser password",
       });
@@ -207,6 +206,7 @@ test("platform login lands in a separate shell without tenant navigation", async
           "set-cookie": "wf_refresh=platform-refresh; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600",
         },
         body: envelope({
+          status: "authenticated",
           access_token: accessToken,
           token_type: "bearer",
           expires_in: 900,
@@ -230,7 +230,7 @@ test("platform login lands in a separate shell without tenant navigation", async
   });
 
   await page.goto("/login");
-  await page.getByLabel("Kurum kodu").fill("internal-platform");
+  await expect(page.getByLabel("Kurum kodu")).toHaveCount(0);
   await page.getByLabel("E-posta adresi").fill("platform@wealthyfalcon.demo");
   await page.getByLabel("Parola").fill("A safe platform browser password");
   await page.getByRole("button", { name: "Giriş yap" }).click();

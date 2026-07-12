@@ -1,8 +1,8 @@
 import type {
   AuthUser,
-  LoginResponseData,
   MeResponseData,
   RefreshResponseData,
+  SessionGrantData,
 } from "./auth-contracts";
 import {
   ApiClientError,
@@ -34,7 +34,7 @@ class SessionSupersededError extends Error {
   }
 }
 
-function applySession(data: LoginResponseData): void {
+function applySession(data: SessionGrantData): void {
   accessToken = data.access_token;
   publishSessionChange({ type: "user_updated", user: data.user });
 }
@@ -61,7 +61,7 @@ export function subscribeToSessionChanges(
   return () => sessionChangeListeners.delete(listener);
 }
 
-export function establishSession(data: LoginResponseData): void {
+export function establishSession(data: SessionGrantData): void {
   sessionGeneration += 1;
   applySession(data);
   restoreInFlight = null;

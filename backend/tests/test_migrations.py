@@ -414,6 +414,23 @@ def _run_alembic_p3a_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p3b_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0022_p3a_identity_memberships:0023_p3b_email_first_login",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -462,8 +479,11 @@ def test_core_migration_chain_is_linear() -> None:
     p3a_identity_memberships_revision = script.get_revision(
         "0022_p3a_identity_memberships"
     )
+    p3b_email_first_login_revision = script.get_revision(
+        "0023_p3b_email_first_login"
+    )
 
-    assert script.get_heads() == ["0022_p3a_identity_memberships"]
+    assert script.get_heads() == ["0023_p3b_email_first_login"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -513,6 +533,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3a_identity_memberships_revision is not None
     assert p3a_identity_memberships_revision.down_revision == (
         "0021_f2f_user_insert_grant"
+    )
+    assert p3b_email_first_login_revision is not None
+    assert p3b_email_first_login_revision.down_revision == (
+        "0022_p3a_identity_memberships"
     )
 
 
@@ -755,6 +779,47 @@ def test_alembic_offline_p3a_downgrade_guards_projection_before_drops() -> None:
     assert preflight_position < first_drop_position
     assert result.stdout.index("DROP TABLE tenant_memberships") > first_drop_position
     assert result.stdout.index("DROP TABLE identities") > first_drop_position
+
+
+def test_alembic_offline_p3b_renders_narrow_authentication_boundary() -> None:
+    result = _run_alembic_p3b_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "CREATE TABLE organization_selection_transactions" in result.stdout
+    assert "CREATE TABLE organization_selection_choices" in result.stdout
+    assert "CREATE TABLE authentication_rate_limit_buckets" in result.stdout
+    assert 'CREATE ROLE "wealthy_falcon_authentication"' in result.stdout
+    assert 'CREATE POLICY "authentication_identity_read"' in result.stdout
+    assert (
+        'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "public" '
+        'FROM "wealthy_falcon_authentication"'
+        in result.stdout
+    )
+    assert "DO $p3b_revoke_stale_authentication_columns$" in result.stdout
+    assert (
+        'GRANT SELECT ("id", "email_normalized", "status", "password_hash") '
+        'ON TABLE "identities" TO "wealthy_falcon_authentication"'
+        in result.stdout
+    )
+    assert (
+        'GRANT SELECT ("id", "tenant_id", "identity_id", "legacy_user_id", "status") '
+        'ON TABLE "tenant_memberships" TO "wealthy_falcon_authentication"'
+        in result.stdout
+    )
+    assert "metadata = '{\"failure_reason\":\"authentication_failed\"}'::jsonb" in (
+        result.stdout
+    )
+    assert (
+        'GRANT INSERT ON TABLE "organization_selection_transactions" '
+        'TO "wealthy_falcon_authentication"'
+    ) in result.stdout
+    assert (
+        'REVOKE ALL PRIVILEGES ON TABLE "organization_selection_transactions" '
+        'FROM "wealthy_falcon_app"'
+    ) in result.stdout
+    assert "CREATE FUNCTION public.sync_current_tenant_identity_membership" in result.stdout
+    assert "SECURITY DEFINER" in result.stdout
+    assert 'OWNER TO "wealthy_falcon_identity_projection"' in result.stdout
 
 
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
@@ -1408,7 +1473,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0022_p3a_identity_memberships"
+        assert revision == "0023_p3b_email_first_login"
     finally:
         engine.dispose()
 

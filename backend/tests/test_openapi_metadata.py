@@ -774,6 +774,31 @@ def test_critical_post_commands_document_optional_tenant_scoped_idempotency_key(
     assert "X-Idempotency-Key" not in patch_headers
 
 
+def test_p3b_login_contract_is_email_first_and_discriminates_safe_outcomes() -> None:
+    openapi = create_app().openapi()
+    schemas = openapi["components"]["schemas"]
+    login_request = schemas["LoginRequest"]
+
+    assert set(login_request["properties"]) == {"email", "password"}
+    assert set(login_request["required"]) == {"email", "password"}
+    assert login_request["additionalProperties"] is False
+
+    login_operation = openapi["paths"]["/api/v1/auth/login"]["post"]
+    assert "429" in login_operation["responses"]
+    assert "Retry-After" in login_operation["responses"]["429"]["headers"]
+    selection = schemas["OrganizationSelectionRead"]
+    assert set(selection["properties"]) == {
+        "status",
+        "selection_transaction",
+        "expires_in",
+        "organizations",
+    }
+    assert set(schemas["OrganizationChoiceRead"]["properties"]) == {
+        "selection_key",
+        "display_name",
+    }
+
+
 def _transitive_schema_references(
     value: object,
     schemas: dict[str, object],

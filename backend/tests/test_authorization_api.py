@@ -19,6 +19,7 @@ from app.services.authorization_service import (
     load_authorization_snapshot,
     seed_authorization_catalog,
 )
+from app.services.identity_projection_service import sync_identity_membership_projection
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -142,13 +143,16 @@ async def _seed_authorization_fixtures(
                 user_id=user_id,
                 role_code=role_code,
             )
+        for user_id in (ADMIN_ID, EMPLOYEE_ID, OTHER_TENANT_USER_ID):
+            user = await session.get(User, user_id)
+            assert user is not None
+            await sync_identity_membership_projection(session, user)
 
 
 async def _login(client: AsyncClient, *, email: str) -> tuple[str, dict[str, object]]:
     response = await client.post(
         "/api/v1/auth/login",
         json={
-            "tenant_slug": "authorization-a",
             "email": email,
             "password": PASSWORD,
         },

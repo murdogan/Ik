@@ -26,14 +26,36 @@ export interface AuthUser {
   permission_version: number;
 }
 
-export interface LoginResponseData {
+export interface SessionGrantData {
   access_token: string;
   token_type: string;
   expires_in: number;
   user: AuthUser;
 }
 
-export type RefreshResponseData = LoginResponseData;
+export interface AuthenticatedLoginResponseData extends SessionGrantData {
+  status: "authenticated";
+}
+
+export interface OrganizationSelectionOption {
+  selection_key: string;
+  display_name: string;
+}
+
+export interface OrganizationSelectionRequiredData {
+  status: "organization_selection_required";
+  selection_transaction: string;
+  expires_in: number;
+  organizations: OrganizationSelectionOption[];
+}
+
+export type LoginResponseData =
+  | AuthenticatedLoginResponseData
+  | OrganizationSelectionRequiredData;
+
+// Refresh rotates an existing tenant-bound session. Unlike login, it can never return an
+// organization-selection transaction and the backend response has no `status` discriminator.
+export type RefreshResponseData = SessionGrantData;
 
 export interface MeResponseData {
   user: AuthUser;
@@ -50,26 +72,9 @@ export interface AuthErrorPresentation {
 }
 
 const GENERIC_LOGIN_ERROR =
-  "Kurum kodu, e-posta veya parola eşleşmedi. Bilgilerinizi kontrol edip yeniden deneyin.";
+  "E-posta veya parola eşleşmedi. Bilgilerinizi kontrol edip yeniden deneyin.";
 const GENERIC_ACTIVATION_ERROR =
   "Bu davet bağlantısı geçersiz, süresi dolmuş veya daha önce kullanılmış. Hesabınızı daha önce etkinleştirdiyseniz giriş yapmayı deneyin; aksi halde yöneticinizden yeni bir davet isteyin.";
-const TENANT_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
-
-export function validatedTenantSlug(value: unknown): string {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (
-    normalized.length < 2 ||
-    normalized.length > 80 ||
-    !TENANT_SLUG_PATTERN.test(normalized)
-  ) {
-    return "";
-  }
-  return normalized;
-}
 
 function presentation(
   message: string,
@@ -109,7 +114,7 @@ export function loginErrorPresentation(cause: unknown): AuthErrorPresentation {
   }
   if (cause.status === 422 || code.includes("validation")) {
     return presentation(
-      "Kurum kodu ve e-posta biçimini kontrol edin; ardından parolanızı yeniden girin.",
+      "E-posta biçimini kontrol edin; ardından parolanızı yeniden girin.",
       cause,
     );
   }

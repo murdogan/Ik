@@ -41,7 +41,7 @@ def p3a_postgres_database(postgres_database_url: URL) -> URL:
     config = _alembic_config(postgres_database_url)
     alembic_command.upgrade(config, PRE_P3A_REVISION)
     asyncio.run(_seed_mergeable_legacy_projection(postgres_database_url))
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, P3A_REVISION)
     return postgres_database_url
 
 
@@ -239,7 +239,7 @@ def test_p3a_upgrade_refuses_conflicting_legacy_passwords_until_repaired(
             "conflicting_password_identities=1, blank_normalized_emails=0"
         ),
     ):
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, P3A_REVISION)
 
     assert asyncio.run(_current_revision(postgres_database_url)) == PRE_P3A_REVISION
     assert asyncio.run(_p3a_table_names(postgres_database_url)) == set()
@@ -253,7 +253,7 @@ def test_p3a_upgrade_refuses_conflicting_legacy_passwords_until_repaired(
     )
 
     asyncio.run(_repair_conflicting_legacy_passwords(postgres_database_url))
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, P3A_REVISION)
 
     assert asyncio.run(_current_revision(postgres_database_url)) == P3A_REVISION
     assert asyncio.run(_identity_projection(postgres_database_url)) == [
@@ -268,7 +268,7 @@ def test_p3a_downgrade_refuses_a_new_unmergeable_legacy_credential(
     config = _alembic_config(postgres_database_url)
     alembic_command.upgrade(config, PRE_P3A_REVISION)
     asyncio.run(_seed_mergeable_legacy_projection(postgres_database_url))
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, P3A_REVISION)
     asyncio.run(_introduce_lower_sorting_legacy_password(postgres_database_url))
 
     with pytest.raises(
@@ -296,7 +296,7 @@ def test_p3a_downgrade_refuses_a_new_unmergeable_legacy_credential(
 
     asyncio.run(_clear_invited_legacy_password(postgres_database_url))
     alembic_command.downgrade(config, PRE_P3A_REVISION)
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, P3A_REVISION)
     assert asyncio.run(_current_revision(postgres_database_url)) == P3A_REVISION
 
 
@@ -306,7 +306,7 @@ def test_p3a_downgrade_refuses_canonical_drift_and_preserves_legacy_repair_path(
     config = _alembic_config(postgres_database_url)
     alembic_command.upgrade(config, PRE_P3A_REVISION)
     asyncio.run(_seed_mergeable_legacy_projection(postgres_database_url))
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, P3A_REVISION)
     asyncio.run(_drift_membership_name(postgres_database_url))
 
     with pytest.raises(
@@ -343,7 +343,7 @@ def test_p3a_downgrade_refuses_canonical_drift_and_preserves_legacy_repair_path(
     assert asyncio.run(_p3a_table_names(postgres_database_url)) == set()
     assert asyncio.run(_legacy_demo_admin_exists(postgres_database_url)) is True
 
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, P3A_REVISION)
     assert asyncio.run(_current_revision(postgres_database_url)) == P3A_REVISION
     assert asyncio.run(_membership_count(postgres_database_url)) == 3
 

@@ -16,6 +16,7 @@ from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.identity import PasswordManager
 from app.services.authorization_service import assign_system_role, seed_authorization_catalog
+from app.services.identity_projection_service import sync_identity_membership_projection
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, select
@@ -171,17 +172,27 @@ async def _seed_users(
                 user_id=user_id,
                 role_code=role_code,
             )
+        for user_id in (
+            ADMIN_A_ID,
+            USER_A_ID,
+            INVITED_A_ID,
+            PERCENT_A_ID,
+            ADMIN_B_ID,
+            USER_B_ID,
+        ):
+            user = await session.get(User, user_id)
+            assert user is not None
+            await sync_identity_membership_projection(session, user)
 
 
 async def _login(
     client: AsyncClient,
     *,
     email: str,
-    tenant_slug: str = "tenant-a",
 ) -> str:
     response = await client.post(
         "/api/v1/auth/login",
-        json={"tenant_slug": tenant_slug, "email": email, "password": PASSWORD},
+        json={"email": email, "password": PASSWORD},
     )
     assert response.status_code == 200
     return response.json()["data"]["access_token"]

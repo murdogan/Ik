@@ -11,6 +11,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.auth import RefreshSessionFamily, RefreshSessionToken
+from app.models.identity import MembershipStatus, TenantMembership
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.audit import (
@@ -104,6 +105,7 @@ class AuthSessionService:
         tenant_id: UUID,
         tenant_slug: str,
         user_id: UUID,
+        membership_id: UUID | None = None,
         audit_context: AuditContext | None = None,
     ) -> SessionGrant:
         context = audit_context or AuditContext.internal()
@@ -117,17 +119,28 @@ class AuthSessionService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> AuthenticatedUser:
-                row = (
-                    await session.execute(
-                        select(User, Tenant)
-                        .join(Tenant, Tenant.id == User.tenant_id)
-                        .where(
-                            User.tenant_id == tenant_id,
-                            User.id == user_id,
-                            Tenant.id == tenant_id,
-                        )
-                        .with_for_update(of=User)
+                statement = (
+                    select(User, Tenant)
+                    .join(Tenant, Tenant.id == User.tenant_id)
+                    .where(
+                        User.tenant_id == tenant_id,
+                        User.id == user_id,
+                        Tenant.id == tenant_id,
                     )
+                )
+                if membership_id is not None:
+                    statement = statement.join(
+                        TenantMembership,
+                        and_(
+                            TenantMembership.tenant_id == User.tenant_id,
+                            TenantMembership.legacy_user_id == User.id,
+                        ),
+                    ).where(
+                        TenantMembership.id == membership_id,
+                        TenantMembership.status == MembershipStatus.ACTIVE.value,
+                    )
+                row = (
+                    await session.execute(statement.with_for_update(of=User))
                 ).one_or_none()
                 if row is None:
                     raise InvalidSessionError()

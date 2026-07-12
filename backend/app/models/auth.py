@@ -189,3 +189,120 @@ class RefreshSessionToken(Base, TimestampMixin):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class OrganizationSelectionTransaction(Base, TimestampMixin):
+    """Hashed, expiring, one-use continuation issued only after password verification."""
+
+    __tablename__ = "organization_selection_transactions"
+    __table_args__ = (
+        CheckConstraint(
+            "length(token_hash) = 64",
+            name="ck_organization_selection_transactions_hash_length",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_organization_selection_transactions_expiry_order",
+        ),
+        CheckConstraint(
+            "consumed_at is null or consumed_at >= created_at",
+            name="ck_organization_selection_transactions_consumed_order",
+        ),
+        UniqueConstraint(
+            "token_hash",
+            name="uq_organization_selection_transactions_token_hash",
+        ),
+        Index(
+            "ix_organization_selection_transactions_identity_expires_at",
+            "identity_id",
+            "expires_at",
+        ),
+        Index(
+            "ix_organization_selection_transactions_expires_at",
+            "expires_at",
+        ),
+        {"implicit_returning": False},
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    identity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "identities.id",
+            name="fk_organization_selection_transactions_identity_id_identities",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class OrganizationSelectionChoice(Base):
+    """Opaque option mapped to one eligible tenant inside a selection transaction."""
+
+    __tablename__ = "organization_selection_choices"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id"],
+            ["organization_selection_transactions.id"],
+            name="fk_organization_selection_choices_transaction_id_transactions",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id"],
+            ["tenants.id"],
+            name="fk_organization_selection_choices_tenant_id_tenants",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "transaction_id",
+            "tenant_id",
+            name="uq_organization_selection_choices_transaction_tenant",
+        ),
+    )
+
+    selection_key: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    transaction_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+
+
+class AuthenticationRateLimitBucket(Base):
+    """PII-free fixed-window counter shared by authentication workers."""
+
+    __tablename__ = "authentication_rate_limit_buckets"
+    __table_args__ = (
+        CheckConstraint(
+            "length(bucket_key_hash) = 64",
+            name="ck_authentication_rate_limit_buckets_hash_length",
+        ),
+        CheckConstraint(
+            "scope in ('login_source','login_identity')",
+            name="ck_authentication_rate_limit_buckets_scope",
+        ),
+        CheckConstraint(
+            "attempt_count >= 1",
+            name="ck_authentication_rate_limit_buckets_attempt_count_positive",
+        ),
+        CheckConstraint(
+            "expires_at > window_started_at",
+            name="ck_authentication_rate_limit_buckets_expiry_order",
+        ),
+        Index(
+            "ix_authentication_rate_limit_buckets_expires_at",
+            "expires_at",
+        ),
+    )
+
+    bucket_key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

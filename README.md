@@ -915,8 +915,9 @@ npm --prefix frontend run dev
 ```
 
 Open the printed `DEMO_AUTH_ACTIVATION_URL`, choose a password of at least 12 characters, then log
-in at `http://localhost:3000/login` with organization code `wealthy-falcon-demo` and email
-`admin@wealthyfalcon.demo`. Login opens the protected `/dashboard` tenant shell. Reloading the
+in at `http://localhost:3000/login` with email `admin@wealthyfalcon.demo` and that password. The
+organization is discovered only after the credential succeeds; this single-membership demo opens
+the protected `/dashboard` tenant shell automatically. Reloading the
 page rotates the HttpOnly refresh credential and restores the in-memory access credential; **Çıkış
 yap** revokes the server-side session family and returns to login.
 

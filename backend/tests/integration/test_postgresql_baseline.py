@@ -70,6 +70,11 @@ EXPECTED_UUID_COLUMNS = {
     ("membership_roles", "membership_id"),
     ("membership_roles", "role_id"),
     ("membership_roles", "tenant_id"),
+    ("organization_selection_choices", "selection_key"),
+    ("organization_selection_choices", "transaction_id"),
+    ("organization_selection_choices", "tenant_id"),
+    ("organization_selection_transactions", "id"),
+    ("organization_selection_transactions", "identity_id"),
     ("permissions", "id"),
     ("role_permissions", "permission_id"),
     ("role_permissions", "role_id"),
@@ -104,6 +109,7 @@ EXPECTED_TIMESTAMP_COLUMNS = {
         "leave_balance_summaries",
         "leave_requests",
         "membership_roles",
+        "organization_selection_transactions",
         "permissions",
         "roles",
         "tenants",
@@ -128,6 +134,11 @@ EXPECTED_TIMESTAMP_COLUMNS = {
     ("refresh_session_families", "revoked_at"),
     ("refresh_session_tokens", "consumed_at"),
     ("audit_events", "occurred_at"),
+    ("authentication_rate_limit_buckets", "window_started_at"),
+    ("authentication_rate_limit_buckets", "expires_at"),
+    ("authentication_rate_limit_buckets", "updated_at"),
+    ("organization_selection_transactions", "expires_at"),
+    ("organization_selection_transactions", "consumed_at"),
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     "ck_audit_events_actor_type",
@@ -136,6 +147,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_audit_events_scope_tenant",
     "ck_audit_events_scope_type",
     "ck_audit_events_severity",
+    "ck_authentication_rate_limit_buckets_attempt_count_positive",
+    "ck_authentication_rate_limit_buckets_expiry_order",
+    "ck_authentication_rate_limit_buckets_hash_length",
+    "ck_authentication_rate_limit_buckets_scope",
     "ck_command_idempotency_completion",
     "ck_employees_date_order",
     "ck_employees_lifecycle_status_dates",
@@ -151,6 +166,9 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "ck_leave_requests_status",
     "ck_membership_roles_active",
     "ck_membership_roles_tenant_role_scope",
+    "ck_organization_selection_transactions_consumed_order",
+    "ck_organization_selection_transactions_expiry_order",
+    "ck_organization_selection_transactions_hash_length",
     "ck_permissions_scope_target",
     "ck_permissions_target_type",
     "ck_tenants_status",
@@ -184,6 +202,8 @@ EXPECTED_NAMED_UNIQUE_CONSTRAINTS = {
     "uq_employees_tenant_employee_number",
     "uq_identities_email_normalized",
     "uq_leave_balance_summaries_tenant_employee_type_period",
+    "uq_organization_selection_choices_transaction_tenant",
+    "uq_organization_selection_transactions_token_hash",
     "uq_permissions_code",
     "uq_roles_code",
     "uq_roles_id_scope_type",
@@ -205,6 +225,8 @@ EXPECTED_FOREIGN_KEY_COUNTS = {
     "leave_balance_summaries": 2,
     "leave_requests": 4,
     "membership_roles": 2,
+    "organization_selection_choices": 2,
+    "organization_selection_transactions": 1,
     "role_permissions": 2,
     "tenant_settings": 1,
     "tenant_feature_flags": 1,
@@ -319,7 +341,9 @@ def test_f1d_migration_owner_without_bypass_backfills_and_guards_limits(
         asyncio.run(_insert_pre_settings_tenant(postgres_database_url, tenant_id))
         asyncio.run(_set_hostile_feature_default_privileges(owner_url))
 
-        alembic_command.upgrade(owner_config, "head")
+        # Keep this historical non-BYPASS owner probe scoped to the F1D revision it proves.
+        # P3B intentionally provisions new cluster capability roles through the admin lane.
+        alembic_command.upgrade(owner_config, "0015_f1d_feature_flags")
         assert asyncio.run(_tenant_feature_count(postgres_database_url, tenant_id)) == 7
         assert asyncio.run(_unexpected_feature_delete_grantees(postgres_database_url)) == set()
         assert asyncio.run(_row_security_flags(postgres_database_url, "tenants")) == (

@@ -70,9 +70,9 @@ OPENAPI_TAGS = [
     {
         "name": AUTHENTICATION_TAG,
         "description": (
-            "Tenant-aware login and activation plus cookie-backed refresh rotation, logout, and "
-            "live-session current-user validation. Credential failures are generic and all "
-            "credential-bearing responses are non-cacheable."
+            "Email-first tenant login and activation plus cookie-backed refresh rotation, logout, "
+            "and live-session current-user validation. Memberships are disclosed only after "
+            "credential verification and credential-bearing responses are non-cacheable."
         ),
     },
     {

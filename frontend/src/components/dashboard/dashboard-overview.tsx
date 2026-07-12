@@ -42,7 +42,7 @@ export function DashboardOverview() {
           <div>
             <small>Kurum</small>
             <h2>{user.tenant.name}</h2>
-            <p>Kurum kodunuz: {user.tenant.slug}</p>
+            <p>Çalışma alanınız: {user.tenant.name}</p>
           </div>
         </article>
       </div>

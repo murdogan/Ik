@@ -2,6 +2,9 @@
 
 from app.models.audit import AuditEvent
 from app.models.auth import (
+    AuthenticationRateLimitBucket,
+    OrganizationSelectionChoice,
+    OrganizationSelectionTransaction,
     RefreshSessionFamily,
     RefreshSessionToken,
     UserActivationToken,
@@ -23,6 +26,7 @@ from app.models.user import User, UserStatus
 
 __all__ = [
     "AuditEvent",
+    "AuthenticationRateLimitBucket",
     "CommandIdempotency",
     "Employee",
     "EmployeeStatus",
@@ -34,6 +38,8 @@ __all__ = [
     "MembershipRole",
     "MembershipStatus",
     "Permission",
+    "OrganizationSelectionTransaction",
+    "OrganizationSelectionChoice",
     "RefreshSessionFamily",
     "RefreshSessionToken",
     "Role",

@@ -1,10 +1,12 @@
 """Database transaction capabilities; runtime wiring remains at the compatibility path."""
 
 from app.platform.db.tenant_access import (
+    AUTHENTICATION_APPLICATION_ROLE,
     DatabaseAccessContext,
     DatabaseAccessPath,
     MissingDatabaseAccessContextError,
     attach_database_access_resolver,
+    configure_authentication_database_access,
     configure_platform_database_access,
     configure_tenant_database_access,
     database_access_context,
@@ -21,6 +23,7 @@ from app.platform.db.unit_of_work import (
 )
 
 __all__ = [
+    "AUTHENTICATION_APPLICATION_ROLE",
     "DatabaseAccessContext",
     "DatabaseAccessPath",
     "MissingDatabaseAccessContextError",
@@ -30,6 +33,7 @@ __all__ = [
     "SqlAlchemyUnitOfWork",
     "UnitOfWork",
     "attach_database_access_resolver",
+    "configure_authentication_database_access",
     "configure_platform_database_access",
     "configure_tenant_database_access",
     "constraint_name_from_error",

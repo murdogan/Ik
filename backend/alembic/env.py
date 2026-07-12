@@ -7,12 +7,15 @@ from alembic.ddl.postgresql import PostgresqlImpl
 from app.db.base import Base
 from app.models import (  # noqa: F401
     AuditEvent,
+    AuthenticationRateLimitBucket,
     CommandIdempotency,
     Employee,
     Identity,
     LeaveBalanceSummary,
     LeaveRequest,
     MembershipRole,
+    OrganizationSelectionChoice,
+    OrganizationSelectionTransaction,
     RefreshSessionFamily,
     RefreshSessionToken,
     Tenant,
