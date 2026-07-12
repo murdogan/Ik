@@ -113,6 +113,12 @@ class RefreshSessionFamily(Base, TimestampMixin):
             "expires_at",
         ),
         Index(
+            "ix_refresh_session_families_tenant_membership_expires_at",
+            "tenant_id",
+            "membership_id",
+            "expires_at",
+        ),
+        Index(
             "ix_refresh_session_families_expires_at",
             "expires_at",
         ),
@@ -120,6 +126,12 @@ class RefreshSessionFamily(Base, TimestampMixin):
             ["tenant_id", "user_id"],
             ["users.tenant_id", "users.id"],
             name="fk_refresh_session_families_tenant_user_id_users",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "membership_id"],
+            ["tenant_memberships.tenant_id", "tenant_memberships.id"],
+            name="fk_refresh_session_families_tenant_membership_id_memberships",
             ondelete="CASCADE",
         ),
     )
@@ -135,6 +147,7 @@ class RefreshSessionFamily(Base, TimestampMixin):
         nullable=False,
     )
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    membership_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
@@ -192,7 +205,7 @@ class RefreshSessionToken(Base, TimestampMixin):
 
 
 class OrganizationSelectionTransaction(Base, TimestampMixin):
-    """Hashed, expiring, one-use continuation issued only after password verification."""
+    """Hashed, expiring, one-use continuation issued after identity authentication."""
 
     __tablename__ = "organization_selection_transactions"
     __table_args__ = (
@@ -300,9 +313,7 @@ class AuthenticationRateLimitBucket(Base):
 
     bucket_key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     scope: Mapped[str] = mapped_column(String(32), nullable=False)
-    window_started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     attempt_count: Mapped[int] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

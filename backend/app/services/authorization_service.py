@@ -34,6 +34,7 @@ from app.platform.authorization import (
 from app.platform.db import SqlAlchemyUnitOfWork, configure_tenant_database_access
 from app.platform.errors.application import ApplicationError
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
+from app.services.identity_projection_service import sync_existing_membership_projection
 
 
 class AuthorizationAccessDeniedError(ApplicationError):
@@ -325,6 +326,7 @@ class AuthorizationService:
                     user.updated_at = datetime.now(UTC)
                     await session.flush()
                     await session.refresh(user)
+                    await sync_existing_membership_projection(session, user)
 
                 snapshot = await load_authorization_snapshot(
                     session,

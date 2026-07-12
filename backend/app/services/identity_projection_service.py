@@ -142,7 +142,72 @@ async def sync_identity_membership_projection(
     await session.flush()
 
 
+async def sync_existing_membership_projection(
+    session: AsyncSession,
+    user: User,
+) -> None:
+    """Keep an already-canonical membership aligned without creating global identity state."""
+
+    membership = await session.scalar(
+        select(TenantMembership).where(
+            TenantMembership.tenant_id == user.tenant_id,
+            TenantMembership.legacy_user_id == user.id,
+        )
+    )
+    if membership is None:
+        # Expand-contract compatibility: legacy fixtures/users without a canonical projection
+        # remain manageable, but they cannot authenticate through the membership-bound path.
+        return
+    if session.get_bind().dialect.name == "postgresql":
+        # P3B's narrow SECURITY DEFINER function is the only tenant-authorized write path for
+        # canonical membership projections. The normal tenant role remains SELECT-only.
+        await sync_identity_membership_projection(session, user)
+        return
+    membership.full_name = user.full_name
+    membership.status = user.status
+    membership.permission_version = user.permission_version
+    await session.flush()
+
+    assignments = tuple(
+        await session.scalars(
+            select(UserRole).where(
+                UserRole.tenant_id == user.tenant_id,
+                UserRole.user_id == user.id,
+            )
+        )
+    )
+    existing_roles = {
+        assignment.role_id: assignment
+        for assignment in await session.scalars(
+            select(MembershipRole).where(
+                MembershipRole.tenant_id == user.tenant_id,
+                MembershipRole.membership_id == membership.id,
+            )
+        )
+    }
+    assigned_role_ids = {assignment.role_id for assignment in assignments}
+    for role_id, projected in existing_roles.items():
+        if role_id not in assigned_role_ids:
+            projected.active = False
+    for assignment in assignments:
+        projected = existing_roles.get(assignment.role_id)
+        if projected is None:
+            session.add(
+                MembershipRole(
+                    tenant_id=user.tenant_id,
+                    membership_id=membership.id,
+                    role_id=assignment.role_id,
+                    role_scope_type=assignment.role_scope_type,
+                    active=assignment.active,
+                )
+            )
+        else:
+            projected.active = assignment.active
+    await session.flush()
+
+
 __all__ = [
     "IdentityProjectionConflictError",
+    "sync_existing_membership_projection",
     "sync_identity_membership_projection",
 ]

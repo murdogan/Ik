@@ -12,8 +12,11 @@ import {
 } from "react";
 
 import type { AuthUser } from "@/lib/auth-contracts";
+import { useOrganizationSelection } from "@/components/auth/organization-selection-provider";
+import { ApiClientError } from "@/lib/api-client";
 import {
   logoutSession,
+  requestOrganizationSelection,
   restoreSession,
   subscribeToSessionChanges,
 } from "@/lib/session";
@@ -23,18 +26,26 @@ import styles from "./session.module.css";
 interface SessionContextValue {
   user: AuthUser;
   isLoggingOut: boolean;
+  isSwitchingOrganization: boolean;
   logoutError: string | null;
+  organizationSwitchError: string | null;
   signOut: () => Promise<void>;
+  switchOrganization: () => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const { beginSelection } = useOrganizationSelection();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [organizationSwitchError, setOrganizationSwitchError] = useState<
+    string | null
+  >(null);
 
   useEffect(
     () =>
@@ -105,7 +116,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    if (isLoggingOut) {
+    if (isLoggingOut || isSwitchingOrganization) {
       return;
     }
 
@@ -129,7 +140,36 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoggingOut(false);
     }
-  }, [isLoggingOut, router]);
+  }, [isLoggingOut, isSwitchingOrganization, router]);
+
+  const switchOrganization = useCallback(async () => {
+    if (isLoggingOut || isSwitchingOrganization) {
+      return;
+    }
+
+    setLogoutError(null);
+    setOrganizationSwitchError(null);
+    setIsSwitchingOrganization(true);
+    try {
+      const data = await requestOrganizationSelection();
+      beginSelection(data, "switch");
+      router.replace("/select-organization");
+    } catch (cause) {
+      setOrganizationSwitchError(
+        cause instanceof ApiClientError &&
+          cause.code === "organization_switch_unavailable"
+          ? "Hesabınızda geçiş yapabileceğiniz başka bir aktif kurum bulunmuyor."
+          : "Kurum değiştirme başlatılamadı. Bağlantınızı kontrol edip yeniden deneyin.",
+      );
+    } finally {
+      setIsSwitchingOrganization(false);
+    }
+  }, [
+    beginSelection,
+    isLoggingOut,
+    isSwitchingOrganization,
+    router,
+  ]);
 
   const contextValue = useMemo<SessionContextValue | null>(
     () =>
@@ -137,11 +177,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         ? {
             user,
             isLoggingOut,
+            isSwitchingOrganization,
             logoutError,
+            organizationSwitchError,
             signOut,
+            switchOrganization,
           }
         : null,
-    [isLoggingOut, logoutError, signOut, user],
+    [
+      isLoggingOut,
+      isSwitchingOrganization,
+      logoutError,
+      organizationSwitchError,
+      signOut,
+      switchOrganization,
+      user,
+    ],
   );
 
   if (isChecking || !contextValue) {

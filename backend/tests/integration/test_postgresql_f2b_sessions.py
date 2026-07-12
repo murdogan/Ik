@@ -54,6 +54,7 @@ FAMILY_A_ID = UUID("73000000-0000-4000-8000-000000000001")
 FAMILY_B_ID = UUID("73000000-0000-4000-8000-000000000002")
 TOKEN_A_ID = UUID("74000000-0000-4000-8000-000000000001")
 TOKEN_B_ID = UUID("74000000-0000-4000-8000-000000000002")
+PASSWORD_HASH = "$argon2id$f2b-postgresql-session-fixture"
 
 
 @pytest.fixture
@@ -154,9 +155,9 @@ async def test_session_tables_force_tenant_isolation_and_have_no_platform_visibi
                 await connection.execute(
                     text(
                         "insert into refresh_session_families ("
-                        "id, tenant_id, user_id, expires_at"
+                        "id, tenant_id, user_id, membership_id, expires_at"
                         ") values ("
-                        ":id, :tenant_id, :user_id, "
+                        ":id, :tenant_id, :user_id, :membership_id, "
                         "CURRENT_TIMESTAMP + INTERVAL '1 day'"
                         ")"
                     ),
@@ -164,6 +165,7 @@ async def test_session_tables_force_tenant_isolation_and_have_no_platform_visibi
                         "id": uuid4(),
                         "tenant_id": TENANT_B_ID,
                         "user_id": USER_B_ID,
+                        "membership_id": USER_B_ID,
                     },
                 )
         assert sqlstate_from_error(cross_tenant_family_insert.value) == "42501"
@@ -234,6 +236,7 @@ async def test_concurrent_refresh_replay_commits_revoke_and_kills_successor_sess
             tenant_id=TENANT_A_ID,
             tenant_slug="f2b-pg-tenant-a",
             user_id=USER_A_ID,
+            membership_id=USER_A_ID,
         )
         original_material = parse_refresh_token(original.refresh_token)
         start = asyncio.Event()
@@ -319,9 +322,29 @@ async def _seed_identity_rows(engine: AsyncEngine) -> None:
         )
         await connection.execute(
             text(
+                "insert into identities (id, email, status, password_hash) "
+                "values (:id, :email, 'active', :password_hash)"
+            ),
+            [
+                {
+                    "id": USER_A_ID,
+                    "email": "session-a@example.test",
+                    "password_hash": PASSWORD_HASH,
+                },
+                {
+                    "id": USER_B_ID,
+                    "email": "session-b@example.test",
+                    "password_hash": PASSWORD_HASH,
+                },
+            ],
+        )
+        await connection.execute(
+            text(
                 "insert into users ("
-                "id, tenant_id, email, full_name, status"
-                ") values (:id, :tenant_id, :email, :full_name, 'active')"
+                "id, tenant_id, email, full_name, status, password_hash"
+                ") values ("
+                ":id, :tenant_id, :email, :full_name, 'active', :password_hash"
+                ")"
             ),
             [
                 {
@@ -329,11 +352,40 @@ async def _seed_identity_rows(engine: AsyncEngine) -> None:
                     "tenant_id": TENANT_A_ID,
                     "email": "session-a@example.test",
                     "full_name": "Session A",
+                    "password_hash": PASSWORD_HASH,
                 },
                 {
                     "id": USER_B_ID,
                     "tenant_id": TENANT_B_ID,
                     "email": "session-b@example.test",
+                    "full_name": "Session B",
+                    "password_hash": PASSWORD_HASH,
+                },
+            ],
+        )
+        await connection.execute(
+            text(
+                "insert into tenant_memberships ("
+                "id, tenant_id, identity_id, legacy_user_id, full_name, status, "
+                "permission_version"
+                ") values ("
+                ":id, :tenant_id, :identity_id, :legacy_user_id, :full_name, "
+                "'active', 1"
+                ")"
+            ),
+            [
+                {
+                    "id": USER_A_ID,
+                    "tenant_id": TENANT_A_ID,
+                    "identity_id": USER_A_ID,
+                    "legacy_user_id": USER_A_ID,
+                    "full_name": "Session A",
+                },
+                {
+                    "id": USER_B_ID,
+                    "tenant_id": TENANT_B_ID,
+                    "identity_id": USER_B_ID,
+                    "legacy_user_id": USER_B_ID,
                     "full_name": "Session B",
                 },
             ],
@@ -345,14 +397,25 @@ async def _seed_session_rows(engine: AsyncEngine) -> None:
         await connection.execute(
             text(
                 "insert into refresh_session_families ("
-                "id, tenant_id, user_id, expires_at"
+                "id, tenant_id, user_id, membership_id, expires_at"
                 ") values ("
-                ":id, :tenant_id, :user_id, CURRENT_TIMESTAMP + INTERVAL '1 day'"
+                ":id, :tenant_id, :user_id, :membership_id, "
+                "CURRENT_TIMESTAMP + INTERVAL '1 day'"
                 ")"
             ),
             [
-                {"id": FAMILY_A_ID, "tenant_id": TENANT_A_ID, "user_id": USER_A_ID},
-                {"id": FAMILY_B_ID, "tenant_id": TENANT_B_ID, "user_id": USER_B_ID},
+                {
+                    "id": FAMILY_A_ID,
+                    "tenant_id": TENANT_A_ID,
+                    "user_id": USER_A_ID,
+                    "membership_id": USER_A_ID,
+                },
+                {
+                    "id": FAMILY_B_ID,
+                    "tenant_id": TENANT_B_ID,
+                    "user_id": USER_B_ID,
+                    "membership_id": USER_B_ID,
+                },
             ],
         )
         await connection.execute(

@@ -386,7 +386,7 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
   await inviteeContext.close();
 });
 
-test("verified multi-organization identity sees only safe organization names", async ({
+test("verified multi-organization identity selects a company and reaches its dashboard", async ({
   context,
   page,
 }) => {
@@ -404,7 +404,21 @@ test("verified multi-organization identity sees only safe organization names", a
       display_name: "Wealthy Falcon Avrupa",
     },
   ];
+  const selectedUser = {
+    ...invitedEmployee,
+    id: "f2000000-0000-4000-8000-000000000022",
+    tenant_id: "f1000000-0000-4000-8000-000000000022",
+    email,
+    full_name: "Çok Kurumlu Kullanıcı",
+    tenant: {
+      slug: "wealthy-falcon-europe",
+      name: organizations[1].display_name,
+    },
+  };
+  let accessToken = "";
   let loginCount = 0;
+  let selectionCount = 0;
+  let meCount = 0;
 
   await page.route("**/api/v1/**", async (route: Route) => {
     const request = route.request();
@@ -427,6 +441,42 @@ test("verified multi-organization identity sees only safe organization names", a
       return;
     }
 
+    if (path === "/api/v1/auth/select-organization") {
+      expect(request.method()).toBe("POST");
+      expect(request.headers().authorization).toBeUndefined();
+      expect(request.postDataJSON()).toEqual({
+        selection_transaction: selectionTransaction,
+        selection_key: organizations[1].selection_key,
+      });
+      selectionCount += 1;
+      accessToken = "multi-selected-access";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "set-cookie": refreshCookie("multi-selected-refresh") },
+        body: dataEnvelope({
+          status: "authenticated",
+          access_token: accessToken,
+          token_type: "bearer",
+          expires_in: 900,
+          user: selectedUser,
+        }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/me") {
+      expect(request.method()).toBe("GET");
+      expect(request.headers().authorization).toBe(`Bearer ${accessToken}`);
+      meCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: dataEnvelope({ user: selectedUser }),
+      });
+      return;
+    }
+
     await route.fulfill({ status: 404 });
   });
 
@@ -436,8 +486,9 @@ test("verified multi-organization identity sees only safe organization names", a
   await page.getByLabel("Parola").fill(password);
   await page.getByRole("button", { name: "Giriş yap" }).click();
 
+  await expect(page).toHaveURL(/\/select-organization$/);
   await expect(
-    page.getByRole("heading", { name: "Kurum seçimi gerekiyor" }),
+    page.getByRole("heading", { name: "Çalışacağınız kurumu seçin" }),
   ).toBeVisible();
   const organizationList = page.getByRole("list", { name: "Erişilebilir kurumlar" });
   await expect(organizationList.getByRole("listitem")).toHaveCount(2);
@@ -460,10 +511,211 @@ test("verified multi-organization identity sees only safe organization names", a
   expect(browserStorage).not.toContain(selectionTransaction);
   expect(browserStorage).not.toContain(email);
 
-  await page.getByRole("button", { name: "Giriş ekranına dön" }).click();
-  await expect(page.getByLabel("E-posta adresi")).toHaveValue("");
-  await expect(page.getByLabel("Parola")).toHaveValue("");
-  await expect(page.getByText(organizations[0].display_name)).toHaveCount(0);
+  await page
+    .getByRole("button", { name: new RegExp(organizations[1].display_name) })
+    .click();
+
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(
+    page.getByRole("heading", { name: "Merhaba, Çok Kurumlu Kullanıcı" }),
+  ).toBeVisible();
+  await expect(page.getByText(organizations[1].display_name).first()).toBeVisible();
+  expect(loginCount).toBe(1);
+  expect(selectionCount).toBe(1);
+  expect(meCount).toBe(1);
+  expect(
+    (await context.cookies()).find((cookie) => cookie.name === "wf_refresh")?.value,
+  ).toBe("multi-selected-refresh");
+  await expect(page.getByText(selectionTransaction)).toHaveCount(0);
+  for (const organization of organizations) {
+    await expect(page.getByText(organization.selection_key)).toHaveCount(0);
+  }
+
+  const selectedStorage = await page.evaluate(() =>
+    JSON.stringify({
+      local: { ...localStorage },
+      session: { ...sessionStorage },
+    }),
+  );
+  expect(selectedStorage).not.toContain(selectionTransaction);
+  expect(selectedStorage).not.toContain("multi-selected-access");
+  expect(selectedStorage).not.toContain("multi-selected-refresh");
+});
+
+test("tenant shell switches to another authorized organization with a rotated session", async ({
+  context,
+  page,
+}) => {
+  const currentTenant = {
+    slug: "wealthy-falcon-turkiye",
+    name: "Wealthy Falcon Türkiye",
+  };
+  const nextTenant = {
+    slug: "wealthy-falcon-avrupa",
+    name: "Wealthy Falcon Avrupa",
+  };
+  const currentUser = {
+    ...tenantAdmin,
+    tenant_id: "f1000000-0000-4000-8000-000000000031",
+    email: "switcher@wealthyfalcon.demo",
+    full_name: "Deniz Çoklu",
+    tenant: currentTenant,
+  };
+  const nextUser = {
+    ...currentUser,
+    id: "f2000000-0000-4000-8000-000000000032",
+    tenant_id: "f1000000-0000-4000-8000-000000000032",
+    tenant: nextTenant,
+  };
+  const selectionTransaction =
+    "os1.f1000000-0000-4000-8000-000000000030.safe-switch-selection-material-0000000001";
+  const organizations = [
+    {
+      selection_key: "f4000000-0000-4000-8000-000000000032",
+      display_name: nextTenant.name,
+    },
+  ];
+  let accessToken = "current-tenant-access";
+  let activeUser = currentUser;
+  let switchCount = 0;
+  let selectionCount = 0;
+  let priorSessionRevoked = false;
+
+  await context.addCookies([
+    {
+      name: "wf_refresh",
+      value: "current-tenant-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/auth/refresh") {
+      expect(priorSessionRevoked).toBe(false);
+      expect(await requestCookie(request)).toContain(
+        "wf_refresh=current-tenant-refresh",
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: dataEnvelope({
+          access_token: accessToken,
+          token_type: "bearer",
+          expires_in: 900,
+          user: currentUser,
+        }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/me") {
+      expect(request.headers().authorization).toBe(`Bearer ${accessToken}`);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: dataEnvelope({ user: activeUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/auth/organization-selection") {
+      expect(request.method()).toBe("POST");
+      expect(request.postData()).toBeNull();
+      expect(request.headers().authorization).toBe("Bearer current-tenant-access");
+      expect(await requestCookie(request)).toContain(
+        "wf_refresh=current-tenant-refresh",
+      );
+      switchCount += 1;
+      priorSessionRevoked = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: {
+          "set-cookie": "wf_refresh=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        },
+        body: dataEnvelope({
+          status: "organization_selection_required",
+          selection_transaction: selectionTransaction,
+          expires_in: 120,
+          organizations,
+        }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/auth/select-organization") {
+      expect(priorSessionRevoked).toBe(true);
+      expect(request.headers().authorization).toBeUndefined();
+      expect(await requestCookie(request)).not.toContain("wf_refresh=");
+      expect(request.postDataJSON()).toEqual({
+        selection_transaction: selectionTransaction,
+        selection_key: organizations[0].selection_key,
+      });
+      selectionCount += 1;
+      accessToken = "next-tenant-access";
+      activeUser = nextUser;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "set-cookie": refreshCookie("next-tenant-refresh") },
+        body: dataEnvelope({
+          status: "authenticated",
+          access_token: accessToken,
+          token_type: "bearer",
+          expires_in: 900,
+          user: nextUser,
+        }),
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404 });
+  });
+
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "Merhaba, Deniz Çoklu" })).toBeVisible();
+  await expect(page.getByText(currentTenant.name).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Kurum değiştir" }).click();
+  await expect(page).toHaveURL(/\/select-organization$/);
+  await expect(
+    page.getByRole("heading", { name: "Çalışacağınız kurumu seçin" }),
+  ).toBeVisible();
+  expect(switchCount).toBe(1);
+  expect(
+    (await context.cookies()).some((cookie) => cookie.name === "wf_refresh"),
+  ).toBe(false);
+  await expect(page.getByText(selectionTransaction)).toHaveCount(0);
+  for (const organization of organizations) {
+    await expect(page.getByText(organization.selection_key)).toHaveCount(0);
+  }
+
+  await page
+    .getByRole("button", { name: new RegExp(nextTenant.name) })
+    .click();
+
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByText(nextTenant.name).first()).toBeVisible();
+  expect(selectionCount).toBe(1);
+  expect(
+    (await context.cookies()).find((cookie) => cookie.name === "wf_refresh")?.value,
+  ).toBe("next-tenant-refresh");
+
+  const browserStorage = await page.evaluate(() =>
+    JSON.stringify({
+      local: { ...localStorage },
+      session: { ...sessionStorage },
+    }),
+  );
+  expect(browserStorage).not.toContain(selectionTransaction);
+  expect(browserStorage).not.toContain("current-tenant-access");
+  expect(browserStorage).not.toContain("next-tenant-access");
+  expect(browserStorage).not.toContain("next-tenant-refresh");
 });
 
 test("invalid credentials stay generic and never reveal organizations", async ({

@@ -141,7 +141,23 @@ class OrganizationSelectionRead(BaseModel):
         StringConstraints(min_length=80, max_length=160),
     ]
     expires_in: int = Field(gt=0, le=900)
-    organizations: list[OrganizationChoiceRead] = Field(min_length=2)
+    organizations: list[OrganizationChoiceRead] = Field(min_length=1)
+
+
+class OrganizationSelectionRequest(_AuthPayload):
+    selection_transaction: SecretStr
+    selection_key: UUID
+
+    @field_validator("selection_transaction")
+    @classmethod
+    def validate_selection_transaction(cls, value: SecretStr) -> SecretStr:
+        if not 80 <= len(value.get_secret_value()) <= 160:
+            raise ValueError("Organization selection transaction is invalid")
+        return value
+
+
+class OrganizationSwitchRequest(_AuthPayload):
+    """Explicitly empty body contract; caller tenant context is forbidden."""
 
 
 LoginOutcomeRead = Annotated[
@@ -194,5 +210,7 @@ __all__ = [
     "MeRead",
     "OrganizationChoiceRead",
     "OrganizationSelectionRead",
+    "OrganizationSelectionRequest",
+    "OrganizationSwitchRequest",
     "normalize_email",
 ]

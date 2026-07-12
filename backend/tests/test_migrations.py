@@ -482,8 +482,11 @@ def test_core_migration_chain_is_linear() -> None:
     p3b_email_first_login_revision = script.get_revision(
         "0023_p3b_email_first_login"
     )
+    p3c_organization_selection_revision = script.get_revision(
+        "0024_p3c_organization_selection"
+    )
 
-    assert script.get_heads() == ["0023_p3b_email_first_login"]
+    assert script.get_heads() == ["0024_p3c_organization_selection"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -537,6 +540,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3b_email_first_login_revision is not None
     assert p3b_email_first_login_revision.down_revision == (
         "0022_p3a_identity_memberships"
+    )
+    assert p3c_organization_selection_revision is not None
+    assert p3c_organization_selection_revision.down_revision == (
+        "0023_p3b_email_first_login"
     )
 
 
@@ -1473,7 +1480,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0023_p3b_email_first_login"
+        assert revision == "0024_p3c_organization_selection"
     finally:
         engine.dispose()
 

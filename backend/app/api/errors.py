@@ -42,6 +42,8 @@ from app.services.authentication_rate_limit_service import (
 from app.services.authentication_service import (
     InvalidActivationError,
     InvalidCredentialsError,
+    InvalidOrganizationSelectionError,
+    OrganizationSwitchUnavailableError,
 )
 from app.services.authorization_service import (
     AuthorizationAccessDeniedError,
@@ -160,6 +162,14 @@ AUTHENTICATION_REQUIRED_ERROR_CODE = "authentication_required"
 AUTHENTICATION_REQUIRED_ERROR_MESSAGE = "A valid access credential is required"
 SESSION_INVALID_ERROR_CODE = "session_invalid"
 SESSION_INVALID_ERROR_MESSAGE = "The session is invalid, expired, or revoked"
+ORGANIZATION_SELECTION_INVALID_ERROR_CODE = "organization_selection_invalid"
+ORGANIZATION_SELECTION_INVALID_ERROR_MESSAGE = (
+    "The organization selection is invalid, expired, or has already been used"
+)
+ORGANIZATION_SWITCH_UNAVAILABLE_ERROR_CODE = "organization_switch_unavailable"
+ORGANIZATION_SWITCH_UNAVAILABLE_ERROR_MESSAGE = (
+    "No other active organization is available for this identity"
+)
 INVITATION_ACCESS_DENIED_ERROR_CODE = "invitation_access_denied"
 INVITATION_ACCESS_DENIED_ERROR_MESSAGE = "You do not have permission to invite users"
 INVITATION_CONFLICT_ERROR_CODE = "invitation_conflict"
@@ -648,6 +658,10 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return invalid_activation_error()
     if isinstance(exc, InvalidSessionError):
         return session_invalid_error()
+    if isinstance(exc, InvalidOrganizationSelectionError):
+        return organization_selection_invalid_error()
+    if isinstance(exc, OrganizationSwitchUnavailableError):
+        return organization_switch_unavailable_error()
     if isinstance(exc, AuditAccessDeniedError):
         return authorization_access_denied_error()
     if isinstance(exc, AuditEventNotFoundError):
@@ -852,6 +866,22 @@ def session_invalid_error() -> ApiError:
         status_code=status.HTTP_401_UNAUTHORIZED,
         code=SESSION_INVALID_ERROR_CODE,
         message=SESSION_INVALID_ERROR_MESSAGE,
+    )
+
+
+def organization_selection_invalid_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=ORGANIZATION_SELECTION_INVALID_ERROR_CODE,
+        message=ORGANIZATION_SELECTION_INVALID_ERROR_MESSAGE,
+    )
+
+
+def organization_switch_unavailable_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ORGANIZATION_SWITCH_UNAVAILABLE_ERROR_CODE,
+        message=ORGANIZATION_SWITCH_UNAVAILABLE_ERROR_MESSAGE,
     )
 
 

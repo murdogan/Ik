@@ -36,6 +36,7 @@ from app.schemas.user_administration import (
 )
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.authorization_service import AssignedRole, load_assigned_roles
+from app.services.identity_projection_service import sync_existing_membership_projection
 
 _authorization_policy = DenyByDefaultPolicy()
 
@@ -199,6 +200,7 @@ class UserAdministrationService:
                 user.updated_at = datetime.now(UTC)
                 await session.flush()
                 await session.refresh(user)
+                await sync_existing_membership_projection(session, user)
                 roles_by_user = await load_assigned_roles(
                     session,
                     tenant_id=tenant_id,

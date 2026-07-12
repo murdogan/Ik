@@ -24,8 +24,8 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 `backend/tests/contracts/f1e_openapi_contract.json` snapshot'ında dondurur.
 F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: executable contract testi
 F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
-canlı OpenAPI'den doğrular. Böylece güncel registry 39 generated operation ve runtime
-`/openapi.json` ile 40 documented endpoint'tir.
+canlı OpenAPI'den doğrular. P3C iki organization-selection operation'ı ekler; güncel registry 41
+generated operation ve runtime `/openapi.json` ile 42 documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -43,6 +43,8 @@ canlı OpenAPI'den doğrular. Böylece güncel registry 39 generated operation v
 | PATCH | `/api/v1/tenant/settings` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; `{data,meta}`; extra key reddi ve lifecycle read-only guard |
 | GET | `/api/v1/tenant/features` | Uygulandı ve doğrulandı | `x-required-principal: tenant`; selector kabul etmeden injected current tenant effective flag catalogu |
 | POST | `/api/v1/auth/login` | F2B uygulandı | Tenant-aware doğrulama, kısa ömürlü bearer ve HttpOnly cookie üzerinden hashli server session family |
+| POST | `/api/v1/auth/select-organization` | P3C uygulandı | Hashli, süreli, tek kullanımlık seçim credential'ı ve opaque choice ile membership/tenant-bound session |
+| POST | `/api/v1/auth/organization-selection` | P3C uygulandı | Aktif membership-bound session'dan server-derived alternatifler; kaynak family revoke; tenant selector kabul etmez |
 | POST | `/api/v1/auth/refresh` | F2B uygulandı | Tek kullanımlık rotation; reuse bütün session family'yi revoke eder |
 | POST | `/api/v1/auth/logout` | F2B uygulandı | Session family revoke ve refresh cookie temizleme |
 | GET | `/api/v1/me` | F2D uygulandı | Bearer + aktif/versioned session doğrulamasıyla current user/tenant/role/permission bilgisi |

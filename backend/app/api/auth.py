@@ -43,6 +43,8 @@ from app.schemas.auth import (
     MeRead,
     OrganizationChoiceRead,
     OrganizationSelectionRead,
+    OrganizationSelectionRequest,
+    OrganizationSwitchRequest,
 )
 from app.schemas.authorization import RoleSummaryRead
 from app.services.auth_session_service import AuthSessionService, InvalidSessionError, SessionGrant
@@ -147,6 +149,109 @@ async def login(
             access_token=result.access_token,
             expires_in=result.expires_in,
             user=_auth_user_read(result.user),
+        ),
+        request_context,
+    )
+
+
+@router.post(
+    "/select-organization",
+    response_model=DataEnvelope[AuthenticatedLoginRead],
+    summary="Select an organization after identity verification",
+    description=(
+        "Consumes a short-lived, one-use organization-selection credential and opaque "
+        "choice, then starts a session bound to the selected active membership and tenant."
+    ),
+    responses=with_correlation_response_headers({200: {}, 400: {}}),
+)
+async def select_organization(
+    payload: OrganizationSelectionRequest,
+    response: Response,
+    request: Request,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    service: Annotated[AuthenticationService, Depends(get_authentication_service)],
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+    settings: Annotated[Settings, Depends(get_application_settings)],
+) -> DataEnvelope[AuthenticatedLoginRead]:
+    _require_trusted_browser_origin(request, settings)
+    result = await service.select_organization(
+        raw_token=payload.selection_transaction.get_secret_value(),
+        selection_key=payload.selection_key,
+        audit_context=AuditContext.from_request_context(request_context),
+    )
+    _set_refresh_cookie(response, result, auth_runtime)
+    _prevent_credential_caching(response)
+    return data_envelope(
+        AuthenticatedLoginRead(
+            status="authenticated",
+            access_token=result.access_token,
+            expires_in=result.expires_in,
+            user=_auth_user_read(result.user),
+        ),
+        request_context,
+    )
+
+
+@router.post(
+    "/organization-selection",
+    response_model=DataEnvelope[OrganizationSelectionRead],
+    summary="Prepare a controlled organization switch",
+    description=(
+        "Derives the global identity from the validated membership-bound session, returns "
+        "opaque choices for its other active memberships, and revokes the previous tenant "
+        "session before the switch continues. No caller tenant context is accepted."
+    ),
+    responses=with_correlation_response_headers({200: {}, 409: {}}),
+)
+async def prepare_organization_switch(
+    response: Response,
+    request: Request,
+    authenticated: Annotated[
+        AuthenticatedSession,
+        Depends(require_authenticated_session),
+    ],
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    authentication: Annotated[
+        AuthenticationService,
+        Depends(get_authentication_service),
+    ],
+    sessions: Annotated[AuthSessionService, Depends(get_auth_session_service)],
+    auth_runtime: Annotated[AuthRuntime, Depends(get_auth_runtime)],
+    settings: Annotated[Settings, Depends(get_application_settings)],
+    _payload: OrganizationSwitchRequest | None = None,
+) -> DataEnvelope[OrganizationSelectionRead]:
+    _require_trusted_browser_origin(request, settings)
+    principal = authenticated.principal
+    result = await authentication.prepare_organization_switch(
+        tenant_id=principal.tenant_id,
+        membership_id=principal.membership_id,
+        user_id=principal.user_id,
+    )
+    revoked = await sessions.revoke_for_organization_switch(
+        principal,
+        audit_context=AuditContext.from_request_context(request_context),
+    )
+    if not revoked:
+        raise InvalidSessionError()
+    await sessions.revoke(
+        request.cookies.get(auth_runtime.refresh_cookie.name),
+        audit_context=AuditContext.from_request_context(request_context),
+        revocation_reason="organization_switch",
+    )
+    _clear_refresh_cookie(response, auth_runtime)
+    _prevent_credential_caching(response)
+    return data_envelope(
+        OrganizationSelectionRead(
+            status="organization_selection_required",
+            selection_transaction=result.selection_transaction,
+            expires_in=result.expires_in,
+            organizations=[
+                OrganizationChoiceRead(
+                    selection_key=choice.selection_key,
+                    display_name=choice.display_name,
+                )
+                for choice in result.organizations
+            ],
         ),
         request_context,
     )

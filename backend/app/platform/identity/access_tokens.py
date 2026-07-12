@@ -20,6 +20,7 @@ class InvalidAccessTokenError(ValueError):
 class AccessPrincipal:
     user_id: UUID
     tenant_id: UUID
+    membership_id: UUID
     tenant_slug: str
     session_family_id: UUID
     permission_version: int = 1
@@ -53,6 +54,7 @@ class AccessTokenCodec:
             "typ": "access",
             "sub": str(principal.user_id),
             "tenant_id": str(principal.tenant_id),
+            "membership_id": str(principal.membership_id),
             "tenant_slug": principal.tenant_slug,
             "pver": principal.permission_version,
             "jti": str(uuid4()),
@@ -84,6 +86,7 @@ class AccessTokenCodec:
                         "typ",
                         "sub",
                         "tenant_id",
+                        "membership_id",
                         "tenant_slug",
                         "pver",
                         "sid",
@@ -97,6 +100,7 @@ class AccessTokenCodec:
                 raise InvalidAccessTokenError("Access token is invalid")
             user_id = _canonical_uuid(claims["sub"])
             tenant_id = _canonical_uuid(claims["tenant_id"])
+            membership_id = _canonical_uuid(claims["membership_id"])
             tenant_slug = claims["tenant_slug"]
             if not isinstance(tenant_slug, str) or not tenant_slug.strip():
                 raise InvalidAccessTokenError("Access token is invalid")
@@ -113,6 +117,7 @@ class AccessTokenCodec:
         return AccessPrincipal(
             user_id=user_id,
             tenant_id=tenant_id,
+            membership_id=membership_id,
             tenant_slug=tenant_slug,
             session_family_id=session_family_id,
             permission_version=permission_version,

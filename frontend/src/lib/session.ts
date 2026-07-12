@@ -1,6 +1,7 @@
 import type {
   AuthUser,
   MeResponseData,
+  OrganizationSelectionRequiredData,
   RefreshResponseData,
   SessionGrantData,
 } from "./auth-contracts";
@@ -16,11 +17,16 @@ import {
 const REFRESH_PATH = "/api/v1/auth/refresh" as const;
 const LOGOUT_PATH = "/api/v1/auth/logout" as const;
 const ME_PATH = "/api/v1/me" as const;
+const ORGANIZATION_SELECTION_PATH = "/api/v1/auth/organization-selection" as const;
 
 let accessToken: string | null = null;
 let sessionGeneration = 0;
 let refreshInFlight: Promise<RefreshResponseData> | null = null;
 let restoreInFlight: Promise<AuthUser> | null = null;
+let organizationSelectionInFlight: Promise<OrganizationSelectionRequiredData> | null =
+  null;
+let sessionTransitionInProgress = false;
+let sessionSuspendedForOrganizationSelection = false;
 const sessionChangeListeners = new Set<(change: SessionChange) => void>();
 
 export type SessionChange =
@@ -62,6 +68,7 @@ export function subscribeToSessionChanges(
 }
 
 export function establishSession(data: SessionGrantData): void {
+  sessionSuspendedForOrganizationSelection = false;
   sessionGeneration += 1;
   applySession(data);
   restoreInFlight = null;
@@ -86,6 +93,9 @@ async function performRefresh(generation: number): Promise<RefreshResponseData> 
 }
 
 export function refreshSession(): Promise<RefreshResponseData> {
+  if (sessionTransitionInProgress || sessionSuspendedForOrganizationSelection) {
+    return Promise.reject(new SessionSupersededError());
+  }
   if (refreshInFlight) {
     return refreshInFlight;
   }
@@ -119,6 +129,9 @@ async function requestAuthenticated<TResponse>(
   options: AuthenticatedRequestOptions,
   requester: AuthenticatedRequester<TResponse>,
 ): Promise<TResponse> {
+  if (sessionTransitionInProgress || sessionSuspendedForOrganizationSelection) {
+    throw new SessionSupersededError();
+  }
   const requestGeneration = sessionGeneration;
   if (!accessToken) {
     await refreshSession();
@@ -227,6 +240,77 @@ export function restoreSession(): Promise<AuthUser> {
     () => {
       if (restoreInFlight === pending) {
         restoreInFlight = null;
+      }
+    },
+  );
+  return pending;
+}
+
+async function performOrganizationSelectionRequest(): Promise<OrganizationSelectionRequiredData> {
+  if (!accessToken) {
+    await refreshSession();
+  }
+
+  const pendingRefresh = refreshInFlight;
+  if (pendingRefresh) {
+    await pendingRefresh;
+  }
+
+  const requestGeneration = sessionGeneration;
+  const selectionAccessToken = accessToken;
+  if (!selectionAccessToken) {
+    throw new SessionSupersededError();
+  }
+
+  sessionTransitionInProgress = true;
+  try {
+    const data = await requestApi<OrganizationSelectionRequiredData>(
+      ORGANIZATION_SELECTION_PATH,
+      {
+        method: "POST",
+        accessToken: selectionAccessToken,
+      },
+    );
+    if (requestGeneration !== sessionGeneration) {
+      throw new SessionSupersededError();
+    }
+
+    // The server has revoked the previous tenant family and cleared its cookie. Incrementing the
+    // client generation prevents any old-tenant response from being applied while the selection
+    // credential remains only in the root in-memory provider.
+    invalidateSession({ notify: false });
+    sessionSuspendedForOrganizationSelection = true;
+    return data;
+  } catch (cause) {
+    if (
+      cause instanceof ApiClientError &&
+      cause.status === 401 &&
+      requestGeneration === sessionGeneration
+    ) {
+      invalidateSession();
+    }
+    throw cause;
+  } finally {
+    sessionTransitionInProgress = false;
+  }
+}
+
+export function requestOrganizationSelection(): Promise<OrganizationSelectionRequiredData> {
+  if (organizationSelectionInFlight) {
+    return organizationSelectionInFlight;
+  }
+
+  const pending = performOrganizationSelectionRequest();
+  organizationSelectionInFlight = pending;
+  pending.then(
+    () => {
+      if (organizationSelectionInFlight === pending) {
+        organizationSelectionInFlight = null;
+      }
+    },
+    () => {
+      if (organizationSelectionInFlight === pending) {
+        organizationSelectionInFlight = null;
       }
     },
   );

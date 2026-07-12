@@ -641,6 +641,8 @@ the expected local commits ahead of the review-branch remote after the final com
 | PATCH | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact allowlist update and suspended/offboarding read-only guard |
 | GET | `/api/v1/tenant/features` | Implemented and verified | Current-principal-only ordered effective flags; no tenant selector or mutation |
 | POST | `/api/v1/auth/login` | Implemented for F2B | Tenant-aware credential verification, short-lived bearer response, and hashed server-side refresh family with HttpOnly cookie |
+| POST | `/api/v1/auth/select-organization` | Implemented for P3C | One-use opaque selection consumption and membership/tenant-bound access plus refresh session issuance |
+| POST | `/api/v1/auth/organization-selection` | Implemented for P3C | Authenticated identity-derived alternatives, source-family revocation, and no caller tenant selector |
 | POST | `/api/v1/auth/refresh` | Implemented for F2B | Single-use rotation, retained token history, reuse-triggered family revoke, and rotated HttpOnly cookie |
 | POST | `/api/v1/auth/logout` | Implemented for F2B | Idempotent family revoke and exact-policy refresh-cookie deletion |
 | GET | `/api/v1/me` | Implemented for F2D | Bearer plus active server-session/version validation; current user, tenant, roles and permissions derived without caller selectors |
@@ -669,8 +671,9 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
 
 F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
-list/detail and the separate platform audit list. The current F2F surface is therefore 39 generated
-operations and 40 documented runtime endpoints including `/openapi.json`. The executable smoke
+list/detail and the separate platform audit list. P3C adds two organization-selection operations,
+bringing the current surface to 41 generated operations and 42 documented runtime endpoints
+including `/openapi.json`. The executable smoke
 covers activation/login/session lifecycle, tenant-admin user/role/audit behavior and contract-table
 drift without printing credential material.
 

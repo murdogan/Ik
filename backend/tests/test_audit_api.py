@@ -629,6 +629,7 @@ async def test_f2f_role_scope_endpoint_security_matrix() -> None:
         super_admin_principal = AccessPrincipal(
             user_id=SUPER_ADMIN_ID,
             tenant_id=PLATFORM_IDENTITY_TENANT_ID,
+            membership_id=SUPER_ADMIN_ID,
             tenant_slug="platform-identity",
             session_family_id=SUPER_ADMIN_SESSION_ID,
         )
@@ -636,6 +637,7 @@ async def test_f2f_role_scope_endpoint_security_matrix() -> None:
         super_admin_user = AuthenticatedUser(
             id=SUPER_ADMIN_ID,
             tenant_id=PLATFORM_IDENTITY_TENANT_ID,
+            membership_id=SUPER_ADMIN_ID,
             email="super-admin@platform.test",
             full_name="Platform Super Admin",
             tenant_slug="platform-identity",

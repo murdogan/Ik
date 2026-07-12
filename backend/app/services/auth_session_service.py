@@ -55,6 +55,7 @@ class InvalidSessionError(ApplicationError):
 class AuthenticatedUser:
     id: UUID
     tenant_id: UUID
+    membership_id: UUID
     email: str
     full_name: str
     tenant_slug: str
@@ -78,6 +79,7 @@ class SessionGrant:
 @dataclass(frozen=True, slots=True)
 class _PersistedSessionGrant:
     family_id: UUID
+    membership_id: UUID
     refresh_token: str
     refresh_expires_at: datetime
     user: AuthenticatedUser
@@ -105,7 +107,8 @@ class AuthSessionService:
         tenant_id: UUID,
         tenant_slug: str,
         user_id: UUID,
-        membership_id: UUID | None = None,
+        membership_id: UUID,
+        authentication_method: str = "local",
         audit_context: AuditContext | None = None,
     ) -> SessionGrant:
         context = audit_context or AuditContext.internal()
@@ -119,34 +122,34 @@ class AuthSessionService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> AuthenticatedUser:
-                statement = (
-                    select(User, Tenant)
-                    .join(Tenant, Tenant.id == User.tenant_id)
-                    .where(
-                        User.tenant_id == tenant_id,
-                        User.id == user_id,
-                        Tenant.id == tenant_id,
-                    )
-                )
-                if membership_id is not None:
-                    statement = statement.join(
-                        TenantMembership,
-                        and_(
-                            TenantMembership.tenant_id == User.tenant_id,
-                            TenantMembership.legacy_user_id == User.id,
-                        ),
-                    ).where(
-                        TenantMembership.id == membership_id,
-                        TenantMembership.status == MembershipStatus.ACTIVE.value,
-                    )
                 row = (
-                    await session.execute(statement.with_for_update(of=User))
+                    await session.execute(
+                        select(User, Tenant, TenantMembership)
+                        .join(Tenant, Tenant.id == User.tenant_id)
+                        .join(
+                            TenantMembership,
+                            and_(
+                                TenantMembership.tenant_id == User.tenant_id,
+                                TenantMembership.legacy_user_id == User.id,
+                            ),
+                        )
+                        .where(
+                            User.tenant_id == tenant_id,
+                            User.id == user_id,
+                            Tenant.id == tenant_id,
+                            TenantMembership.tenant_id == tenant_id,
+                            TenantMembership.id == membership_id,
+                        )
+                        .with_for_update(of=User)
+                    )
                 ).one_or_none()
                 if row is None:
                     raise InvalidSessionError()
-                user, tenant = row
+                user, tenant, membership = row
                 if (
                     user.status != UserStatus.ACTIVE.value
+                    or membership.status != MembershipStatus.ACTIVE.value
+                    or membership.permission_version != user.permission_version
                     or tenant.status not in _SESSION_TENANT_STATUSES
                     or tenant.slug != tenant_slug
                 ):
@@ -158,6 +161,7 @@ class AuthSessionService:
                             id=family_id,
                             tenant_id=tenant_id,
                             user_id=user_id,
+                            membership_id=membership_id,
                             expires_at=refresh_expires_at,
                         ),
                         RefreshSessionToken(
@@ -189,7 +193,7 @@ class AuthSessionService:
                         result=AuditResult.SUCCESS,
                         context=context,
                         session_id=family_id,
-                        metadata={"authentication_method": "local"},
+                        metadata={"authentication_method": authentication_method},
                         data_classification=AuditDataClassification.SECURITY_METADATA,
                         visibility_class=AuditVisibilityClass.TENANT_SECURITY,
                     )
@@ -202,16 +206,17 @@ class AuthSessionService:
                         event_type=AuditEventType.SESSION_STARTED,
                         action="start",
                         context=context,
-                        metadata={"authentication_method": "local"},
+                        metadata={"authentication_method": authentication_method},
                     )
                 )
-                return _authenticated_user(user, tenant, authorization)
+                return _authenticated_user(user, tenant, membership, authorization)
 
             user = await unit_of_work.execute(operation)
 
         return self._grant(
             _PersistedSessionGrant(
                 family_id=family_id,
+                membership_id=membership_id,
                 refresh_token=refresh.raw_token,
                 refresh_expires_at=refresh_expires_at,
                 user=user,
@@ -238,7 +243,13 @@ class AuthSessionService:
             async def operation() -> _PersistedSessionGrant | None:
                 row = (
                     await session.execute(
-                        select(RefreshSessionToken, RefreshSessionFamily, User, Tenant)
+                        select(
+                            RefreshSessionToken,
+                            RefreshSessionFamily,
+                            User,
+                            Tenant,
+                            TenantMembership,
+                        )
                         .join(
                             RefreshSessionFamily,
                             and_(
@@ -254,18 +265,32 @@ class AuthSessionService:
                             ),
                         )
                         .join(Tenant, Tenant.id == RefreshSessionFamily.tenant_id)
+                        .join(
+                            TenantMembership,
+                            and_(
+                                TenantMembership.tenant_id == RefreshSessionFamily.tenant_id,
+                                TenantMembership.id == RefreshSessionFamily.membership_id,
+                                TenantMembership.legacy_user_id == RefreshSessionFamily.user_id,
+                            ),
+                        )
                         .where(
                             RefreshSessionToken.tenant_id == presented.tenant_id,
                             RefreshSessionToken.id == presented.token_id,
                             RefreshSessionToken.token_hash == presented.token_hash,
                         )
-                        .with_for_update(of=(RefreshSessionToken, RefreshSessionFamily, User))
+                        .with_for_update(
+                            of=(
+                                RefreshSessionToken,
+                                RefreshSessionFamily,
+                                User,
+                            )
+                        )
                     )
                 ).one_or_none()
                 if row is None:
                     return None
 
-                token, family, user, tenant = row
+                token, family, user, tenant, membership = row
                 now = datetime.now(UTC)
                 if token.consumed_at is not None:
                     if family.revoked_at is None:
@@ -291,6 +316,8 @@ class AuthSessionService:
                     family.revoked_at is not None
                     or _as_utc(family.expires_at) <= now
                     or user.status != UserStatus.ACTIVE.value
+                    or membership.status != MembershipStatus.ACTIVE.value
+                    or membership.permission_version != user.permission_version
                     or tenant.status not in _SESSION_TENANT_STATUSES
                 ):
                     if family.revoked_at is None:
@@ -334,9 +361,10 @@ class AuthSessionService:
                 )
                 return _PersistedSessionGrant(
                     family_id=family.id,
+                    membership_id=family.membership_id,
                     refresh_token=replacement.raw_token,
                     refresh_expires_at=_as_utc(family.expires_at),
-                    user=_authenticated_user(user, tenant, authorization),
+                    user=_authenticated_user(user, tenant, membership, authorization),
                 )
 
             persisted = await unit_of_work.execute(operation)
@@ -352,7 +380,7 @@ class AuthSessionService:
             async with session.begin():
                 row = (
                     await session.execute(
-                        select(RefreshSessionFamily, User, Tenant)
+                        select(RefreshSessionFamily, User, Tenant, TenantMembership)
                         .join(
                             User,
                             and_(
@@ -361,25 +389,36 @@ class AuthSessionService:
                             ),
                         )
                         .join(Tenant, Tenant.id == RefreshSessionFamily.tenant_id)
+                        .join(
+                            TenantMembership,
+                            and_(
+                                TenantMembership.tenant_id == RefreshSessionFamily.tenant_id,
+                                TenantMembership.id == RefreshSessionFamily.membership_id,
+                                TenantMembership.legacy_user_id == RefreshSessionFamily.user_id,
+                            ),
+                        )
                         .where(
                             RefreshSessionFamily.tenant_id == principal.tenant_id,
                             RefreshSessionFamily.id == family_id,
                             RefreshSessionFamily.user_id == principal.user_id,
+                            RefreshSessionFamily.membership_id == principal.membership_id,
                         )
                         .with_for_update(of=(RefreshSessionFamily, User))
                     )
                 ).one_or_none()
                 if row is None:
                     raise InvalidSessionError()
-                family, user, tenant = row
+                family, user, tenant, membership = row
                 now = datetime.now(UTC)
                 if (
                     family.revoked_at is not None
                     or _as_utc(family.expires_at) <= now
                     or user.status != UserStatus.ACTIVE.value
+                    or membership.status != MembershipStatus.ACTIVE.value
                     or tenant.status not in _SESSION_TENANT_STATUSES
                     or tenant.slug != principal.tenant_slug
                     or user.permission_version != principal.permission_version
+                    or membership.permission_version != principal.permission_version
                 ):
                     raise InvalidSessionError()
                 authorization = await load_authorization_snapshot(
@@ -387,7 +426,7 @@ class AuthSessionService:
                     tenant_id=user.tenant_id,
                     user_id=user.id,
                 )
-        return _authenticated_user(user, tenant, authorization)
+        return _authenticated_user(user, tenant, membership, authorization)
 
     async def revoke(
         self,
@@ -395,6 +434,7 @@ class AuthSessionService:
         *,
         principal: AccessPrincipal | None = None,
         audit_context: AuditContext | None = None,
+        revocation_reason: str = "logout",
     ) -> None:
         context = audit_context or AuditContext.internal()
         if raw_token is not None:
@@ -403,14 +443,38 @@ class AuthSessionService:
             except InvalidRefreshTokenFormatError:
                 presented = None
             if presented is not None:
-                await self._revoke_presented_token(presented, context)
+                await self._revoke_presented_token(
+                    presented,
+                    context,
+                    revocation_reason=revocation_reason,
+                )
         if principal is not None:
-            await self._revoke_principal_family(principal, context)
+            await self._revoke_principal_family(
+                principal,
+                context,
+                revocation_reason=revocation_reason,
+            )
+
+    async def revoke_for_organization_switch(
+        self,
+        principal: AccessPrincipal,
+        *,
+        audit_context: AuditContext | None = None,
+    ) -> bool:
+        """Let exactly one switch request consume an active source session family."""
+
+        return await self._revoke_principal_family(
+            principal,
+            audit_context or AuditContext.internal(),
+            revocation_reason="organization_switch",
+        )
 
     async def _revoke_presented_token(
         self,
         presented: RefreshTokenMaterial,
         context: AuditContext,
+        *,
+        revocation_reason: str,
     ) -> None:
         async with self._session_factory() as session:
             configure_tenant_database_access(session, presented.tenant_id)
@@ -443,7 +507,7 @@ class AuthSessionService:
                             event_type=AuditEventType.SESSION_REVOKED,
                             action="revoke",
                             context=context,
-                            metadata={"revocation_reason": "logout"},
+                            metadata={"revocation_reason": revocation_reason},
                         )
                     )
 
@@ -453,18 +517,21 @@ class AuthSessionService:
         self,
         principal: AccessPrincipal,
         context: AuditContext,
-    ) -> None:
+        *,
+        revocation_reason: str,
+    ) -> bool:
         async with self._session_factory() as session:
             configure_tenant_database_access(session, principal.tenant_id)
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
-            async def operation() -> None:
+            async def operation() -> bool:
                 family = await session.scalar(
                     select(RefreshSessionFamily)
                     .where(
                         RefreshSessionFamily.tenant_id == principal.tenant_id,
                         RefreshSessionFamily.id == principal.session_family_id,
                         RefreshSessionFamily.user_id == principal.user_id,
+                        RefreshSessionFamily.membership_id == principal.membership_id,
                     )
                     .with_for_update()
                 )
@@ -479,19 +546,22 @@ class AuthSessionService:
                             action="revoke",
                             context=context,
                             metadata={
-                                "revocation_reason": "logout",
+                                "revocation_reason": revocation_reason,
                                 "source": "access_session",
                             },
                         )
                     )
+                    return True
+                return False
 
-            await unit_of_work.execute(operation)
+            return await unit_of_work.execute(operation)
 
     def _grant(self, persisted: _PersistedSessionGrant) -> SessionGrant:
         issued = self._access_tokens.issue(
             AccessPrincipal(
                 user_id=persisted.user.id,
                 tenant_id=persisted.user.tenant_id,
+                membership_id=persisted.membership_id,
                 tenant_slug=persisted.user.tenant_slug,
                 session_family_id=persisted.family_id,
                 permission_version=persisted.user.permission_version,
@@ -510,11 +580,13 @@ class AuthSessionService:
 def _authenticated_user(
     user: User,
     tenant: Tenant,
+    membership: TenantMembership,
     authorization: AuthorizationSnapshot,
 ) -> AuthenticatedUser:
     return AuthenticatedUser(
         id=user.id,
         tenant_id=user.tenant_id,
+        membership_id=membership.id,
         email=user.email,
         full_name=user.full_name,
         tenant_slug=tenant.slug,

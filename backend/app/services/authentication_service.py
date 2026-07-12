@@ -40,9 +40,11 @@ from app.platform.identity import (
     AccessTokenCodec,
     ActivationTokenMaterial,
     InvalidActivationTokenFormatError,
+    InvalidOrganizationSelectionTokenFormatError,
     PasswordManager,
     issue_organization_selection_token,
     parse_activation_token,
+    parse_organization_selection_token,
 )
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.auth_session_service import (
@@ -65,6 +67,14 @@ class InvalidCredentialsError(ApplicationError):
 
 
 class InvalidActivationError(ApplicationError):
+    pass
+
+
+class InvalidOrganizationSelectionError(ApplicationError):
+    pass
+
+
+class OrganizationSwitchUnavailableError(ApplicationError):
     pass
 
 
@@ -200,6 +210,115 @@ class AuthenticationService:
 
             await unit_of_work.execute(operation)
 
+    async def select_organization(
+        self,
+        *,
+        raw_token: str,
+        selection_key: UUID,
+        audit_context: AuditContext | None = None,
+    ) -> SessionGrant:
+        context = audit_context or AuditContext.internal()
+        try:
+            token = parse_organization_selection_token(raw_token)
+        except InvalidOrganizationSelectionTokenFormatError as exc:
+            raise InvalidOrganizationSelectionError() from exc
+
+        membership = await self._consume_organization_selection(
+            transaction_id=token.transaction_id,
+            token_hash=token.token_hash,
+            selection_key=selection_key,
+        )
+        if membership is None:
+            raise InvalidOrganizationSelectionError()
+        try:
+            return await self._sessions.start_session(
+                tenant_id=membership.tenant_id,
+                tenant_slug=membership.tenant_slug,
+                user_id=membership.legacy_user_id,
+                membership_id=membership.membership_id,
+                authentication_method="organization_selection",
+                audit_context=context,
+            )
+        except InvalidSessionError as exc:
+            raise InvalidOrganizationSelectionError() from exc
+
+    async def prepare_organization_switch(
+        self,
+        *,
+        tenant_id: UUID,
+        membership_id: UUID,
+        user_id: UUID,
+    ) -> OrganizationSelectionRequired:
+        async with self._session_factory() as session:
+            configure_authentication_database_access(session)
+            unit_of_work = SqlAlchemyUnitOfWork(session)
+
+            async def operation() -> OrganizationSelectionRequired:
+                current_identity_id = await session.scalar(
+                    select(TenantMembership.identity_id).where(
+                        TenantMembership.tenant_id == tenant_id,
+                        TenantMembership.id == membership_id,
+                        TenantMembership.legacy_user_id == user_id,
+                        TenantMembership.status == MembershipStatus.ACTIVE.value,
+                    )
+                )
+                if current_identity_id is None:
+                    raise OrganizationSwitchUnavailableError()
+
+                rows = list(
+                    (
+                        await session.execute(
+                            select(
+                                TenantMembership.id,
+                                TenantMembership.tenant_id,
+                                Tenant.slug,
+                                Tenant.name,
+                                TenantMembership.legacy_user_id,
+                            )
+                            .join(
+                                Identity,
+                                Identity.id == TenantMembership.identity_id,
+                            )
+                            .join(Tenant, Tenant.id == TenantMembership.tenant_id)
+                            .join(
+                                User,
+                                and_(
+                                    User.tenant_id == TenantMembership.tenant_id,
+                                    User.id == TenantMembership.legacy_user_id,
+                                ),
+                            )
+                            .where(
+                                TenantMembership.identity_id == current_identity_id,
+                                TenantMembership.id != membership_id,
+                                Identity.status == IdentityStatus.ACTIVE.value,
+                                TenantMembership.status == MembershipStatus.ACTIVE.value,
+                                Tenant.status.in_(_LOGIN_TENANT_STATUSES),
+                                User.status == UserStatus.ACTIVE.value,
+                            )
+                            .order_by(Tenant.name, Tenant.id)
+                        )
+                    ).all()
+                )
+                memberships = tuple(
+                    EligibleMembership(
+                        membership_id=row.id,
+                        tenant_id=row.tenant_id,
+                        tenant_slug=row.slug,
+                        tenant_name=row.name,
+                        legacy_user_id=row.legacy_user_id,
+                    )
+                    for row in rows
+                )
+                if not memberships:
+                    raise OrganizationSwitchUnavailableError()
+                return await self._persist_selection_transaction(
+                    session,
+                    identity_id=current_identity_id,
+                    memberships=memberships,
+                )
+
+            return await unit_of_work.execute(operation)
+
     async def activate(
         self,
         *,
@@ -304,6 +423,7 @@ class AuthenticationService:
                 return AuthenticatedUser(
                     id=user.id,
                     tenant_id=user.tenant_id,
+                    membership_id=user.id,
                     email=user.email,
                     full_name=user.full_name,
                     tenant_slug=tenant.slug,
@@ -434,47 +554,144 @@ class AuthenticationService:
                 if len(memberships) == 1:
                     return memberships[0]
 
-                token = issue_organization_selection_token()
-                now = datetime.now(UTC)
-                expires_at = now + self._organization_selection_ttl
-                choices = tuple(
-                    OrganizationChoice(
-                        selection_key=uuid4(),
-                        display_name=membership.tenant_name,
-                    )
-                    for membership in memberships
-                )
-                session.add(
-                    OrganizationSelectionTransaction(
-                        id=token.transaction_id,
-                        identity_id=identity_id,
-                        token_hash=token.token_hash,
-                        expires_at=expires_at,
-                    )
-                )
-                # Persist the transaction before its opaque choices. The models deliberately
-                # expose no navigation relationship, so the Unit of Work has no mapper-level
-                # dependency edge from which to infer this FK ordering.
-                await session.flush()
-                session.add_all(
-                    OrganizationSelectionChoice(
-                        selection_key=choice.selection_key,
-                        transaction_id=token.transaction_id,
-                        tenant_id=membership.tenant_id,
-                    )
-                    for choice, membership in zip(choices, memberships, strict=True)
-                )
-                await session.flush()
-                return OrganizationSelectionRequired(
-                    selection_transaction=token.raw_token,
-                    expires_in=max(
-                        1,
-                        int((expires_at - datetime.now(UTC)).total_seconds()),
-                    ),
-                    organizations=choices,
+                return await self._persist_selection_transaction(
+                    session,
+                    identity_id=identity_id,
+                    memberships=memberships,
                 )
 
             return await unit_of_work.execute(operation)
+
+    async def _consume_organization_selection(
+        self,
+        *,
+        transaction_id: UUID,
+        token_hash: str,
+        selection_key: UUID,
+    ) -> EligibleMembership | None:
+        async with self._session_factory() as session:
+            configure_authentication_database_access(session)
+            unit_of_work = SqlAlchemyUnitOfWork(session)
+
+            async def operation() -> EligibleMembership | None:
+                row = (
+                    await session.execute(
+                        select(
+                            OrganizationSelectionTransaction,
+                            TenantMembership.id,
+                            TenantMembership.tenant_id,
+                            TenantMembership.legacy_user_id,
+                            Tenant.slug,
+                            Tenant.name,
+                        )
+                        .join(
+                            OrganizationSelectionChoice,
+                            OrganizationSelectionChoice.transaction_id
+                            == OrganizationSelectionTransaction.id,
+                        )
+                        .join(
+                            TenantMembership,
+                            and_(
+                                TenantMembership.identity_id
+                                == OrganizationSelectionTransaction.identity_id,
+                                TenantMembership.tenant_id == OrganizationSelectionChoice.tenant_id,
+                            ),
+                        )
+                        .join(
+                            Identity,
+                            Identity.id == OrganizationSelectionTransaction.identity_id,
+                        )
+                        .join(Tenant, Tenant.id == TenantMembership.tenant_id)
+                        .join(
+                            User,
+                            and_(
+                                User.tenant_id == TenantMembership.tenant_id,
+                                User.id == TenantMembership.legacy_user_id,
+                            ),
+                        )
+                        .where(
+                            OrganizationSelectionTransaction.id == transaction_id,
+                            OrganizationSelectionTransaction.token_hash == token_hash,
+                            OrganizationSelectionTransaction.consumed_at.is_(None),
+                            OrganizationSelectionChoice.selection_key == selection_key,
+                            Identity.status == IdentityStatus.ACTIVE.value,
+                            TenantMembership.status == MembershipStatus.ACTIVE.value,
+                            Tenant.status.in_(_LOGIN_TENANT_STATUSES),
+                            User.status == UserStatus.ACTIVE.value,
+                        )
+                        .with_for_update(
+                            of=OrganizationSelectionTransaction
+                        )
+                    )
+                ).one_or_none()
+                if row is None:
+                    return None
+                (
+                    transaction,
+                    membership_id,
+                    tenant_id,
+                    legacy_user_id,
+                    tenant_slug,
+                    tenant_name,
+                ) = row
+                now = datetime.now(UTC)
+                if _as_utc(transaction.expires_at) <= now:
+                    return None
+                transaction.consumed_at = now
+                await session.flush()
+                return EligibleMembership(
+                    membership_id=membership_id,
+                    tenant_id=tenant_id,
+                    tenant_slug=tenant_slug,
+                    tenant_name=tenant_name,
+                    legacy_user_id=legacy_user_id,
+                )
+
+            return await unit_of_work.execute(operation)
+
+    async def _persist_selection_transaction(
+        self,
+        session: AsyncSession,
+        *,
+        identity_id: UUID,
+        memberships: tuple[EligibleMembership, ...],
+    ) -> OrganizationSelectionRequired:
+        token = issue_organization_selection_token()
+        now = datetime.now(UTC)
+        expires_at = now + self._organization_selection_ttl
+        choices = tuple(
+            OrganizationChoice(
+                selection_key=uuid4(),
+                display_name=membership.tenant_name,
+            )
+            for membership in memberships
+        )
+        session.add(
+            OrganizationSelectionTransaction(
+                id=token.transaction_id,
+                identity_id=identity_id,
+                token_hash=token.token_hash,
+                expires_at=expires_at,
+            )
+        )
+        await session.flush()
+        session.add_all(
+            OrganizationSelectionChoice(
+                selection_key=choice.selection_key,
+                transaction_id=token.transaction_id,
+                tenant_id=membership.tenant_id,
+            )
+            for choice, membership in zip(choices, memberships, strict=True)
+        )
+        await session.flush()
+        return OrganizationSelectionRequired(
+            selection_transaction=token.raw_token,
+            expires_in=max(
+                1,
+                int((expires_at - datetime.now(UTC)).total_seconds()),
+            ),
+            organizations=choices,
+        )
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -488,8 +705,10 @@ __all__ = [
     "AuthenticationService",
     "InvalidActivationError",
     "InvalidCredentialsError",
+    "InvalidOrganizationSelectionError",
     "LoginResult",
     "OrganizationChoice",
     "OrganizationSelectionRequired",
+    "OrganizationSwitchUnavailableError",
     "SessionGrant",
 ]

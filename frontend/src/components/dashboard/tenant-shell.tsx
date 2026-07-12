@@ -63,7 +63,15 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
 }
 
 export function TenantShell({ children }: { children: ReactNode }) {
-  const { user, isLoggingOut, logoutError, signOut } = useSession();
+  const {
+    user,
+    isLoggingOut,
+    isSwitchingOrganization,
+    logoutError,
+    organizationSwitchError,
+    signOut,
+    switchOrganization,
+  } = useSession();
   const name = displayName(user.full_name, user.email);
   const roleNames = user.roles.map((role) => role.name).join(" · ") || "Rol atanmamış";
 
@@ -82,6 +90,14 @@ export function TenantShell({ children }: { children: ReactNode }) {
           <strong>{user.tenant.name}</strong>
           <small>{user.tenant.slug}</small>
           <small className={styles.roleSummary}>{roleNames}</small>
+          <button
+            className={styles.tenantSwitchButton}
+            type="button"
+            disabled={isLoggingOut || isSwitchingOrganization}
+            onClick={() => void switchOrganization()}
+          >
+            {isSwitchingOrganization ? "Kurumlar hazırlanıyor…" : "Kurum değiştir"}
+          </button>
         </div>
 
         <Navigation user={user} />
@@ -96,14 +112,24 @@ export function TenantShell({ children }: { children: ReactNode }) {
             <strong>{name}</strong>
             <small>{user.email}</small>
           </div>
-          <button
-            className={styles.logoutButton}
-            type="button"
-            disabled={isLoggingOut}
-            onClick={() => void signOut()}
-          >
-            {isLoggingOut ? "Çıkış yapılıyor…" : "Çıkış yap"}
-          </button>
+          <div className={styles.headerActions}>
+            <button
+              className={styles.mobileSwitchButton}
+              type="button"
+              disabled={isLoggingOut || isSwitchingOrganization}
+              onClick={() => void switchOrganization()}
+            >
+              {isSwitchingOrganization ? "Hazırlanıyor…" : "Kurum değiştir"}
+            </button>
+            <button
+              className={styles.logoutButton}
+              type="button"
+              disabled={isLoggingOut || isSwitchingOrganization}
+              onClick={() => void signOut()}
+            >
+              {isLoggingOut ? "Çıkış yapılıyor…" : "Çıkış yap"}
+            </button>
+          </div>
         </header>
 
         <Navigation user={user} mobile />
@@ -112,6 +138,11 @@ export function TenantShell({ children }: { children: ReactNode }) {
           {logoutError ? (
             <div className={styles.errorBanner} role="alert">
               {logoutError}
+            </div>
+          ) : null}
+          {organizationSwitchError ? (
+            <div className={styles.errorBanner} role="alert">
+              {organizationSwitchError}
             </div>
           ) : null}
           {children}

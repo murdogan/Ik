@@ -208,6 +208,27 @@ async def _login(
     return data["access_token"], response
 
 
+async def _add_admin_membership_in_other_tenant(harness: AuthApiHarness) -> None:
+    async with harness.session_factory.begin() as session:
+        second_user = User(
+            id=OTHER_TENANT_ADMIN_MEMBERSHIP_ID,
+            tenant_id=OTHER_TENANT_ID,
+            email=ADMIN_EMAIL,
+            full_name="Admin in Other Organization",
+            status=UserStatus.ACTIVE.value,
+            password_hash=harness.password_manager.hash(ADMIN_PASSWORD),
+        )
+        session.add(second_user)
+        await session.flush()
+        await assign_system_role(
+            session,
+            tenant_id=OTHER_TENANT_ID,
+            user_id=second_user.id,
+            role_code="employee",
+        )
+        await sync_identity_membership_projection(session, second_user)
+
+
 def _activation_token(activation_url: str) -> str:
     fragment = parse_qs(urlsplit(activation_url).fragment)
     assert set(fragment) == {"token"}
@@ -433,24 +454,7 @@ async def test_login_contract_rejects_organization_code_as_an_extra_field() -> N
 
 async def test_multiple_memberships_return_only_safe_names_and_hashed_transaction() -> None:
     async with _auth_api() as harness:
-        async with harness.session_factory.begin() as session:
-            second_user = User(
-                id=OTHER_TENANT_ADMIN_MEMBERSHIP_ID,
-                tenant_id=OTHER_TENANT_ID,
-                email=ADMIN_EMAIL,
-                full_name="Admin in Other Organization",
-                status=UserStatus.ACTIVE.value,
-                password_hash=harness.password_manager.hash(ADMIN_PASSWORD),
-            )
-            session.add(second_user)
-            await session.flush()
-            await assign_system_role(
-                session,
-                tenant_id=OTHER_TENANT_ID,
-                user_id=second_user.id,
-                role_code="employee",
-            )
-            await sync_identity_membership_projection(session, second_user)
+        await _add_admin_membership_in_other_tenant(harness)
 
         response = await harness.client.post(
             "/api/v1/auth/login",
@@ -504,6 +508,237 @@ async def test_multiple_memberships_return_only_safe_names_and_hashed_transactio
         assert {choice.tenant_id for choice in choices} == {TENANT_ID, OTHER_TENANT_ID}
         assert len(families) == 0
         assert len(successes) == 0
+
+
+async def test_multi_membership_selection_binds_session_and_rejects_replay_or_wrong_choice(
+) -> None:
+    async with _auth_api() as harness:
+        await _add_admin_membership_in_other_tenant(harness)
+
+        first_login = await harness.client.post(
+            "/api/v1/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        second_login = await harness.client.post(
+            "/api/v1/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        assert first_login.status_code == second_login.status_code == 200
+        first_selection = first_login.json()["data"]
+        second_selection = second_login.json()["data"]
+        first_other_choice = next(
+            choice
+            for choice in first_selection["organizations"]
+            if choice["display_name"] == "Other Falcon HR"
+        )
+        second_other_choice = next(
+            choice
+            for choice in second_selection["organizations"]
+            if choice["display_name"] == "Other Falcon HR"
+        )
+
+        wrong_choice = await harness.client.post(
+            "/api/v1/auth/select-organization",
+            json={
+                "selection_transaction": first_selection["selection_transaction"],
+                "selection_key": second_other_choice["selection_key"],
+            },
+        )
+        assert wrong_choice.status_code == 400
+        assert wrong_choice.json()["error"]["code"] == "organization_selection_invalid"
+        assert wrong_choice.cookies.get("wf_refresh") is None
+        async with harness.session_factory() as session:
+            assert len(tuple(await session.scalars(select(RefreshSessionFamily)))) == 0
+
+        caller_tenant = await harness.client.post(
+            "/api/v1/auth/select-organization",
+            json={
+                "selection_transaction": first_selection["selection_transaction"],
+                "selection_key": first_other_choice["selection_key"],
+                "tenant_id": str(TENANT_ID),
+            },
+        )
+        assert caller_tenant.status_code == 422
+        assert caller_tenant.json()["error"]["code"] == "auth_validation_error"
+
+        selected = await harness.client.post(
+            "/api/v1/auth/select-organization",
+            headers={
+                "X-Tenant-Id": str(TENANT_ID),
+                "X-Tenant-Slug": TENANT_SLUG,
+            },
+            json={
+                "selection_transaction": first_selection["selection_transaction"],
+                "selection_key": first_other_choice["selection_key"],
+            },
+        )
+        assert selected.status_code == 200
+        assert selected.headers["Cache-Control"] == "no-store"
+        selected_data = selected.json()["data"]
+        assert selected_data["status"] == "authenticated"
+        assert selected_data["user"]["tenant_id"] == str(OTHER_TENANT_ID)
+        assert selected_data["user"]["tenant"]["slug"] == OTHER_TENANT_SLUG
+        selected_cookie = selected.cookies.get("wf_refresh")
+        assert selected_cookie is not None
+
+        auth_runtime = getattr(harness.app.state, AUTH_RUNTIME_STATE_KEY)
+        assert isinstance(auth_runtime, AuthRuntime)
+        principal = auth_runtime.access_tokens.decode(selected_data["access_token"])
+        assert principal.tenant_id == OTHER_TENANT_ID
+        assert principal.membership_id == OTHER_TENANT_ADMIN_MEMBERSHIP_ID
+        async with harness.session_factory() as session:
+            families = tuple(await session.scalars(select(RefreshSessionFamily)))
+            transactions = tuple(
+                await session.scalars(
+                    select(OrganizationSelectionTransaction).order_by(
+                        OrganizationSelectionTransaction.created_at,
+                        OrganizationSelectionTransaction.id,
+                    )
+                )
+            )
+        assert len(families) == 1
+        assert families[0].id == principal.session_family_id
+        assert families[0].tenant_id == OTHER_TENANT_ID
+        assert families[0].user_id == OTHER_TENANT_ADMIN_MEMBERSHIP_ID
+        assert families[0].membership_id == OTHER_TENANT_ADMIN_MEMBERSHIP_ID
+        assert sum(transaction.consumed_at is not None for transaction in transactions) == 1
+
+        replay = await harness.client.post(
+            "/api/v1/auth/select-organization",
+            json={
+                "selection_transaction": first_selection["selection_transaction"],
+                "selection_key": first_other_choice["selection_key"],
+            },
+        )
+        assert replay.status_code == 400
+        assert replay.json()["error"]["code"] == "organization_selection_invalid"
+        async with harness.session_factory() as session:
+            assert len(tuple(await session.scalars(select(RefreshSessionFamily)))) == 1
+
+        async with harness.session_factory.begin() as session:
+            expiring_transaction = await session.scalar(
+                select(OrganizationSelectionTransaction).where(
+                    OrganizationSelectionTransaction.token_hash
+                    == hash_organization_selection_token(
+                        second_selection["selection_transaction"]
+                    )
+                )
+            )
+            assert expiring_transaction is not None
+            expiring_transaction.expires_at = (
+                expiring_transaction.created_at + timedelta(microseconds=1)
+            )
+        expired = await harness.client.post(
+            "/api/v1/auth/select-organization",
+            json={
+                "selection_transaction": second_selection["selection_transaction"],
+                "selection_key": second_other_choice["selection_key"],
+            },
+        )
+        assert expired.status_code == 400
+        assert expired.json()["error"]["code"] == "organization_selection_invalid"
+        async with harness.session_factory() as session:
+            assert len(tuple(await session.scalars(select(RefreshSessionFamily)))) == 1
+
+
+async def test_controlled_switch_revokes_source_and_selects_only_other_identity_membership(
+) -> None:
+    async with _auth_api() as harness:
+        original_access, original_login = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+        original_refresh = original_login.cookies.get("wf_refresh")
+        assert original_refresh is not None
+        auth_runtime = getattr(harness.app.state, AUTH_RUNTIME_STATE_KEY)
+        assert isinstance(auth_runtime, AuthRuntime)
+        original_principal = auth_runtime.access_tokens.decode(original_access)
+        await _add_admin_membership_in_other_tenant(harness)
+
+        caller_tenant_payload = await harness.client.post(
+            "/api/v1/auth/organization-selection",
+            headers={"Authorization": f"Bearer {original_access}"},
+            json={"tenant_id": str(OTHER_TENANT_ID)},
+        )
+        assert caller_tenant_payload.status_code == 422
+        assert caller_tenant_payload.json()["error"]["code"] == "auth_validation_error"
+
+        prepared = await harness.client.post(
+            "/api/v1/auth/organization-selection",
+            headers={
+                "Authorization": f"Bearer {original_access}",
+                "X-Tenant-Id": str(OTHER_TENANT_ID),
+                "X-Tenant-Slug": OTHER_TENANT_SLUG,
+            },
+        )
+        assert prepared.status_code == 200
+        assert prepared.headers["Cache-Control"] == "no-store"
+        assert "Max-Age=0" in prepared.headers["set-cookie"]
+        assert harness.client.cookies.get("wf_refresh") is None
+        selection = prepared.json()["data"]
+        assert selection["status"] == "organization_selection_required"
+        assert len(selection["organizations"]) == 1
+        assert set(selection["organizations"][0]) == {"selection_key", "display_name"}
+        assert selection["organizations"][0]["display_name"] == "Other Falcon HR"
+
+        async with harness.session_factory() as session:
+            original_family = await session.get(
+                RefreshSessionFamily,
+                original_principal.session_family_id,
+            )
+        assert original_family is not None
+        assert original_family.tenant_id == TENANT_ID
+        assert original_family.membership_id == ADMIN_ID
+        assert original_family.revoked_at is not None
+
+        repeated_switch = await harness.client.post(
+            "/api/v1/auth/organization-selection",
+            headers={"Authorization": f"Bearer {original_access}"},
+        )
+        assert repeated_switch.status_code == 401
+        assert repeated_switch.json()["error"]["code"] == "session_invalid"
+
+        old_access = await harness.client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {original_access}"},
+        )
+        assert old_access.status_code == 401
+        assert old_access.json()["error"]["code"] == "session_invalid"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=harness.app),
+            base_url="http://testserver",
+        ) as replay_client:
+            replay_client.cookies.set("wf_refresh", original_refresh)
+            old_refresh = await replay_client.post("/api/v1/auth/refresh")
+        assert old_refresh.status_code == 401
+        assert old_refresh.json()["error"]["code"] == "session_invalid"
+
+        target = await harness.client.post(
+            "/api/v1/auth/select-organization",
+            headers={
+                "X-Tenant-Id": str(TENANT_ID),
+                "X-Tenant-Slug": TENANT_SLUG,
+            },
+            json={
+                "selection_transaction": selection["selection_transaction"],
+                "selection_key": selection["organizations"][0]["selection_key"],
+            },
+        )
+        assert target.status_code == 200
+        target_data = target.json()["data"]
+        assert target_data["user"]["tenant_id"] == str(OTHER_TENANT_ID)
+        target_principal = auth_runtime.access_tokens.decode(target_data["access_token"])
+        assert target_principal.tenant_id == OTHER_TENANT_ID
+        assert target_principal.membership_id == OTHER_TENANT_ADMIN_MEMBERSHIP_ID
+        assert target_principal.session_family_id != original_principal.session_family_id
+        target_me = await harness.client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {target_data['access_token']}"},
+        )
+        assert target_me.status_code == 200
+        assert target_me.json()["data"]["user"]["tenant_id"] == str(OTHER_TENANT_ID)
 
 
 async def test_valid_identity_without_eligible_membership_uses_generic_failure() -> None:
@@ -813,6 +1048,7 @@ async def test_email_first_login_and_invitations_remain_tenant_isolated() -> Non
             AccessPrincipal(
                 user_id=OTHER_TENANT_ACTIVE_USER_ID,
                 tenant_id=TENANT_ID,
+                membership_id=OTHER_TENANT_ACTIVE_USER_ID,
                 tenant_slug=OTHER_TENANT_SLUG,
                 session_family_id=FORGED_SESSION_ID,
             )
@@ -944,6 +1180,7 @@ async def test_login_refresh_me_logout_session_flow_uses_only_httponly_cookie() 
         assert isinstance(auth_runtime, AuthRuntime)
         principal = auth_runtime.access_tokens.decode(access_token)
         assert principal.session_family_id is not None
+        assert principal.membership_id == ADMIN_ID
 
         async with harness.session_factory() as session:
             family = await session.get(RefreshSessionFamily, principal.session_family_id)
@@ -955,6 +1192,7 @@ async def test_login_refresh_me_logout_session_flow_uses_only_httponly_cookie() 
             assert family is not None
             assert family.tenant_id == TENANT_ID
             assert family.user_id == ADMIN_ID
+            assert family.membership_id == ADMIN_ID
             assert family.revoked_at is None
             assert token_row is not None
             assert token_row.token_hash == hash_refresh_token(refresh_cookie)

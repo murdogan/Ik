@@ -183,7 +183,9 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("post", "/api/v1/auth/activate"),
     ("post", "/api/v1/auth/login"),
     ("post", "/api/v1/auth/logout"),
+    ("post", "/api/v1/auth/organization-selection"),
     ("post", "/api/v1/auth/refresh"),
+    ("post", "/api/v1/auth/select-organization"),
     ("get", "/api/v1/me"),
     ("get", "/api/v1/permissions"),
     ("get", "/api/v1/audit-events"),
@@ -646,6 +648,31 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         **SPOOFED_IDENTITY_HEADERS,
         "Authorization": f"Bearer {access_token}",
     }
+    _expect_phase1_error_code(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/select-organization",
+            json={
+                "selection_transaction": f"os1.{uuid4()}.{'x' * 64}",
+                "selection_key": str(uuid4()),
+            },
+        ),
+        400,
+        "organization_selection_invalid",
+        "POST /api/v1/auth/select-organization rejects an unknown transaction",
+    )
+    _expect_phase1_error_code(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/auth/organization-selection",
+            headers=admin_headers,
+        ),
+        409,
+        "organization_switch_unavailable",
+        "POST /api/v1/auth/organization-selection requires another membership",
+    )
     roles_response = await _request_documented(
         client,
         "get",
@@ -1478,12 +1505,15 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
     invitation = paths["/api/v1/users/invitations"]["post"]
     refresh = paths["/api/v1/auth/refresh"]["post"]
     logout = paths["/api/v1/auth/logout"]["post"]
+    select_organization = paths["/api/v1/auth/select-organization"]["post"]
+    prepare_organization_switch = paths["/api/v1/auth/organization-selection"]["post"]
     me = paths["/api/v1/me"]["get"]
     for operation, label in (
         (login, "F2A login"),
         (activation, "F2A activation"),
         (refresh, "F2B refresh"),
         (logout, "F2B logout"),
+        (select_organization, "P3C organization selection"),
     ):
         if "security" in operation:
             raise AssertionError(f"{label} must remain a public credential endpoint")
@@ -1493,12 +1523,19 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
         "F2A invitation bearer requirement",
     )
     _assert_equal(me.get("security"), [{"BearerAuth": []}], "F2B me bearer requirement")
+    _assert_equal(
+        prepare_organization_switch.get("security"),
+        [{"BearerAuth": []}],
+        "P3C organization switch bearer requirement",
+    )
 
     for operation, success_status, label in (
         (login, "200", "F2A login"),
         (activation, "200", "F2A activation"),
         (invitation, "201", "F2A invitation"),
         (refresh, "200", "F2B refresh"),
+        (select_organization, "200", "P3C organization selection"),
+        (prepare_organization_switch, "200", "P3C organization switch"),
         (me, "200", "F2B me"),
     ):
         success_response = operation["responses"][success_status]

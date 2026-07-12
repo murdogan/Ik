@@ -1,4 +1,5 @@
 """Identity, principal, and session boundary; auth behavior is outside P0B."""
+
 from app.platform.identity.access_tokens import (
     AccessPrincipal,
     AccessTokenCodec,
@@ -13,9 +14,11 @@ from app.platform.identity.activation_tokens import (
     parse_activation_token,
 )
 from app.platform.identity.organization_selection_tokens import (
+    InvalidOrganizationSelectionTokenFormatError,
     OrganizationSelectionTokenMaterial,
     hash_organization_selection_token,
     issue_organization_selection_token,
+    parse_organization_selection_token,
 )
 from app.platform.identity.passwords import PasswordManager
 from app.platform.identity.refresh_tokens import (
@@ -33,6 +36,7 @@ __all__ = [
     "InvalidAccessTokenError",
     "InvalidActivationTokenFormatError",
     "InvalidRefreshTokenFormatError",
+    "InvalidOrganizationSelectionTokenFormatError",
     "IssuedAccessToken",
     "OrganizationSelectionTokenMaterial",
     "PasswordManager",
@@ -44,5 +48,6 @@ __all__ = [
     "issue_refresh_token",
     "issue_organization_selection_token",
     "parse_activation_token",
+    "parse_organization_selection_token",
     "parse_refresh_token",
 ]

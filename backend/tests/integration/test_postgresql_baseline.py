@@ -95,6 +95,7 @@ EXPECTED_UUID_COLUMNS = {
     ("user_activation_tokens", "tenant_id"),
     ("user_activation_tokens", "user_id"),
     ("refresh_session_families", "id"),
+    ("refresh_session_families", "membership_id"),
     ("refresh_session_families", "tenant_id"),
     ("refresh_session_families", "user_id"),
     ("refresh_session_tokens", "id"),
@@ -234,7 +235,7 @@ EXPECTED_FOREIGN_KEY_COUNTS = {
     "users": 1,
     "user_roles": 2,
     "user_activation_tokens": 2,
-    "refresh_session_families": 2,
+    "refresh_session_families": 3,
     "refresh_session_tokens": 2,
 }
 
@@ -461,7 +462,7 @@ def test_full_api_smoke_uses_alembic_migrated_postgresql(
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     assert result.returncode == 0, output
     assert "BACKEND_SMOKE_OK" in result.stdout
-    assert "documented_endpoints=40" in result.stdout
+    assert "documented_endpoints=42" in result.stdout
 
 
 def _alembic_config(database_url: URL) -> Config:

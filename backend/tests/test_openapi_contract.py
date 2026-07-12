@@ -99,6 +99,13 @@ F2_BEARER_OPERATIONS = {
     "POST /api/v1/users/invitations",
     "PUT /api/v1/users/{user_id}/roles",
 }
+P3C_ADDITIVE_OPERATIONS = {
+    "POST /api/v1/auth/organization-selection",
+    "POST /api/v1/auth/select-organization",
+}
+P3C_BEARER_OPERATIONS = {
+    "POST /api/v1/auth/organization-selection",
+}
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -124,16 +131,18 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
         } == components
 
 
-def test_f2f_current_openapi_surface_is_the_approved_additive_phase2_contract() -> None:
-    """Reconcile the live F2 surface without creating another full contract snapshot."""
+def test_current_openapi_surface_is_the_approved_additive_identity_contract() -> None:
+    """Preserve the historical F2 surface while approving the focused P3C additions."""
 
     f1e = _load_contract(F1E_SNAPSHOT_PATH)
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
 
-    assert current["operation_count"] == 39
+    assert current["operation_count"] == 41
     assert set(current["operations"]) == (
-        set(f1e["operations"]) | F2_APPROVED_ADDITIVE_OPERATIONS
+        set(f1e["operations"])
+        | F2_APPROVED_ADDITIVE_OPERATIONS
+        | P3C_ADDITIVE_OPERATIONS
     )
     bearer_security = [{"BearerAuth": []}]
     assert {
@@ -141,12 +150,14 @@ def test_f2f_current_openapi_surface_is_the_approved_additive_phase2_contract() 
         for path, path_item in openapi["paths"].items()
         for method, operation in path_item.items()
         if method in HTTP_METHODS and operation.get("security") == bearer_security
-    } == F2_BEARER_OPERATIONS
+    } == F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS
     for path, path_item in openapi["paths"].items():
         for method, operation in path_item.items():
             if method not in HTTP_METHODS:
                 continue
-            if f"{method.upper()} {path}" not in F2_BEARER_OPERATIONS:
+            if f"{method.upper()} {path}" not in (
+                F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS
+            ):
                 assert "security" not in operation
 
 

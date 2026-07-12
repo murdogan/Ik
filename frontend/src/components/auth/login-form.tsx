@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 
+import { useOrganizationSelection } from "@/components/auth/organization-selection-provider";
 import {
   type LoginResponseData,
-  type OrganizationSelectionOption,
   loginErrorPresentation,
 } from "@/lib/auth-contracts";
 import { postApi } from "@/lib/api-client";
@@ -15,37 +15,13 @@ import { establishSession } from "@/lib/session";
 import styles from "./auth.module.css";
 import { FormAlert } from "./form-alert";
 
-interface OrganizationSelectionState {
-  selectionTransaction: string;
-  expiresIn: number;
-  organizations: OrganizationSelectionOption[];
-}
-
-const EXPIRED_SELECTION_MESSAGE =
-  "Güvenli kurum seçimi süresi doldu. E-posta ve parolanızla yeniden giriş yapın.";
-
 export function LoginForm() {
   const router = useRouter();
+  const { beginSelection, clearSelection } = useOrganizationSelection();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<ReturnType<typeof loginErrorPresentation> | null>(
     null,
   );
-  const [organizationSelection, setOrganizationSelection] =
-    useState<OrganizationSelectionState | null>(null);
-
-  useEffect(() => {
-    if (!organizationSelection) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      setOrganizationSelection(null);
-      setError({ message: EXPIRED_SELECTION_MESSAGE });
-    }, Math.max(1, organizationSelection.expiresIn) * 1_000);
-
-    return () => window.clearTimeout(timeout);
-  }, [organizationSelection]);
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -55,6 +31,7 @@ export function LoginForm() {
 
     setError(null);
     setIsSubmitting(true);
+    clearSelection();
 
     try {
       const data = await postApi<
@@ -67,11 +44,8 @@ export function LoginForm() {
 
       form.reset();
       if (data.status === "organization_selection_required") {
-        setOrganizationSelection({
-          selectionTransaction: data.selection_transaction,
-          expiresIn: data.expires_in,
-          organizations: data.organizations,
-        });
+        beginSelection(data, "login");
+        router.replace("/select-organization");
         return;
       }
 
@@ -82,43 +56,6 @@ export function LoginForm() {
     } finally {
       setIsSubmitting(false);
     }
-  }
-
-  function returnToCredentials() {
-    setOrganizationSelection(null);
-    setError(null);
-  }
-
-  if (organizationSelection) {
-    return (
-      <section
-        className={styles.selectionPanel}
-        aria-labelledby="organization_selection_title"
-      >
-        <div className={styles.selectionHeading}>
-          <span>Kimliğiniz doğrulandı</span>
-          <h2 id="organization_selection_title">Kurum seçimi gerekiyor</h2>
-          <p>
-            Hesabınız birden fazla kurumla eşleşiyor. Devam etmek için güvenli kurum
-            seçimi gerekiyor; bu adım şu anda kullanılamıyor.
-          </p>
-        </div>
-
-        <ul className={styles.organizationList} aria-label="Erişilebilir kurumlar">
-          {organizationSelection.organizations.map((organization) => (
-            <li key={organization.selection_key}>{organization.display_name}</li>
-          ))}
-        </ul>
-
-        <button
-          className={styles.secondaryButton}
-          type="button"
-          onClick={returnToCredentials}
-        >
-          Giriş ekranına dön
-        </button>
-      </section>
-    );
   }
 
   return (

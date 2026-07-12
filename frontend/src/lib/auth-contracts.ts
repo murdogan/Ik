@@ -49,6 +49,11 @@ export interface OrganizationSelectionRequiredData {
   organizations: OrganizationSelectionOption[];
 }
 
+export interface OrganizationSelectionRequestData {
+  selection_transaction: string;
+  selection_key: string;
+}
+
 export type LoginResponseData =
   | AuthenticatedLoginResponseData
   | OrganizationSelectionRequiredData;
@@ -69,6 +74,11 @@ export interface AuthErrorPresentation {
   message: string;
   reference?: string | null;
   offerLogin?: boolean;
+}
+
+export interface OrganizationSelectionErrorPresentation
+  extends AuthErrorPresentation {
+  terminal: boolean;
 }
 
 const GENERIC_LOGIN_ERROR =
@@ -126,6 +136,50 @@ export function loginErrorPresentation(cause: unknown): AuthErrorPresentation {
   }
 
   return presentation(GENERIC_LOGIN_ERROR, cause);
+}
+
+export function organizationSelectionErrorPresentation(
+  cause: unknown,
+): OrganizationSelectionErrorPresentation {
+  if (!(cause instanceof ApiClientError)) {
+    return {
+      message: "Kurum seçimi şu anda tamamlanamıyor. Lütfen yeniden deneyin.",
+      terminal: false,
+    };
+  }
+
+  const code = cause.code.toLowerCase();
+  if (cause.status === null || code === "network_error") {
+    return {
+      ...presentation(
+        "Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.",
+        cause,
+      ),
+      terminal: false,
+    };
+  }
+  if (
+    [400, 401, 403, 404, 409, 410, 422].includes(cause.status ?? 0) ||
+    code.includes("selection") ||
+    code.includes("credential") ||
+    code.includes("session")
+  ) {
+    return {
+      ...presentation(
+        "Güvenli kurum seçiminin süresi doldu veya seçim daha önce kullanıldı. E-posta ve parolanızla yeniden giriş yapın.",
+        cause,
+      ),
+      terminal: true,
+    };
+  }
+
+  return {
+    ...presentation(
+      "Kurum seçimi şu anda tamamlanamıyor. Lütfen yeniden deneyin.",
+      cause,
+    ),
+    terminal: false,
+  };
 }
 
 export function activationErrorPresentation(cause: unknown): AuthErrorPresentation {

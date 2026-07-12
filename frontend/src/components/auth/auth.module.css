@@ -451,13 +451,82 @@
 }
 
 .organizationList li {
-  padding: 14px 16px;
+  min-width: 0;
+}
+
+.organizationCard {
+  display: grid;
+  width: 100%;
+  min-height: 76px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 15px;
   border: 1px solid var(--wf-line);
-  border-radius: 14px;
+  border-radius: 15px;
   color: var(--wf-ink);
-  background: #f8fcfa;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(28, 64, 49, 0.04);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.organizationCard:hover:not(:disabled) {
+  border-color: #a8cdbb;
+  box-shadow: 0 12px 28px rgba(31, 122, 86, 0.1);
+  transform: translateY(-1px);
+}
+
+.organizationCard:focus-visible {
+  outline: 3px solid rgba(49, 107, 255, 0.3);
+  outline-offset: 3px;
+}
+
+.organizationCard:disabled {
+  color: #6f7f77;
+  background: #f7faf8;
+  cursor: wait;
+}
+
+.organizationMark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 13px;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.organizationDetails {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.organizationDetails strong {
+  overflow: hidden;
   font-size: 14px;
-  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.organizationDetails small {
+  color: var(--wf-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.organizationArrow {
+  color: var(--wf-green);
+  font-size: 20px;
+  font-weight: 800;
 }
 
 .loadingPanel {
@@ -586,6 +655,10 @@
   .primaryLink,
   .secondaryLink,
   .field input {
+    transition: none;
+  }
+
+  .organizationCard {
     transition: none;
   }
 
