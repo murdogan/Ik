@@ -139,6 +139,7 @@ DEPARTMENT_API_PREFIX = "/api/v1/departments"
 POSITION_API_PREFIX = "/api/v1/positions"
 EMPLOYEE_ASSIGNMENT_API_PREFIX = "/api/v1/employee-assignments"
 MANAGER_TEAM_API_PREFIX = "/api/v1/teams/me"
+ORG_CHART_API_PREFIX = "/api/v1/org-chart"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -1612,6 +1613,7 @@ def _domain_request_validation_error(
         or _matches_api_prefix(path, BRANCH_API_PREFIX)
         or _matches_api_prefix(path, DEPARTMENT_API_PREFIX)
         or _matches_api_prefix(path, POSITION_API_PREFIX)
+        or _matches_api_prefix(path, ORG_CHART_API_PREFIX)
     ):
         return organization_pagination_validation_error()
     if _matches_api_prefix(

@@ -2,14 +2,46 @@
 
 Date: 2026-07-13
 Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3I employee assignments and derived manager team scope`
-Review checkpoint: `P3H was green, committed and pushed before P3I began`
-Review decision: `P3I implementation and local verification are recorded below`
-Push state: `P3I commit is intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P3J lazy organization chart and unified organization workspace`
+Review checkpoint: `P3I was green, committed and pushed before P3J began`
+Review decision: `P3J implementation and local verification are recorded below`
+Push state: `P3J commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### P3I employee assignments and derived manager team scope
+### P3J lazy organization chart and unified workspace
+
+- Tenant admin and HR users open one role-aware Organization workspace for legal entities,
+  branches, departments, positions, employee assignments and a reporting chart. Ordinary
+  employees neither see its navigation nor mount its APIs.
+- `GET /api/v1/org-chart` returns only roots or one requested manager's direct reports. Every
+  level is capped at 100, cursor-bound to its parent and contains resolved work-organization
+  labels plus `has_children`; descendants are never downloaded until expanded.
+- The read path uses fixed-count joined queries with correlated child existence checks. A
+  tenant-scoped normalized work-email compatibility link supports employee managers until the
+  explicit Employee/User relation planned for Phase 4; referenced manager-only Users remain
+  visible as synthetic roots.
+- Current assignments retain readable archived entity/branch/department/position labels, while
+  terminated or archived employees and ineffective assignment intervals are excluded.
+- P3J does not infer whole-tenant reporting cycles through the transitional email link. A closed,
+  disconnected cycle in pre-existing assignment data can therefore have no root; explicit
+  Employee/User linkage and reporting-graph integrity remain deferred to the planned later work
+  instead of adding an unbounded recursive read or changing P3I assignment semantics here.
+
+### P3J verification gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend scripts/backend_api_smoke.py` | Passed: `All checks passed!` |
+| Full fast backend suite | `uv run pytest -q` | Passed: 855 tests; 55 PostgreSQL tests deselected; one known Starlette/httpx warning |
+| Focused org-chart/OpenAPI regression | `uv run pytest -q backend/tests/test_org_chart_api.py backend/tests/test_openapi_contract.py` | Passed: 11 tests covering tenant/RBAC/feature denial, mixed root and parent cursor walks, archive retention, Unicode-safe cursors and fixed 3/4-statement representative reads |
+| Alembic head | `uv run alembic heads` | Passed: sole unchanged head `0030_p3i_employee_assignments`; P3J adds no persistence migration |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 75 documented endpoints executed, including lazy root and direct-report chart reads |
+| Frontend static gates | `npm run lint`, `npm run typecheck`, `npm run build` in `frontend/` | Passed; production build includes the unified `/organization` workspace and dashboard entry |
+| Organization browser regression | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npm run test:e2e --` with the five organization specs | Passed: 9 Chromium flows covering dashboard entry, lazy-only expansion, retry, empty/archive/pagination states, unauthorized and disabled-feature denial, and existing entity/branch/department/position/assignment behavior |
+| Git hygiene | `git diff --check` plus independent backend/frontend/test scope review | Passed; no Phase 4, migration, deployment, environment, credential or generated-artifact change |
+
+### Historical P3I employee assignments and derived manager team scope
 
 - Authorized tenant admin/HR users can assign an employee to a legal entity, branch, department,
   position and optional manager from the existing `/organization` workspace, then schedule a
@@ -862,6 +894,7 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/employee-assignments/{assignment_id}` | Implemented for P3I | Current or retained historical assignment within authenticated tenant HR scope |
 | PATCH | `/api/v1/employee-assignments/{assignment_id}` | Implemented for P3I | Closes the open interval and appends an immutable successor plus reporting-line audit |
 | GET | `/api/v1/teams/me` | Implemented for P3I | Authenticated manager's current direct team derived only from structured assignments |
+| GET | `/api/v1/org-chart` | Implemented for P3J | Organization-read protected bounded root/direct-report pages with parent-bound cursor and resolved labels |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |

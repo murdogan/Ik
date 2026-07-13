@@ -318,6 +318,15 @@ test("HR creates and effective-dates a structural employee assignment", async ({
       return;
     }
 
+    if (path === "/api/v1/org-chart") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope([], { limit: 25, next_cursor: null }),
+      });
+      return;
+    }
+
     if (path === "/api/v1/departments/tree") {
       await route.fulfill({
         status: 200,

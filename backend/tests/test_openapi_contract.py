@@ -164,6 +164,8 @@ P3I_ADDITIVE_OPERATIONS = {
     "GET /api/v1/teams/me",
 }
 P3I_BEARER_OPERATIONS = P3I_ADDITIVE_OPERATIONS
+P3J_ADDITIVE_OPERATIONS = {"GET /api/v1/org-chart"}
+P3J_BEARER_OPERATIONS = P3J_ADDITIVE_OPERATIONS
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -201,7 +203,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
 
-    assert current["operation_count"] == 73
+    assert current["operation_count"] == 74
     assert set(current["operations"]) == (
         set(f1e["operations"])
         | F2_APPROVED_ADDITIVE_OPERATIONS
@@ -212,6 +214,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3G_ADDITIVE_OPERATIONS
         | P3H_ADDITIVE_OPERATIONS
         | P3I_ADDITIVE_OPERATIONS
+        | P3J_ADDITIVE_OPERATIONS
     )
     bearer_security = [{"BearerAuth": []}]
     assert {
@@ -226,6 +229,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3G_BEARER_OPERATIONS
         | P3H_BEARER_OPERATIONS
         | P3I_BEARER_OPERATIONS
+        | P3J_BEARER_OPERATIONS
     )
     platform_bearer_security = [{"PlatformBearerAuth": []}]
     assert {
@@ -280,6 +284,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
                 | P3G_BEARER_OPERATIONS
                 | P3H_BEARER_OPERATIONS
                 | P3I_BEARER_OPERATIONS
+                | P3J_BEARER_OPERATIONS
             ):
                 assert "security" not in operation
 

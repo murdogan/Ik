@@ -1,10 +1,14 @@
 "use client";
 
+import Link from "next/link";
+
 import { useSession } from "@/components/session/session-provider";
+import { useTenantFeatures } from "@/components/session/tenant-feature-provider";
 import {
   AUTHORIZATION_PERMISSIONS,
   hasPermission,
 } from "@/lib/authorization";
+import { TENANT_FEATURES } from "@/lib/feature-rollout";
 
 import { ManagerTeam } from "./manager-team";
 import styles from "./tenant-shell.module.css";
@@ -15,11 +19,16 @@ function displayName(fullName: string | null, email: string): string {
 
 export function DashboardOverview() {
   const { user } = useSession();
+  const { status: featureStatus, isEnabled } = useTenantFeatures();
   const name = displayName(user.full_name, user.email);
   const canReadTeam = hasPermission(
     user,
     AUTHORIZATION_PERMISSIONS.readTeamEmployees,
   );
+  const canOpenOrganization =
+    hasPermission(user, AUTHORIZATION_PERMISSIONS.readOrganization) &&
+    featureStatus === "ready" &&
+    isEnabled(TENANT_FEATURES.organization);
 
   return (
     <section aria-labelledby="dashboard-title">
@@ -54,6 +63,28 @@ export function DashboardOverview() {
             <p>Çalışma alanınız: {user.tenant.name}</p>
           </div>
         </article>
+
+        {canOpenOrganization ? (
+          <Link
+            className={`${styles.card} ${styles.cardLink}`}
+            href="/organization"
+          >
+            <span className={styles.cardIcon} aria-hidden="true">
+              O
+            </span>
+            <div>
+              <small>Organizasyon</small>
+              <h2>Organizasyon çalışma alanını aç</h2>
+              <p>
+                Şemayı, tüzel kişilikleri, şubeleri, departmanları ve pozisyonları
+                tek alanda inceleyin.
+              </p>
+            </div>
+            <span className={styles.cardArrow} aria-hidden="true">
+              →
+            </span>
+          </Link>
+        ) : null}
       </div>
 
       {canReadTeam ? <ManagerTeam /> : null}

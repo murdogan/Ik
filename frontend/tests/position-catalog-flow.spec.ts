@@ -169,6 +169,15 @@ test("HR searches, pages, creates, updates, and archives reusable positions", as
       return;
     }
 
+    if (path === "/api/v1/org-chart") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope([], { limit: PAGE_LIMIT, next_cursor: null }),
+      });
+      return;
+    }
+
     if (path === "/api/v1/branches" || path === "/api/v1/departments/tree") {
       await route.fulfill({
         status: 200,

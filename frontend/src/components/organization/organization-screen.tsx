@@ -21,6 +21,7 @@ import { BranchDialog } from "./branch-dialog";
 import { DepartmentHierarchy } from "./department-hierarchy";
 import { EmployeeAssignmentPanel } from "./employee-assignment-panel";
 import { LegalEntityForm } from "./legal-entity-form";
+import { OrganizationChart } from "./organization-chart";
 import styles from "./organization.module.css";
 import {
   BRANCH_STATUS_LABELS,
@@ -295,8 +296,9 @@ export function OrganizationScreen() {
           <span>Tenant organizasyonu</span>
           <h1 id="organization-title">Organizasyon</h1>
           <p>
-            Tüzel kişilik ayarlarını, şube ve lokasyonları, departman hiyerarşisini
-            ve pozisyon kataloğunu tek çalışma alanında güncel tutun.
+            Tüzel kişilik ayarlarını, şube ve lokasyonları, departman hiyerarşisini,
+            pozisyon kataloğunu, çalışan atamalarını ve raporlama şemasını tek çalışma
+            alanında güncel tutun.
           </p>
         </div>
         {canUpdate && legalEntityReady ? (
@@ -320,7 +322,26 @@ export function OrganizationScreen() {
         ) : null}
       </header>
 
-      <div className={styles.entitySelector} aria-busy={isLoadingLegalList}>
+      <nav
+        className={styles.workspaceNavigation}
+        aria-label="Organizasyon çalışma alanı bölümleri"
+      >
+        <a href="#organization-chart">Organizasyon şeması</a>
+        <a href="#organization-settings">Tüzel kişilik ve şubeler</a>
+        <a href="#departments-title">Departmanlar</a>
+        <a href="#positions-title">Pozisyonlar</a>
+        {canManageEmployeeAssignments ? (
+          <a href="#employee-assignments-title">Çalışan atamaları</a>
+        ) : null}
+      </nav>
+
+      <OrganizationChart />
+
+      <div
+        id="organization-settings"
+        className={styles.entitySelector}
+        aria-busy={isLoadingLegalList}
+      >
         <div className={styles.selectorField}>
           <label htmlFor="legal_entity_selector">Tüzel kişilik</label>
           <select

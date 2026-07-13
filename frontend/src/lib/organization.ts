@@ -8,6 +8,16 @@ export type LegalEntityStatus = "active" | "inactive";
 export type BranchStatus = "active" | "archived";
 export type DepartmentStatus = "active" | "archived";
 export type PositionStatus = "active" | "archived";
+export type OrganizationChartNodeType = "employee" | "manager";
+export type OrganizationChartEmployeeStatus =
+  | "active"
+  | "on_leave"
+  | "terminated";
+export type OrganizationChartUserStatus =
+  | "invited"
+  | "active"
+  | "locked"
+  | "disabled";
 
 export interface LegalEntity {
   id: string;
@@ -110,6 +120,40 @@ export interface PositionUpdateRequest {
   title: string;
 }
 
+export interface OrganizationChartReference {
+  id: string;
+  code: string;
+  name: string;
+  status: LegalEntityStatus | BranchStatus | DepartmentStatus;
+}
+
+export interface OrganizationChartPositionReference {
+  id: string;
+  code: string;
+  title: string;
+  status: PositionStatus;
+}
+
+export interface OrganizationChartNode {
+  id: string;
+  node_type: OrganizationChartNodeType;
+  employee_id: string | null;
+  user_id: string | null;
+  parent_user_id: string | null;
+  assignment_id: string | null;
+  full_name: string;
+  email: string | null;
+  employee_number: string | null;
+  employee_status: OrganizationChartEmployeeStatus | null;
+  user_status: OrganizationChartUserStatus | null;
+  legal_entity: OrganizationChartReference | null;
+  branch: OrganizationChartReference | null;
+  department: OrganizationChartReference | null;
+  position: OrganizationChartPositionReference | null;
+  has_children: boolean;
+  has_archived_reference: boolean;
+}
+
 export interface OrganizationListMeta {
   request_id?: string;
   trace_id?: string;
@@ -140,6 +184,10 @@ export interface DepartmentListOptions extends CursorListOptions {
 export interface PositionListOptions extends CursorListOptions {
   status?: PositionStatus | "";
   search?: string;
+}
+
+export interface OrganizationChartListOptions extends CursorListOptions {
+  parentId?: string | null;
 }
 
 function assertPageMeta(
@@ -370,4 +418,30 @@ export function archivePosition(positionId: string): Promise<Position> {
     `/api/v1/positions/${encodeURIComponent(positionId)}`,
     { method: "DELETE" },
   );
+}
+
+export async function listOrganizationChart(
+  options: OrganizationChartListOptions,
+): Promise<
+  ApiSuccessEnvelope<OrganizationChartNode[], OrganizationListMeta>
+> {
+  const query = new URLSearchParams({ limit: String(options.limit) });
+  if (options.parentId) {
+    query.set("parent_id", options.parentId);
+  } else {
+    query.set("root", "true");
+  }
+  if (options.cursor) {
+    query.set("cursor", options.cursor);
+  }
+
+  const envelope = await requestAuthenticatedApiEnvelope<
+    OrganizationChartNode[],
+    OrganizationListMeta
+  >(`/api/v1/org-chart?${query.toString()}`);
+  if (!Array.isArray(envelope.data)) {
+    throw new ApiClientError({ status: 200, code: "invalid_response" });
+  }
+  assertPageMeta(envelope);
+  return envelope;
 }

@@ -192,6 +192,15 @@ test("HR lazily expands, creates, renames, moves, archives, and reads department
       return;
     }
 
+    if (path === "/api/v1/org-chart") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope([], { limit: PAGE_LIMIT, next_cursor: null }),
+      });
+      return;
+    }
+
     if (path === "/api/v1/positions") {
       await route.fulfill({
         status: 200,

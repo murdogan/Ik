@@ -37,6 +37,43 @@
   line-height: 1.6;
 }
 
+.workspaceNavigation {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  margin-top: 27px;
+  padding: 5px;
+  border: 1px solid var(--wf-line);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.82);
+  scrollbar-width: thin;
+}
+
+.workspaceNavigation a {
+  display: inline-flex;
+  min-height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--wf-muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.workspaceNavigation a:hover {
+  border-color: #d1e4db;
+  color: var(--wf-green-strong);
+  background: #f1f8f4;
+}
+
+.workspaceNavigation a:focus-visible {
+  outline: 3px solid rgba(49, 107, 255, 0.27);
+  outline-offset: 2px;
+}
+
 .primaryButton,
 .secondaryButton,
 .compactButton,
@@ -45,6 +82,7 @@
 .archiveButton,
 .moveTargetButton,
 .treeToggle,
+.chartToggle,
 .dangerButton,
 .iconButton {
   min-height: 42px;
@@ -101,6 +139,7 @@
 .archiveButton:disabled,
 .moveTargetButton:disabled,
 .treeToggle:disabled,
+.chartToggle:disabled,
 .iconButton:disabled,
 .dangerButton:disabled {
   opacity: 0.58;
@@ -115,6 +154,7 @@
 .archiveButton:focus-visible,
 .moveTargetButton:focus-visible,
 .treeToggle:focus-visible,
+.chartToggle:focus-visible,
 .viewTabs button:focus-visible,
 .dangerButton:focus-visible,
 .iconButton:focus-visible,
@@ -141,6 +181,7 @@
   border: 1px solid var(--wf-line);
   border-radius: 15px;
   background: rgba(255, 255, 255, 0.82);
+  scroll-margin-top: 20px;
 }
 
 .selectorField,
@@ -239,7 +280,8 @@
 
 .entityCard,
 .branchCard,
-.departmentCard {
+.departmentCard,
+.organizationChartCard {
   overflow: hidden;
   margin-top: 18px;
   border: 1px solid var(--wf-line);
@@ -826,6 +868,275 @@
 .pagination > div {
   display: flex;
   gap: 8px;
+}
+
+.organizationChartPanel {
+  overflow-x: auto;
+  min-height: 260px;
+  overscroll-behavior-inline: contain;
+}
+
+.organizationChartTree,
+.organizationChartGroup {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.organizationChartTree {
+  padding: 17px 18px;
+}
+
+.organizationChartItem {
+  min-width: 0;
+}
+
+.organizationChartItem + .organizationChartItem {
+  margin-top: 9px;
+}
+
+.organizationChartNode {
+  display: grid;
+  min-height: 88px;
+  grid-template-columns: 34px 44px minmax(170px, 0.85fr) minmax(330px, 1.4fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid #e1e9e5;
+  border-radius: 15px;
+  background: #ffffff;
+  box-shadow: 0 5px 16px rgba(28, 64, 49, 0.035);
+}
+
+.organizationChartItem[data-node-type="manager"] > .organizationChartNode {
+  border-color: #cfdff3;
+  background: #fbfdff;
+}
+
+.organizationChartItem[data-archived-reference="true"] > .organizationChartNode {
+  border-color: #e3d2ba;
+  background: #fffdf9;
+}
+
+.chartToggle,
+.chartTogglePlaceholder {
+  width: 32px;
+  height: 32px;
+}
+
+.chartToggle {
+  display: grid;
+  min-height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #d4e1da;
+  border-radius: 9px;
+  color: var(--wf-green-strong);
+  background: #f5faf7;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.chartToggle:hover:not(:disabled) {
+  border-color: #aac7b9;
+  background: #ecf6f1;
+}
+
+.chartTogglePlaceholder {
+  display: block;
+}
+
+.organizationChartAvatar {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid #cbe2d7;
+  border-radius: 14px;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.organizationChartItem[data-node-type="manager"] > .organizationChartNode > .organizationChartAvatar {
+  border-color: #c9dcf4;
+  color: #315f9c;
+  background: #eef5ff;
+}
+
+.organizationChartIdentity {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.organizationChartIdentity strong,
+.organizationChartIdentity span,
+.organizationChartIdentity small,
+.organizationChartStructure strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.organizationChartIdentity strong {
+  color: var(--wf-ink);
+  font-size: 13px;
+}
+
+.organizationChartIdentity span {
+  color: #46564e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.organizationChartIdentity small {
+  color: var(--wf-muted);
+  font-size: 9px;
+}
+
+.organizationChartStructure {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.organizationChartStructure > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding-left: 9px;
+  border-left: 1px solid #e7eeea;
+}
+
+.organizationChartStructure small {
+  color: var(--wf-muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.organizationChartStructure strong {
+  color: #46564e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.organizationChartBadges {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.chartManagerBadge,
+.chartArchiveBadge {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.chartManagerBadge {
+  border-color: #c7ddfa;
+  color: #315f9c;
+  background: #eef5ff;
+}
+
+.chartArchiveBadge {
+  border-color: #e2d1b9;
+  color: #815c2c;
+  background: #fff8ed;
+}
+
+.organizationChartChildren {
+  margin: 8px 0 0 28px;
+  padding-left: 20px;
+  border-left: 2px solid #dce8e2;
+}
+
+.chartInlineStatus,
+.chartInlineError {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  color: var(--wf-muted);
+  font-size: 11px;
+}
+
+.chartInlineStatus .spinner {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  border-width: 2px;
+}
+
+.chartInlineError {
+  justify-content: space-between;
+  border: 1px solid var(--wf-danger-line);
+  border-radius: 11px;
+  color: #793936;
+  background: #fff9f8;
+}
+
+.chartInlineError > div {
+  display: grid;
+  gap: 3px;
+}
+
+.chartInlineError span,
+.chartInlineError small {
+  font-size: 10px;
+}
+
+.chartPageAction {
+  margin-top: 8px;
+  list-style: none;
+}
+
+.chartPageAction > .compactButton {
+  width: 100%;
+  border-style: dashed;
+}
+
+.organizationChartSemantics {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 13px 18px;
+  border-top: 1px solid var(--wf-line);
+  color: var(--wf-muted);
+  background: #fbfdfc;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.organizationChartSemantics strong {
+  color: var(--wf-green-strong);
+  white-space: nowrap;
+}
+
+.statusBadge[data-status="invited"] {
+  border-color: #c7ddfa;
+  color: #315f9c;
+  background: #eef5ff;
+}
+
+.statusBadge[data-status="locked"],
+.statusBadge[data-status="disabled"] {
+  border-color: #e2d1b9;
+  color: #815c2c;
+  background: #fff8ed;
 }
 
 .departmentHeader {
@@ -1523,6 +1834,21 @@
     grid-template-columns: 34px minmax(130px, 1fr) auto;
   }
 
+  .organizationChartNode {
+    grid-template-columns: 34px 44px minmax(170px, 1fr) auto;
+  }
+
+  .organizationChartStructure,
+  .organizationChartBadges {
+    grid-column: 3 / -1;
+  }
+
+  .organizationChartBadges {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
   .departmentNodeActions {
     grid-column: 2 / -1;
   }
@@ -1571,6 +1897,23 @@
 
   .departmentNode {
     grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  .organizationChartNode {
+    grid-template-columns: 34px 44px minmax(0, 1fr);
+  }
+
+  .organizationChartStructure,
+  .organizationChartBadges {
+    grid-column: 3;
+  }
+
+  .organizationChartStructure {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .organizationChartStructure > span:last-child {
+    grid-column: 1 / -1;
   }
 
   .departmentNodeActions {
@@ -1758,6 +2101,59 @@
 
   .departmentTree {
     padding: 12px;
+  }
+
+  .organizationChartTree {
+    padding: 12px;
+  }
+
+  .organizationChartNode {
+    grid-template-columns: 30px 38px minmax(0, 1fr);
+    align-items: start;
+    padding: 10px;
+  }
+
+  .organizationChartAvatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+
+  .organizationChartIdentity {
+    align-self: center;
+  }
+
+  .organizationChartStructure,
+  .organizationChartBadges {
+    grid-column: 1 / -1;
+  }
+
+  .organizationChartStructure {
+    grid-template-columns: 1fr;
+    padding-top: 8px;
+    border-top: 1px solid #edf2ef;
+  }
+
+  .organizationChartStructure > span,
+  .organizationChartStructure > span:last-child {
+    grid-column: auto;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .organizationChartChildren {
+    margin-left: 13px;
+    padding-left: 9px;
+  }
+
+  .chartInlineError,
+  .organizationChartSemantics {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .chartInlineError .compactButton {
+    width: 100%;
   }
 
   .departmentNode {

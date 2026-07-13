@@ -181,6 +181,25 @@ EMPLOYEE_ASSIGNMENT_FIELDS = {
     "created_at",
     "updated_at",
 }
+ORG_CHART_NODE_FIELDS = {
+    "id",
+    "node_type",
+    "employee_id",
+    "user_id",
+    "parent_user_id",
+    "assignment_id",
+    "full_name",
+    "email",
+    "employee_number",
+    "employee_status",
+    "user_status",
+    "legal_entity",
+    "branch",
+    "department",
+    "position",
+    "has_children",
+    "has_archived_reference",
+}
 AUDIT_EVENT_FIELDS = {
     "id",
     "occurred_at",
@@ -322,6 +341,7 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/employee-assignments/{assignment_id}"),
     ("patch", "/api/v1/employee-assignments/{assignment_id}"),
     ("get", "/api/v1/teams/me"),
+    ("get", "/api/v1/org-chart"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -444,7 +464,7 @@ async def main(database_url: str | None = None) -> None:
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
         "legal_entities,branches,branch_archive_history,departments,department_lazy_tree,"
         "department_move_cycle_archive_history,positions,position_search_archive_history,"
-        "employee_assignments,assignment_history,derived_manager_team,"
+        "employee_assignments,assignment_history,derived_manager_team,lazy_org_chart,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
         "leave_balances,leave_filters,leave_requests,workflow_transitions,auth"
@@ -1846,6 +1866,56 @@ async def _smoke_employee_assignment_endpoints(
         "initial reporting manager",
     )
     _assert_equal(created["is_current"], True, "initial current assignment")
+
+    roots, roots_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/org-chart",
+            headers=admin_headers,
+            params={"root": "true", "limit": 25},
+        ),
+        200,
+        "GET /api/v1/org-chart roots",
+        expected_limit=25,
+    )
+    _assert_equal(roots_cursor, None, "organization-chart root terminal cursor")
+    _assert_equal(len(roots), 1, "organization-chart synthetic manager root count")
+    _assert_exact_fields(roots[0], ORG_CHART_NODE_FIELDS, "organization-chart root")
+    _assert_equal(
+        roots[0]["user_id"],
+        str(REQUESTING_USER_ID),
+        "organization-chart manager root",
+    )
+    _assert_equal(roots[0]["has_children"], True, "organization-chart root child hint")
+
+    direct_reports, reports_cursor = _expect_phase1_list(
+        await client.get(
+            "/api/v1/org-chart",
+            headers=admin_headers,
+            params={"parent_id": str(REQUESTING_USER_ID), "limit": 25},
+        ),
+        200,
+        "GET /api/v1/org-chart direct reports",
+        expected_limit=25,
+    )
+    _assert_equal(reports_cursor, None, "organization-chart child terminal cursor")
+    _assert_equal(len(direct_reports), 1, "organization-chart direct-report count")
+    _assert_exact_fields(
+        direct_reports[0],
+        ORG_CHART_NODE_FIELDS,
+        "organization-chart direct-report node",
+    )
+    _assert_equal(
+        direct_reports[0]["employee_id"],
+        str(employee_id),
+        "organization-chart direct report",
+    )
+    _assert_equal(
+        direct_reports[0]["parent_user_id"],
+        str(REQUESTING_USER_ID),
+        "organization-chart direct-report parent",
+    )
 
     detail = _expect_phase1_data(
         await _request_documented(

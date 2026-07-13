@@ -219,6 +219,17 @@ test("tenant admin edits the legal entity and creates, updates, pages, and archi
       return;
     }
 
+    if (path === "/api/v1/org-chart") {
+      expect(request.method()).toBe("GET");
+      expect(url.searchParams.get("root")).toBe("true");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope([], { limit: PAGE_LIMIT, next_cursor: null }),
+      });
+      return;
+    }
+
     if (path === "/api/v1/departments/tree") {
       expect(request.method()).toBe("GET");
       expect(url.searchParams.get("limit")).toBe(String(PAGE_LIMIT));
@@ -492,7 +503,9 @@ test("a user without organization permission is redirected before organization A
       path.startsWith("/api/v1/legal-entities") ||
       path.startsWith("/api/v1/branches") ||
       path.startsWith("/api/v1/departments") ||
-      path.startsWith("/api/v1/positions")
+      path.startsWith("/api/v1/positions") ||
+      path.startsWith("/api/v1/org-chart") ||
+      path.startsWith("/api/v1/employee-assignments")
     ) {
       organizationRequests += 1;
       await route.fulfill({
@@ -571,7 +584,9 @@ test("a disabled organization feature redirects after an authoritative availabil
       path.startsWith("/api/v1/legal-entities") ||
       path.startsWith("/api/v1/branches") ||
       path.startsWith("/api/v1/departments") ||
-      path.startsWith("/api/v1/positions")
+      path.startsWith("/api/v1/positions") ||
+      path.startsWith("/api/v1/org-chart") ||
+      path.startsWith("/api/v1/employee-assignments")
     ) {
       organizationRequests += 1;
       await route.fulfill({

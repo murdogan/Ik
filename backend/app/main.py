@@ -23,6 +23,7 @@ from app.api.landing import router as landing_router
 from app.api.leave_balances import router as leave_balances_router
 from app.api.leave_requests import router as leave_requests_router
 from app.api.openapi import OPENAPI_TAGS
+from app.api.org_chart import router as org_chart_router
 from app.api.organization import branches_router, legal_entities_router
 from app.api.platform_auth import me_router as platform_me_router
 from app.api.platform_auth import router as platform_auth_router
@@ -91,6 +92,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(positions_router)
     app.include_router(assignments_router)
     app.include_router(teams_router)
+    app.include_router(org_chart_router)
     app.include_router(dashboard_router)
     app.include_router(employees_router)
     app.include_router(leave_balances_router)

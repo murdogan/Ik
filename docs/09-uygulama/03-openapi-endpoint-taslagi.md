@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-13 / P3I employee assignment and derived team scope vertical slice.
+Son güncelleme: 2026-07-13 / P3J lazy organization chart and unified workspace slice.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -26,8 +26,8 @@ F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: execut
 F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
 canlı OpenAPI'den doğrular. P3C iki organization-selection, P3D dört platform-auth, P3E iki
 password-recovery, P3F dokuz legal-entity/branch, P3G altı department, P3H beş position catalog ve
-P3I altı assignment/team operation'ı ekler; güncel registry 73 generated operation ve runtime
-`/openapi.json` ile 74 documented endpoint'tir.
+P3I altı assignment/team operation'ı, P3J bir lazy org-chart operation'ı ekler; güncel registry
+74 generated operation ve runtime `/openapi.json` ile 75 documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -93,6 +93,7 @@ P3I altı assignment/team operation'ı ekler; güncel registry 73 generated oper
 | GET | `/api/v1/employee-assignments/{assignment_id}` | P3I uygulandı | Tenant HR scope içinde güncel veya immutable tarihsel atama detayı |
 | PATCH | `/api/v1/employee-assignments/{assignment_id}` | P3I uygulandı | Open aralığı kapatır, immutable successor ve reporting-line audit ekler |
 | GET | `/api/v1/teams/me` | P3I uygulandı | Yalnız authenticated user'a bağlı güncel structured assignment'lardan türetilen doğrudan ekip |
+| GET | `/api/v1/org-chart` | P3J uygulandı | `root=true` veya `parent_id` ile tek bounded reporting seviyesi; parent-bound opaque cursor, resolved organizasyon etiketleri ve lazy child ipucu |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |

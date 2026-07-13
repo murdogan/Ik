@@ -25,6 +25,7 @@ export type OrganizationAction =
   | "department_update"
   | "department_move"
   | "department_archive"
+  | "org_chart_read"
   | "position_list"
   | "position_create"
   | "position_update"
@@ -44,6 +45,7 @@ const GENERIC_MESSAGES: Record<OrganizationAction, string> = {
   department_update: "Departman adı güncellenemedi. Lütfen yeniden deneyin.",
   department_move: "Departman taşınamadı. Lütfen yeniden deneyin.",
   department_archive: "Departman arşivlenemedi. Lütfen yeniden deneyin.",
+  org_chart_read: "Organizasyon şeması şu anda yüklenemiyor. Lütfen yeniden deneyin.",
   position_list: "Pozisyon kataloğu şu anda yüklenemiyor. Lütfen yeniden deneyin.",
   position_create: "Pozisyon oluşturulamadı. Lütfen yeniden deneyin.",
   position_update: "Pozisyon unvanı güncellenemedi. Lütfen yeniden deneyin.",
