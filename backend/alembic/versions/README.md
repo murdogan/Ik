@@ -66,6 +66,10 @@ kanıtlanır.
 `0012_p0f_query_performance`, mevcut response sözleşmesini değiştirmeden ölçülen liste/search
 sorgularını destekler:
 
+Bu bölüm P0F zamanındaki employee-number cursor plan kanıtını tarihsel olarak korur. Güncel P4A
+employee directory cursor/index sözleşmesi aşağıdaki `0032` bölümünde tanımlanan immutable
+`created_at`/`id` sırasıdır; P0F PostgreSQL ölçümü bu onarım için yeniden çalıştırılmış sayılmaz.
+
 - PostgreSQL'de `pg_trgm` extension'ını `IF NOT EXISTS` ile hazırlar. Non-archived employee
   `employee_number` ve `email` alanlarına partial GIN trigram indexleri ekler. Migration downgrade'i
   başka schema/uygulamalarca da kullanılabilecek extension'ı düşürmez.
@@ -405,8 +409,10 @@ daraltmadan HR çalışan dizini için gereken en küçük persistence genişlem
   iş e-postası Unicode uç boşlukları temizlenip lowercase edilerek tenant içinde benzersizdir;
   birden çok `NULL` e-posta geçerlidir, blank değerler DB check ile reddedilir. Arşivli satırlar da
   kimlikleri reserve etmeye devam eder.
-- Pozitif `version` optimistic concurrency kolonu, bounded directory/status cursor indexleri,
-  full-name trigram indexi ve legal-entity/position effective-assignment filter indexleri eklenir.
+- Pozitif `version` optimistic concurrency kolonu; non-archived directory için
+  `(tenant_id, created_at, id)` ve status-filtered directory için
+  `(tenant_id, status, created_at, id)` cursor indexleri; full-name trigram indexi ve
+  legal-entity/position effective-assignment filter indexleri eklenir.
   Legacy `department`/`position`, raw employee number/email ve assignment history korunur.
 - Upgrade, herhangi bir kolon/index eklemeden önce normalized collision ve blank preflight yapar.
   PostgreSQL'de global preflight için `employees` FORCE RLS transaction içinde geçici kaldırılır ve

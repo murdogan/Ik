@@ -3,11 +3,17 @@
 Date: 2026-07-10
 Scope: employee/leave list pagination, employee search and dashboard query count
 
+Historical note: this document preserves the P0F capture and its then-current employee
+`(employee_number asc, id asc)` plan evidence. P4A later superseded only the employee directory
+ordering with immutable `(created_at asc, id asc)`; the captured timings/index evidence below was
+not rerun for that repair and must not be read as repaired PostgreSQL execution evidence.
+
 ## Contract and safeguards
 
 - `GET /api/v1/employees` keeps its plain JSON array response and bounded `offset` path for
   compatibility. The preferred growing-list path uses `cursor`; a following page is advertised by
-  `X-Next-Cursor`. Ordering is `(employee_number asc, id asc)`.
+  `X-Next-Cursor`. At P0F capture time, ordering was `(employee_number asc, id asc)`; the current
+  P4A contract uses immutable `(created_at asc, id asc)`.
 - `GET /api/v1/leave-requests` uses the same additive contract. Its cursor contains the full
   `(created_at desc, start_date asc, id asc)` ordering tuple. Mixed directions are applied
   explicitly in the keyset predicate.

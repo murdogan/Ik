@@ -3075,7 +3075,7 @@ async def _smoke_employee_endpoints(
         "GET /api/v1/employees",
     )
     _assert_equal(
-        [employee["employee_number"] for employee in employees],
+        sorted(employee["employee_number"] for employee in employees),
         ["WF-SMOKE-001", "WF-SMOKE-002"],
         "employee list tenant scope",
     )
@@ -3090,7 +3090,7 @@ async def _smoke_employee_endpoints(
         "GET /api/v1/employees blank filters",
     )
     _assert_equal(
-        [employee["employee_number"] for employee in blank_filter_employees],
+        sorted(employee["employee_number"] for employee in blank_filter_employees),
         ["WF-SMOKE-001", "WF-SMOKE-002"],
         "employee blank filters are ignored",
     )
@@ -3384,7 +3384,10 @@ async def _smoke_employee_endpoints(
         "GET /api/v1/employees?limit=1&cursor=<cursor>",
     )
     _assert_equal(
-        [employee["employee_number"] for employee in employee_cursor_page + employee_next_page],
+        sorted(
+            employee["employee_number"]
+            for employee in employee_cursor_page + employee_next_page
+        ),
         ["WF-SMOKE-001", "WF-SMOKE-002"],
         "employee deterministic cursor pagination",
     )
@@ -3408,6 +3411,14 @@ async def _smoke_employee_endpoints(
             "employment_start_date": today,
         },
     )
+    offset_source = _expect_json(
+        await client.get(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+        ),
+        200,
+        "GET /api/v1/employees before offset compatibility check",
+    )
     paginated = _expect_json(
         await client.get(
             "/api/v1/employees",
@@ -3418,8 +3429,8 @@ async def _smoke_employee_endpoints(
         "GET /api/v1/employees?limit=1&offset=2",
     )
     _assert_equal(
-        [employee["employee_number"] for employee in paginated],
-        ["WF-SMOKE-DELETE"],
+        [employee["id"] for employee in paginated],
+        [offset_source[2]["id"]],
         "employee pagination",
     )
     _expect_status(

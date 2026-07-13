@@ -189,6 +189,31 @@ def test_employee_has_tenant_archive_index() -> None:
     )
 
 
+def test_employee_has_immutable_partial_directory_cursor_indexes() -> None:
+    indexes = {index.name: index for index in Employee.__table__.indexes}
+    directory_index = indexes["ix_employees_tenant_directory_cursor"]
+    status_directory_index = indexes[
+        "ix_employees_tenant_status_directory_cursor"
+    ]
+
+    assert tuple(column.name for column in directory_index.columns) == (
+        "tenant_id",
+        "created_at",
+        "id",
+    )
+    assert tuple(column.name for column in status_directory_index.columns) == (
+        "tenant_id",
+        "status",
+        "created_at",
+        "id",
+    )
+    for index in (directory_index, status_directory_index):
+        assert str(index.dialect_options["postgresql"]["where"]) == (
+            "archived_at IS NULL"
+        )
+        assert str(index.dialect_options["sqlite"]["where"]) == "archived_at IS NULL"
+
+
 def test_employee_has_postgresql_search_indexes() -> None:
     indexes = {index.name: index for index in Employee.__table__.indexes}
 

@@ -244,7 +244,7 @@ def _create_employee_directory_indexes() -> None:
     op.create_index(
         "ix_employees_tenant_directory_cursor",
         _EMPLOYEES_TABLE,
-        ["tenant_id", "employee_number", "id"],
+        ["tenant_id", "created_at", "id"],
         unique=False,
         postgresql_where=sa.text("archived_at IS NULL"),
         sqlite_where=sa.text("archived_at IS NULL"),
@@ -252,7 +252,7 @@ def _create_employee_directory_indexes() -> None:
     op.create_index(
         "ix_employees_tenant_status_directory_cursor",
         _EMPLOYEES_TABLE,
-        ["tenant_id", "status", "employee_number", "id"],
+        ["tenant_id", "status", "created_at", "id"],
         unique=False,
         postgresql_where=sa.text("archived_at IS NULL"),
         sqlite_where=sa.text("archived_at IS NULL"),

@@ -293,7 +293,7 @@ Geçerli uygulama notları:
 - Employee list/detail/update normal yüzeyi yalnız `archived_at is null` kayıtları görür.
   Arşivlenmiş employee'nin eski leave request kayıtları tenant-scoped leave history listesinde
   tutulmaya devam eder; yeni leave request veya normal balance erişimi açılamaz.
-- Employee listesinde `limit` + `(employee_number asc, id asc)` cursor uygulanmıştır. Devam varsa
+- Employee listesinde `limit` + immutable `(created_at asc, id asc)` cursor uygulanmıştır. Devam varsa
   `X-Next-Cursor` döner; plain-array body ve deprecated `offset` compatibility yolu korunur.
 - Leave request listesinde W2A3 itibarıyla `status`, `employee_id` ve inclusive
   `start_date`/`end_date` tarih aralığı filtreleri testlerle sabitlenmiştir. Tarih aralığı, izin
@@ -888,7 +888,10 @@ Query:
 - `cursor`: Önceki response'un `X-Next-Cursor` header'ından opaque keyset değeri.
 - `offset`: Deprecated compatibility yolu; cursor ile positive değer birlikte kullanılamaz.
 
-Sıra `(employee_number asc, id asc)` ile deterministiktir. Global `sort` ayrı backlog'dur.
+Sıra immutable `(created_at asc, id asc)` ile deterministiktir. Devam predicate'i
+`created_at > cursor.created_at OR (created_at = cursor.created_at AND id > cursor.id)` tam
+lexicographic karşılaştırmasıdır; güncellenebilir `employee_number` cursor'a girmez. Global `sort`
+ayrı backlog'dur.
 
 Request örneği:
 

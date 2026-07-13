@@ -24,8 +24,9 @@ Push state: `P4A commit is intentionally left unpushed for the supervisor; no me
   success the route-backed `/employees/{employee_id}` summary opens with legacy work labels,
   optimistic version, and the current Phase 3 assignment reference when one exists.
 - `0032_p4a_employee_directory` adds generated normalized employee-number/email/full-name columns,
-  tenant unique indexes, positive SQLAlchemy optimistic versioning, bounded directory/search
-  indexes and missing assignment filter indexes without removing legacy columns/history. Non-null
+  tenant unique indexes, positive SQLAlchemy optimistic versioning, immutable
+  `(tenant_id, created_at, id)` and `(tenant_id, status, created_at, id)` bounded directory
+  indexes, and missing assignment filter indexes without removing legacy columns/history. Non-null
   work email and employee number are trim/lowercase unique per tenant; multiple null emails are
   allowed and blank identifiers are rejected at schema and DB boundaries.
 - Create, actual update and first archive write same-transaction `employee.created|updated|archived`
@@ -765,6 +766,10 @@ the expected local commits ahead of the review-branch remote after the final com
 
 ### Historical P0F pagination, search and query-performance baseline
 
+The bullets in this subsection preserve what P0F implemented and measured. P4A later superseded
+the employee cursor only: the current directory uses immutable `(created_at asc, id asc)`, and the
+old employee-number PostgreSQL plan evidence was not rerun or relabeled as repair evidence.
+
 - Added versioned opaque keyset cursors to employee and leave-request high-growth lists while
   preserving their plain-array bodies and bounded `offset` compatibility path. A page that proves
   more rows exist returns `X-Next-Cursor`; positive `offset` cannot be combined with `cursor`.
@@ -1090,7 +1095,9 @@ flows, legacy HR authorization and contract-table drift without printing credent
 - Employee list supports `department`, `status`, `q`, `limit`, deterministic `cursor`, and the
   deprecated `offset` compatibility path. Filters and archive visibility are tenant-scoped before
   pagination. `limit` defaults to `50` and is capped at `200`; another page is exposed only through
-  `X-Next-Cursor` after a `limit + 1` probe.
+  `X-Next-Cursor` after a `limit + 1` probe. The current immutable ordering is
+  `(created_at asc, id asc)` with
+  `created_at > cursor.created_at OR (created_at = cursor.created_at AND id > cursor.id)`.
 - Employee lifecycle validation is active: `terminated` requires `employment_end_date`; `active`
   and `on_leave` require `employment_end_date: null`. Violations return
   `employee_invalid_lifecycle`, and the database also has
@@ -1466,6 +1473,9 @@ The PostgreSQL lane used a disposable local PostgreSQL 17.10 cluster and a fresh
 No staging/production database, deployment, credential file or `.env` was changed.
 
 ### Historical Phase-0 verification evidence
+
+This is retained P0F evidence for the former employee-number cursor. It does not claim PostgreSQL
+execution of the P4A immutable-cursor repair.
 
 P0F local gate evidence:
 

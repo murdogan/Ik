@@ -430,7 +430,7 @@ Bağlam:
 
 Karar:
 
-- Employee listesi `(employee_number asc, id asc)`, leave request listesi
+- P0F başlangıç kararında employee listesi `(employee_number asc, id asc)`, leave request listesi
   `(created_at desc, start_date asc, id asc)` üzerinden versioned opaque keyset cursor kullanır.
   Response body plain array kalır; devam değeri `X-Next-Cursor` header'ındadır. Bounded `offset`
   deprecated compatibility path olarak korunur; positive offset ile cursor birlikte reddedilir.
@@ -464,6 +464,12 @@ Sonuç:
   seçmesine izin verilir.
 - OpenSearch, response envelope standardizasyonu, audit-derived dashboard activity ve cache
   invalidation bu Phase-0 kararının kapsamı değildir.
+
+P4A review blocker onarımı, güncellenebilir `employee_number` nedeniyle sayfalar arasında oluşan
+skip/duplicate riskini kapatmak için ADR'nin employee tarafını immutable
+`(created_at asc, id asc)` ile supersede eder. Tam devam predicate'i
+`created_at > cursor.created_at OR (created_at = cursor.created_at AND id > cursor.id)`'dir;
+leave ordering'i ve P0F zamanında kaydedilmiş ölçüm kanıtı değişmez.
 
 Kanıt ve tekrar prosedürü:
 

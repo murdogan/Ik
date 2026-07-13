@@ -1610,6 +1610,16 @@ def test_alembic_offline_p4a_renders_preflight_generated_keys_and_indexes() -> N
         "ix_employee_assignments_tenant_position_effective",
     ):
         assert index_name in result.stdout
+    assert (
+        "CREATE INDEX ix_employees_tenant_directory_cursor ON employees "
+        "(tenant_id, created_at, id) WHERE archived_at IS NULL;"
+        in result.stdout
+    )
+    assert (
+        "CREATE INDEX ix_employees_tenant_status_directory_cursor ON employees "
+        "(tenant_id, status, created_at, id) WHERE archived_at IS NULL;"
+        in result.stdout
+    )
 
 
 def test_alembic_offline_p4a_downgrade_guards_changed_versions_before_drops() -> None:

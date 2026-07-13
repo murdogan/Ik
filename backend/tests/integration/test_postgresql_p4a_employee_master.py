@@ -242,6 +242,15 @@ async def _assert_catalog(engine: AsyncEngine) -> None:
         assert "UNIQUE INDEX" in indexes[
             "uq_employees_tenant_employee_number_normalized"
         ]
+        assert indexes["ix_employees_tenant_directory_cursor"] == (
+            "CREATE INDEX ix_employees_tenant_directory_cursor ON public.employees "
+            "USING btree (tenant_id, created_at, id) WHERE (archived_at IS NULL)"
+        )
+        assert indexes["ix_employees_tenant_status_directory_cursor"] == (
+            "CREATE INDEX ix_employees_tenant_status_directory_cursor ON "
+            "public.employees USING btree (tenant_id, status, created_at, id) "
+            "WHERE (archived_at IS NULL)"
+        )
         assert "USING gin (full_name_normalized gin_trgm_ops)" in indexes[
             "ix_employees_full_name_normalized_trgm"
         ]

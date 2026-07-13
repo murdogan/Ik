@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -14,6 +14,7 @@ from app.main import create_app
 from app.models.command_idempotency import CommandIdempotency
 from app.models.employee import Employee, EmployeeStatus
 from app.models.tenant import Tenant, TenantStatus
+from app.platform.pagination import encode_cursor
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
@@ -30,6 +31,8 @@ EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 ON_LEAVE_EMPLOYEE_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 TERMINATED_EMPLOYEE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 OTHER_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+FIRST_CREATED_AT = datetime(2026, 7, 13, 9, 0, tzinfo=UTC)
+LATER_CREATED_AT = datetime(2026, 7, 13, 10, 0, tzinfo=UTC)
 
 
 async def _client_with_database(
@@ -83,6 +86,7 @@ async def _client_with_database(
                 position="HR Specialist",
                 status=EmployeeStatus.ACTIVE.value,
                 employment_start_date=date(2026, 7, 1),
+                created_at=FIRST_CREATED_AT,
             ),
             Employee(
                 id=ON_LEAVE_EMPLOYEE_ID,
@@ -95,6 +99,7 @@ async def _client_with_database(
                 position="People Partner",
                 status=EmployeeStatus.ON_LEAVE.value,
                 employment_start_date=date(2026, 7, 2),
+                created_at=FIRST_CREATED_AT,
             ),
             Employee(
                 id=TERMINATED_EMPLOYEE_ID,
@@ -108,6 +113,7 @@ async def _client_with_database(
                 status=EmployeeStatus.TERMINATED.value,
                 employment_start_date=date(2026, 7, 3),
                 employment_end_date=date(2026, 7, 31),
+                created_at=LATER_CREATED_AT,
             ),
             Employee(
                 id=OTHER_EMPLOYEE_ID,
@@ -119,6 +125,7 @@ async def _client_with_database(
                 department="People",
                 status=EmployeeStatus.ACTIVE.value,
                 employment_start_date=date(2026, 7, 1),
+                created_at=FIRST_CREATED_AT,
             ),
         ]
         records.extend(
@@ -631,6 +638,93 @@ async def test_list_employees_exposes_deterministic_cursor_while_preserving_arra
         await engine.dispose()
 
 
+async def test_employee_cursor_does_not_skip_unseen_employee_after_number_update() -> None:
+    client, engine = await _client_with_database()
+    try:
+        first_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1},
+        )
+        assert first_response.status_code == 200
+        assert [employee["id"] for employee in first_response.json()] == [
+            str(EMPLOYEE_ID)
+        ]
+        first_cursor = first_response.headers["X-Next-Cursor"]
+
+        update_response = await client.patch(
+            f"/api/v1/employees/{ON_LEAVE_EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"employee_number": "WF-000"},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["employee_number"] == "WF-000"
+
+        second_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1, "cursor": first_cursor},
+        )
+        assert second_response.status_code == 200
+        assert [employee["id"] for employee in second_response.json()] == [
+            str(ON_LEAVE_EMPLOYEE_ID)
+        ]
+        second_cursor = second_response.headers["X-Next-Cursor"]
+
+        final_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1, "cursor": second_cursor},
+        )
+        assert final_response.status_code == 200
+        assert [employee["id"] for employee in final_response.json()] == [
+            str(TERMINATED_EMPLOYEE_ID)
+        ]
+        assert "X-Next-Cursor" not in final_response.headers
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_employee_cursor_does_not_duplicate_seen_employee_after_number_update() -> None:
+    client, engine = await _client_with_database()
+    try:
+        first_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1},
+        )
+        assert first_response.status_code == 200
+        assert [employee["id"] for employee in first_response.json()] == [
+            str(EMPLOYEE_ID)
+        ]
+        first_cursor = first_response.headers["X-Next-Cursor"]
+
+        update_response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"employee_number": "WF-005"},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["employee_number"] == "WF-005"
+
+        second_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"limit": 1, "cursor": first_cursor},
+        )
+        assert second_response.status_code == 200
+        assert [employee["id"] for employee in second_response.json()] == [
+            str(ON_LEAVE_EMPLOYEE_ID)
+        ]
+        assert set(employee["id"] for employee in first_response.json()).isdisjoint(
+            employee["id"] for employee in second_response.json()
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
 async def test_list_employees_rejects_invalid_cursor_and_cursor_offset_mix() -> None:
     client, engine = await _client_with_database()
     try:
@@ -638,6 +732,32 @@ async def test_list_employees_rejects_invalid_cursor_and_cursor_offset_mix() -> 
             "/api/v1/employees",
             headers=_tenant_headers(),
             params={"cursor": "not-a-cursor"},
+        )
+        legacy_cursor_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={
+                "cursor": encode_cursor(
+                    "employees",
+                    {
+                        "employee_number": "WF-001",
+                        "id": str(EMPLOYEE_ID),
+                    },
+                )
+            },
+        )
+        wrong_resource_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={
+                "cursor": encode_cursor(
+                    "leave_requests",
+                    {
+                        "created_at": "2026-07-13T09:00:00Z",
+                        "id": str(EMPLOYEE_ID),
+                    },
+                )
+            },
         )
         first_response = await client.get(
             "/api/v1/employees",
@@ -653,7 +773,12 @@ async def test_list_employees_rejects_invalid_cursor_and_cursor_offset_mix() -> 
             },
         )
 
-        for response in (invalid_response, mixed_response):
+        for response in (
+            invalid_response,
+            legacy_cursor_response,
+            wrong_resource_response,
+            mixed_response,
+        ):
             _assert_error_response(
                 response,
                 status_code=422,

@@ -189,7 +189,7 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 | `tenants` | unique `slug`; mevcut lifecycle status check'i; yeni plan/region/locale inputları API/domain allowlist'inde |
 | `tenant_settings` | primary key `tenant_id` aynı zamanda tenant foreign key |
 | `tenant_feature_flags` | composite primary key `(tenant_id,key)`; fixed key/enabled check; tenant root FK; katalog sırası bounded olduğu için ayrı liste indexi yok |
-| `employees` | `(tenant_id, employee_number) unique`, `(tenant_id, status)`, `(tenant_id, archived_at)`, non-archived `employee_number`/`email` partial `pg_trgm` GIN, non-archived `(tenant_id, department_normalized)` |
+| `employees` | `(tenant_id, employee_number) unique`, `(tenant_id, status)`, `(tenant_id, archived_at)`, non-archived `(tenant_id, created_at, id)` directory cursor, non-archived `(tenant_id, status, created_at, id)` status cursor, non-archived `employee_number`/`email` partial `pg_trgm` GIN, non-archived `(tenant_id, department_normalized)` |
 | `command_idempotency` | `(tenant_id, idempotency_key) unique`, `(tenant_id)` |
 | `legal_entities` | tenant-unique normalized code, tek default partial unique, `(tenant_id,status,code_normalized)` |
 | `branches` | tenant-unique normalized code, `(tenant_id,status,code_normalized)`, `(tenant_id,legal_entity_id,status)` |

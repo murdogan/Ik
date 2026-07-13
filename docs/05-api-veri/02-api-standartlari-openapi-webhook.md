@@ -196,7 +196,7 @@ log metadata'sına girmez.
 
 Faz-0 deterministic sıraları:
 
-- employee: `employee_number asc, id asc`;
+- employee: immutable `created_at asc, id asc`;
 - leave request: `created_at desc, start_date asc, id asc`.
 
 Cursor endpoint türü ve bu tam ordering tuple'ını versioned opaque token içinde taşır; tenant
@@ -259,6 +259,11 @@ korur; `{data,meta}` zarfına geçirilmez. Default `limit=50`, max `200` ve depr
 - `department`: legacy/current projection üzerinde exact case-insensitive uyumluluk filtresi;
 - `legal_entity_id`, `branch_id`, `department_id`, `position_id`: aynı currently-effective Phase 3
   assignment satırında kesişen UUID filtreleri.
+
+Employee directory opaque cursor'ı yalnız immutable `(created_at, id)` tuple'ını taşır. Artan sıra
+için devam predicate'i tam lexicographic biçimde
+`created_at > cursor.created_at OR (created_at = cursor.created_at AND id > cursor.id)`'dir;
+güncellenebilir `employee_number` cursor ordering/key alanı değildir.
 
 List/detail item'ına optional-compatible `version` ve `current_assignment` eklenir. Legacy
 `department`/`position` alanları kaldırılmaz; current structured değer varsa onu projekte eder,

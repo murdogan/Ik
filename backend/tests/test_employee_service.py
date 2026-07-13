@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
@@ -11,6 +11,7 @@ from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.schemas.employee import (
     EmployeeCreate,
+    EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
     EmployeeUpdate,
@@ -34,11 +35,14 @@ EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SECOND_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 OTHER_EMPLOYEE_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 TERMINATED_EMPLOYEE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+LOW_ID_LATER_EMPLOYEE_ID = UUID("09999999-0000-4000-8000-00000000000a")
 ASSIGNMENT_EFFECTIVE_ON = date(2026, 7, 13)
 BRANCH_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 STRUCTURED_DEPARTMENT_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1")
 EXPIRED_DEPARTMENT_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2")
 STRUCTURED_POSITION_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3")
+FIRST_CREATED_AT = datetime(2026, 7, 13, 9, 0, tzinfo=UTC)
+LATER_CREATED_AT = datetime(2026, 7, 13, 10, 0, tzinfo=UTC)
 
 
 async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
@@ -85,6 +89,7 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 position="HR Specialist",
                 status=EmployeeStatus.ACTIVE.value,
                 employment_start_date=date(2026, 7, 1),
+                created_at=FIRST_CREATED_AT,
             ),
             Employee(
                 id=SECOND_EMPLOYEE_ID,
@@ -97,6 +102,7 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 position="People Partner",
                 status=EmployeeStatus.ON_LEAVE.value,
                 employment_start_date=date(2026, 7, 2),
+                created_at=FIRST_CREATED_AT,
             ),
             Employee(
                 id=OTHER_EMPLOYEE_ID,
@@ -108,6 +114,7 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 department="People",
                 status=EmployeeStatus.ACTIVE.value,
                 employment_start_date=date(2026, 7, 1),
+                created_at=FIRST_CREATED_AT,
             ),
             Employee(
                 id=TERMINATED_EMPLOYEE_ID,
@@ -121,6 +128,7 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 status=EmployeeStatus.TERMINATED.value,
                 employment_start_date=date(2026, 7, 1),
                 employment_end_date=date(2026, 7, 31),
+                created_at=LATER_CREATED_AT,
             ),
         ]
     )
@@ -382,6 +390,128 @@ async def test_list_employees_paginates_after_tenant_scope() -> None:
 
         assert [employee.employee_number for employee in employees] == ["WF-002"]
         assert {employee.tenant_id for employee in employees} == {TENANT_ID}
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_employee_cursor_does_not_skip_unseen_employee_when_number_moves_before_cursor(
+) -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        service = EmployeeService(session)
+        first_page = await service.list_employee_page(
+            TENANT_ID,
+            pagination=EmployeeListPagination(limit=1),
+        )
+        assert [employee.id for employee in first_page.items] == [EMPLOYEE_ID]
+        assert first_page.next_cursor is not None
+
+        unseen_employee = await session.get(Employee, SECOND_EMPLOYEE_ID)
+        assert unseen_employee is not None
+        unseen_employee.employee_number = "WF-000"
+        await session.commit()
+
+        second_page = await service.list_employee_page(
+            TENANT_ID,
+            pagination=EmployeeListPagination(
+                limit=1,
+                cursor=EmployeeListCursor.from_token(first_page.next_cursor),
+            ),
+        )
+        assert [employee.id for employee in second_page.items] == [SECOND_EMPLOYEE_ID]
+        assert second_page.next_cursor is not None
+
+        final_page = await service.list_employee_page(
+            TENANT_ID,
+            pagination=EmployeeListPagination(
+                limit=1,
+                cursor=EmployeeListCursor.from_token(second_page.next_cursor),
+            ),
+        )
+        assert [employee.id for employee in final_page.items] == [
+            TERMINATED_EMPLOYEE_ID
+        ]
+        assert final_page.next_cursor is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_employee_cursor_does_not_duplicate_seen_employee_when_number_moves_after_cursor(
+) -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        service = EmployeeService(session)
+        first_page = await service.list_employee_page(
+            TENANT_ID,
+            pagination=EmployeeListPagination(limit=1),
+        )
+        assert [employee.id for employee in first_page.items] == [EMPLOYEE_ID]
+        assert first_page.next_cursor is not None
+
+        seen_employee = await session.get(Employee, EMPLOYEE_ID)
+        assert seen_employee is not None
+        seen_employee.employee_number = "WF-999"
+        await session.commit()
+
+        employee_ids = [employee.id for employee in first_page.items]
+        next_cursor = first_page.next_cursor
+        while next_cursor is not None:
+            page = await service.list_employee_page(
+                TENANT_ID,
+                pagination=EmployeeListPagination(
+                    limit=1,
+                    cursor=EmployeeListCursor.from_token(next_cursor),
+                ),
+            )
+            employee_ids.extend(employee.id for employee in page.items)
+            next_cursor = page.next_cursor
+
+        assert employee_ids == [
+            EMPLOYEE_ID,
+            SECOND_EMPLOYEE_ID,
+            TERMINATED_EMPLOYEE_ID,
+        ]
+        assert employee_ids.count(EMPLOYEE_ID) == 1
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_employee_cursor_uses_full_created_at_id_lexicographic_predicate() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        session.add(
+            Employee(
+                id=LOW_ID_LATER_EMPLOYEE_ID,
+                tenant_id=TENANT_ID,
+                employee_number="WF-004",
+                first_name="Deniz",
+                last_name="Arslan",
+                status=EmployeeStatus.ACTIVE.value,
+                employment_start_date=date(2026, 7, 4),
+                created_at=datetime(2026, 7, 13, 11, 0, tzinfo=UTC),
+            )
+        )
+        await session.commit()
+
+        page = await EmployeeService(session).list_employee_page(
+            TENANT_ID,
+            pagination=EmployeeListPagination(
+                limit=10,
+                cursor=EmployeeListCursor(
+                    created_at=FIRST_CREATED_AT,
+                    id=EMPLOYEE_ID,
+                ),
+            ),
+        )
+
+        assert [employee.id for employee in page.items] == [
+            SECOND_EMPLOYEE_ID,
+            TERMINATED_EMPLOYEE_ID,
+            LOW_ID_LATER_EMPLOYEE_ID,
+        ]
     finally:
         await session.close()
         await engine.dispose()

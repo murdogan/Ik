@@ -58,7 +58,7 @@ def test_representative_10k_queries_capture_index_and_buffer_evidence(
         "ix_employees_employee_number_trgm",
     } <= set(evidence["employee_search"]["indexes"])
     assert (
-        "uq_employees_tenant_employee_number"
+        "ix_employees_tenant_directory_cursor"
         in evidence["employee_cursor"]["indexes"]
     )
     assert (
@@ -116,6 +116,7 @@ async def _capture_representative_plans(database_url: URL) -> dict[str, object]:
                         TENANT_ID,
                         EmployeeListFilters(q="employee009999"),
                         EmployeeListPagination(limit=50),
+                        dialect_name="postgresql",
                     ),
                 ),
                 "employee_cursor": await _explain_statement(
@@ -126,10 +127,11 @@ async def _capture_representative_plans(database_url: URL) -> dict[str, object]:
                         EmployeeListPagination(
                             limit=50,
                             cursor=EmployeeListCursor(
-                                employee_number="WF-005000",
+                                created_at=datetime(2026, 7, 1, tzinfo=UTC),
                                 id=UUID("10000000-0000-4000-8000-000000005000"),
                             ),
                         ),
+                        dialect_name="postgresql",
                     ),
                 ),
                 "leave_request_cursor": await _explain_statement(
@@ -212,7 +214,7 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
             insert into employees (
                 id, tenant_id, employee_number, first_name, last_name, email,
                 department, position, status, employment_start_date,
-                employment_end_date
+                employment_end_date, created_at, updated_at
             )
             select
                 ('10000000-0000-4000-8000-' || lpad(gs::text, 12, '0'))::uuid,
@@ -229,7 +231,11 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
                     else 'active'
                 end,
                 date '2024-01-01' + (gs % 700),
-                case when gs % 20 = 0 then date '2026-06-30' else null end
+                case when gs % 20 = 0 then date '2026-06-30' else null end,
+                timestamptz '2026-07-01 00:00:00+00'
+                    + (gs - 5000) * interval '1 second',
+                timestamptz '2026-07-01 00:00:00+00'
+                    + (gs - 5000) * interval '1 second'
             from generate_series(1, :employee_count) as gs
             """
         ),
