@@ -114,6 +114,14 @@ def f1c_postgres_database(postgres_database_url: URL) -> URL:
     return postgres_database_url
 
 
+@pytest.fixture
+def current_repository_postgres_database(f1c_postgres_database: URL) -> URL:
+    """Upgrade the isolated F1C database for tests that exercise the current ORM."""
+
+    alembic_command.upgrade(_alembic_config(f1c_postgres_database), "head")
+    return f1c_postgres_database
+
+
 async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
     f1c_postgres_database: URL,
 ) -> None:
@@ -756,9 +764,11 @@ async def test_uow_set_local_role_and_tenant_rebind_and_reset_on_one_pool_connec
 
 
 async def test_employee_repository_cannot_retrieve_tenant_b_under_tenant_a_session(
-    f1c_postgres_database: URL,
+    current_repository_postgres_database: URL,
 ) -> None:
-    engine = create_async_engine(f1c_postgres_database, poolclass=NullPool)
+    # Unlike the surrounding revision-pinned catalog assertions, this test uses the
+    # current EmployeeService mapping and therefore requires the current physical schema.
+    engine = create_async_engine(current_repository_postgres_database, poolclass=NullPool)
     try:
         await _seed_tenants_and_employees(engine)
         async with AsyncSession(engine, expire_on_commit=False) as session:
