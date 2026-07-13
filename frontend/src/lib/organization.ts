@@ -7,6 +7,7 @@ import {
 export type LegalEntityStatus = "active" | "inactive";
 export type BranchStatus = "active" | "archived";
 export type DepartmentStatus = "active" | "archived";
+export type PositionStatus = "active" | "archived";
 
 export interface LegalEntity {
   id: string;
@@ -89,6 +90,26 @@ export interface DepartmentUpdateRequest {
   parent_id?: string | null;
 }
 
+export interface Position {
+  id: string;
+  code: string;
+  title: string;
+  status: PositionStatus;
+  archived_at: string | null;
+  accepts_new_assignments: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PositionCreateRequest {
+  code: string;
+  title: string;
+}
+
+export interface PositionUpdateRequest {
+  title: string;
+}
+
 export interface OrganizationListMeta {
   request_id?: string;
   trace_id?: string;
@@ -114,6 +135,11 @@ export interface DepartmentTreeOptions extends CursorListOptions {
 
 export interface DepartmentListOptions extends CursorListOptions {
   status?: DepartmentStatus;
+}
+
+export interface PositionListOptions extends CursorListOptions {
+  status?: PositionStatus | "";
+  search?: string;
 }
 
 function assertPageMeta(
@@ -285,6 +311,63 @@ export function updateDepartment(
 export function archiveDepartment(departmentId: string): Promise<Department> {
   return requestAuthenticatedApi<Department>(
     `/api/v1/departments/${encodeURIComponent(departmentId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function listPositions(
+  options: PositionListOptions,
+): Promise<ApiSuccessEnvelope<Position[], OrganizationListMeta>> {
+  const query = new URLSearchParams({ limit: String(options.limit) });
+  if (options.cursor) {
+    query.set("cursor", options.cursor);
+  }
+  if (options.status) {
+    query.set("status", options.status);
+  }
+  if (options.search) {
+    query.set("search", options.search);
+  }
+
+  const envelope = await requestAuthenticatedApiEnvelope<
+    Position[],
+    OrganizationListMeta
+  >(`/api/v1/positions?${query.toString()}`);
+  if (!Array.isArray(envelope.data)) {
+    throw new ApiClientError({ status: 200, code: "invalid_response" });
+  }
+  assertPageMeta(envelope);
+  return envelope;
+}
+
+export function readPosition(positionId: string): Promise<Position> {
+  return requestAuthenticatedApi<Position>(
+    `/api/v1/positions/${encodeURIComponent(positionId)}`,
+  );
+}
+
+export function createPosition(
+  position: PositionCreateRequest,
+): Promise<Position> {
+  return requestAuthenticatedApi<Position>("/api/v1/positions", {
+    method: "POST",
+    body: position,
+  });
+}
+
+export function updatePosition(
+  positionId: string,
+  update: PositionUpdateRequest,
+): Promise<Position> {
+  return requestAuthenticatedApi<Position>(
+    `/api/v1/positions/${encodeURIComponent(positionId)}`,
+    { method: "PATCH", body: update },
+  );
+}
+
+export function archivePosition(positionId: string): Promise<Position> {
+  return requestAuthenticatedApi<Position>(
+    `/api/v1/positions/${encodeURIComponent(positionId)}`,
     { method: "DELETE" },
   );
 }

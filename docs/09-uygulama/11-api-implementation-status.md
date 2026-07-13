@@ -2,14 +2,47 @@
 
 Date: 2026-07-13
 Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3G department hierarchy vertical slice`
-Review checkpoint: `P3F was green, committed and pushed before P3G began`
-Review decision: `P3G implementation and local verification are recorded below`
-Push state: `P3G commits are intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P3H position catalog vertical slice`
+Review checkpoint: `P3G was green, committed and pushed before P3H began`
+Review decision: `P3H implementation and local verification are recorded below`
+Push state: `P3H commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### P3G department hierarchy
+### P3H position catalog
+
+- Authorized tenant admin/HR users can create reusable job titles with stable codes, search and
+  paginate the tenant catalog, rename active titles, archive them and retain readable history from
+  the existing `/organization` workspace. Budget, FTE, occupancy, manager and workforce-planning
+  fields remain out of scope.
+- Stable codes are tenant-unique and remain reserved after archive. Archived positions are
+  terminal, expose `accepts_new_assignments=false`, reject updates and are rejected by the
+  assignable-position service boundary prepared for the later structured-assignment slice.
+- Every API and service read/write derives tenant and actor only from the authenticated request
+  context, reuses organization read/update RBAC and rollout/lifecycle guards, and records
+  create/update/archive audit events in the domain transaction.
+- Status/search-bound opaque cursors cap pages at 100. One- or two-character searches are exact
+  stable-code B-tree lookups; longer contains searches accept at most 100 characters, require an
+  indexable three-character word trigram and use PostgreSQL code/title GIN indexes.
+- The additive `positions` table preserves the legacy `employees.position` string. PostgreSQL
+  FORCE RLS, narrow column ACLs and an immutable/terminal-history trigger are covered by a focused
+  test that passed on an ephemeral local PostgreSQL 17.10 database.
+
+### P3H verification gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend scripts/backend_api_smoke.py` | Passed: `All checks passed!` |
+| Full fast backend suite | `uv run pytest -q` | Passed: 842 tests; 54 PostgreSQL tests deselected; one known Starlette/httpx warning |
+| Focused migration/API | `uv run pytest -q backend/tests/test_migrations.py backend/tests/test_position_api.py` | Passed: 57 tests |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0029_p3h_position_catalog` |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 68 documented endpoints executed, including position search/update/archive/history |
+| PostgreSQL P3H proof | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p3h_positions.py` | Passed: one focused test on ephemeral PostgreSQL 17.10 covering RLS/ACLs, indexes, generated normalization, tenant isolation, lifecycle trigger and downgrade retention guard |
+| Frontend static gates | `npm run lint`, `npm run typecheck`, `npm run build` in `frontend/` | Passed; production build includes `/organization` |
+| Focused browser E2E | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npx playwright test tests/position-catalog-flow.spec.ts tests/organization-flow.spec.ts tests/department-hierarchy-flow.spec.ts` | Passed: five Chromium flows including position create/search/page/update/archive/history and existing organization regressions |
+| Git hygiene | `git diff --check` plus independent backend/frontend/scope review | Passed; no Phase 4, planning, deployment, environment, credential or generated-artifact change |
+
+### Historical P3G department hierarchy
 
 - HR can create root/child departments, lazily expand one bounded level, rename active nodes,
   safely move them, archive leaves and read archived parent/code history from `/organization`.
@@ -786,6 +819,11 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/departments/{department_id}` | Implemented for P3G | Active or archived current-tenant detail with retained parent history |
 | PATCH | `/api/v1/departments/{department_id}` | Implemented for P3G | Active-only rename/safe move; application and PostgreSQL cycle prevention |
 | DELETE | `/api/v1/departments/{department_id}` | Implemented for P3G | Terminal archive rejects active children and retains stable code/parent history |
+| GET | `/api/v1/positions` | Implemented for P3H | Current-tenant active/archive catalog with bounded status/search-bound cursor pages |
+| POST | `/api/v1/positions` | Implemented for P3H | Reusable active job title with tenant-unique stable code and same-transaction audit |
+| GET | `/api/v1/positions/{position_id}` | Implemented for P3H | Active or archived current-tenant detail with identical missing/cross-tenant `404` |
+| PATCH | `/api/v1/positions/{position_id}` | Implemented for P3H | Active-only title update while stable code remains immutable |
+| DELETE | `/api/v1/positions/{position_id}` | Implemented for P3H | Terminal archive preserves code/history and closes new assignments |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -802,10 +840,9 @@ the expected local commits ahead of the review-branch remote after the final com
 F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
 list/detail and the separate platform audit list. P3C adds two organization-selection operations,
 P3D adds four platform-auth operations, P3E adds two password-recovery operations, P3F adds
-nine legal-entity/branch operations and P3G adds six department operations, bringing the current
-surface to 62 generated operations and 63
-documented runtime endpoints
-including `/openapi.json`. The executable smoke
+nine legal-entity/branch operations, P3G adds six department operations and P3H adds five position
+catalog operations, bringing the current surface to 67 generated operations and 68 documented
+runtime endpoints including `/openapi.json`. The executable smoke
 covers activation/login/session lifecycle, tenant-admin user/role/audit behavior and contract-table
 drift without printing credential material.
 

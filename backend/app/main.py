@@ -26,6 +26,7 @@ from app.api.organization import branches_router, legal_entities_router
 from app.api.platform_auth import me_router as platform_me_router
 from app.api.platform_auth import router as platform_auth_router
 from app.api.platform_tenants import router as platform_tenants_router
+from app.api.positions import router as positions_router
 from app.api.tenant import router as tenant_router
 from app.api.user_invitations import router as user_invitations_router
 from app.api.users import router as users_router
@@ -86,6 +87,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(legal_entities_router)
     app.include_router(branches_router)
     app.include_router(departments_router)
+    app.include_router(positions_router)
     app.include_router(dashboard_router)
     app.include_router(employees_router)
     app.include_router(leave_balances_router)

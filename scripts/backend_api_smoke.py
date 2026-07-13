@@ -155,6 +155,16 @@ DEPARTMENT_FIELDS = {
     "created_at",
     "updated_at",
 }
+POSITION_FIELDS = {
+    "id",
+    "code",
+    "title",
+    "status",
+    "archived_at",
+    "accepts_new_assignments",
+    "created_at",
+    "updated_at",
+}
 AUDIT_EVENT_FIELDS = {
     "id",
     "occurred_at",
@@ -285,6 +295,11 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/departments/{department_id}"),
     ("patch", "/api/v1/departments/{department_id}"),
     ("delete", "/api/v1/departments/{department_id}"),
+    ("get", "/api/v1/positions"),
+    ("post", "/api/v1/positions"),
+    ("get", "/api/v1/positions/{position_id}"),
+    ("patch", "/api/v1/positions/{position_id}"),
+    ("delete", "/api/v1/positions/{position_id}"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -397,7 +412,7 @@ async def main(database_url: str | None = None) -> None:
         "tenant_audit,platform_audit,audit_redaction,"
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
         "legal_entities,branches,branch_archive_history,departments,department_lazy_tree,"
-        "department_move_cycle_archive_history,"
+        "department_move_cycle_archive_history,positions,position_search_archive_history,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
         "leave_balances,leave_filters,leave_requests,workflow_transitions,auth"
@@ -1580,6 +1595,117 @@ async def _smoke_organization_endpoints(
         "archived department bounded history",
     )
     _assert_equal(archived_next_cursor, None, "archived department terminal cursor")
+
+    backend_position = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/positions",
+            headers=admin_headers,
+            json={"code": "backend-eng", "title": "Backend Engineer"},
+        ),
+        201,
+        "POST /api/v1/positions",
+        POSITION_FIELDS,
+    )
+    _assert_equal(backend_position["code"], "BACKEND-ENG", "position stable code")
+    _assert_equal(backend_position["status"], "active", "created position status")
+    _assert_equal(
+        backend_position["accepts_new_assignments"],
+        True,
+        "active position assignment availability",
+    )
+    position_id = backend_position["id"]
+
+    searched_positions, position_next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/positions",
+            headers=admin_headers,
+            params={"search": "backend", "status": "active", "limit": 1},
+        ),
+        200,
+        "GET /api/v1/positions search",
+        expected_limit=1,
+    )
+    _assert_equal(len(searched_positions), 1, "position search count")
+    _assert_exact_fields(
+        searched_positions[0],
+        POSITION_FIELDS,
+        "GET /api/v1/positions item",
+    )
+    _assert_equal(searched_positions[0]["id"], position_id, "position search identity")
+    _assert_equal(position_next_cursor, None, "position search terminal cursor")
+
+    position_detail = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/positions/{position_id}",
+            documented_path="/api/v1/positions/{position_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/positions/{position_id}",
+        POSITION_FIELDS,
+    )
+    _assert_equal(position_detail, backend_position, "position detail")
+
+    updated_position = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/positions/{position_id}",
+            documented_path="/api/v1/positions/{position_id}",
+            headers=admin_headers,
+            json={"title": "Senior Backend Engineer"},
+        ),
+        200,
+        "PATCH /api/v1/positions/{position_id}",
+        POSITION_FIELDS,
+    )
+    _assert_equal(
+        updated_position["title"],
+        "Senior Backend Engineer",
+        "updated position title",
+    )
+    _assert_equal(updated_position["code"], "BACKEND-ENG", "updated position stable code")
+
+    archived_position = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "delete",
+            f"/api/v1/positions/{position_id}",
+            documented_path="/api/v1/positions/{position_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "DELETE /api/v1/positions/{position_id}",
+        POSITION_FIELDS,
+    )
+    _assert_equal(archived_position["status"], "archived", "archived position status")
+    _assert_equal(
+        archived_position["accepts_new_assignments"],
+        False,
+        "archived position assignment availability",
+    )
+    if not archived_position["archived_at"]:
+        raise AssertionError("archived position must expose its archive timestamp")
+
+    historical_position = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/positions/{position_id}",
+            documented_path="/api/v1/positions/{position_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/positions/{position_id} archived history",
+        POSITION_FIELDS,
+    )
+    _assert_equal(historical_position, archived_position, "archived position history")
 
 
 async def _smoke_tenant_audit_endpoints(

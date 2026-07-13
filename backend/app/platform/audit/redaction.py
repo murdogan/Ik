@@ -201,6 +201,14 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         metadata_keys=frozenset({"before_status", "after_status"}),
         changed_fields=frozenset({"status", "archived_at"}),
     ),
+    AuditEventType.POSITION_CREATED: AuditMetadataPolicy(
+        changed_fields=frozenset({"code", "title", "status"})
+    ),
+    AuditEventType.POSITION_UPDATED: AuditMetadataPolicy(changed_fields=frozenset({"title"})),
+    AuditEventType.POSITION_ARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_status", "after_status"}),
+        changed_fields=frozenset({"status", "archived_at"}),
+    ),
 }
 
 

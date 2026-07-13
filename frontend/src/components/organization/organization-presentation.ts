@@ -3,6 +3,7 @@ import type {
   BranchStatus,
   DepartmentStatus,
   LegalEntityStatus,
+  PositionStatus,
 } from "@/lib/organization";
 
 export interface OrganizationErrorPresentation {
@@ -23,7 +24,11 @@ export type OrganizationAction =
   | "department_create"
   | "department_update"
   | "department_move"
-  | "department_archive";
+  | "department_archive"
+  | "position_list"
+  | "position_create"
+  | "position_update"
+  | "position_archive";
 
 const GENERIC_MESSAGES: Record<OrganizationAction, string> = {
   legal_list: "Tüzel kişilikler şu anda yüklenemiyor. Lütfen yeniden deneyin.",
@@ -39,6 +44,10 @@ const GENERIC_MESSAGES: Record<OrganizationAction, string> = {
   department_update: "Departman adı güncellenemedi. Lütfen yeniden deneyin.",
   department_move: "Departman taşınamadı. Lütfen yeniden deneyin.",
   department_archive: "Departman arşivlenemedi. Lütfen yeniden deneyin.",
+  position_list: "Pozisyon kataloğu şu anda yüklenemiyor. Lütfen yeniden deneyin.",
+  position_create: "Pozisyon oluşturulamadı. Lütfen yeniden deneyin.",
+  position_update: "Pozisyon unvanı güncellenemedi. Lütfen yeniden deneyin.",
+  position_archive: "Pozisyon arşivlenemedi. Lütfen yeniden deneyin.",
 };
 
 export const LEGAL_ENTITY_STATUS_LABELS: Record<LegalEntityStatus, string> = {
@@ -52,6 +61,11 @@ export const BRANCH_STATUS_LABELS: Record<BranchStatus, string> = {
 };
 
 export const DEPARTMENT_STATUS_LABELS: Record<DepartmentStatus, string> = {
+  active: "Aktif",
+  archived: "Arşivlendi",
+};
+
+export const POSITION_STATUS_LABELS: Record<PositionStatus, string> = {
   active: "Aktif",
   archived: "Arşivlendi",
 };
@@ -85,7 +99,9 @@ export function organizationErrorPresentation(
       ? "Tüzel kişilik bulunamadı veya artık erişim kapsamınızda değil."
       : action.startsWith("department_")
         ? "Departman bulunamadı veya artık erişim kapsamınızda değil."
-        : "Şube bulunamadı veya artık erişim kapsamınızda değil.";
+        : action.startsWith("position_")
+          ? "Pozisyon bulunamadı veya artık erişim kapsamınızda değil."
+          : "Şube bulunamadı veya artık erişim kapsamınızda değil.";
   } else if (cause.status === 409 && cause.code === "branch_code_conflict") {
     message =
       "Bu sabit kod tenant genelinde başka bir şube tarafından kullanılıyor. " +
@@ -97,6 +113,13 @@ export function organizationErrorPresentation(
     message =
       "Bu sabit kod tenant genelinde başka bir departman tarafından kullanılıyor. " +
       "Arşivlenmiş departman kodları da rezerve kalır ve yeniden kullanılamaz.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "position_code_conflict"
+  ) {
+    message =
+      "Bu sabit kod tenant genelinde başka bir pozisyon tarafından kullanılıyor. " +
+      "Arşivlenmiş pozisyon kodları da rezerve kalır ve yeniden kullanılamaz.";
   } else if (
     cause.status === 409 &&
     cause.code === "organization_conflict" &&
@@ -168,12 +191,29 @@ export function organizationErrorPresentation(
     message =
       "Yalnızca etkin alt departmanı bulunmayan departmanlar arşivlenebilir. " +
       "Önce alt departmanları taşıyın veya arşivleyin.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "organization_conflict" &&
+    action === "position_update"
+  ) {
+    message =
+      "Arşivlenmiş pozisyonlar yeniden adlandırılamaz. Pencereyi kapatıp " +
+      "güncel kaydı arşiv geçmişinden görüntüleyin.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "organization_conflict" &&
+    action === "position_archive"
+  ) {
+    message =
+      "Pozisyonun arşiv durumu değişmiş olabilir. Pencereyi kapatıp kataloğu yenileyin.";
   } else if (cause.status === 409) {
     message = "Kayıt siz düzenlerken değişti. Sayfayı yenileyip yeniden deneyin.";
   } else if (cause.status === 422) {
     message = action.startsWith("department_")
       ? "Departman adı, sabit kodu ve üst departman seçimini kontrol edip yeniden deneyin."
-      : "Alanları ve saat dilimi seçimini kontrol edip yeniden deneyin.";
+      : action.startsWith("position_")
+        ? "Pozisyon unvanını ve sabit kodu kontrol edip yeniden deneyin."
+        : "Alanları ve saat dilimi seçimini kontrol edip yeniden deneyin.";
   } else if (cause.status === 429) {
     message = "Çok sayıda istek gönderildi. Kısa bir süre bekleyip yeniden deneyin.";
   }

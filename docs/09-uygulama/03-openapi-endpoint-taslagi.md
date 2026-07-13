@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-13 / P3G department hierarchy vertical slice.
+Son güncelleme: 2026-07-13 / P3H position catalog vertical slice.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -25,8 +25,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: executable contract testi
 F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
 canlı OpenAPI'den doğrular. P3C iki organization-selection, P3D dört platform-auth, P3E iki
-password-recovery, P3F dokuz legal-entity/branch ve P3G altı department operation'ı ekler; güncel
-registry 62 generated operation ve runtime `/openapi.json` ile 63 documented endpoint'tir.
+password-recovery, P3F dokuz legal-entity/branch, P3G altı department ve P3H beş position catalog
+operation'ı ekler; güncel registry 67 generated operation ve runtime `/openapi.json` ile 68
+documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -81,6 +82,11 @@ registry 62 generated operation ve runtime `/openapi.json` ile 63 documented end
 | GET | `/api/v1/departments/{department_id}` | P3G uygulandı | Aktif veya arşivlenmiş current-tenant detay; geçmiş parent bağı korunur |
 | PATCH | `/api/v1/departments/{department_id}` | P3G uygulandı | Aktif kaydı yeniden adlandırma/güvenli taşıma; uygulama ve PostgreSQL cycle koruması |
 | DELETE | `/api/v1/departments/{department_id}` | P3G uygulandı | Active child varken reddedilen terminal archive; stable kod ve parent tarihi korunur |
+| GET | `/api/v1/positions` | P3H uygulandı | Current-tenant active/archive pozisyon katalogu; status/search filtrelerine bağlı bounded opaque cursor |
+| POST | `/api/v1/positions` | P3H uygulandı | Tenant-unique kalıcı kodla reusable aktif iş unvanı oluşturma ve atomik audit |
+| GET | `/api/v1/positions/{position_id}` | P3H uygulandı | Aktif veya arşivlenmiş current-tenant pozisyon detayı; missing/cross-tenant aynı `404` |
+| PATCH | `/api/v1/positions/{position_id}` | P3H uygulandı | Aktif pozisyonun unvanını günceller; kalıcı kod immutable |
+| DELETE | `/api/v1/positions/{position_id}` | P3H uygulandı | Terminal archive ile kod/tarihçe korunur ve yeni atamalar kapanır |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |

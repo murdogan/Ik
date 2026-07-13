@@ -86,6 +86,11 @@ from app.services.platform_auth_session_service import (
     PlatformRoleRequiredError,
 )
 from app.services.platform_authentication_service import InvalidPlatformCredentialsError
+from app.services.position_service import (
+    DuplicatePositionCodeError,
+    PositionConflictError,
+    PositionNotFoundError,
+)
 from app.services.tenant_service import (
     DuplicateTenantSlugError,
     TenantClosedError,
@@ -126,6 +131,7 @@ USER_ADMINISTRATION_API_PREFIX = "/api/v1/users"
 LEGAL_ENTITY_API_PREFIX = "/api/v1/legal-entities"
 BRANCH_API_PREFIX = "/api/v1/branches"
 DEPARTMENT_API_PREFIX = "/api/v1/departments"
+POSITION_API_PREFIX = "/api/v1/positions"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -247,6 +253,10 @@ DEPARTMENT_CYCLE_CONFLICT_ERROR_CODE = "department_cycle_conflict"
 DEPARTMENT_CYCLE_CONFLICT_ERROR_MESSAGE = (
     "The requested department move would create a hierarchy cycle"
 )
+POSITION_NOT_FOUND_ERROR_CODE = "position_not_found"
+POSITION_NOT_FOUND_ERROR_MESSAGE = "Position was not found"
+POSITION_CODE_CONFLICT_ERROR_CODE = "position_code_conflict"
+POSITION_CODE_CONFLICT_ERROR_MESSAGE = "Position code is already in use"
 ORGANIZATION_CONFLICT_ERROR_CODE = "organization_conflict"
 ORGANIZATION_CONFLICT_ERROR_MESSAGE = "The requested organization change is not allowed"
 
@@ -737,6 +747,44 @@ DEPARTMENT_CONFLICT_RESPONSES = _conflict_response(
     },
 )
 
+POSITION_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "The position is absent or outside the authenticated tenant.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    TENANT_NOT_FOUND_ERROR_CODE: _error_example(
+                        TENANT_NOT_FOUND_ERROR_CODE,
+                        TENANT_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    POSITION_NOT_FOUND_ERROR_CODE: _error_example(
+                        POSITION_NOT_FOUND_ERROR_CODE,
+                        POSITION_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE: _error_example(
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE,
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_MESSAGE,
+                    ),
+                }
+            }
+        },
+    }
+}
+POSITION_CONFLICT_RESPONSES = _conflict_response(
+    description="Position code or archive lifecycle conflict envelope.",
+    examples={
+        POSITION_CODE_CONFLICT_ERROR_CODE: _error_example(
+            POSITION_CODE_CONFLICT_ERROR_CODE,
+            POSITION_CODE_CONFLICT_ERROR_MESSAGE,
+        ),
+        ORGANIZATION_CONFLICT_ERROR_CODE: _error_example(
+            ORGANIZATION_CONFLICT_ERROR_CODE,
+            ORGANIZATION_CONFLICT_ERROR_MESSAGE,
+        ),
+    },
+)
+
 
 EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Employee command conflict envelope.",
@@ -882,15 +930,21 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return branch_not_found_error()
     if isinstance(exc, DepartmentNotFoundError):
         return department_not_found_error()
+    if isinstance(exc, PositionNotFoundError):
+        return position_not_found_error()
     if isinstance(exc, DuplicateLegalEntityCodeError):
         return legal_entity_code_conflict_error()
     if isinstance(exc, DuplicateBranchCodeError):
         return branch_code_conflict_error()
     if isinstance(exc, DuplicateDepartmentCodeError):
         return department_code_conflict_error()
+    if isinstance(exc, DuplicatePositionCodeError):
+        return position_code_conflict_error()
     if isinstance(exc, DepartmentCycleError):
         return department_cycle_conflict_error()
     if isinstance(exc, DepartmentConflictError):
+        return organization_conflict_error(str(exc))
+    if isinstance(exc, PositionConflictError):
         return organization_conflict_error(str(exc))
     if isinstance(exc, OrganizationConflictError):
         return organization_conflict_error(str(exc))
@@ -1271,6 +1325,22 @@ def department_cycle_conflict_error() -> ApiError:
     )
 
 
+def position_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=POSITION_NOT_FOUND_ERROR_CODE,
+        message=POSITION_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def position_code_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=POSITION_CODE_CONFLICT_ERROR_CODE,
+        message=POSITION_CODE_CONFLICT_ERROR_MESSAGE,
+    )
+
+
 def organization_conflict_error(message: str) -> ApiError:
     return ApiError(
         status_code=status.HTTP_409_CONFLICT,
@@ -1428,6 +1498,7 @@ def _domain_request_validation_error(
         _matches_api_prefix(path, LEGAL_ENTITY_API_PREFIX)
         or _matches_api_prefix(path, BRANCH_API_PREFIX)
         or _matches_api_prefix(path, DEPARTMENT_API_PREFIX)
+        or _matches_api_prefix(path, POSITION_API_PREFIX)
     ):
         return organization_pagination_validation_error()
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):

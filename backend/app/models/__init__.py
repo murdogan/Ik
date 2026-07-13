@@ -31,6 +31,7 @@ from app.models.identity import (
 from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
+from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
 from app.models.user import User, UserStatus
 
@@ -61,6 +62,8 @@ __all__ = [
     "PlatformIdentityRole",
     "PlatformRefreshSessionFamily",
     "PlatformRefreshSessionToken",
+    "Position",
+    "PositionStatus",
     "RefreshSessionFamily",
     "RefreshSessionToken",
     "Role",

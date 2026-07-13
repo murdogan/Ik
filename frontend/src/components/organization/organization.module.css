@@ -120,6 +120,7 @@
 .iconButton:focus-visible,
 .selectorField select:focus-visible,
 .statusFilter select:focus-visible,
+.positionSearch input:focus-visible,
 .formField input:focus-visible,
 .formField select:focus-visible,
 .formField textarea:focus-visible,
@@ -544,6 +545,44 @@
   font-size: 12px;
 }
 
+.positionSearch {
+  display: grid;
+  min-width: 290px;
+  gap: 7px;
+}
+
+.positionSearch label {
+  color: #415049;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.positionSearch > small {
+  color: var(--wf-muted);
+  font-size: 10px;
+}
+
+.positionSearch > div {
+  display: flex;
+  gap: 6px;
+}
+
+.positionSearch input {
+  min-width: 0;
+  min-height: 40px;
+  flex: 1 1 auto;
+  padding: 0 11px;
+  border: 1px solid #ccd9d3;
+  border-radius: 11px;
+  color: var(--wf-ink);
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.positionSearch .compactButton {
+  min-height: 40px;
+}
+
 .refreshButton,
 .inspectButton,
 .archiveButton {
@@ -632,6 +671,30 @@
 
 .branchTable tbody tr[data-branch-status="archived"] {
   background: #fafbfa;
+}
+
+.branchTable tbody tr[data-position-status="archived"] {
+  background: #fafbfa;
+}
+
+.positionTable th:first-child {
+  width: 32%;
+}
+
+.positionTable th:nth-child(2) {
+  width: 15%;
+}
+
+.positionTable th:nth-child(3) {
+  width: 20%;
+}
+
+.positionTable th:nth-child(4) {
+  width: 17%;
+}
+
+.positionTable th:last-child {
+  width: 16%;
 }
 
 .branchIdentity,
@@ -1289,6 +1352,11 @@
     flex-wrap: wrap;
   }
 
+  .positionSearch {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
   .departmentNode {
     grid-template-columns: 34px minmax(130px, 1fr) auto;
   }
@@ -1480,6 +1548,10 @@
   .departmentTools {
     display: grid;
     justify-content: stretch;
+  }
+
+  .positionSearch {
+    min-width: 0;
   }
 
   .departmentTools .primaryButton,

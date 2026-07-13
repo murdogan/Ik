@@ -331,4 +331,27 @@ adjacency tree'sini ekler:
   `backend/tests/integration/test_postgresql_p3g_departments.py` ile çalışır; SQLite hattı yalnız
   schema/migration compatibility kanıtıdır.
 
-Bu revision sonrası tek head `0028_p3g_department_hierarchy`'dır.
+## P3H position/job-title catalog
+
+`0029_p3h_position_catalog`, reusable tenant position catalog'unu assignment ve workforce
+planning kapsamından ayrı olarak ekler:
+
+- `positions`, tenant içinde kalıcı ve case-insensitive unique generated `code_normalized` ile
+  indexed `title_normalized`, active/archived terminal durum ve archive timestamp'i saklar.
+  `(tenant_id,id)` candidate key ilerideki structured assignment composite foreign key'leri için
+  tenant sınırını hazırlar; eski `employees.position` metin kolonu expand-contract gereği korunur.
+- Tenant/status/code/id B-tree index'leri bounded keyset sayfalarını; mevcut `pg_trgm` extension'ı
+  üzerindeki code/title GIN index'leri bounded contains aramasını destekler.
+- PostgreSQL'de tablo `ENABLE + FORCE RLS` ve tenant policy altındadır. Tenant capability yalnız
+  `SELECT/INSERT` ile `title,status,archived_at,updated_at` column-level `UPDATE` alır; `DELETE`,
+  stable code/identity update ve platform/authentication capability erişimi yoktur.
+- `SECURITY INVOKER` lifecycle trigger'ı archived insert'i, identity/tenant/code değişimini,
+  archive sırasında title rewrite'ını ve archived history üzerindeki bütün update'leri reddeder.
+  Downgrade retained position history varsa export/remediation istemeden tabloyu düşürmez.
+
+RLS/ACL, generated normalization, tenant isolation, exact index catalog, immutable code ve
+terminal archive kanıtı disposable PostgreSQL üzerinde
+`backend/tests/integration/test_postgresql_p3h_positions.py` ile çalışır; SQLite hattı migration
+ve model metadata parity kanıtıdır.
+
+Bu revision sonrası tek head `0029_p3h_position_catalog`'dır.

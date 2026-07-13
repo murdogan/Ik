@@ -465,6 +465,40 @@ def _run_alembic_p3g_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p3h_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0028_p3g_department_hierarchy:0029_p3h_position_catalog",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p3h_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0029_p3h_position_catalog:0028_p3g_department_hierarchy",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -531,8 +565,9 @@ def test_core_migration_chain_is_linear() -> None:
     p3g_department_revision = script.get_revision(
         "0028_p3g_department_hierarchy"
     )
+    p3h_position_revision = script.get_revision("0029_p3h_position_catalog")
 
-    assert script.get_heads() == ["0028_p3g_department_hierarchy"]
+    assert script.get_heads() == ["0029_p3h_position_catalog"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -607,6 +642,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3g_department_revision.down_revision == (
         "0027_p3f_legal_entities_branches"
     )
+    assert p3h_position_revision is not None
+    assert p3h_position_revision.down_revision == "0028_p3g_department_hierarchy"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -968,6 +1005,68 @@ def test_alembic_offline_p3g_downgrade_guards_retained_history() -> None:
     )
     assert "DROP TABLE departments" in result.stdout
     assert "DROP TABLE department_hierarchy_write_fences" in result.stdout
+
+
+def test_alembic_offline_p3h_renders_position_indexes_rls_acl_and_trigger() -> None:
+    result = _run_alembic_p3h_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "CREATE TABLE positions" in result.stdout
+    for constraint_name in (
+        "ck_positions_status",
+        "ck_positions_archive_state",
+        "ck_positions_code_normalized_not_empty",
+        "ck_positions_title_normalized_not_empty",
+        "uq_positions_tenant_id_id",
+        "uq_positions_tenant_code_normalized",
+        "fk_positions_tenant_id_tenants",
+    ):
+        assert constraint_name in result.stdout
+    for index_name in (
+        "ix_positions_tenant_code_cursor",
+        "ix_positions_tenant_status_code_cursor",
+        "ix_positions_code_normalized_trgm",
+        "ix_positions_title_normalized_trgm",
+    ):
+        assert index_name in result.stdout
+    assert "gin_trgm_ops" in result.stdout
+    assert 'ALTER TABLE "positions" ENABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "positions" FORCE ROW LEVEL SECURITY' in result.stdout
+    assert (
+        'CREATE POLICY "tenant_isolation_app" ON "positions" '
+        'AS PERMISSIVE FOR ALL TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert (
+        'GRANT SELECT, INSERT ON TABLE "positions" TO "wealthy_falcon_app"'
+        in result.stdout
+    )
+    assert (
+        'GRANT UPDATE ("title", "status", "archived_at", "updated_at") '
+        'ON TABLE "positions" TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert "CREATE FUNCTION public.enforce_position_catalog_integrity()" in (
+        result.stdout
+    )
+    assert "CONSTRAINT = 'ck_positions_immutable_identity_code'" in result.stdout
+    assert "CONSTRAINT = 'ck_positions_archived_terminal'" in result.stdout
+    assert "GRANT DELETE" not in result.stdout
+
+
+def test_alembic_offline_p3h_downgrade_guards_retained_position_history() -> None:
+    result = _run_alembic_p3h_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p3h_downgrade_preflight$" in result.stdout
+    assert "P3H downgrade preflight failed" in result.stdout
+    preflight_position = result.stdout.index("DO $p3h_downgrade_preflight$")
+    trigger_drop_position = result.stdout.index(
+        "DROP TRIGGER IF EXISTS trg_positions_catalog_integrity"
+    )
+    assert preflight_position < trigger_drop_position
+    assert "DROP FUNCTION IF EXISTS public.enforce_position_catalog_integrity()" in (
+        result.stdout
+    )
+    assert "DROP TABLE positions" in result.stdout
 
 
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
@@ -1621,7 +1720,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0028_p3g_department_hierarchy"
+        assert revision == "0029_p3h_position_catalog"
     finally:
         engine.dispose()
 

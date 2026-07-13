@@ -27,6 +27,7 @@ import {
   type OrganizationErrorPresentation,
   organizationErrorPresentation,
 } from "./organization-presentation";
+import { PositionCatalog } from "./position-catalog";
 
 const PAGE_LIMIT = 25;
 
@@ -289,8 +290,8 @@ export function OrganizationScreen() {
           <span>Tenant organizasyonu</span>
           <h1 id="organization-title">Organizasyon</h1>
           <p>
-            Tüzel kişilik ayarlarını, şube ve lokasyonları ve departman
-            hiyerarşisini tek çalışma alanında güncel tutun.
+            Tüzel kişilik ayarlarını, şube ve lokasyonları, departman hiyerarşisini
+            ve pozisyon kataloğunu tek çalışma alanında güncel tutun.
           </p>
         </div>
         {canUpdate && legalEntityReady ? (
@@ -632,6 +633,7 @@ export function OrganizationScreen() {
           </article>
 
           <DepartmentHierarchy canUpdate={canUpdate} />
+          <PositionCatalog canUpdate={canUpdate} />
         </>
       ) : (
         <div className={styles.emptyState}>

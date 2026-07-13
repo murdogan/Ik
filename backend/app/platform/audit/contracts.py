@@ -92,6 +92,9 @@ class AuditEventType(StrEnum):
     DEPARTMENT_CREATED = "department.created"
     DEPARTMENT_UPDATED = "department.updated"
     DEPARTMENT_ARCHIVED = "department.archived"
+    POSITION_CREATED = "position.created"
+    POSITION_UPDATED = "position.updated"
+    POSITION_ARCHIVED = "position.archived"
 
 
 @dataclass(frozen=True, slots=True)
