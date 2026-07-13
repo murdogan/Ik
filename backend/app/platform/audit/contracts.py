@@ -89,6 +89,9 @@ class AuditEventType(StrEnum):
     BRANCH_CREATED = "branch.created"
     BRANCH_UPDATED = "branch.updated"
     BRANCH_ARCHIVED = "branch.archived"
+    DEPARTMENT_CREATED = "department.created"
+    DEPARTMENT_UPDATED = "department.updated"
+    DEPARTMENT_ARCHIVED = "department.archived"
 
 
 @dataclass(frozen=True, slots=True)

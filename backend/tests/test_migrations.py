@@ -431,6 +431,40 @@ def _run_alembic_p3b_upgrade_offline_subprocess() -> subprocess.CompletedProcess
     )
 
 
+def _run_alembic_p3g_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0027_p3f_legal_entities_branches:0028_p3g_department_hierarchy",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p3g_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0028_p3g_department_hierarchy:0027_p3f_legal_entities_branches",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -494,8 +528,11 @@ def test_core_migration_chain_is_linear() -> None:
     p3f_organization_revision = script.get_revision(
         "0027_p3f_legal_entities_branches"
     )
+    p3g_department_revision = script.get_revision(
+        "0028_p3g_department_hierarchy"
+    )
 
-    assert script.get_heads() == ["0027_p3f_legal_entities_branches"]
+    assert script.get_heads() == ["0028_p3g_department_hierarchy"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -565,6 +602,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3f_organization_revision is not None
     assert p3f_organization_revision.down_revision == (
         "0026_p3e_identity_checkpoint"
+    )
+    assert p3g_department_revision is not None
+    assert p3g_department_revision.down_revision == (
+        "0027_p3f_legal_entities_branches"
     )
 
 
@@ -848,6 +889,64 @@ def test_alembic_offline_p3b_renders_narrow_authentication_boundary() -> None:
     assert "CREATE FUNCTION public.sync_current_tenant_identity_membership" in result.stdout
     assert "SECURITY DEFINER" in result.stdout
     assert 'OWNER TO "wealthy_falcon_identity_projection"' in result.stdout
+
+
+def test_alembic_offline_p3g_renders_department_integrity_rls_and_acl() -> None:
+    result = _run_alembic_p3g_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "CREATE TABLE departments" in result.stdout
+    for constraint_name in (
+        "ck_departments_status",
+        "ck_departments_archive_state",
+        "ck_departments_parent_not_self",
+        "uq_departments_tenant_code_normalized",
+        "fk_departments_tenant_parent_id_departments",
+    ):
+        assert constraint_name in result.stdout
+    assert 'ALTER TABLE "departments" ENABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "departments" FORCE ROW LEVEL SECURITY' in result.stdout
+    assert (
+        'CREATE POLICY "tenant_isolation_app" ON "departments" '
+        'AS PERMISSIVE FOR ALL TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert (
+        'GRANT SELECT, INSERT ON TABLE "departments" TO "wealthy_falcon_app"'
+        in result.stdout
+    )
+    assert (
+        'GRANT UPDATE ("name", "parent_id", "status", "archived_at", "updated_at") '
+        'ON TABLE "departments" TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert "CREATE FUNCTION public.enforce_department_hierarchy_integrity()" in (
+        result.stdout
+    )
+    assert "SELECT tenants.id INTO locked_tenant_id" in result.stdout
+    assert "WITH RECURSIVE ancestors(id, parent_id)" in result.stdout
+    assert "CONSTRAINT = 'ck_departments_acyclic'" in result.stdout
+    assert "CREATE FUNCTION public.validate_department_hierarchy_acyclic()" in (
+        result.stdout
+    )
+    assert result.stdout.count("REFERENCING NEW TABLE AS new_departments") == 2
+    assert "WITH RECURSIVE hierarchy_walk(" in result.stdout
+    assert "GRANT DELETE" not in result.stdout
+
+
+def test_alembic_offline_p3g_downgrade_guards_retained_history() -> None:
+    result = _run_alembic_p3g_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p3g_downgrade_preflight$" in result.stdout
+    assert "P3G downgrade preflight failed" in result.stdout
+    preflight_position = result.stdout.index("DO $p3g_downgrade_preflight$")
+    first_drop_position = result.stdout.index(
+        "DROP TRIGGER IF EXISTS trg_departments_acyclic_after_update"
+    )
+    assert preflight_position < first_drop_position
+    assert "DROP FUNCTION IF EXISTS public.validate_department_hierarchy_acyclic()" in (
+        result.stdout
+    )
+    assert "DROP TABLE departments" in result.stdout
 
 
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
@@ -1501,7 +1600,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0027_p3f_legal_entities_branches"
+        assert revision == "0028_p3g_department_hierarchy"
     finally:
         engine.dispose()
 

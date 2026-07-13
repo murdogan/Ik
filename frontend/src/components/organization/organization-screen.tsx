@@ -18,6 +18,7 @@ import {
 
 import { ArchiveBranchDialog } from "./archive-branch-dialog";
 import { BranchDialog } from "./branch-dialog";
+import { DepartmentHierarchy } from "./department-hierarchy";
 import { LegalEntityForm } from "./legal-entity-form";
 import styles from "./organization.module.css";
 import {
@@ -288,8 +289,8 @@ export function OrganizationScreen() {
           <span>Tenant organizasyonu</span>
           <h1 id="organization-title">Organizasyon</h1>
           <p>
-            Tüzel kişilik ayarlarını yönetin; şube ve lokasyonları saat dilimleriyle
-            birlikte güncel tutun.
+            Tüzel kişilik ayarlarını, şube ve lokasyonları ve departman
+            hiyerarşisini tek çalışma alanında güncel tutun.
           </p>
         </div>
         {canUpdate && legalEntityReady ? (
@@ -629,6 +630,8 @@ export function OrganizationScreen() {
               </footer>
             ) : null}
           </article>
+
+          <DepartmentHierarchy canUpdate={canUpdate} />
         </>
       ) : (
         <div className={styles.emptyState}>

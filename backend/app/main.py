@@ -10,6 +10,7 @@ from app.api.auth import me_router
 from app.api.auth import router as auth_router
 from app.api.authorization import router as authorization_router
 from app.api.dashboard import router as dashboard_router
+from app.api.departments import router as departments_router
 from app.api.employees import router as employees_router
 from app.api.errors import (
     application_error_handler,
@@ -84,6 +85,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(tenant_router)
     app.include_router(legal_entities_router)
     app.include_router(branches_router)
+    app.include_router(departments_router)
     app.include_router(dashboard_router)
     app.include_router(employees_router)
     app.include_router(leave_balances_router)

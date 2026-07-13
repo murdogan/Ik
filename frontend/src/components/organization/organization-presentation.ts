@@ -1,6 +1,7 @@
 import { ApiClientError } from "@/lib/api-client";
 import type {
   BranchStatus,
+  DepartmentStatus,
   LegalEntityStatus,
 } from "@/lib/organization";
 
@@ -16,7 +17,13 @@ export type OrganizationAction =
   | "branch_list"
   | "branch_create"
   | "branch_update"
-  | "branch_archive";
+  | "branch_archive"
+  | "department_tree"
+  | "department_history"
+  | "department_create"
+  | "department_update"
+  | "department_move"
+  | "department_archive";
 
 const GENERIC_MESSAGES: Record<OrganizationAction, string> = {
   legal_list: "Tüzel kişilikler şu anda yüklenemiyor. Lütfen yeniden deneyin.",
@@ -26,6 +33,12 @@ const GENERIC_MESSAGES: Record<OrganizationAction, string> = {
   branch_create: "Şube oluşturulamadı. Lütfen yeniden deneyin.",
   branch_update: "Şube değişiklikleri kaydedilemedi. Lütfen yeniden deneyin.",
   branch_archive: "Şube arşivlenemedi. Lütfen yeniden deneyin.",
+  department_tree: "Departman hiyerarşisi şu anda yüklenemiyor. Lütfen yeniden deneyin.",
+  department_history: "Departman arşiv geçmişi şu anda yüklenemiyor. Lütfen yeniden deneyin.",
+  department_create: "Departman oluşturulamadı. Lütfen yeniden deneyin.",
+  department_update: "Departman adı güncellenemedi. Lütfen yeniden deneyin.",
+  department_move: "Departman taşınamadı. Lütfen yeniden deneyin.",
+  department_archive: "Departman arşivlenemedi. Lütfen yeniden deneyin.",
 };
 
 export const LEGAL_ENTITY_STATUS_LABELS: Record<LegalEntityStatus, string> = {
@@ -34,6 +47,11 @@ export const LEGAL_ENTITY_STATUS_LABELS: Record<LegalEntityStatus, string> = {
 };
 
 export const BRANCH_STATUS_LABELS: Record<BranchStatus, string> = {
+  active: "Aktif",
+  archived: "Arşivlendi",
+};
+
+export const DEPARTMENT_STATUS_LABELS: Record<DepartmentStatus, string> = {
   active: "Aktif",
   archived: "Arşivlendi",
 };
@@ -65,11 +83,20 @@ export function organizationErrorPresentation(
   } else if (cause.status === 404) {
     message = action.startsWith("legal_")
       ? "Tüzel kişilik bulunamadı veya artık erişim kapsamınızda değil."
-      : "Şube bulunamadı veya artık erişim kapsamınızda değil.";
+      : action.startsWith("department_")
+        ? "Departman bulunamadı veya artık erişim kapsamınızda değil."
+        : "Şube bulunamadı veya artık erişim kapsamınızda değil.";
   } else if (cause.status === 409 && cause.code === "branch_code_conflict") {
     message =
       "Bu sabit kod tenant genelinde başka bir şube tarafından kullanılıyor. " +
       "Arşivlenmiş şube kodları da rezerve kalır ve yeniden kullanılamaz.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "department_code_conflict"
+  ) {
+    message =
+      "Bu sabit kod tenant genelinde başka bir departman tarafından kullanılıyor. " +
+      "Arşivlenmiş departman kodları da rezerve kalır ve yeniden kullanılamaz.";
   } else if (
     cause.status === 409 &&
     cause.code === "organization_conflict" &&
@@ -101,10 +128,52 @@ export function organizationErrorPresentation(
   ) {
     message =
       "Şubenin arşiv durumu değişmiş olabilir. Pencereyi kapatıp şube listesini yenileyin.";
+  } else if (
+    cause.status === 409 &&
+    (cause.code === "department_cycle" ||
+      cause.code === "department_cycle_conflict")
+  ) {
+    message =
+      "Bu taşıma bir departmanı kendi altına bağlayacağı için yapılamaz. " +
+      "Hiyerarşiyi yenileyip başka bir üst departman seçin.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "organization_conflict" &&
+    action === "department_create"
+  ) {
+    message =
+      "Yeni departman yalnızca etkin bir üst departman altında oluşturulabilir. " +
+      "Hiyerarşiyi yenileyip yeniden deneyin.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "organization_conflict" &&
+    action === "department_update"
+  ) {
+    message =
+      "Arşivlenmiş departmanlar yeniden adlandırılamaz. Pencereyi kapatıp " +
+      "güncel kaydı arşiv geçmişinden görüntüleyin.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "organization_conflict" &&
+    action === "department_move"
+  ) {
+    message =
+      "Bu taşıma hiyerarşide döngü oluşturuyor olabilir veya seçilen üst departman " +
+      "artık etkin değildir. Hiyerarşiyi yenileyip yeniden deneyin.";
+  } else if (
+    cause.status === 409 &&
+    cause.code === "organization_conflict" &&
+    action === "department_archive"
+  ) {
+    message =
+      "Yalnızca etkin alt departmanı bulunmayan departmanlar arşivlenebilir. " +
+      "Önce alt departmanları taşıyın veya arşivleyin.";
   } else if (cause.status === 409) {
     message = "Kayıt siz düzenlerken değişti. Sayfayı yenileyip yeniden deneyin.";
   } else if (cause.status === 422) {
-    message = "Alanları ve saat dilimi seçimini kontrol edip yeniden deneyin.";
+    message = action.startsWith("department_")
+      ? "Departman adı, sabit kodu ve üst departman seçimini kontrol edip yeniden deneyin."
+      : "Alanları ve saat dilimi seçimini kontrol edip yeniden deneyin.";
   } else if (cause.status === 429) {
     message = "Çok sayıda istek gönderildi. Kısa bir süre bekleyip yeniden deneyin.";
   }

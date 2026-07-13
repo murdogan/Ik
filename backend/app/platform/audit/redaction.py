@@ -56,9 +56,7 @@ _ROLE_CODES = frozenset(
         "employee",
     }
 )
-_STATUS_VALUES = frozenset(
-    {"invited", "active", "inactive", "archived", "locked", "disabled"}
-)
+_STATUS_VALUES = frozenset({"invited", "active", "inactive", "archived", "locked", "disabled"})
 _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "authentication_method": frozenset({"local"}),
     "failure_reason": frozenset({"authentication_failed"}),
@@ -78,9 +76,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     AuditEventType.LOGIN_SUCCEEDED: AuditMetadataPolicy(
         metadata_keys=frozenset({"authentication_method"})
     ),
-    AuditEventType.LOGIN_FAILED: AuditMetadataPolicy(
-        metadata_keys=frozenset({"failure_reason"})
-    ),
+    AuditEventType.LOGIN_FAILED: AuditMetadataPolicy(metadata_keys=frozenset({"failure_reason"})),
     AuditEventType.PLATFORM_LOGIN_SUCCEEDED: AuditMetadataPolicy(),
     AuditEventType.PLATFORM_LOGIN_FAILED: AuditMetadataPolicy(),
     AuditEventType.PLATFORM_LOGIN_DENIED: AuditMetadataPolicy(),
@@ -95,15 +91,11 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         changed_fields=frozenset({"status", "roles"}),
     ),
     AuditEventType.ROLES_REPLACED: AuditMetadataPolicy(
-        metadata_keys=frozenset(
-            {"before_role_codes", "after_role_codes", "permission_version"}
-        ),
+        metadata_keys=frozenset({"before_role_codes", "after_role_codes", "permission_version"}),
         changed_fields=frozenset({"roles", "permission_version"}),
     ),
     AuditEventType.USER_STATUS_CHANGED: AuditMetadataPolicy(
-        metadata_keys=frozenset(
-            {"before_status", "after_status", "sessions_revoked"}
-        ),
+        metadata_keys=frozenset({"before_status", "after_status", "sessions_revoked"}),
         changed_fields=frozenset({"full_name", "status"}),
     ),
     AuditEventType.SESSION_STARTED: AuditMetadataPolicy(
@@ -193,11 +185,19 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         )
     ),
     AuditEventType.BRANCH_UPDATED: AuditMetadataPolicy(
-        changed_fields=frozenset(
-            {"name", "timezone", "country_code", "city", "address"}
-        )
+        changed_fields=frozenset({"name", "timezone", "country_code", "city", "address"})
     ),
     AuditEventType.BRANCH_ARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_status", "after_status"}),
+        changed_fields=frozenset({"status", "archived_at"}),
+    ),
+    AuditEventType.DEPARTMENT_CREATED: AuditMetadataPolicy(
+        changed_fields=frozenset({"parent_id", "code", "name", "status"})
+    ),
+    AuditEventType.DEPARTMENT_UPDATED: AuditMetadataPolicy(
+        changed_fields=frozenset({"name", "parent_id"})
+    ),
+    AuditEventType.DEPARTMENT_ARCHIVED: AuditMetadataPolicy(
         metadata_keys=frozenset({"before_status", "after_status"}),
         changed_fields=frozenset({"status", "archived_at"}),
     ),

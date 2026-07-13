@@ -16,16 +16,6 @@ from app.models.organization import (
     LegalEntity,
     LegalEntityStatus,
 )
-from app.models.tenant import Tenant, TenantFeatureFlag
-from app.modules.core.domain.feature_flags import (
-    FeatureFlagKey,
-    default_feature_flag_enabled,
-)
-from app.modules.core.domain.tenant import (
-    TenantAccessMode,
-    TenantStatus,
-    access_mode_for_status,
-)
 from app.platform.audit import (
     AuditActorType,
     AuditCategory,
@@ -37,7 +27,6 @@ from app.platform.audit import (
     AuditScopeType,
     AuditVisibilityClass,
 )
-from app.platform.authorization import DenyByDefaultPolicy
 from app.platform.db import (
     SqlAlchemyUnitOfWork,
     configure_tenant_database_access,
@@ -56,23 +45,24 @@ from app.schemas.organization import (
     LegalEntityUpdate,
 )
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
-from app.services.tenant_service import (
-    TenantClosedError,
-    TenantNotFoundError,
-    TenantNotReadyError,
-    TenantReadOnlyError,
+from app.services.organization_access import (
+    ORGANIZATION_READ_PERMISSION,
+    ORGANIZATION_UPDATE_PERMISSION,
+    OrganizationAccessDeniedError,
+    OrganizationFeatureUnavailableError,
+)
+from app.services.organization_access import (
+    organization_scope_from_context as _scope_from_context,
+)
+from app.services.organization_access import (
+    require_organization_permission as _require_permission,
+)
+from app.services.organization_access import (
+    require_organization_tenant_access as _require_tenant_access,
 )
 
 LEGAL_ENTITY_CODE_UNIQUE_CONSTRAINT = "uq_legal_entities_tenant_code_normalized"
 BRANCH_CODE_UNIQUE_CONSTRAINT = "uq_branches_tenant_code_normalized"
-ORGANIZATION_READ_PERMISSION = "organization:read:tenant"
-ORGANIZATION_UPDATE_PERMISSION = "organization:update:tenant"
-
-_authorization_policy = DenyByDefaultPolicy()
-
-
-class OrganizationAccessDeniedError(ApplicationError):
-    pass
 
 
 class LegalEntityNotFoundError(ApplicationError):
@@ -95,10 +85,6 @@ class OrganizationConflictError(ApplicationError):
     pass
 
 
-class OrganizationFeatureUnavailableError(ApplicationError):
-    pass
-
-
 class BranchNotAssignableError(OrganizationConflictError):
     pass
 
@@ -110,9 +96,7 @@ class OrganizationService:
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
-        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = (
-            SqlAlchemyAuditRecorder
-        ),
+        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = (SqlAlchemyAuditRecorder),
     ) -> None:
         self._session_factory = session_factory
         self._audit_recorder_factory = audit_recorder_factory
@@ -640,52 +624,6 @@ class OrganizationService:
         )
 
 
-def _scope_from_context(request_context: RequestContext) -> tuple[UUID, UUID]:
-    tenant_id = request_context.require_tenant().tenant_id
-    actor_id = request_context.actor_id
-    if actor_id is None:
-        raise OrganizationAccessDeniedError()
-    return tenant_id, actor_id
-
-
-def _require_permission(granted_permissions: tuple[str, ...], permission: str) -> None:
-    if not _authorization_policy.allows(permission, granted_permissions):
-        raise OrganizationAccessDeniedError()
-
-
-async def _require_tenant_access(
-    session: AsyncSession,
-    tenant_id: UUID,
-    *,
-    write: bool,
-) -> None:
-    tenant_statement = select(Tenant).where(Tenant.id == tenant_id)
-    if write:
-        # Serialize tenant-owned commands with platform lifecycle transitions. A write that waits
-        # behind suspension/offboarding must observe the new read-only state before mutating.
-        tenant_statement = tenant_statement.with_for_update()
-    tenant = await session.scalar(tenant_statement)
-    if tenant is None:
-        raise TenantNotFoundError()
-    access_mode = access_mode_for_status(TenantStatus(tenant.status))
-    if access_mode is TenantAccessMode.PLATFORM_ONLY:
-        raise TenantNotReadyError()
-    if access_mode is TenantAccessMode.DENIED:
-        raise TenantClosedError()
-    if write and access_mode is TenantAccessMode.READ_ONLY:
-        raise TenantReadOnlyError()
-    organization_enabled = await session.scalar(
-        select(TenantFeatureFlag.enabled).where(
-            TenantFeatureFlag.tenant_id == tenant_id,
-            TenantFeatureFlag.key == FeatureFlagKey.ORGANIZATION.value,
-        )
-    )
-    if organization_enabled is None:
-        organization_enabled = default_feature_flag_enabled(FeatureFlagKey.ORGANIZATION)
-    if not organization_enabled:
-        raise OrganizationFeatureUnavailableError()
-
-
 async def _legal_entity(
     session: AsyncSession,
     *,
@@ -793,10 +731,7 @@ async def _flush_organization_write(
 
 
 def _provided_values(payload: LegalEntityUpdate | BranchUpdate) -> dict[str, object]:
-    return {
-        field_name: getattr(payload, field_name)
-        for field_name in payload.model_fields_set
-    }
+    return {field_name: getattr(payload, field_name) for field_name in payload.model_fields_set}
 
 
 def _enum_value(value: object) -> object:

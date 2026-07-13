@@ -51,6 +51,12 @@ from app.services.authorization_service import (
     RoleAssignmentInvalidError,
     RoleAssignmentUserNotFoundError,
 )
+from app.services.department_service import (
+    DepartmentConflictError,
+    DepartmentCycleError,
+    DepartmentNotFoundError,
+    DuplicateDepartmentCodeError,
+)
 from app.services.employee_service import (
     EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
     DuplicateEmployeeNumberError,
@@ -119,6 +125,7 @@ USER_INVITATION_API_PREFIX = "/api/v1/users/invitations"
 USER_ADMINISTRATION_API_PREFIX = "/api/v1/users"
 LEGAL_ENTITY_API_PREFIX = "/api/v1/legal-entities"
 BRANCH_API_PREFIX = "/api/v1/branches"
+DEPARTMENT_API_PREFIX = "/api/v1/departments"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -148,9 +155,7 @@ PLATFORM_ACCESS_DENIED_ERROR_MESSAGE = "A valid platform access credential is re
 PLATFORM_ROLE_REQUIRED_ERROR_CODE = "platform_role_required"
 PLATFORM_ROLE_REQUIRED_ERROR_MESSAGE = "Platform access is not available for this account"
 PLATFORM_STEP_UP_REQUIRED_ERROR_CODE = "platform_step_up_required"
-PLATFORM_STEP_UP_REQUIRED_ERROR_MESSAGE = (
-    "A stronger platform authentication method is required"
-)
+PLATFORM_STEP_UP_REQUIRED_ERROR_MESSAGE = "A stronger platform authentication method is required"
 TENANT_ACCESS_DENIED_ERROR_CODE = "tenant_access_denied"
 TENANT_ACCESS_DENIED_ERROR_MESSAGE = "Tenant access requires a trusted principal"
 PLATFORM_TENANT_VALIDATION_ERROR_CODE = "platform_tenant_validation_error"
@@ -171,9 +176,7 @@ TENANT_READ_ONLY_ERROR_MESSAGE = "Tenant settings are read-only in the current l
 AUTH_VALIDATION_ERROR_CODE = "auth_validation_error"
 AUTH_VALIDATION_ERROR_MESSAGE = "Authentication request validation failed"
 INVALID_CREDENTIALS_ERROR_CODE = "invalid_credentials"
-INVALID_CREDENTIALS_ERROR_MESSAGE = (
-    "The email or password is incorrect"
-)
+INVALID_CREDENTIALS_ERROR_MESSAGE = "The email or password is incorrect"
 AUTHENTICATION_RATE_LIMIT_ERROR_CODE = "authentication_rate_limited"
 AUTHENTICATION_RATE_LIMIT_ERROR_MESSAGE = (
     "Too many login attempts were made; retry after a short wait"
@@ -236,6 +239,14 @@ LEGAL_ENTITY_CODE_CONFLICT_ERROR_CODE = "legal_entity_code_conflict"
 LEGAL_ENTITY_CODE_CONFLICT_ERROR_MESSAGE = "Legal entity code is already in use"
 BRANCH_CODE_CONFLICT_ERROR_CODE = "branch_code_conflict"
 BRANCH_CODE_CONFLICT_ERROR_MESSAGE = "Branch code is already in use"
+DEPARTMENT_NOT_FOUND_ERROR_CODE = "department_not_found"
+DEPARTMENT_NOT_FOUND_ERROR_MESSAGE = "Department was not found"
+DEPARTMENT_CODE_CONFLICT_ERROR_CODE = "department_code_conflict"
+DEPARTMENT_CODE_CONFLICT_ERROR_MESSAGE = "Department code is already in use"
+DEPARTMENT_CYCLE_CONFLICT_ERROR_CODE = "department_cycle_conflict"
+DEPARTMENT_CYCLE_CONFLICT_ERROR_MESSAGE = (
+    "The requested department move would create a hierarchy cycle"
+)
 ORGANIZATION_CONFLICT_ERROR_CODE = "organization_conflict"
 ORGANIZATION_CONFLICT_ERROR_MESSAGE = "The requested organization change is not allowed"
 
@@ -684,6 +695,48 @@ ORGANIZATION_CONFLICT_RESPONSES = _conflict_response(
     },
 )
 
+DEPARTMENT_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "The department is absent or outside the authenticated tenant.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    TENANT_NOT_FOUND_ERROR_CODE: _error_example(
+                        TENANT_NOT_FOUND_ERROR_CODE,
+                        TENANT_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    DEPARTMENT_NOT_FOUND_ERROR_CODE: _error_example(
+                        DEPARTMENT_NOT_FOUND_ERROR_CODE,
+                        DEPARTMENT_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE: _error_example(
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE,
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_MESSAGE,
+                    ),
+                }
+            }
+        },
+    }
+}
+DEPARTMENT_CONFLICT_RESPONSES = _conflict_response(
+    description="Department code, hierarchy, or archive conflict envelope.",
+    examples={
+        DEPARTMENT_CODE_CONFLICT_ERROR_CODE: _error_example(
+            DEPARTMENT_CODE_CONFLICT_ERROR_CODE,
+            DEPARTMENT_CODE_CONFLICT_ERROR_MESSAGE,
+        ),
+        DEPARTMENT_CYCLE_CONFLICT_ERROR_CODE: _error_example(
+            DEPARTMENT_CYCLE_CONFLICT_ERROR_CODE,
+            DEPARTMENT_CYCLE_CONFLICT_ERROR_MESSAGE,
+        ),
+        ORGANIZATION_CONFLICT_ERROR_CODE: _error_example(
+            ORGANIZATION_CONFLICT_ERROR_CODE,
+            ORGANIZATION_CONFLICT_ERROR_MESSAGE,
+        ),
+    },
+)
+
 
 EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Employee command conflict envelope.",
@@ -705,8 +758,9 @@ EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
 IDEMPOTENT_EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Idempotent employee command conflict envelope.",
     examples={
-        **EMPLOYEE_COMMAND_CONFLICT_RESPONSES[status.HTTP_409_CONFLICT]["content"]
-        ["application/json"]["examples"],
+        **EMPLOYEE_COMMAND_CONFLICT_RESPONSES[status.HTTP_409_CONFLICT]["content"][
+            "application/json"
+        ]["examples"],
         IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE: _error_example(
             IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE,
             IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
@@ -826,10 +880,18 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return legal_entity_not_found_error()
     if isinstance(exc, BranchNotFoundError):
         return branch_not_found_error()
+    if isinstance(exc, DepartmentNotFoundError):
+        return department_not_found_error()
     if isinstance(exc, DuplicateLegalEntityCodeError):
         return legal_entity_code_conflict_error()
     if isinstance(exc, DuplicateBranchCodeError):
         return branch_code_conflict_error()
+    if isinstance(exc, DuplicateDepartmentCodeError):
+        return department_code_conflict_error()
+    if isinstance(exc, DepartmentCycleError):
+        return department_cycle_conflict_error()
+    if isinstance(exc, DepartmentConflictError):
+        return organization_conflict_error(str(exc))
     if isinstance(exc, OrganizationConflictError):
         return organization_conflict_error(str(exc))
     if isinstance(exc, TenantNotFoundError):
@@ -1185,6 +1247,30 @@ def branch_code_conflict_error() -> ApiError:
     )
 
 
+def department_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=DEPARTMENT_NOT_FOUND_ERROR_CODE,
+        message=DEPARTMENT_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def department_code_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=DEPARTMENT_CODE_CONFLICT_ERROR_CODE,
+        message=DEPARTMENT_CODE_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def department_cycle_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=DEPARTMENT_CYCLE_CONFLICT_ERROR_CODE,
+        message=DEPARTMENT_CYCLE_CONFLICT_ERROR_MESSAGE,
+    )
+
+
 def organization_conflict_error(message: str) -> ApiError:
     return ApiError(
         status_code=status.HTTP_409_CONFLICT,
@@ -1338,8 +1424,10 @@ def _domain_request_validation_error(
         )
     if _matches_api_prefix(path, USER_ADMINISTRATION_API_PREFIX):
         return user_administration_validation_error()
-    if _matches_api_prefix(path, LEGAL_ENTITY_API_PREFIX) or _matches_api_prefix(
-        path, BRANCH_API_PREFIX
+    if (
+        _matches_api_prefix(path, LEGAL_ENTITY_API_PREFIX)
+        or _matches_api_prefix(path, BRANCH_API_PREFIX)
+        or _matches_api_prefix(path, DEPARTMENT_API_PREFIX)
     ):
         return organization_pagination_validation_error()
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):

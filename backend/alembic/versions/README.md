@@ -296,4 +296,33 @@ organization tabloları bu checkpoint'e dahil değildir.
   yerine fail eder. PostgreSQL RLS/ACL iddiaları disposable PostgreSQL integration hattında
   kanıtlanmalıdır; SQLite hattı generated kolon, constraint, backfill ve schema uyumunu kanıtlar.
 
-Bu revision sonrası tek head `0027_p3f_legal_entities_branches`'tır.
+## P3G department hierarchy integrity
+
+`0028_p3g_department_hierarchy`, P3F organization temelinin üzerine tenant-owned department
+adjacency tree'sini ekler:
+
+- `departments`, tenant içinde kalıcı ve case-insensitive unique generated `code_normalized`,
+  nullable `parent_id`, active/archived terminal durum ve archive timestamp'i saklar. Composite
+  `(tenant_id,parent_id) → departments(tenant_id,id)` foreign key başka tenant parent'ına
+  bağlanmayı; named self-parent ve archive-state check'leri geçersiz temel durumları engeller.
+- Root/child ve bounded flat liste sorguları için tenant/parent/status/code/id sırasını taşıyan
+  iki B-tree index vardır. Migration veya API sınırsız recursive tree payload'ı üretmez.
+- PostgreSQL `BEFORE ROW` integrity trigger'ı ilk işlem olarak tenant sentinel satırını
+  `FOR UPDATE` kilitler. Aynı tenant'taki structural yazılar bundan sonra active-parent, ancestor
+  ve active-child archive kararlarını serialize ederek kontrol eder. Identity/tenant/code
+  değişmez; archived satırın name/parent/status/timestamp tarihi terminaldir ve archive işlemi
+  parent link'ini aynı statement'ta yeniden yazamaz.
+- Tek row kontrolüne ek olarak ayrı `AFTER INSERT` ve `AFTER UPDATE` transition-table trigger'ları,
+  statement'ın bitmiş graph'ında değişen her node'dan parent zincirini dolaşır. Böylece tek
+  multi-row statement'taki karşılıklı move ve iki bağımsız transaction'ın karşılıklı move yarışı
+  `ck_departments_acyclic` ile atomik olarak reddedilir.
+- PostgreSQL'de tablo `ENABLE + FORCE RLS` ve tenant policy altındadır. Tenant capability yalnız
+  `SELECT/INSERT` ile `name,parent_id,status,archived_at,updated_at` column-level `UPDATE` alır;
+  `DELETE`, stable code/identity update ve platform/authentication capability erişimi yoktur.
+- Downgrade retained department/history varsa export/remediation istemeden tabloyu düşürmez.
+  Catalog, RLS/ACL, cross-tenant parent, terminal archive, multi-row cycle ve concurrent cycle
+  kanıtı disposable PostgreSQL üzerinde
+  `backend/tests/integration/test_postgresql_p3g_departments.py` ile çalışır; SQLite hattı yalnız
+  schema/migration compatibility kanıtıdır.
+
+Bu revision sonrası tek head `0028_p3g_department_hierarchy`'dır.

@@ -138,6 +138,15 @@ P3F_ADDITIVE_OPERATIONS = {
     "DELETE /api/v1/branches/{branch_id}",
 }
 P3F_BEARER_OPERATIONS = P3F_ADDITIVE_OPERATIONS
+P3G_ADDITIVE_OPERATIONS = {
+    "GET /api/v1/departments",
+    "POST /api/v1/departments",
+    "GET /api/v1/departments/tree",
+    "GET /api/v1/departments/{department_id}",
+    "PATCH /api/v1/departments/{department_id}",
+    "DELETE /api/v1/departments/{department_id}",
+}
+P3G_BEARER_OPERATIONS = P3G_ADDITIVE_OPERATIONS
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -175,7 +184,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
 
-    assert current["operation_count"] == 56
+    assert current["operation_count"] == 62
     assert set(current["operations"]) == (
         set(f1e["operations"])
         | F2_APPROVED_ADDITIVE_OPERATIONS
@@ -183,6 +192,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3D_ADDITIVE_OPERATIONS
         | P3E_ADDITIVE_OPERATIONS
         | P3F_ADDITIVE_OPERATIONS
+        | P3G_ADDITIVE_OPERATIONS
     )
     bearer_security = [{"BearerAuth": []}]
     assert {
@@ -190,7 +200,9 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         for path, path_item in openapi["paths"].items()
         for method, operation in path_item.items()
         if method in HTTP_METHODS and operation.get("security") == bearer_security
-    } == F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS | P3F_BEARER_OPERATIONS
+    } == (
+        F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS | P3F_BEARER_OPERATIONS | P3G_BEARER_OPERATIONS
+    )
     platform_bearer_security = [{"PlatformBearerAuth": []}]
     assert {
         f"{method.upper()} {path}"
@@ -206,10 +218,21 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
     }
     for operation_name in P3F_ADDITIVE_OPERATIONS:
         method, path = operation_name.split(" ", maxsplit=1)
+        examples = openapi["paths"][path][method.lower()]["responses"]["404"]["content"][
+            "application/json"
+        ]["examples"]
+        assert set(examples) == p3f_not_found_examples
+    p3g_not_found_examples = {
+        "tenant_not_found",
+        "department_not_found",
+        "organization_feature_unavailable",
+    }
+    for operation_name in P3G_ADDITIVE_OPERATIONS:
+        method, path = operation_name.split(" ", maxsplit=1)
         examples = openapi["paths"][path][method.lower()]["responses"]["404"][
             "content"
         ]["application/json"]["examples"]
-        assert set(examples) == p3f_not_found_examples
+        assert set(examples) == p3g_not_found_examples
     for path, path_item in openapi["paths"].items():
         for method, operation in path_item.items():
             if method not in HTTP_METHODS:
@@ -219,6 +242,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
                 | P3C_BEARER_OPERATIONS
                 | P3D_PLATFORM_BEARER_OPERATIONS
                 | P3F_BEARER_OPERATIONS
+                | P3G_BEARER_OPERATIONS
             ):
                 assert "security" not in operation
 
@@ -228,8 +252,7 @@ def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:
     current = build_openapi_contract_manifest(create_app().openapi())
 
     assert {
-        operation: current["operations"].get(operation)
-        for operation in phase0["operations"]
+        operation: current["operations"].get(operation) for operation in phase0["operations"]
     } == phase0["operations"]
     for group_name, components in phase0["components"].items():
         assert {
@@ -244,8 +267,7 @@ def test_historical_f1a_is_the_approved_additive_phase0_contract() -> None:
 
     assert set(f1a["operations"]) == set(phase0["operations"]) | F1A_ADDITIVE_OPERATIONS
     assert {
-        operation: f1a["operations"].get(operation)
-        for operation in phase0["operations"]
+        operation: f1a["operations"].get(operation) for operation in phase0["operations"]
     } == phase0["operations"]
     for group_name, components in phase0["components"].items():
         assert {
@@ -289,9 +311,7 @@ def test_f1d_delta_from_f1b_is_additive_features_and_approved_limits_migration()
     assert set(f1d_schemas) - set(f1b_schemas) == F1D_ADDITIVE_SCHEMA_COMPONENTS
     assert set(f1b_schemas) - set(f1d_schemas) == set()
     assert {
-        component
-        for component, digest in f1b_schemas.items()
-        if digest != f1d_schemas[component]
+        component for component, digest in f1b_schemas.items() if digest != f1d_schemas[component]
     } == F1D_APPROVED_COMPONENT_MIGRATIONS
     assert f1d["top_level_sha256"] != f1b["top_level_sha256"]
 
@@ -324,9 +344,7 @@ def build_openapi_contract_manifest(openapi: dict[str, Any]) -> dict[str, Any]:
         }
         for group_name, group in sorted(openapi.get("components", {}).items())
     }
-    top_level = {
-        key: value for key, value in openapi.items() if key not in {"components", "paths"}
-    }
+    top_level = {key: value for key, value in openapi.items() if key not in {"components", "paths"}}
 
     return {
         "operation_count": len(operations),

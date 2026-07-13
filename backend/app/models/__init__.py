@@ -14,6 +14,7 @@ from app.models.auth import (
 )
 from app.models.authorization import Permission, Role, RolePermission, UserRole
 from app.models.command_idempotency import CommandIdempotency
+from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
 from app.models.identity import (
     Identity,
@@ -35,6 +36,8 @@ __all__ = [
     "Branch",
     "BranchStatus",
     "CommandIdempotency",
+    "Department",
+    "DepartmentStatus",
     "Employee",
     "EmployeeStatus",
     "Identity",

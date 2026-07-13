@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
 from app.main import create_app
 from app.models.audit import AuditEvent
+from app.models.department import Department, DepartmentStatus
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantStatus
 from app.models.user import User, UserStatus
@@ -21,8 +22,13 @@ from app.platform.identity import PasswordManager
 from app.platform.pagination import encode_cursor
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
+from app.schemas.department import DepartmentCreate
 from app.schemas.organization import BranchCreate, BranchListCursor
 from app.services.authorization_service import assign_system_role, seed_authorization_catalog
+from app.services.department_service import (
+    DepartmentLifecycleConflictError,
+    DepartmentService,
+)
 from app.services.identity_projection_service import sync_identity_membership_projection
 from app.services.organization_service import (
     ORGANIZATION_READ_PERMISSION,
@@ -43,6 +49,7 @@ HR_A_ID = UUID("ca000000-0000-4000-8000-000000000003")
 DEFAULT_ENTITY_A_ID = TENANT_A_ID
 DEFAULT_ENTITY_B_ID = TENANT_B_ID
 BRANCH_B_ID = UUID("cb000000-0000-4000-8000-000000000001")
+DEPARTMENT_B_ID = UUID("cc000000-0000-4000-8000-000000000001")
 
 ADMIN_A_EMAIL = "admin@organization-a.test"
 EMPLOYEE_A_EMAIL = "employee@organization-a.test"
@@ -193,6 +200,15 @@ async def _seed_organization(
                     city="London",
                     address="Tenant B historical address",
                     status=BranchStatus.ACTIVE.value,
+                    archived_at=None,
+                ),
+                Department(
+                    id=DEPARTMENT_B_ID,
+                    tenant_id=TENANT_B_ID,
+                    parent_id=None,
+                    code="B-ROOT",
+                    name="Tenant B Department",
+                    status=DepartmentStatus.ACTIVE.value,
                     archived_at=None,
                 ),
             ]
@@ -743,9 +759,10 @@ async def test_disabled_organization_feature_fails_closed_before_data_access() -
         assert write.json()["error"]["code"] == "organization_feature_unavailable"
 
         async with harness.session_factory() as session:
-            assert await session.scalar(
-                select(Branch.id).where(Branch.code_normalized == "disabled")
-            ) is None
+            assert (
+                await session.scalar(select(Branch.id).where(Branch.code_normalized == "disabled"))
+                is None
+            )
 
         async with harness.session_factory.begin() as session:
             feature = await session.get(
@@ -759,9 +776,7 @@ async def test_disabled_organization_feature_fails_closed_before_data_access() -
             headers=_authorization(token),
         )
         assert missing_flag.status_code == 404
-        assert missing_flag.json()["error"]["code"] == (
-            "organization_feature_unavailable"
-        )
+        assert missing_flag.json()["error"]["code"] == ("organization_feature_unavailable")
 
 
 async def test_organization_write_rolls_back_when_same_transaction_audit_fails() -> None:
@@ -796,6 +811,355 @@ async def test_organization_write_rolls_back_when_same_transaction_audit_fails()
                 select(AuditEvent.id).where(
                     AuditEvent.tenant_id == TENANT_A_ID,
                     AuditEvent.event_type == "branch.created",
+                )
+            )
+        assert rolled_back is None
+        assert audit_event is None
+
+
+async def test_department_lazy_hierarchy_move_cycle_archive_history_and_audit() -> None:
+    async with _organization_api() as harness:
+        token = await _login(harness.client, email=ADMIN_A_EMAIL)
+        headers = _authorization(token)
+
+        async def create_department(
+            *,
+            code: str,
+            name: str,
+            parent_id: str | None = None,
+        ) -> dict[str, object]:
+            response = await harness.client.post(
+                "/api/v1/departments",
+                headers=headers,
+                json={"code": code, "name": name, "parent_id": parent_id},
+            )
+            assert response.status_code == 201
+            assert response.json()["data"]["accepts_new_assignments"] is True
+            return response.json()["data"]
+
+        engineering = await create_department(code="eng", name="Engineering")
+        operations = await create_department(code="ops", name="Operations")
+        platform = await create_department(
+            code="platform",
+            name="Platform Engineering",
+            parent_id=str(engineering["id"]),
+        )
+        sre = await create_department(
+            code="sre",
+            name="Site Reliability",
+            parent_id=str(platform["id"]),
+        )
+
+        first_roots = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={"limit": 1},
+        )
+        assert first_roots.status_code == 200
+        assert first_roots.headers["Cache-Control"] == "no-store"
+        assert [item["code"] for item in first_roots.json()["data"]] == ["ENG"]
+        assert first_roots.json()["data"][0]["has_children"] is True
+        root_cursor = first_roots.json()["meta"]["next_cursor"]
+        assert root_cursor
+
+        second_roots = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={"limit": 1, "cursor": root_cursor},
+        )
+        assert second_roots.status_code == 200
+        assert [item["code"] for item in second_roots.json()["data"]] == ["OPS"]
+
+        mismatched_level = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={
+                "limit": 1,
+                "cursor": root_cursor,
+                "parent_id": engineering["id"],
+            },
+        )
+        assert mismatched_level.status_code == 422
+        assert mismatched_level.json()["error"]["code"] == "organization_validation_error"
+
+        engineering_children = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={"parent_id": engineering["id"]},
+        )
+        assert engineering_children.status_code == 200
+        assert [item["code"] for item in engineering_children.json()["data"]] == ["PLATFORM"]
+        assert engineering_children.json()["data"][0]["has_children"] is True
+
+        platform_children = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={"parent_id": platform["id"]},
+        )
+        assert [item["code"] for item in platform_children.json()["data"]] == ["SRE"]
+
+        renamed = await harness.client.patch(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+            json={"name": "Cloud Platform"},
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["data"]["name"] == "Cloud Platform"
+        assert renamed.json()["data"]["code"] == "PLATFORM"
+
+        immutable_code = await harness.client.patch(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+            json={"code": "RENAMED"},
+        )
+        assert immutable_code.status_code == 422
+        assert immutable_code.json()["error"]["code"] == "organization_validation_error"
+
+        moved_to_root = await harness.client.patch(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+            json={"parent_id": None},
+        )
+        assert moved_to_root.status_code == 200
+        assert moved_to_root.json()["data"]["parent_id"] is None
+
+        moved_to_operations = await harness.client.patch(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+            json={"parent_id": operations["id"]},
+        )
+        assert moved_to_operations.status_code == 200
+        assert moved_to_operations.json()["data"]["parent_id"] == operations["id"]
+
+        cycle = await harness.client.patch(
+            f"/api/v1/departments/{operations['id']}",
+            headers=headers,
+            json={"parent_id": sre["id"]},
+        )
+        assert cycle.status_code == 409
+        assert cycle.json()["error"]["code"] == "department_cycle_conflict"
+
+        self_cycle = await harness.client.patch(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+            json={"parent_id": platform["id"]},
+        )
+        assert self_cycle.status_code == 409
+        assert self_cycle.json()["error"]["code"] == "department_cycle_conflict"
+
+        used_parent = await harness.client.delete(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+        )
+        assert used_parent.status_code == 409
+        assert used_parent.json()["error"]["code"] == "organization_conflict"
+
+        department_service = DepartmentService(session_factory=harness.session_factory)
+        assignable = await department_service.require_assignable_department(
+            request_context=_service_context(),
+            department_id=UUID(str(sre["id"])),
+            granted_permissions=(ORGANIZATION_READ_PERMISSION,),
+        )
+        assert assignable.id == UUID(str(sre["id"]))
+
+        archived_sre = await harness.client.delete(
+            f"/api/v1/departments/{sre['id']}",
+            headers=headers,
+        )
+        assert archived_sre.status_code == 200
+        assert archived_sre.json()["data"]["status"] == "archived"
+        assert archived_sre.json()["data"]["parent_id"] == platform["id"]
+        assert archived_sre.json()["data"]["accepts_new_assignments"] is False
+        with pytest.raises(DepartmentLifecycleConflictError):
+            await department_service.require_assignable_department(
+                request_context=_service_context(),
+                department_id=UUID(str(sre["id"])),
+                granted_permissions=(ORGANIZATION_READ_PERMISSION,),
+            )
+
+        active_platform_children = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={"parent_id": platform["id"]},
+        )
+        assert active_platform_children.status_code == 200
+        assert active_platform_children.json()["data"] == []
+
+        archived_platform = await harness.client.delete(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+        )
+        assert archived_platform.status_code == 200
+        assert archived_platform.json()["data"]["status"] == "archived"
+        assert archived_platform.json()["data"]["parent_id"] == operations["id"]
+        assert archived_platform.json()["data"]["has_children"] is True
+
+        history_level = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={"parent_id": operations["id"], "include_archived": True},
+        )
+        assert history_level.status_code == 200
+        assert [item["code"] for item in history_level.json()["data"]] == ["PLATFORM"]
+        assert history_level.json()["data"][0]["status"] == "archived"
+
+        nested_history = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=headers,
+            params={"parent_id": platform["id"], "include_archived": True},
+        )
+        assert [item["code"] for item in nested_history.json()["data"]] == ["SRE"]
+
+        archived_update = await harness.client.patch(
+            f"/api/v1/departments/{platform['id']}",
+            headers=headers,
+            json={"name": "Reopened"},
+        )
+        assert archived_update.status_code == 409
+        assert archived_update.json()["error"]["code"] == "organization_conflict"
+
+        archived_list = await harness.client.get(
+            "/api/v1/departments",
+            headers=headers,
+            params={"status": "archived", "limit": 1},
+        )
+        assert archived_list.status_code == 200
+        assert len(archived_list.json()["data"]) == 1
+        assert archived_list.json()["meta"]["next_cursor"]
+
+        reused_code = await harness.client.post(
+            "/api/v1/departments",
+            headers=headers,
+            json={"code": "platform", "name": "Replacement Platform"},
+        )
+        assert reused_code.status_code == 409
+        assert reused_code.json()["error"]["code"] == "department_code_conflict"
+
+        async with harness.session_factory() as session:
+            events = tuple(
+                await session.scalars(
+                    select(AuditEvent)
+                    .where(
+                        AuditEvent.tenant_id == TENANT_A_ID,
+                        AuditEvent.event_type.in_(
+                            (
+                                "department.created",
+                                "department.updated",
+                                "department.archived",
+                            )
+                        ),
+                    )
+                    .order_by(AuditEvent.occurred_at, AuditEvent.id)
+                )
+            )
+        assert Counter(event.event_type for event in events) == Counter(
+            {
+                "department.created": 4,
+                "department.updated": 3,
+                "department.archived": 2,
+            }
+        )
+        assert all(event.actor_user_id == ADMIN_A_ID for event in events)
+        assert all(event.resource_type == "department" for event in events)
+
+
+async def test_department_tenant_rbac_feature_and_audit_transaction_boundaries() -> None:
+    async with _organization_api() as harness:
+        admin_token = await _login(harness.client, email=ADMIN_A_EMAIL)
+        employee_token = await _login(harness.client, email=EMPLOYEE_A_EMAIL)
+        hr_token = await _login(harness.client, email=HR_A_EMAIL)
+
+        spoofed = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers={
+                **_authorization(admin_token),
+                "X-Tenant-Id": str(TENANT_B_ID),
+                "X-Tenant-Slug": "organization-b",
+            },
+        )
+        assert spoofed.status_code == 200
+        assert spoofed.json()["data"] == []
+
+        cross_tenant = await harness.client.get(
+            f"/api/v1/departments/{DEPARTMENT_B_ID}",
+            headers=_authorization(admin_token),
+        )
+        assert cross_tenant.status_code == 404
+        assert cross_tenant.json()["error"]["code"] == "department_not_found"
+
+        cross_parent = await harness.client.post(
+            "/api/v1/departments",
+            headers=_authorization(admin_token),
+            json={
+                "code": "ESCAPE",
+                "name": "Cross tenant department",
+                "parent_id": str(DEPARTMENT_B_ID),
+            },
+        )
+        assert cross_parent.status_code == 404
+        assert cross_parent.json()["error"]["code"] == "department_not_found"
+
+        denied_read = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=_authorization(employee_token),
+        )
+        assert denied_read.status_code == 403
+        assert denied_read.json()["error"]["code"] == "organization_access_denied"
+        denied_write = await harness.client.post(
+            "/api/v1/departments",
+            headers=_authorization(employee_token),
+            json={"code": "DENIED", "name": "Denied"},
+        )
+        assert denied_write.status_code == 403
+        assert denied_write.json()["error"]["code"] == "organization_access_denied"
+
+        hr_created = await harness.client.post(
+            "/api/v1/departments",
+            headers=_authorization(hr_token),
+            json={"code": "HR", "name": "HR managed"},
+        )
+        assert hr_created.status_code == 201
+
+        async with harness.session_factory.begin() as session:
+            feature = await session.get(
+                TenantFeatureFlag,
+                (TENANT_A_ID, FeatureFlagKey.ORGANIZATION.value),
+            )
+            assert feature is not None
+            feature.enabled = False
+        disabled = await harness.client.get(
+            "/api/v1/departments/tree",
+            headers=_authorization(admin_token),
+        )
+        assert disabled.status_code == 404
+        assert disabled.json()["error"]["code"] == "organization_feature_unavailable"
+
+    async with _organization_api() as harness:
+        service = DepartmentService(
+            session_factory=harness.session_factory,
+            audit_recorder_factory=lambda _session: _FailingAuditRecorder(),
+        )
+        with pytest.raises(RuntimeError, match="forced organization audit failure"):
+            await service.create_department(
+                request_context=_service_context(),
+                payload=DepartmentCreate(code="ROLLBACK-DEPT", name="Must Roll Back"),
+                granted_permissions=(
+                    ORGANIZATION_READ_PERMISSION,
+                    ORGANIZATION_UPDATE_PERMISSION,
+                ),
+            )
+
+        async with harness.session_factory() as session:
+            rolled_back = await session.scalar(
+                select(Department.id).where(
+                    Department.tenant_id == TENANT_A_ID,
+                    Department.code_normalized == "rollback-dept",
+                )
+            )
+            audit_event = await session.scalar(
+                select(AuditEvent.id).where(
+                    AuditEvent.tenant_id == TENANT_A_ID,
+                    AuditEvent.event_type == "department.created",
                 )
             )
         assert rolled_back is None

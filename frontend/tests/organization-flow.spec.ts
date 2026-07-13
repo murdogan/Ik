@@ -219,6 +219,18 @@ test("tenant admin edits the legal entity and creates, updates, pages, and archi
       return;
     }
 
+    if (path === "/api/v1/departments/tree") {
+      expect(request.method()).toBe("GET");
+      expect(url.searchParams.get("limit")).toBe(String(PAGE_LIMIT));
+      expect(url.searchParams.get("include_archived")).toBe("false");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope([], { limit: PAGE_LIMIT, next_cursor: null }),
+      });
+      return;
+    }
+
     if (path === "/api/v1/branches") {
       if (request.method() === "POST") {
         const payload = request.postDataJSON();
@@ -466,7 +478,11 @@ test("a user without organization permission is redirected before organization A
       });
       return;
     }
-    if (path.startsWith("/api/v1/legal-entities") || path.startsWith("/api/v1/branches")) {
+    if (
+      path.startsWith("/api/v1/legal-entities") ||
+      path.startsWith("/api/v1/branches") ||
+      path.startsWith("/api/v1/departments")
+    ) {
       organizationRequests += 1;
       await route.fulfill({
         status: 403,
@@ -540,7 +556,11 @@ test("a disabled organization feature redirects after an authoritative availabil
       });
       return;
     }
-    if (path.startsWith("/api/v1/legal-entities") || path.startsWith("/api/v1/branches")) {
+    if (
+      path.startsWith("/api/v1/legal-entities") ||
+      path.startsWith("/api/v1/branches") ||
+      path.startsWith("/api/v1/departments")
+    ) {
       organizationRequests += 1;
       await route.fulfill({
         status: 403,
