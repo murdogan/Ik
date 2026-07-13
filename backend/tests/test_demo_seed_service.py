@@ -3,16 +3,24 @@ from uuid import UUID
 
 import pytest
 from app.db.base import Base
+from app.models.authorization import UserRole
 from app.models.department import Department
 from app.models.employee import Employee
 from app.models.employee_assignment import EmployeeAssignment
-from app.models.identity import Identity, IdentityStatus, MembershipRole, TenantMembership
+from app.models.identity import (
+    Identity,
+    IdentityStatus,
+    MembershipRole,
+    PlatformIdentityRole,
+    TenantMembership,
+)
 from app.models.leave_request import LeaveRequest
 from app.models.organization import Branch, BranchStatus, LegalEntity
 from app.models.position import Position
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User
 from app.modules.core.domain.feature_flags import FeatureFlagKey
+from app.platform.authorization import ROLES_BY_CODE
 from app.services.demo_seed_service import (
     DEMO_EMPLOYEES,
     DEMO_LEAVE_REQUESTS,
@@ -53,6 +61,60 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         default_entity = await session.get(LegalEntity, DEMO_TENANTS[0].id)
         assert default_entity is not None
         default_entity.name = "Preserved legal entity name"
+
+        shared_identity = await session.scalar(
+            select(Identity).where(
+                Identity.email_normalized == "admin@wealthyfalcon.demo"
+            )
+        )
+        assert shared_identity is not None
+        super_admin_role = ROLES_BY_CODE["super_admin"]
+        platform_assignment = await session.get(
+            PlatformIdentityRole,
+            (shared_identity.id, super_admin_role.id),
+        )
+        assert platform_assignment is not None
+        assert platform_assignment.active is True
+        platform_assignment.active = False
+
+        wf_admin_fixture = next(
+            fixture for fixture in DEMO_USERS if fixture.key == "wf_admin"
+        )
+        hr_specialist_role = ROLES_BY_CODE["hr_specialist"]
+        tenant_admin_role = ROLES_BY_CODE["tenant_admin"]
+        wf_hr_assignment = await session.get(
+            UserRole,
+            (
+                next(
+                    tenant.id
+                    for tenant in DEMO_TENANTS
+                    if tenant.key == wf_admin_fixture.tenant_key
+                ),
+                wf_admin_fixture.id,
+                hr_specialist_role.id,
+            ),
+        )
+        assert wf_hr_assignment is not None
+        assert wf_hr_assignment.active is True
+        wf_hr_assignment.active = False
+        wf_admin_membership = await session.scalar(
+            select(TenantMembership).where(
+                TenantMembership.tenant_id == DEMO_TENANTS[0].id,
+                TenantMembership.legacy_user_id == wf_admin_fixture.id,
+            )
+        )
+        assert wf_admin_membership is not None
+        wf_hr_projection = await session.get(
+            MembershipRole,
+            (
+                wf_admin_membership.tenant_id,
+                wf_admin_membership.id,
+                hr_specialist_role.id,
+            ),
+        )
+        assert wf_hr_projection is not None
+        assert wf_hr_projection.active is True
+        wf_hr_projection.active = False
 
         seeded_assignments = tuple(
             await session.scalars(
@@ -115,7 +177,12 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert await _count(session, User) == len(DEMO_USERS)
         assert await _count(session, Identity) == 4
         assert await _count(session, TenantMembership) == len(DEMO_USERS)
-        assert await _count(session, MembershipRole) == len(DEMO_USERS)
+        expected_tenant_role_count = sum(
+            1 + len(fixture.additional_role_codes) for fixture in DEMO_USERS
+        )
+        assert await _count(session, UserRole) == expected_tenant_role_count
+        assert await _count(session, MembershipRole) == expected_tenant_role_count
+        assert await _count(session, PlatformIdentityRole) == 1
         assert await _count(session, Employee) == len(DEMO_EMPLOYEES)
         assert await _count(session, LeaveRequest) == len(DEMO_LEAVE_REQUESTS)
         assert set(second_result.tenant_ids) == {tenant.id for tenant in DEMO_TENANTS}
@@ -125,6 +192,12 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
             )
         )
         assert shared_identity is not None
+        platform_assignment = await session.get(
+            PlatformIdentityRole,
+            (shared_identity.id, super_admin_role.id),
+        )
+        assert platform_assignment is not None
+        assert platform_assignment.active is True
         shared_memberships = tuple(
             await session.scalars(
                 select(TenantMembership).where(
@@ -134,6 +207,32 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         )
         assert {membership.tenant_id for membership in shared_memberships} == {
             tenant.id for tenant in DEMO_TENANTS
+        }
+        wf_admin_roles = tuple(
+            await session.scalars(
+                select(UserRole).where(
+                    UserRole.tenant_id == DEMO_TENANTS[0].id,
+                    UserRole.user_id == wf_admin_fixture.id,
+                    UserRole.active.is_(True),
+                )
+            )
+        )
+        assert {assignment.role_id for assignment in wf_admin_roles} == {
+            tenant_admin_role.id,
+            hr_specialist_role.id,
+        }
+        wf_membership_roles = tuple(
+            await session.scalars(
+                select(MembershipRole).where(
+                    MembershipRole.tenant_id == DEMO_TENANTS[0].id,
+                    MembershipRole.membership_id == wf_admin_membership.id,
+                    MembershipRole.active.is_(True),
+                )
+            )
+        )
+        assert {assignment.role_id for assignment in wf_membership_roles} == {
+            tenant_admin_role.id,
+            hr_specialist_role.id,
         }
 
         updated_employee = await session.get(Employee, employee_fixture.id)

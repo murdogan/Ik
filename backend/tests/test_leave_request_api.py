@@ -1,9 +1,15 @@
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Annotated
 from uuid import UUID, uuid4
 
 import pytest
+from app.api.auth_dependencies import require_authenticated_session
+from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
+    get_phase0_tenant_request_context,
+)
 from app.api.leave_requests import (
     get_leave_request_command_handler,
     get_leave_request_service,
@@ -214,6 +220,12 @@ async def _client_with_database(
 
     app = create_app()
     app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_authenticated_tenant_request_context] = (
+        get_phase0_tenant_request_context
+    )
+    app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
+        user=SimpleNamespace(permissions=("leave:read:tenant", "leave:manage:tenant"))
+    )
     app.dependency_overrides.update(dependency_overrides or {})
 
     return (

@@ -284,15 +284,21 @@ P3A `0022_p3a_identity_memberships` ile mevcut tenant `users`/API ID'lerini kald
 ekler. Normalized e-posta başına deterministic identity ve her legacy user/role için membership
 projection backfill edilir; bir e-postada farklı non-null parola hash'leri varsa migration açık
 onarım için fail eder. Global credential tablosu mevcut tenant/platform capability'lerine kapalı,
-membership tabloları tenant RLS altında read-only'dir. Güncel tek Alembic head
-`0026_p3e_identity_checkpoint`'tır. P3B global e-posta/parola login'i, P3C güvenli kurum seçimini,
+membership tabloları tenant RLS altında read-only'dir. P3B global e-posta/parola login'i, P3C
+güvenli kurum seçimini,
 P3D ayrı platform auth realm'ini ve P3E existing-identity membership kabulü ile global password
 recovery'yi tamamlar. `password_reset_tokens` yalnız hash/süre/tek-kullanım durumu saklar; P3E
 reset confirm bütün tenant/platform session family'lerini ve açık kurum seçimlerini geçersiz kılar.
 Global credential satır kilidi, doğrulanmış eski hash ile devam eden login/session oluşturma işlemini
 reset ile atomik olarak sıralar; invited membership'in legacy hash'i null kaldığı için reset sonrası
 reinvite ve mevcut global parola ile activation akışı korunur.
-P3A–P3E Phase 3A identity checkpoint'i kapalıdır; P3F organization work bu committe başlamaz.
+
+P3F–P3J legal entity/branch, department hierarchy, position catalog, effective-dated employee
+assignment, derived team ve lazy organization chart ürün yüzeylerini tamamlar. P3K final hardening
+gate'i legacy dashboard/employee/leave route'larını caller-controlled tenant header'larından
+ayırır: tenant yalnız doğrulanmış canlı `BearerAuth` session'ından gelir. Güncel tek Alembic head
+`0031_p3k_legacy_tenant_auth_boundary` katalog-only revision'ıdır; `leave:manage:tenant` yalnız HR
+director/specialist rollerine verilir. Phase 4 modülü veya destructive contract adımı eklenmez.
 
 Veritabanı migration komutları:
 
@@ -318,11 +324,14 @@ uv run python scripts/seed_demo_data.py
 
 Seed komutu yalnız `IK_ENVIRONMENT=local` veya `IK_ENVIRONMENT=dev` iken çalışır. Komut
 idempotenttir; iki demo tenant, beş membership kullanıcısı, dört membership-backed canonical demo
-identity, sekiz çalışan ve beş izin talebini stabil UUID'ler ile oluşturur veya demo fixture
+identity, sekiz çalışan, beş izin talebi ve kullanılabilir organization/assignment/team/chart
+fixture'larını stabil UUID'ler ile oluşturur veya demo fixture
 değerlerine geri günceller. P3 öncesi Atlas admin fixture'ından yükseltilen veritabanında membership
 aynı public ID ile ortak admin identity'ye taşınır; artık membership'i olmayan eski identity olası
 security/history bağlantılarını silmemek için korunur ve canonical demo identity sayısına dahil
-edilmez. Lokal test/smoke kullanımında hedef
+edilmez. Ortak demo admin identity'si iki tenant membership'ine ek olarak aktif `super_admin`
+platform rolü taşır; Wealthy Falcon admin membership'i `tenant_admin + hr_specialist` ile hem
+organizasyon hem HR ürün akışlarını kullanabilir. Lokal test/smoke kullanımında hedef
 veritabanı `--database-url` ile geçici olarak override edilebilir; komut SQLite veya local host
 veritabanı dışındaki hedefleri reddeder. Production/staging deploy, cron, token, credential veya
 `.env` değişikliği yapmaz.
@@ -398,12 +407,15 @@ filtre/header açıklamaları güncel API docs okunabilirliği için netleştiri
 davranışı değişmedi. Historical W4C6 checkpoint'inde endpoint değişikliği yoktu; F1A daha sonra
 yukarıdaki yedi operation ve iki tag'i additive olarak ekler.
 
-Tenant header dependency hataları, API edge'deki merkezi `ApplicationError` mapper'ının
-dönüştürdüğü typed domain/application hataları ve employee, leave balance, leave request
-endpointlerindeki otomatik request validation `422` hataları şu zarfla döner:
+Aktif dashboard, employee, leave balance ve leave request endpointleri kısa ömürlü tenant
+`BearerAuth` credential'ı ve canlı server-side session ister. Tenant scope access token'daki
+membership'ten türetilir; `X-Tenant-Id`/`X-Tenant-Slug` gönderilse bile okunmaz. Header-only istek,
+platform-audience token ve geçersiz/revoke session `401`; exact permission eksikliği `403` döner.
+API edge'deki merkezi `ApplicationError` mapper'ının dönüştürdüğü typed domain/application
+hataları ve otomatik request validation `422` hataları şu zarfla döner:
 `{ "error": { "code": "...", "message": "...", "details": null, "correlation_id": null } }`.
-Bu kapsam `tenant_header_missing`, `tenant_header_invalid`, `tenant_slug_header_invalid`,
-not-found, conflict, date-range, employee lifecycle, `employee_validation_error`,
+Bu kapsam authentication/authorization, not-found, conflict, date-range, employee lifecycle,
+`employee_validation_error`,
 `leave_balance_validation_error`, `leave_request_validation_error` ve leave transition
 hatalarıdır. F1A platform/tenant yolları da default-deny, lifecycle ve
 `platform_tenant_validation_error`/`tenant_settings_validation_error` yanıtlarını aynı zarfla
@@ -418,30 +430,20 @@ P0C mevcut employee/leave status, code ve public mesajlarını korur. Named
 `409 employee_number_conflict` yanıtına map edilir. Diğer bilinmeyen integrity hataları DB
 detayı sızdırmadan `409 data_integrity_conflict`; SQLAlchemy `StaleDataError` ve tanınan DB
 concurrency hataları `409 concurrent_write_conflict` döner.
-W4A6 itibarıyla employee, leave balance ve leave request endpointlerinde bu public hata mesajları
-kod içi ortak sabitlerden üretilir. Tenant header hataları aynı request içinde payload/query/path
-validation hatası olsa bile önce normalize edilir; global FastAPI validation davranışı bu kapsamda
-değiştirilmedi. W4B4 itibarıyla invalid tenant id mesajı gerçek sözleşmeyi açıkça söyler:
-`X-Tenant-Id header must be a single canonical hyphenated UUID`.
+W4A6 itibarıyla employee, leave balance ve leave request endpointlerinde public hata mesajları kod
+içi ortak sabitlerden üretilir. P3K'de authentication dependency payload/query/path işleminden önce
+fail closed olur; global FastAPI validation davranışı diğer route'larda değiştirilmemiştir.
 
-Demo seed sonrası employee ve leave endpointleri için örnek tenant header'ları:
+Demo seed sonrası employee ve leave endpointleri için örnek session header'ı:
 
 ```http
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 ```
 
-Eksik veya boş `X-Tenant-Id`, canonical hyphenated UUID olmayan tenant id değerleri, tekrarlı
-`X-Tenant-Id` header'ları ve boş gönderilen `X-Tenant-Slug` `400` status koduyla aynı error
-zarfını döner. Tekrarlı veya boş `X-Tenant-Slug` için mesaj
-`X-Tenant-Slug header must be sent at most once and be non-empty when provided` olur.
-
-Bu W4B3 örnekleri existing Faz-0 FastAPI davranışını gösterir: employee ve leave endpointleri
-explicit compatibility olarak doğrudan schema/list döner. F1A'nın yedi tenant/platform success
-operation'ı F1B ile `{data,meta}` standardına geçmiştir; bu migration Faz-0 örneklerini sessizce
-değiştirmez.
-HTTP request bloklarında gösterilen tenant header'ları her domain endpoint için zorunludur.
+Employee ve leave endpointleri response compatibility olarak doğrudan schema/list döndürmeye
+devam eder; P3K yalnız authority boundary'yi session-backed hale getirir. F1A'nın yedi
+tenant/platform success operation'ı F1B ile `{data,meta}` standardına geçmiştir.
 List endpointleri plain JSON array döner; eşleşen kayıt yoksa `200 []` yanıtı alınır ve pagination
 body metadata dönmez. Employee ve leave-request listelerinde başka sayfa varsa response
 `X-Next-Cursor` header'ı taşır; devam isteği `cursor` query parametresiyle yapılır. Bounded
@@ -453,8 +455,7 @@ Employee list örneği:
 
 ```http
 GET /api/v1/employees?department=Engineering&status=active&q=WF&limit=2&offset=0
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 ```
 
@@ -485,8 +486,7 @@ Employee create request/response örneği:
 
 ```http
 POST /api/v1/employees
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 Content-Type: application/json
 ```
@@ -526,8 +526,7 @@ Employee detail/update/delete örnekleri:
 
 ```http
 GET /api/v1/employees/f3000000-0000-4000-8000-000000000002
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 ```
 
@@ -550,8 +549,7 @@ Response `200`:
 
 ```http
 PATCH /api/v1/employees/f3000000-0000-4000-8000-000000000002
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 Content-Type: application/json
 ```
@@ -582,8 +580,7 @@ Response `200`:
 
 ```http
 DELETE /api/v1/employees/f3000000-0000-4000-8000-000000000002
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 ```
 
@@ -627,8 +624,7 @@ Leave balance summary örneği:
 
 ```http
 GET /api/v1/employees/f3000000-0000-4000-8000-000000000002/leave-balances?period_year=2026
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 ```
 
@@ -660,8 +656,8 @@ W4C2 regresyonu, çalışanın mevcut leave request kayıtları olsa bile manuel
 endpointin sentetik bakiye üretmeden `200 []` döndüğünü sabitler.
 Leave balance endpointinde generic request validation hataları `leave_balance_validation_error`
 kodu ve `Leave balance request validation failed` mesajıyla aynı error zarfını kullanır.
-Eksik tenant header, invalid path/query validation hatalarından önce `tenant_header_missing`
-zarfına normalize edilir.
+Eksik/geçersiz tenant session, path/query validation'dan önce `authentication_required` zarfıyla
+fail closed olur.
 Tenant içindeki çalışan için manuel bakiye özeti yoksa response `200 []` olur; tenant scope dışı
 çalışan için `employee_not_found` `404` zarfı döner.
 
@@ -669,8 +665,7 @@ Leave request list örneği:
 
 ```http
 GET /api/v1/leave-requests?status=pending&employee_id=f3000000-0000-4000-8000-000000000002&start_date=2026-08-01&end_date=2026-08-31&limit=10&offset=0
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 ```
 
@@ -696,8 +691,7 @@ Leave request create request/response örneği:
 
 ```http
 POST /api/v1/leave-requests
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 Content-Type: application/json
 ```
@@ -766,8 +760,7 @@ Leave approve request/response örneği:
 
 ```http
 POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000001/approve
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 Content-Type: application/json
 ```
@@ -800,8 +793,7 @@ bağımsız örneklerde pending talepleri temsil eder:
 
 ```http
 POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000011/reject
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 Content-Type: application/json
 ```
@@ -831,8 +823,7 @@ Response `200`:
 
 ```http
 POST /api/v1/leave-requests/f4000000-0000-4000-8000-000000000012/cancel
-X-Tenant-Id: f1000000-0000-4000-8000-000000000001
-X-Tenant-Slug: wealthy-falcon-demo
+Authorization: Bearer <tenant-access-token>
 X-Correlation-Id: req_wf_demo_001
 Content-Type: application/json
 ```
@@ -906,10 +897,10 @@ Beklenen sonuç:
 - Backend API smoke testi `BACKEND_SMOKE_OK` çıktısı verir.
 - Opsiyonel HTTP landing/health smoke testi `SMOKE_OK` çıktısı verir.
 
-## F2F invitation → activation → secure admin/audit demo
+## P3K tenant/platform identity and organization demo
 
 The local bootstrap creates no committed password or token. It resets only the synthetic demo
-admin and prints one short-lived activation URL to the current terminal:
+admin and manager and prints two labeled, short-lived activation URLs to the current terminal:
 
 ```bash
 docker compose up -d postgres
@@ -925,22 +916,28 @@ npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
-Open the printed `DEMO_AUTH_ACTIVATION_URL`, choose a password of at least 12 characters, then log
-in at `http://localhost:3000/login` with email `admin@wealthyfalcon.demo` and that password. The
+Open the `user=wf_admin` activation URL, choose a password of at least 12 characters, then log in
+at `http://localhost:3000/login` with email `admin@wealthyfalcon.demo` and that password. The
 organizations are discovered only after the credential succeeds. The shared demo admin identity
 has one membership in each seeded organization, so login opens the safe organization-selection
 screen before the protected `/dashboard` tenant shell. Reloading the
 page rotates the HttpOnly refresh credential and restores the in-memory access credential; **Çıkış
 yap** revokes the server-side session family and returns to login.
 
-The activated demo admin can open `/users` to search/page accounts, issue another invitation,
-update allowlisted account fields and replace tenant-role assignments. `/audit` shows the resulting
-security/administration history as a filtered, cursor-paged, redacted and read-only view. Employee
+The activated demo admin can open `/organization` to administer legal entities, branches,
+departments and positions, change effective-dated employee assignments, inspect the derived team
+reporting structure and expand the lazy organization chart. `/users` supports account administration and `/audit`
+shows filtered, cursor-paged, redacted history. Employee
 sessions do not receive either navigation item and direct `/users` or `/audit` navigation redirects
-before those administration APIs mount. The browser regression also keeps platform audit in the
-separate `/platform/audit` shell and never calls the tenant audit API. That backend endpoint still
-requires the trusted `PlatformPrincipal` boundary; a normal bearer alone does not unlock platform
-operations, and the local tenant-admin demo does not pretend to provide step-up/platform access.
+before those administration APIs mount.
+
+The same shared admin identity also has the demo-only `super_admin` platform role. Use the separate
+`http://localhost:3000/platform/login` page with the same email/password to enter `/platform` and
+`/platform/audit`; its cookie, token audience and principal are distinct from the tenant session.
+A tenant token cannot call platform APIs and a platform token cannot call tenant HR APIs. Open the
+`user=wf_manager` activation URL separately, choose a manager password, then sign in at the tenant
+login with `manager@wealthyfalcon.demo` to review the permission-shaped manager navigation and
+derived `/teams/me` experience without tenant-wide HR administration authority.
 
 An API client can use that login response's short-lived `data.access_token` as
 `Authorization: Bearer <token>` when calling `POST /api/v1/users/invitations`; the response returns
@@ -971,10 +968,11 @@ npm --prefix frontend run build
 npm --prefix frontend run test:e2e
 ```
 
-The focused Playwright set covers invite → activate → login → refresh → logout, tenant-admin
-user/role management, employee denial, protected navigation, tenant audit redaction/read-only
-behavior and platform/tenant audit separation. PostgreSQL RLS, grants, audit immutability and
-cross-tenant storage claims remain in the separate disposable-database `-m postgres` lane.
+The Playwright set covers activation, email-only tenant login, multi-organization selection,
+refresh/logout, separate platform login, tenant user/role administration, organization catalogs,
+assignments, derived team view, lazy org chart, protected navigation and platform/tenant audit
+separation. PostgreSQL RLS, grants, audit immutability and cross-tenant storage claims remain in
+the separate disposable-database `-m postgres` lane.
 
 ## Branch iş akışı
 
@@ -1012,13 +1010,16 @@ henüz yoktur:
 
 ## Durum
 
-P0A–P0G ile Faz 0, F1A–F1E ile Faz 1 ve F2A–F2E product slice'ları tamamlanmıştır. F2F yalnız
-Phase 2 product hardening, manual-demo ve focused regression gate'ini kapatır; yeni endpoint,
-ekran veya Phase 3 modülü eklemez. Güncel uygulama yüzeyi, intentional OpenAPI farkları,
-PostgreSQL/SQLite kanıtları ve açık plan sapmaları
-[API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md) içinde kayıtlıdır.
+P0A–P0G Faz 0, F1A–F1E Faz 1, F2A–F2F Faz 2 ve P3A–P3J Phase 3 identity/organization ürün
+dilimleri tamamlanmıştır. P3K birleşik hardening gate'i migration/backfill, PostgreSQL RLS/grant,
+realm/membership abuse, hierarchy/concurrency, manager scope, audit, OpenAPI, browser ve bounded
+query kanıtlarını kapatır; Phase 4 başlatılmaz. Güncel uygulama yüzeyi ve kanıtlar
+[API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md), migration
+zinciri ve populated backfill sonucu ise
+[Phase 3 Migration and Backfill Report](docs/09-uygulama/13-phase-3-migration-backfill-report.md)
+içinde kayıtlıdır.
 
-Queue F2F commit'inden sonra `STOP — supervisor push pending; awaiting Murat review`
+P3K commit'inden sonra `STOP — supervisor push pending; awaiting Murat review`
 checkpoint'inde kalır. Codex push/merge/deploy yapmaz; review branch push'u ve remote sync
 doğrulaması supervisor sorumluluğundadır. Yürütme otoritesi
 [MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;

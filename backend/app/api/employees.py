@@ -5,14 +5,17 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth_dependencies import AuthenticatedSession, require_permission
 from app.api.compatibility import phase0_plain_cursor_list
 from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
     get_command_idempotency_service,
     get_idempotency_key,
-    get_phase0_tenant_request_context,
     get_unit_of_work,
 )
 from app.api.errors import (
+    AUTHENTICATION_REQUIRED_RESPONSES,
+    AUTHORIZATION_RESPONSES,
     EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
     EMPLOYEE_VALIDATION_RESPONSES,
     IDEMPOTENCY_KEY_INVALID_RESPONSES,
@@ -42,7 +45,11 @@ from app.services.employee_service import EmployeeService
 router = APIRouter(
     prefix="/api/v1/employees",
     tags=[EMPLOYEES_TAG],
-    responses=EMPLOYEE_VALIDATION_RESPONSES,
+    responses={
+        **AUTHENTICATION_REQUIRED_RESPONSES,
+        **AUTHORIZATION_RESPONSES,
+        **EMPLOYEE_VALIDATION_RESPONSES,
+    },
 )
 
 
@@ -141,7 +148,7 @@ def get_employee_list_pagination(
     response_model=list[EmployeeRead],
     summary="List tenant employees",
     description=(
-        "Lists employee directory records for the current tenant from the tenant header context. "
+        "Lists employee directory records for the authenticated tenant session. "
         "Optional filters cover department, lifecycle status, and employee number or email "
         "search; tenant isolation is applied before bounded keyset pagination. The bounded "
         "limit/offset path remains available for compatibility."
@@ -164,7 +171,11 @@ async def list_employees(
     response: Response,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:read:tenant")),
     ],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
     filters: Annotated[EmployeeListFilters, Depends(get_employee_list_filters)],
@@ -184,8 +195,8 @@ async def list_employees(
     status_code=status.HTTP_201_CREATED,
     summary="Create tenant employee",
     description=(
-        "Creates an employee master-data record in the current tenant from the tenant header "
-        "context. Employee numbers must remain unique within that tenant, and lifecycle date "
+        "Creates an employee master-data record in the authenticated tenant session. Employee "
+        "numbers must remain unique within that tenant, and lifecycle date "
         "rules are enforced before persistence. An optional X-Idempotency-Key replays the first "
         "successful response for an equivalent retry in this tenant."
     ),
@@ -199,7 +210,11 @@ async def create_employee(
     payload: EmployeeCreate,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:update:tenant")),
     ],
     command_handler: Annotated[
         EmployeeCommandHandler,
@@ -228,7 +243,11 @@ async def get_employee(
     employee_id: UUID,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:read:tenant")),
     ],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> EmployeeRead:
@@ -254,7 +273,11 @@ async def update_employee(
     payload: EmployeeUpdate,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:update:tenant")),
     ],
     command_handler: Annotated[
         EmployeeCommandHandler,
@@ -285,7 +308,11 @@ async def delete_employee(
     employee_id: UUID,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:update:tenant")),
     ],
     command_handler: Annotated[
         EmployeeCommandHandler,

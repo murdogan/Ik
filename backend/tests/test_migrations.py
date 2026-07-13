@@ -601,8 +601,11 @@ def test_core_migration_chain_is_linear() -> None:
     )
     p3h_position_revision = script.get_revision("0029_p3h_position_catalog")
     p3i_assignment_revision = script.get_revision("0030_p3i_employee_assignments")
+    p3k_auth_boundary_revision = script.get_revision(
+        "0031_p3k_legacy_tenant_auth_boundary"
+    )
 
-    assert script.get_heads() == ["0030_p3i_employee_assignments"]
+    assert script.get_heads() == ["0031_p3k_legacy_tenant_auth_boundary"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -681,6 +684,8 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3h_position_revision.down_revision == "0028_p3g_department_hierarchy"
     assert p3i_assignment_revision is not None
     assert p3i_assignment_revision.down_revision == "0029_p3h_position_catalog"
+    assert p3k_auth_boundary_revision is not None
+    assert p3k_auth_boundary_revision.down_revision == "0030_p3i_employee_assignments"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -1959,7 +1964,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0030_p3i_employee_assignments"
+        assert revision == "0031_p3k_legacy_tenant_auth_boundary"
     finally:
         engine.dispose()
 

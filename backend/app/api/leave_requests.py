@@ -5,14 +5,17 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth_dependencies import AuthenticatedSession, require_permission
 from app.api.compatibility import phase0_plain_cursor_list
 from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
     get_command_idempotency_service,
     get_idempotency_key,
-    get_phase0_tenant_request_context,
     get_unit_of_work,
 )
 from app.api.errors import (
+    AUTHENTICATION_REQUIRED_RESPONSES,
+    AUTHORIZATION_RESPONSES,
     IDEMPOTENCY_KEY_INVALID_RESPONSES,
     LEAVE_REQUEST_DECISION_CONFLICT_RESPONSES,
     LEAVE_REQUEST_PERSISTENCE_CONFLICT_RESPONSES,
@@ -45,7 +48,11 @@ from app.services.leave_request_service import LeaveRequestService
 router = APIRouter(
     prefix="/api/v1/leave-requests",
     tags=[LEAVE_REQUESTS_TAG],
-    responses=LEAVE_REQUEST_VALIDATION_RESPONSES,
+    responses={
+        **AUTHENTICATION_REQUIRED_RESPONSES,
+        **AUTHORIZATION_RESPONSES,
+        **LEAVE_REQUEST_VALIDATION_RESPONSES,
+    },
 )
 
 
@@ -148,8 +155,8 @@ def get_leave_request_list_pagination(
     response_model=list[LeaveRequestRead],
     summary="List tenant leave requests",
     description=(
-        "Lists leave request review records for the current tenant from the tenant header "
-        "context. Optional filters cover workflow status, employee, and overlapping date "
+        "Lists leave request review records for the authenticated tenant session. Optional "
+        "filters cover workflow status, employee, and overlapping date "
         "windows; tenant isolation is applied before bounded keyset pagination. The bounded "
         "limit/offset path remains available for compatibility."
     ),
@@ -171,7 +178,11 @@ async def list_leave_requests(
     response: Response,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("leave:read:tenant")),
     ],
     service: Annotated[LeaveRequestService, Depends(get_leave_request_service)],
     filters: Annotated[LeaveRequestListFilters, Depends(get_leave_request_list_filters)],
@@ -192,7 +203,7 @@ async def list_leave_requests(
     summary="Create tenant leave request",
     description=(
         "Creates a pending leave request in the current tenant. The employee and requesting user "
-        "must both belong to the tenant from the request headers, and leave dates must be "
+        "must both belong to the authenticated tenant session, and leave dates must be "
         "ordered before persistence. An optional X-Idempotency-Key replays the first successful "
         "response for an equivalent retry in this tenant."
     ),
@@ -206,7 +217,11 @@ async def create_leave_request(
     payload: LeaveRequestCreate,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("leave:manage:tenant")),
     ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,
@@ -242,7 +257,11 @@ async def approve_leave_request(
     payload: LeaveRequestDecision,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("leave:manage:tenant")),
     ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,
@@ -279,7 +298,11 @@ async def reject_leave_request(
     payload: LeaveRequestDecision,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("leave:manage:tenant")),
     ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,
@@ -316,7 +339,11 @@ async def cancel_leave_request(
     payload: LeaveRequestDecision,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("leave:manage:tenant")),
     ],
     command_handler: Annotated[
         LeaveRequestCommandHandler,

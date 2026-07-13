@@ -14,10 +14,16 @@ Bu doküman, foundation ERD dokümanını implementasyon sırasına indirger. Am
   constraint validate edildikten sonra eski constraint'i kaldırır.
 - Migration testleri model metadata ve migration dosyası varlığını doğrular.
 - Tenant guard testleri Faz 0/F1A'da başlar; F1C catalog/policy testleri her non-null `tenant_id`
-  tablosunun PostgreSQL RLS enabled/forced ve app policy kapsamlı olmasını zorunlu kılar. F1D yeni
-  tenant-owned feature tablosunu kendi frozen revision inventory/policy/grant sözleşmesiyle ekler.
-- F1E final Faz 1 kapısı yeni schema DDL veya revision eklemez; Alembic zincirinin tek head'i
-  `0015_f1d_feature_flags` olarak kalır.
+  tablosunun PostgreSQL RLS enabled/forced ve amacına uygun tenant/auth policy kapsamlı olmasını
+  zorunlu kılar. F1D yeni
+  tenant-owned feature tablosunu kendi frozen revision inventory/policy/grant sözleşmesiyle ekler;
+  F2 ve P3'te eklenen her tenant-owned tablo aynı catalog gate'ine dahil edilir.
+- F1E'nin historical head'i `0015_f1d_feature_flags` idi. Güncel doğrusal zincir P3I'nin structured
+  assignment/backfill revision'ı `0030_p3i_employee_assignments` üzerinden P3K'nin katalog-only
+  `0031_p3k_legacy_tenant_auth_boundary` revision'ına ulaşır; final gate tam bir Alembic head ister.
+- P3K `0031` yeni domain tablosu veya Phase 4 verisi eklemez. Yalnız `leave:manage:tenant`
+  permission'ını HR director/specialist rollerine grant ederek legacy leave mutation'larını canlı
+  tenant auth'a bağlayan katalog sınırını kapatır.
 
 ### 1.1 Uygulanan P0D geçişi
 
@@ -134,7 +140,8 @@ transaction'ındadır; append-only `audit_events` migration'ı Faz 2'dir.
 
 ### 1.7 F1E Faz 1 final migration kapısı
 
-F1E yeni tablo, kolon, constraint, policy veya Alembic revision eklemez. Final migration yüzeyi
+Bu bölüm historical Faz 1 snapshot'ıdır; güncel head bilgisi değildir. F1E yeni tablo, kolon,
+constraint, policy veya Alembic revision eklemez. O checkpoint'teki final migration yüzeyi
 tek head `0015_f1d_feature_flags`'tır. Kapanış kanıtı:
 
 - `uv run pytest -q backend/tests/test_migrations.py` → `36 passed`.
@@ -149,24 +156,86 @@ Test fixture'ı unique disposable database'ler oluştursa da capability rolleri 
 scope'undadır ve downgrade'de bilinçli olarak düşürülmez. Bu yüzden tam lane yalnız disposable test
 cluster'ında ve database/role/extension yönetebilen admin DSN ile çalıştırılır.
 
+### 1.8 Uygulanan F2 auth, RBAC ve audit zinciri
+
+`0016`–`0021` invitation activation, hashed refresh family/token rotation, tenant user yönetimi,
+permission katalogu, append-only `audit_events` ve invited-user için dar PostgreSQL kolon grant'ini
+lineer olarak ekler. Existing user, activation token ve actor foreign key'leri korunur. Audit normal
+runtime role için `UPDATE/DELETE` edilemez; command ve audit aynı UoW'da commit/rollback eder.
+
+### 1.9 Uygulanan P3A–P3E identity expand-contract zinciri
+
+- `0022_p3a_identity_memberships`, global normalized e-posta credential sahibi `identities` ile
+  tenant-local `tenant_memberships` ve `membership_roles` projection'larını mevcut user/role
+  satırlarından backfill eder. Legacy ID/FK'ler contract aşamasına kadar korunur.
+- `0023_p3b_email_first_login`, credential doğrulamasından önce membership metadata'sı açmayan
+  dar authentication capability'sini, rate-limit bucket'larını ve hashli/süreli organization-
+  selection transaction/choice tablolarını ekler. Login payload'ı yalnız e-posta/paroladır.
+- `0024_p3c_organization_selection`, mevcut refresh family'leri membership'e backfill edip composite
+  FK ile bağlar ve selection consume yetkisini tek-kullanımlı hale getirir. Opaque choice,
+  transaction identity'si ve seçilen tenant/membership birlikte doğrulanır.
+- `0025_p3d_platform_authentication`, tenantless platform role ve session family/token tablolarını
+  ayrı capability, refresh cookie ve access-token audience ile ekler. Platform ve tenant token'ı
+  birbirinin endpointini açamaz.
+- `0026_p3e_identity_checkpoint`, hashed/süreli/tek-kullanımlı password reset tablosu ile global
+  credential lock/reconciliation fonksiyonlarını ekler. Reset tenant/platform family'lerini ve açık
+  organization-selection transaction'larını kapatır; existing identity daveti kendi parolasıyla
+  yalnız pending membership'i aktive eder.
+
+### 1.10 Uygulanan P3F–P3J organization zinciri
+
+- `0027_p3f_legal_entities_branches`, tenant başına tek aktif default legal entity backfill eder;
+  tenant-owned legal entity lifecycle ve branch archive history'sini stable normalized code,
+  composite FK, FORCE RLS ve dar platform-provisioning policy'siyle kurar.
+- `0028_p3g_department_hierarchy`, adjacency-list `departments` ile tenant-scoped
+  `department_hierarchy_write_fences` tablosunu ekler. PostgreSQL integrity/deferred-cycle
+  trigger'ları self, cross-tenant, same-statement ve concurrent cycle'ı reddeder.
+- `0029_p3h_position_catalog`, departmandan bağımsız reusable job-title katalogunu stable code,
+  terminal archive, bounded cursor ve normalized code/title arama indexleriyle ekler.
+- `0030_p3i_employee_assignments`, legal entity, branch, department, position ve manager user'ı
+  tenant composite FK'leriyle bağlayan effective-dated immutable history'yi ekler. Tenant/employee
+  başına tek open row vardır; successor eski satırı exclusive `effective_to` ile kapatır.
+- P3I backfill'i legacy `employees.department` ve `employees.position` metinlerini normalized
+  tenant-local katalog kayıtlarına map eder, default structure altında assignment oluşturur ve eski
+  alanları compatibility projection olarak korur. Arşivli veya ambiguous state kayıpsız preflight
+  olmadan sessizce yorumlanmaz.
+- P3J org chart yeni DDL eklemez. `employee_assignments` manager/effective indexleriyle root veya tek
+  direct-report seviyesini bounded/lazy okur.
+
+### 1.11 P3K katalog-only kapanış ve final migration raporu
+
+`0031_p3k_legacy_tenant_auth_boundary`, P3K için tek head'tir ve yalnız authorization katalogunu
+genişletir. `leave:manage:tenant` HR director ve HR specialist rollerine explicit olarak bağlanır;
+read scope mutation authority olarak kullanılmaz. Revision tablo/kolon, Phase 4 employee kaydı,
+payroll veya başka ürün modülü eklemez.
+
+Final P3K raporu en az şunları kaydeder: tek Alembic head; `base → head` ve desteklenen
+round-trip; identity/membership/role ve organization/assignment backfill sayıları; autogenerate
+metadata drift; FORCE RLS/policy/ACL katalogu; cross-tenant composite-FK negatifleri; auth realm ve
+membership-selection saldırıları; departman concurrency/cycle; manager scope ve bounded query
+planları. PostgreSQL-specific iddialar disposable gerçek PostgreSQL lane'inde kanıtlanır.
+
 ## 2. Migration sırası
 
-Bu tablo ilk ürün planındaki kavramsal uygulama sırasıdır; `Plan` değerleri yayınlanmış Alembic
-revision kimliği değildir. Güncel fiziksel Alembic zinciri için yukarıdaki 1.1–1.6 bölümleri,
-migration history'si ve Alembic head otoritatiftir.
+Alembic history ve `alembic heads` çıktısı fiziksel sıra için otoritatiftir. Phase 3'te
+uygulanan eklemeler şöyledir:
 
-| Plan | Tablo/alan | Faz | Gerekçe |
-|---|---|---|---|
-| Plan 01 | `tenants` | Sprint-0 | Tüm izolasyonun temeli |
-| Plan 02 | `users` | Sprint-0 | Auth ve tenant admin için temel |
-| Plan 03 | `roles`, `permissions`, `user_roles` | Sprint-1 | RBAC olmadan protected endpoint olmaz |
-| Plan 04 | `employees` | Sprint-1 | Core HR değerinin başlangıcı |
-| Plan 05 | `departments`, `positions` minimal | Sprint-1/S2 | Employee assignment için gerekli |
-| Plan 06 | `employee_assignments` | S2 | Effective-dated org ilişkisi |
-| Plan 07 | `audit_events` | S2 | Kritik değişikliklerin izlenmesi |
-| Plan 08 | `employee_documents`, `document_types` | S3 | Özlük belge yönetimi |
-| Plan 09 | `leave_types`, `leave_balances` | S4 | İzin motoru başlangıcı |
-| Plan 10 | `leave_requests`, `approval_tasks` | S4/S5 | İzin ve onay akışı |
+| Revision | Dilim | Fiziksel etki |
+|---|---|---|
+| `0022` | P3A | Global identity, tenant membership ve membership-role projection/backfill |
+| `0023` | P3B | E-posta-öncelikli auth capability, rate limit ve organization-selection state |
+| `0024` | P3C | Membership-bound tenant session family ve tek-kullanımlı selection consume |
+| `0025` | P3D | Ayrı tenantless platform role/session realm'i |
+| `0026` | P3E | Global recovery, existing-identity membership acceptance ve credential lock |
+| `0027` | P3F | Default legal entity backfill, legal entity ve branch/location |
+| `0028` | P3G | Department hierarchy, write fence ve PostgreSQL cycle trigger'ları |
+| `0029` | P3H | Reusable position/job-title katalogu |
+| `0030` | P3I | Structured effective-dated assignment ve legacy string backfill |
+| `0031` | P3K | Catalog-only `leave:manage:tenant` role grant kapanışı |
+
+P3J bu fiziksel sıraya revision eklemez. Employee 360 alt tabloları ve documents Phase 4+;
+holiday/time, payroll, ATS, performance, LMS ve gelişmiş workflow tabloları kendi sonraki
+fazlarında planlanır.
 
 ## 3. İlk tenant tabloları
 
@@ -235,6 +304,13 @@ Kısıtlar:
 - `tenant_id` foreign key.
 - `status` enum/check.
 
+`users` Phase 3'te credential otoritesi değil, korunmuş tenant-local compatibility projection'dır.
+Canonical credential global unique `identities.email_normalized`/`password_hash` alanındadır;
+`tenant_memberships(tenant_id, identity_id)` bir identity'nin birden fazla tenant'a erişimini ve
+tenant-local status/permission version'ını taşır. `membership_roles` rol authority'sini global
+identity yerine composite tenant-membership anahtarına bağlar. Tenant login bu modelde kurum kodu
+almaz; membership listesi ancak global credential doğrulandıktan sonra bulunur.
+
 ## 4. RBAC tabloları
 
 ### `roles`
@@ -242,14 +318,17 @@ Kısıtlar:
 Alanlar:
 
 - `id`
-- `tenant_id`
 - `code`
 - `name`
+- `description`
+- `scope_type` (`tenant|platform`)
 - `system_role`
 - `created_at`
 - `updated_at`
 
-Unique: `(tenant_id, code)`.
+Unique: `code`. Rol katalogu sistem-global tanımdır; authority ataması tenant için
+`user_roles`/`membership_roles`, platform için `platform_identity_roles` üzerinden scope-qualified
+kurulur.
 
 ### `permissions`
 
@@ -257,8 +336,11 @@ Alanlar:
 
 - `id`
 - `code`
+- `resource`
+- `action`
+- `target`
+- `target_type` (`scope|field`)
 - `description`
-- `module`
 
 Unique: `code`.
 
@@ -269,8 +351,13 @@ Alanlar:
 - `tenant_id`
 - `user_id`
 - `role_id`
-- `valid_from`
-- `valid_until`
+- `role_scope_type` (yalnız `tenant`)
+- `active`
+- timestamps
+
+`membership_roles` P3 expand projection'ı aynı tenant role authority'sini
+`(tenant_id,membership_id,role_id)` ile temsil eder. `platform_identity_roles` ayrı tenantless
+platform realm'ine aittir ve tenant rol liste/atama endpointlerinde gösterilmez.
 
 ## 5. Employee minimal ERD
 
@@ -298,6 +385,26 @@ set eder ve tekrarlandığında no-op olur. Unique constraint arşivlenen employ
 içinde rezerve tutar.
 
 Hassas alanlar ilk migration'a alınmayabilir; TCKN/IBAN gibi alanlar field encryption planı netleşince eklenmelidir.
+
+### Phase 3 structured organization ERD
+
+- `legal_entities`: tenant-owned stable `code`, temel tescilli ad/ülke/vergi/timezone alanları,
+  `active|inactive` durumu ve tenant başına tek aktif default marker.
+- `branches`: composite legal-entity FK, tenant-wide stable code, lokasyon/timezone alanları ve
+  fiziksel silme yerine `active|archived` history.
+- `departments`: tenant-wide stable code, composite self-parent FK, `active|archived` history ve
+  `department_hierarchy_write_fences` üzerinden serialize edilen cycle-safe adjacency list.
+- `positions`: departman/manager FK'si taşımayan reusable tenant job-title katalogu; stable code,
+  mutable title ve terminal archive.
+- `employee_assignments`: employee, legal entity, branch, department, position ve optional
+  `manager_user_id` composite FK'leri; `effective_from`, exclusive `effective_to`, optional
+  `supersedes_assignment_id`, change reason ve actor. Employee başına tek open row vardır.
+
+Inactive legal entity ile archived branch/department/position yeni assignment'ta kullanılamaz;
+var olan assignment history'si silinmez ve API resolved historical labels ile okunabilir. Manager
+team ve lazy org chart yalnız
+bugün yürürlükteki structured assignment bağından türetilir; legacy department/position metni
+authorization kaynağı değildir.
 
 ### `command_idempotency`
 
@@ -368,11 +475,19 @@ PostgreSQL catalog discovery testini günceller. SQLite bu standardın güvenlik
 | Platform-to-HR negative | Metadata/feature platform capability'si HR tablo/query/schema erişimi alamıyor mu |
 | Relational preflight | Orphan ve cross-tenant satırlar constraint DDL'den önce raporlanıyor mu |
 | PostgreSQL direct write | Her composite ilişki servis bypass edildiğinde cross-tenant write'ı reddediyor mu |
-| Data-preserving round trip | Valid satırlar `0008 → head → 0008 → head` boyunca korunuyor mu |
+| Data-preserving round trip | Desteklenen round-trip valid satırları koruyor; retention preflight destructive downgrade'ı sayılı biçimde reddediyor mu |
 | Concurrent leave decision | PostgreSQL row lock approve/reject için tam bir terminal winner sağlıyor mu |
 | Concurrent idempotency | Aynı tenant/key ile yarışan create komutları tek resource ve receipt üretiyor mu |
 | Archive retention | Normal DELETE satırı/history'yi koruyor ve child FK fiziksel silmeyi `RESTRICT` ediyor mu |
 | Idempotency rollback | Başarısız keyed komut receipt bırakmadan aynı key ile retry edilebiliyor mu |
+| Identity/membership backfill | Existing user/role projection sayıları ve drift preflight'i tutarlı mı |
+| Auth realm cross-use | Tenant bearer/cookie platform API'sinde ve platform bearer/cookie tenant API'sinde reddediliyor mu |
+| Membership abuse | Credential öncesi enumeration, forged choice, replay, cross-identity ve cross-tenant consume reddediliyor mu |
+| Department concurrency | Same-statement ve concurrent graph write'ları PostgreSQL trigger/fence ile cycle oluşturamıyor mu |
+| Assignment history | Successor eski open row'u exclusive boundary'de kapatıyor ve archived referans geçmişi okunuyor mu |
+| Manager scope | Team/org chart yalnız current `manager_user_id` bağından türetiliyor mu |
+| Bounded query | Department tree, position search, assignment/team ve org-chart sorguları index/limit bütçesine uyuyor mu |
+| P3K permission catalog | `leave:manage:tenant` yalnız hedef HR rolleri için eklenip read permission mutation authority olmaktan çıkıyor mu |
 
 ## 8. Seed planı
 
@@ -380,13 +495,26 @@ Mevcut local/development seed deterministik ve idempotenttir:
 
 - 2 tenant: `wealthy-falcon-demo`, `atlas-people-demo`.
 - 5 user, 8 employee ve 5 leave request.
-- Department ve position değerleri mevcut employee kolonlarında sentetik metin olarak tutulur;
-  ayrı role/department/position kayıtları henüz seed edilmez.
-- Tenant, user, employee ve leave request UUID'leri tekrar çalıştırmalarda sabittir.
-
-Role atamaları ile ayrı organization/department/position tablolarını içeren daha geniş seed,
-ilgili ürün fazlarının şeması ve authorization sözleşmesi uygulanmadan eklenmez. Seed verisi gerçek
-kişisel veri içermemelidir.
+- Aynı `admin@wealthyfalcon.demo` global identity'si iki tenant membership'iyle multi-org seçim
+  yolunu temsil eder; tenant-local user/membership ID'leri korunur. Bu shared identity ayrı
+  `super_admin` platform role projection'ını da alır; platform login yine ayrı route/cookie/audience
+  kullanır ve tenant membership'i platform principal'a dönüşmez.
+- Wealthy Falcon demo admin'i `tenant_admin` yanında `hr_specialist` rolünü alır; böylece aynı
+  review identity'si tenant seçiminden sonra organization assignment happy path'ini kullanabilir.
+- Her tenant için organization feature açık, tek aktif default legal entity ve bir aktif demo
+  branch vardır. Legacy employee department/position etiketlerinden normalized stable-code
+  department ve position katalogları ile her employee için structured assignment oluşturulur.
+- Assignment manager'ı tenant'ın seeded manager user'ıdır; böylece `/teams/me` ve lazy org chart
+  manuel demoda gerçek structured scope gösterir. Terminated employee interval'i employment end
+  tarihinin ertesi günü exclusive olarak kapanır.
+- Tenant, user, employee, leave ve generated organization/assignment UUID'leri tekrar
+  çalıştırmalarda deterministiktir. Var olan assignment history'si seed tarafından overwrite
+  edilmez; conflict sessizce yorumlanmak yerine fail eder.
+- `scripts/seed_demo_data.py --auth-demo` yalnız local/dev ve local database hedefinde `wf_admin`
+  ile `wf_manager` kullanıcılarını invited duruma getirip iki etiketli, farklı, tek-kullanımlı
+  activation URL üretir. Seed plaintext/default parola yazmaz. Admin aktivasyonu global shared
+  credential'ı kurup email-only multi-org ve ayrı platform-login demolarını; manager aktivasyonu
+  derived team görünümünü açar. Veriler sentetiktir.
 
 ## 9. Kabul kriterleri
 
@@ -395,7 +523,7 @@ kişisel veri içermemelidir.
 - Hassas alanlar encryption kararı olmadan rastgele eklenmez.
 - RLS catalog, role/ACL, tenant A/B raw-SQL ve platform-to-HR negatifleri gerçek PostgreSQL'de
   geçmiştir; SQLite bu iddianın kanıtı değildir.
-- Seed verisi sentetik olacaktır.
+- Seed verisi sentetiktir.
 - Employee normal DELETE archive eder; history ve employee number korunur.
 - Leave kararları PostgreSQL row lock ile one-winner'dır.
 - Desteklenen keyed komutlar tenant-global receipt ile ilk başarılı snapshot'ı replay eder.
@@ -404,19 +532,33 @@ kişisel veri içermemelidir.
   PostgreSQL negatifleri gerçek role'lerle doğrulanır.
 - Configured `limits.active_employees` hiçbir platform query'sinde employee count/usage'a
   dönüştürülmez.
-- F1D event contracts audit persistence tablosu veya audit read endpoint'i eklemez.
+- Historical F1D revision'ı audit persistence tablosu eklememiştir; bu yüzey F2E'de uygulanıp P3
+  organization/auth eventleriyle genişletilmiştir.
+- Phase 3 zinciri tek head `0031_p3k_legacy_tenant_auth_boundary` ile kapanır; `0031` katalog-only'dir
+  ve Phase 4 tablosu eklemez.
+- Email/password-only tenant login, post-auth multi-org selection ve ayrı platform auth realm'i
+  migration/grant/catalog negatifleriyle uyumludur.
+- Legal entity/branch/department/position/assignment backfill'i legacy alanları korur; manager team
+  scope ve lazy org chart structured assignment'tan türetilir.
+- PostgreSQL lane cycle/concurrency, RLS/grant, composite-FK ve bounded-query iddialarını gerçek
+  PostgreSQL'de kanıtlar; SQLite sonucu bu iddialar için yeterli değildir.
 
-## 10. Faz 0/Faz 1 karar ve uygulama durumu
+## 10. Karar ve uygulama durumu
 
 | Konu | Karar / mevcut durum | Uygulama zamanı |
 |---|---|---|
 | UUID | Public ID'ler uygulama tarafında `uuid4` ile üretilir; DB server default eklenmez | Uygulandı |
-| User email canonicalization | Mevcut `(tenant_id, email)` unique davranışı case-sensitive kalır; auth öncesi explicit `lower(btrim(email))` normalize kolon/index kullanılır, `citext` kullanılmaz | Phase 2 auth migration'ından önce |
+| User email canonicalization | Legacy `(tenant_id, email)` unique davranışı korunur; canonical auth `identities.email_normalized=lower(btrim(email))` global unique projection'ını kullanır, `citext` kullanılmaz | P3A–P3E uygulandı |
 | RLS | Faz 0 composite FK + app guard üzerinde `0014` forced RLS, app/platform capability rolleri ve transaction-local tenant context uygulanır | F1E final tekrar: tam PostgreSQL `30`, RLS + direct attack `12` passed |
 | F1A tenant settings | `0013` fixed-column settings check'leri, existing-tenant backfill ve custom-settings downgrade refusal ekler; tenant plan/region/locale input allowlist'i API/domain'dedir; arbitrary JSON/features/legal entity yoktur | F1A; SQLite + PostgreSQL 17.10 gate passed |
-| Faz 1 feature/limit metadata | `0015` fixed feature table/backfill, nullable configured active employee limit, FORCE RLS ve exact tenant/platform/no-DELETE grants ekler; downgrade override/limit kaybını reddeder | F1E final; sole head `0015`, fast migration `36`, PostgreSQL baseline `8` passed |
+| Faz 1 feature/limit metadata | `0015` fixed feature table/backfill, nullable configured active employee limit, FORCE RLS ve exact tenant/platform/no-DELETE grants ekler; downgrade override/limit kaybını reddeder | Historical F1E snapshot; güncel head P3K `0031` |
 | Hassas alan encryption | Key/provider ve envelope encryption kararı olmadan TCKN, IBAN, ücret veya sağlık kolonları eklenmez | İlgili employee/security fazı öncesi Murat kararı |
 | Audit immutability | Audit aynı PostgreSQL DB'de append-only write modelidir; runtime role update/delete engeli ve recorder Faz 2'de birlikte uygulanır | Faz 2 |
+| Global identity / membership | E-posta global normalized identity'de unique; tenant yetkisi membership ve membership-role projection'ındadır | P3A–P3E uygulandı |
+| Tenant login | Request yalnız e-posta/parola; membership metadata credential doğrulamasından sonra, multi-org consume opaque ve tek-kullanımlıdır | P3B/P3C uygulandı |
+| Platform realm | Ayrı route, principal, access audience, refresh cookie ve tenantless session family; cross-use denied | P3D/P3K gate |
+| Structured organization | Legal entity/branch, cycle-safe department, reusable position, effective-dated assignment, derived team ve lazy chart | P3F–P3J uygulandı |
+| Legacy leave auth boundary | `leave:manage:tenant` HR director/specialist katalog grant'i; read scope mutation authority değil | P3K `0031` |
 
 Bu tablo tamamlanmış davranış ile hedef kararı ayırır. Özellikle TCKN, IBAN ve maaş gibi alanlar,
 encryption ve masking kararı netleşmeden migration'a eklenirse sonradan veri taşıma maliyeti doğar.

@@ -611,12 +611,27 @@ async def test_multi_membership_selection_binds_session_and_rejects_replay_or_wr
                     )
                 )
             )
+            selection_audits = tuple(
+                await session.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.session_id == principal.session_family_id,
+                        AuditEvent.event_type.in_(
+                            ("auth.login.succeeded", "session.started")
+                        ),
+                    )
+                )
+            )
         assert len(families) == 1
         assert families[0].id == principal.session_family_id
         assert families[0].tenant_id == OTHER_TENANT_ID
         assert families[0].user_id == OTHER_TENANT_ADMIN_MEMBERSHIP_ID
         assert families[0].membership_id == OTHER_TENANT_ADMIN_MEMBERSHIP_ID
         assert sum(transaction.consumed_at is not None for transaction in transactions) == 1
+        assert len(selection_audits) == 2
+        assert all(
+            event.metadata_ == {"authentication_method": "organization_selection"}
+            for event in selection_audits
+        )
 
         replay = await harness.client.post(
             "/api/v1/auth/select-organization",
@@ -701,10 +716,21 @@ async def test_controlled_switch_revokes_source_and_selects_only_other_identity_
                 RefreshSessionFamily,
                 original_principal.session_family_id,
             )
+            switch_audit = await session.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.session_id == original_principal.session_family_id,
+                    AuditEvent.event_type == "session.revoked",
+                )
+            )
         assert original_family is not None
         assert original_family.tenant_id == TENANT_ID
         assert original_family.membership_id == ADMIN_ID
         assert original_family.revoked_at is not None
+        assert switch_audit is not None
+        assert switch_audit.metadata_ == {
+            "revocation_reason": "organization_switch",
+            "source": "access_session",
+        }
 
         repeated_switch = await harness.client.post(
             "/api/v1/auth/organization-selection",

@@ -380,4 +380,17 @@ organization/reporting-line history ekler:
   varsa export/remediation olmadan veri düşürmez. SQLite hattı schema/backfill parity içindir;
   trigger, exact ACL/RLS ve cross-tenant güvenlik iddiaları gerçek PostgreSQL kanıtı gerektirir.
 
-Bu revision sonrası tek head `0030_p3i_employee_assignments`'dır.
+## P3K authenticated legacy tenant boundary
+
+`0031_p3k_legacy_tenant_auth_boundary`, aktif dashboard, employee ve leave HTTP yüzeylerinin
+tenant scope'unu caller-controlled header yerine doğrulanmış tenant session'ından almasını
+tamamlayan katalog-only revision'dır. Fiziksel ürün tablosu veya Phase 4 alanı eklemez.
+
+- Stable 33 numaralı `leave:manage:tenant` permission'ı eklenir. Tenant-wide leave create ve
+  karar komutları yalnız HR director ve HR specialist rollerine exact grant olarak verilir.
+- Tenant admin, manager ve employee rolleri implicit tenant-wide leave write hakkı almaz;
+  mevcut own/team permission vocabulary'si gelecekteki scoped endpoint'ler için korunur.
+- Upgrade mevcut aynı ID/code satırı farklı anlam taşıyorsa veya permission beklenmeyen role
+  grant edilmişse fail closed olur. Downgrade da beklenmeyen retained grant'i silmez.
+
+Bu revision sonrası tek head `0031_p3k_legacy_tenant_auth_boundary`'dır.

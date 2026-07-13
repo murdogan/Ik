@@ -2,12 +2,55 @@
 
 Date: 2026-07-13
 Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3J lazy organization chart and unified organization workspace`
-Review checkpoint: `P3I was green, committed and pushed before P3J began`
-Review decision: `P3J implementation and local verification are recorded below`
-Push state: `P3J commit is intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P3K combined identity and organization hardening gate`
+Review checkpoint: `P3A-P3J product slices are present; P3K is the final Phase 3 repair gate`
+Review decision: `P3K implementation and local verification are recorded below`
+Push state: `P3K commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
+
+### P3K combined identity and organization hardening gate
+
+- Tenant sign-in accepts only email/password. Credentials are verified before any active
+  organization names are returned; a one-membership identity enters directly while a multi-org
+  identity receives a short-lived, one-use organization-selection transaction. Selection replay,
+  key tampering, membership changes, cross-identity use and cross-tenant substitution fail closed.
+- Platform sign-in has its own route, refresh cookie, audience, server-side session and tenantless
+  principal. Platform credentials cannot authorize tenant APIs and tenant credentials cannot
+  authorize platform APIs. Switching organizations revokes the source tenant session family.
+- The historical dashboard, employee, leave-balance and leave-request APIs now derive tenant scope
+  only from a validated live tenant session. Caller tenant headers are ignored and cannot select
+  scope; exact read/update/manage permissions protect all twelve migrated operations.
+- The P3F-P3J organization product remains manually usable through one role-aware workspace:
+  legal entities, branches, cycle-safe departments, positions, effective-dated assignments,
+  manager-derived team scope and a bounded lazy org chart. Archived references remain readable but
+  cannot receive new assignments.
+- Migration `0031_p3k_legacy_tenant_auth_boundary` adds the exact
+  `leave:manage:tenant` catalog permission for HR director/specialist and is the sole Alembic head.
+  The populated PostgreSQL gate independently exercises the `0030` legacy-string backfill before
+  upgrading to head; no Phase 4 employee-master expansion is included.
+- The demo seed gives one canonical identity two active tenant memberships and a separate active
+  platform super-admin role. `--auth-demo` also emits labeled, short-lived activation URLs for the
+  tenant admin and manager demo identities without persisting or printing a password.
+
+### P3K verification gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend scripts/backend_api_smoke.py scripts/seed_demo_data.py` | Passed: `All checks passed!` |
+| Full fast backend suite | `uv run pytest -q` | Passed: 855 tests; 57 PostgreSQL tests deselected; one known Starlette/httpx deprecation warning |
+| Migration fast lane | `uv run pytest -q backend/tests/test_migrations.py` | Passed: 56 tests; one linear head, SQLite/offline compatibility, catalog parity and expand-contract round trips |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0031_p3k_legacy_tenant_auth_boundary` |
+| OpenAPI contract | `uv run pytest -q backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py` | Passed: 29 tests; 74 generated operations, exact tenant/platform bearer split and 401/403 metadata on the twelve migrated operations |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 75 documented endpoints executed, including realm cross-use, tenant-header spoof resistance and employee leave-mutation denial |
+| Full PostgreSQL lane | `IK_TEST_DATABASE_URL=postgresql+asyncpg://hermes@127.0.0.1:55433/postgres uv run pytest -q -m postgres` | Passed: 57 tests; real migrations, RLS/grants, realm and membership attacks, department concurrency, organization history, manager scope and migrated API smoke |
+| Populated backfill and bounded team query | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p3k_assignment_gate.py` | Passed: 2 tests; deterministic populated `0029 -> head` backfill and 2,481-row team fixture with 3 SELECTs/5 statements per 25-row page plus manager index `EXPLAIN ANALYZE` evidence |
+| Frontend static gates | `npm --prefix frontend run lint`, `typecheck`, `build` | Passed; lint/typecheck/build exit 0 and the production build generated 15 static pages |
+| Browser E2E | `npm --prefix frontend run test:e2e` | Passed: 26 Chromium flows covering email-only multi-org login, platform realm, administration, assignments, manager team, lazy chart and denial states |
+| Git hygiene | `git diff --check` plus final scope review | Passed; no Phase 4, deployment, environment, secret, credential or generated-artifact change |
+
+The queue stops after the local P3K commit. Codex does not push, merge or deploy; the supervisor
+owns the review-branch push, then Murat review is required before Phase 4.
 
 ### P3J lazy organization chart and unified workspace
 
@@ -213,7 +256,7 @@ Push state: `P3J commit is intentionally left unpushed for the supervisor; no me
 The committed P3E checkpoint is the explicit Phase 3A completion boundary. Codex does not push,
 merge or deploy; the supervisor owns the review-branch push before any P3F work begins.
 
-### P3B email-first tenant login and post-auth membership discovery
+### Historical P3B email-first tenant login and post-auth membership discovery
 
 - `POST /api/v1/auth/login` accepts exactly normalized email and password. It reads the global
   credential projection and completes constant-work Argon verification before any membership
@@ -252,7 +295,7 @@ metadata was returned. P3E closes the visible behavior with the same response sh
 existing identities receive a usable link, while only the existing credential owner can activate
 the pending membership.
 
-### P3B local gate evidence
+### Historical P3B local gate evidence
 
 | Gate | Command | Result |
 |---|---|---|
@@ -264,13 +307,15 @@ the pending membership.
 | Frontend | `npm run lint`, `npm run typecheck`, `npm run build` | Passed with Next.js 16.2.10 |
 | Focused browser | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npm run test:e2e -- session-flow.spec.ts role-aware-navigation.spec.ts` | Passed, 5 Chromium tests |
 
-### F2F Phase 2 product hardening, manual-demo gate and focused regression
+### Historical F2F Phase 2 product hardening, manual-demo gate and focused regression
 
-- Hardens the completed F2A–F2E product without adding a new route, screen, table/column, domain
+- At the F2F checkpoint, this hardened the completed F2A–F2E product without adding a new route,
+  screen, table/column, domain
   module or Phase 3 organization behavior. The reviewable product flow is invitation → fragment
   activation → tenant-aware login → protected workspace → refresh rotation → logout, followed by
   tenant-admin user/role administration and redacted audit exploration.
-- The live contract has 39 generated operations: all 24 historical F1E operations remain exact and
+- At that checkpoint, the live contract had 39 generated operations: all 24 historical F1E
+  operations remained exact and
   15 F2 auth/user/RBAC/audit operations are additive. Runtime `/openapi.json` makes the synchronized
   docs/smoke registry 40 rows. F2F uses an explicit additive-set assertion plus executable OpenAPI
   metadata and smoke coverage; it does not create another full per-block snapshot.
@@ -293,7 +338,7 @@ the pending membership.
   the smoke is intended to catch obvious N+1/query-budget regressions, not claim production load
   capacity.
 
-### Reviewable browser surface
+### Historical F2F reviewable browser surface
 
 | Route | Visible outcome | Access boundary |
 |---|---|---|
@@ -309,7 +354,7 @@ the pending membership.
 
 - Completes the local Phase 1 technical gate without adding a route, response field, database
   revision, authentication/RBAC implementation or persistent audit store. Final closure remains
-  pending the supervisor-owned push and Murat review. The current surface remains 24 generated
+  pending the supervisor-owned push and Murat review. At that checkpoint, the surface remained 24 generated
   OpenAPI operations and a 25-row documented/smoke registry including runtime `/openapi.json`.
 - All ten Phase 1 platform/tenant operations now carry exact
   `x-required-principal=platform|tenant` OpenAPI metadata matching their executable injected
@@ -835,12 +880,12 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/health` | Implemented | Health response, OpenAPI operation, and docs-table registry |
 | GET | `/` | Implemented | Wealthy Falcon HR landing response, OpenAPI operation, and docs-table registry |
 | GET | `/openapi.json` | Implemented by FastAPI | Generated schema fetch and docs-table registry |
-| POST | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, default-deny platform principal, server-owned status/ID, typed settings/configured limit |
-| GET | `/api/v1/platform/tenants` | Implemented and verified | `{data,meta}`, bounded cursor, projected lifecycle/plan/configured-limit metadata, no HR payload/count |
-| GET | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}` with platform-safe metadata/plan/region/health/configured limit only |
-| PATCH | `/api/v1/platform/tenants/{tenant_id}` | Implemented and verified | `{data,meta}`, typed metadata/plan/limit and hardened terminal lifecycle transitions |
-| GET | `/api/v1/platform/tenants/{tenant_id}/features` | Implemented and verified | Fixed ordered effective feature catalog through platform-only capability; no HR data/usage |
-| PATCH | `/api/v1/platform/tenants/{tenant_id}/features` | Implemented and verified | Unique typed keys + strict booleans, lifecycle guard and redacted actual-change events |
+| POST | `/api/v1/platform/tenants` | P3K verified | Separate `PlatformBearerAuth` + live platform session; server-owned status/ID and typed settings/configured limit |
+| GET | `/api/v1/platform/tenants` | P3K verified | Separate `PlatformBearerAuth`; bounded cursor and projected lifecycle/plan/configured-limit metadata with no HR payload/count |
+| GET | `/api/v1/platform/tenants/{tenant_id}` | P3K verified | Separate `PlatformBearerAuth`; platform-safe metadata/plan/region/health/configured limit only |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}` | P3K verified | Separate `PlatformBearerAuth`; typed metadata/plan/limit and hardened terminal lifecycle transitions |
+| GET | `/api/v1/platform/tenants/{tenant_id}/features` | P3K verified | Separate `PlatformBearerAuth`; fixed effective feature catalog and no HR data/usage |
+| PATCH | `/api/v1/platform/tenants/{tenant_id}/features` | P3K verified | Separate `PlatformBearerAuth`; unique typed keys, lifecycle guard and redacted actual-change events |
 | GET | `/api/v1/tenant` | Implemented and verified | `{data,meta}`, injected tenant-principal metadata and lifecycle access guard |
 | GET | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact five-key typed settings view and tenant isolation |
 | PATCH | `/api/v1/tenant/settings` | Implemented and verified | `{data,meta}`, exact allowlist update and suspended/offboarding read-only guard |
@@ -849,7 +894,7 @@ the expected local commits ahead of the review-branch remote after the final com
 | POST | `/api/v1/platform/auth/refresh` | Implemented for P3D | Platform-cookie-only tenantless family rotation and reuse detection |
 | POST | `/api/v1/platform/auth/logout` | Implemented for P3D | Revokes only the platform family and clears only the platform cookie |
 | GET | `/api/v1/platform/me` | Implemented for P3D | `PlatformBearerAuth` plus active tenantless session/role/version validation; no tenant-shaped principal fields |
-| POST | `/api/v1/auth/login` | Implemented for F2B | Tenant-aware credential verification, short-lived bearer response, and hashed server-side refresh family with HttpOnly cookie |
+| POST | `/api/v1/auth/login` | Implemented for P3B | Email/password-only global credential verification, post-verification membership discovery, and either direct session or opaque organization-selection response |
 | POST | `/api/v1/auth/select-organization` | Implemented for P3C | One-use opaque selection consumption and membership/tenant-bound access plus refresh session issuance |
 | POST | `/api/v1/auth/organization-selection` | Implemented for P3C | Authenticated identity-derived alternatives, source-family revocation, and no caller tenant selector |
 | POST | `/api/v1/auth/refresh` | Implemented for F2B | Single-use rotation, retained token history, reuse-triggered family revoke, and rotated HttpOnly cookie |
@@ -895,27 +940,29 @@ the expected local commits ahead of the review-branch remote after the final com
 | PATCH | `/api/v1/employee-assignments/{assignment_id}` | Implemented for P3I | Closes the open interval and appends an immutable successor plus reporting-line audit |
 | GET | `/api/v1/teams/me` | Implemented for P3I | Authenticated manager's current direct team derived only from structured assignments |
 | GET | `/api/v1/org-chart` | Implemented for P3J | Organization-read protected bounded root/direct-report pages with parent-bound cursor and resolved labels |
-| GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
-| GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
-| POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
-| GET | `/api/v1/employees/{employee_id}` | Implemented | Active detail lookup, archive hiding, tenant isolation, OpenAPI, and smoke |
-| PATCH | `/api/v1/employees/{employee_id}` | Implemented | Active partial update, lifecycle/archive rules, OpenAPI, and smoke |
-| DELETE | `/api/v1/employees/{employee_id}` | Implemented | Idempotent archive via `archived_at`, history retention, OpenAPI, and smoke |
-| GET | `/api/v1/employees/{employee_id}/leave-balances` | Implemented | Active-employee manual summaries, archive hiding, tenant isolation, OpenAPI, and smoke |
-| GET | `/api/v1/leave-requests` | Implemented | Tenant filters, mixed-order cursor/header, deprecated offset compatibility, OpenAPI |
-| POST | `/api/v1/leave-requests` | Implemented | Active-employee pending create, tenant checks, optional idempotent replay, OpenAPI, and smoke |
-| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
-| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
-| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | Implemented | Row-lock one-winner, pending-only transition, optional replay, OpenAPI, and smoke |
+| GET | `/api/v1/dashboard/summary` | P3K verified | Live tenant `BearerAuth` + `dashboard:read:tenant`; bounded tenant metrics; headers cannot select scope |
+| GET | `/api/v1/employees` | P3K verified | Live tenant `BearerAuth` + `employee:read:tenant`; deterministic cursor and deprecated offset compatibility |
+| POST | `/api/v1/employees` | P3K verified | `employee:update:tenant`; duplicate protection and optional tenant-global idempotent replay |
+| GET | `/api/v1/employees/{employee_id}` | P3K verified | `employee:read:tenant`; active detail/archive hiding and indistinguishable cross-tenant `404` |
+| PATCH | `/api/v1/employees/{employee_id}` | P3K verified | `employee:update:tenant`; partial update and lifecycle/archive rules |
+| DELETE | `/api/v1/employees/{employee_id}` | P3K verified | `employee:update:tenant`; idempotent archive and retained history |
+| GET | `/api/v1/employees/{employee_id}/leave-balances` | P3K verified | `leave:read:tenant`; active-employee manual summaries and cross-tenant hiding |
+| GET | `/api/v1/leave-requests` | P3K verified | `leave:read:tenant`; tenant filters, mixed-order cursor and deprecated offset compatibility |
+| POST | `/api/v1/leave-requests` | P3K verified | HR-only `leave:manage:tenant`; pending create, tenant validation and optional replay |
+| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | P3K verified | HR-only `leave:manage:tenant`; row-lock one-winner, pending-only transition and replay |
+| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | P3K verified | HR-only `leave:manage:tenant`; row-lock one-winner, pending-only transition and replay |
+| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | P3K verified | HR-only `leave:manage:tenant`; row-lock one-winner, pending-only transition and replay |
 
 F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
 list/detail and the separate platform audit list. P3C adds two organization-selection operations,
 P3D adds four platform-auth operations, P3E adds two password-recovery operations, P3F adds
 nine legal-entity/branch operations, P3G adds six department operations and P3H adds five position
-catalog operations, bringing the current surface to 67 generated operations and 68 documented
-runtime endpoints including `/openapi.json`. The executable smoke
-covers activation/login/session lifecycle, tenant-admin user/role/audit behavior and contract-table
-drift without printing credential material.
+catalog operations. P3I adds six assignment/team operations and P3J adds the lazy org-chart read,
+bringing the current surface to 74 generated operations and 75 documented runtime endpoints
+including `/openapi.json`. P3K changes the authority metadata and enforcement of twelve historical
+operations without adding a route. The executable smoke covers email-only login, multi-org
+selection, platform/tenant realm separation, organization administration, assignment/team/chart
+flows, legacy HR authorization and contract-table drift without printing credential material.
 
 ## Current Behavior Notes
 
@@ -931,11 +978,11 @@ drift without printing credential material.
   host-only HttpOnly cookie and as SHA-256 hashes in tenant-RLS tables. Rotation consumes one token;
   presenting it again commits revocation of its entire fixed-expiry family. Logout revokes that
   family, and `/api/v1/me` revalidates family, user and tenant state rather than trusting headers.
-- F1A platform and tenant dependencies deny by default: absent injected context returns
-  `403 platform_access_denied` or `403 tenant_access_denied`. Tests inject principals by dependency
-  override; no HTTP header/body/path/query field constructs platform authority or chooses the
-  current tenant. Legacy employee/leave `X-Tenant-Id` compatibility remains intentionally separate
-  and does not authorize these new endpoints.
+- Historical trusted-principal compatibility seams still deny by default when no principal is
+  injected. All browser-facing protected routes use live server sessions: tenant routes require
+  `BearerAuth`, platform routes require the separate `PlatformBearerAuth`, and no
+  header/body/path/query field constructs authority or chooses the current tenant. P3K migrated
+  the last twelve dashboard/employee/leave operations away from tenant-header authorization.
 - Platform create accepts only `slug`, `name`, canonical optional `plan_code`, `data_region`,
   `locale`, IANA `timezone`, nested `settings` containing week/date/time formats and optional nested
   `limits.active_employees`. The server owns UUID and initial `provisioning` status. Duplicate slug
@@ -978,17 +1025,19 @@ drift without printing credential material.
 - The seven F1A success operations now use the F1B `{data,meta}` contract. Existing Phase-0
   employee/leave response bodies remain direct schema/list; employee and leave-request lists use
   the explicit plain-array + `X-Next-Cursor` adapter and retain deprecated offset compatibility.
-- Domain endpoints require exactly one canonical hyphenated UUID `X-Tenant-Id`; `X-Tenant-Slug`
-  remains optional but cannot be blank or repeated when sent.
+- Protected domain endpoints require the appropriate bearer credential and derive the immutable
+  tenant from its live session. `X-Tenant-Id` and `X-Tenant-Slug` are not selector parameters;
+  absent, duplicated, malformed or cross-tenant values do not change an authenticated request's
+  tenant and cannot authorize a request without a valid tenant session.
 - Employee create, leave request create, and leave approve/reject/cancel accept an optional
   `X-Idempotency-Key`. The key is tenant-global: equivalent semantic retries replay the first
   successful snapshot, while a changed command, target, or body returns
   `409 idempotency_key_mismatch` without a second write. Same key values in different tenants are
   independent. No TTL/cleanup is active.
-- W4B4 tightened tenant dependency error text and route regressions: invalid or repeated tenant id
-  headers return `tenant_header_invalid` with
-  `X-Tenant-Id header must be a single canonical hyphenated UUID`, before unrelated
-  payload/query/path validation errors.
+- Historical W4B4 header validation remains covered only as compatibility evidence. The active P3K
+  authority boundary authenticates before domain processing: no bearer returns `401`, a valid
+  tenant session without the exact permission returns `403 authorization_denied`, and a platform
+  token cannot be interpreted as a tenant token.
 - Employee list supports `department`, `status`, `q`, `limit`, deterministic `cursor`, and the
   deprecated `offset` compatibility path. Filters and archive visibility are tenant-scoped before
   pagination. `limit` defaults to `50` and is capped at `200`; another page is exposed only through
@@ -1021,16 +1070,17 @@ drift without printing credential material.
 - W4C2 locks the current limitation: leave balance reads do not derive balances from leave
   requests. A tenant employee with leave request records but no manual balance summary rows gets
   `200 []`.
-- OpenAPI uses readable tags for `System`, `Public`, `Authentication`, `Authorization`,
-  `User Administration`, `Audit`, `Platform Audit`, `Platform Tenants`, `Tenant Settings`,
-  `Dashboard`, `Employees`, `Leave Balances`, and `Leave Requests`. Historical trusted-principal
-  routes retain exact `x-required-principal` metadata; only the ten real F2 tenant bearer
-  operations advertise `BearerAuth`.
+- OpenAPI uses readable tags for the public, identity, platform, tenant and organization surfaces.
+  Every current tenant-session operation advertises `BearerAuth`, all eight protected platform
+  operations advertise only `PlatformBearerAuth`, and public login/selection exchanges remain
+  unprotected. The twelve P3K-migrated routes advertise their exact permission plus `401`/`403`
+  responses and expose no tenant-selector header parameter.
 - Historical W4C6 was a report and smoke-governance refresh only. At that checkpoint the
   implementation report, endpoint draft and smoke agreed on 15 documented endpoints. Historical
   F1A target was 21 generated operations plus runtime `/openapi.json`; historical F1D/F1E have 24
   generated and 25 documented endpoints. F2F has 39 generated and 40 documented endpoints without
-  rewriting any earlier checkpoint evidence or adding a duplicate current snapshot.
+  rewriting any earlier checkpoint evidence. The current P3K registry has 74 generated operations
+  and 75 documented runtime endpoints.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -1050,22 +1100,27 @@ drift without printing credential material.
 - P0E adds `400 idempotency_key_invalid` for an unusable/repeated key and
   `409 idempotency_key_mismatch` when a tenant-global key is reused with a different semantic
   command. Neither response exposes the stored request fingerprint or response payload.
-- For employee and leave endpoints, tenant header errors are normalized before payload/query/path
-  validation errors when both are present; this keeps missing or invalid tenant context from
-  exposing unrelated validation details.
+- For protected employee and leave endpoints, tenant-session authentication and permission checks
+  run before service/repository access. Caller tenant headers are ignored, preventing missing,
+  malformed or cross-tenant header data from becoming an authority or enumeration oracle.
 - FastAPI's generic request validation remains framework default outside the employee and leave
   endpoint scope.
 - Local demo seed remains a script command, not an API surface:
   `uv run python scripts/seed_demo_data.py --auth-demo`. It assumes the target local/dev schema
-  already exists, idempotently resets the synthetic demo dataset and prints one short-lived
-  activation URL without committing any password/token.
+  already exists, idempotently resets the synthetic demo dataset, provisions the canonical admin
+  identity in two tenant memberships plus the platform realm, and prints labeled short-lived
+  activation URLs for both tenant admin and manager without committing any password/token.
   The command refuses non-local database URL hosts before opening a connection; local hostnames are
   matched case-insensitively.
 
-## Current Tenant Relational Integrity and Retention
+## Historical baseline: tenant relational integrity and retention
 
-Current model metadata and the Alembic head represent these tenant-owned relationships; current
-F2F Phase 2 gate status is tracked separately below:
+The table below preserves the selected employee/leave relationships recorded at the Phase 0/F2
+checkpoint; it is not the complete P3K schema inventory. The current identity, membership, legal
+entity, branch, department, position and assignment relationships are documented in
+[`01-veritabani-modeli-ve-erd.md`](../05-api-veri/01-veritabani-modeli-ve-erd.md), while populated
+backfill and PostgreSQL proof are recorded in
+[`13-phase-3-migration-backfill-report.md`](13-phase-3-migration-backfill-report.md).
 
 | Child columns | Parent candidate key | Delete/null behavior |
 |---|---|---|
@@ -1163,9 +1218,10 @@ environment variables:
 - `IK_DATABASE_STATEMENT_TIMEOUT_MS`
 - `IK_DATABASE_IDLE_TRANSACTION_TIMEOUT_MS`
 
-This foundation changes database wiring and test evidence only. The completed API/OpenAPI operation
-set and intentional tenant-header compatibility remain unchanged; auth, RBAC, RLS, and new product
-features are outside P0A.
+At the historical P0A checkpoint, this foundation changed database wiring and test evidence only;
+the then-current API/OpenAPI operation set and tenant-header compatibility were unchanged because
+auth, RBAC, RLS and new product features were outside P0A. P3K's active behavior is documented at
+the top of this report and no longer authorizes dashboard/employee/leave routes by tenant header.
 
 ## Smoke Coverage
 
@@ -1174,13 +1230,14 @@ SQLite. The PostgreSQL baseline invokes the same script with `--database-url` ag
 test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
 services.
 
-Current F2F documentation expects the registry to contain 40 rows: 39 generated operations plus
-runtime `/openapi.json`. Smoke executes all historical platform/tenant operations with dependency
-overrides and all F2 auth/user/RBAC/audit operations through their real credential or trusted
-principal boundary. It verifies activation/login/refresh/logout, tenant-admin user and role
-management, redacted audit reads, tenant-header spoof resistance, projected no-HR platform output,
-the exact `x-required-principal`/`BearerAuth` split, and bounded cursor behavior.
-Historical Phase-0/F1A/F1B smoke evidence below remains unchanged.
+Current P3K documentation expects the registry to contain 75 rows: 74 generated operations plus
+runtime `/openapi.json`. Smoke executes every row, using real credentials for browser-facing
+tenant/platform auth and narrowly scoped dependency overrides only for historical trusted-principal
+compatibility paths. It verifies activation, email-only login, one- and multi-org selection,
+refresh/logout, realm token cross-use denial, tenant-admin user/role/audit behavior, organization
+administration, assignment/team/chart flows, employee mutation denial, tenant-header spoof
+resistance, projected no-HR platform output, exact security metadata and bounded cursors.
+Historical Phase-0/F1A/F1B smoke evidence below remains checkpoint evidence only.
 
 The script now verifies the documented API surface in four directions:
 
@@ -1230,9 +1287,16 @@ not-found behavior, platform/tenant audit separation and safe audit projections.
 the same product-visible journeys with same-origin API interception so the browser gate remains
 deterministic; PostgreSQL integration separately proves storage/RLS/grant/immutability claims.
 
-## Verification
+P3K scenarios additionally verify that the twelve historical dashboard/employee/leave operations
+cannot be authorized by tenant headers, a platform token, or a tenant role missing their exact
+permission. They also execute both organization memberships, the separate platform realm, all
+organization write/read surfaces, derived manager scope and lazy chart expansion. PostgreSQL tests
+remain the authority for RLS/grants, populated migration backfill, department cycle/concurrency and
+bounded-query/index claims.
 
-### F2F Phase 2 hardening gates — passed locally; supervisor push pending
+## Historical checkpoint verification evidence
+
+### Historical F2F Phase 2 hardening gates
 
 | Gate | Command | Current evidence state |
 |---|---|---|
@@ -1250,9 +1314,8 @@ deterministic; PostgreSQL integration separately proves storage/RLS/grant/immuta
 | Focused browser E2E | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/opt/data/pw-browsers/chromium-1223/chrome-linux/chrome npm run test:e2e` | Passed: 7 Chromium tests; connected invite → activate → login → refresh → logout, admin user/role flow, employee denial, tenant audit and platform-shell separation |
 | Git hygiene | `git diff --check` plus task-scope review | Passed; no deployment, staging, cron, credential, `.env` or Phase 3 change |
 
-The queue stops at this F2F commit. Codex does not push, merge or deploy; the supervisor owns the
-review-branch push and remote-sync gate, after which Murat review is required before any Phase 3
-work.
+At the historical F2F checkpoint, the queue stopped before Phase 3 and the supervisor owned the
+review-branch push. The active stop/review decision is now the P3K gate at the top of this report.
 
 ### Historical F1E Phase 1 closure gates — local technical gates passed; supervisor push pending
 
@@ -1488,15 +1551,19 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Remaining post-checkpoint backend backlog
+## Post-P3K backlog — outside this task
 
-The items below are not part of the completed P3E identity surface. This checkpoint authorizes no
-P3F organization implementation automatically.
+P3K closes Phase 3 only. It does not authorize Phase 4 employee-master/field-security work or any
+later product module.
 
-- Enforced privileged-role MFA is not implemented. The trusted step-up/BFF adapter that would turn a privileged
-  platform identity into `PlatformPrincipal` is also not implemented, so the platform audit shell
-  is a separation/readiness surface rather than part of the local tenant-admin demo. P3E does not
-  weaken the boundary or silently claim the deferred flows.
+- Enforced privileged-role MFA/step-up remains deferred. Separate platform login, audience,
+  cookie, live session/principal, tenant administration and platform audit demo are implemented;
+  future step-up must strengthen that realm without converting a platform session into a tenant
+  session.
+- The historical `/api/v1/tenant` metadata/settings/feature compatibility surface still uses its
+  explicit trusted tenant-principal adapter. Browser-facing identity, organization and migrated HR
+  routes use live sessions; any later migration of this compatibility seam requires its own
+  approved contract slice.
 - Global sort controls and validation/error normalization beyond the endpoint families already
   covered. Immutable `RequestContext`, global correlation middleware and the new Phase-1
   `{data,meta}` standard are implemented; remaining Phase-0 envelope migrations require an explicit
@@ -1508,6 +1575,7 @@ P3F organization implementation automatically.
 - Optional leave request detail endpoint if product workflow needs direct request reads.
 - Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.
-- Employee document, reporting, analytics, and export endpoints in later MVP phases.
+- Phase 4 employee master/360/field security, employee documents, reporting, analytics and export
+  endpoints remain later MVP phases.
 - Activating the documented CI template remains repository administration outside this block; the
   template now describes both the fast SQLite and PostgreSQL service-backed test steps.

@@ -4,8 +4,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_phase0_tenant_request_context
-from app.api.errors import LEAVE_BALANCE_VALIDATION_RESPONSES, employee_not_found_error
+from app.api.auth_dependencies import AuthenticatedSession, require_permission
+from app.api.dependencies import get_authenticated_tenant_request_context
+from app.api.errors import (
+    AUTHENTICATION_REQUIRED_RESPONSES,
+    AUTHORIZATION_RESPONSES,
+    LEAVE_BALANCE_VALIDATION_RESPONSES,
+    employee_not_found_error,
+)
 from app.api.openapi import LEAVE_BALANCES_TAG
 from app.db.session import get_session
 from app.platform.request_context import RequestContext
@@ -18,7 +24,11 @@ from app.services.leave_balance_service import (
 router = APIRouter(
     prefix="/api/v1/employees",
     tags=[LEAVE_BALANCES_TAG],
-    responses=LEAVE_BALANCE_VALIDATION_RESPONSES,
+    responses={
+        **AUTHENTICATION_REQUIRED_RESPONSES,
+        **AUTHORIZATION_RESPONSES,
+        **LEAVE_BALANCE_VALIDATION_RESPONSES,
+    },
 )
 
 
@@ -43,7 +53,11 @@ async def list_employee_leave_balances(
     employee_id: UUID,
     request_context: Annotated[
         RequestContext,
-        Depends(get_phase0_tenant_request_context),
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("leave:read:tenant")),
     ],
     service: Annotated[LeaveBalanceService, Depends(get_leave_balance_service)],
     period_year: Annotated[

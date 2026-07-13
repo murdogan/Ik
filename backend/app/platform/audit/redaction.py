@@ -58,13 +58,19 @@ _ROLE_CODES = frozenset(
 )
 _STATUS_VALUES = frozenset({"invited", "active", "inactive", "archived", "locked", "disabled"})
 _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
-    "authentication_method": frozenset({"local"}),
+    "authentication_method": frozenset({"local", "organization_selection"}),
     "failure_reason": frozenset({"authentication_failed"}),
     "initial_role": frozenset({"employee"}),
     "before_status": _STATUS_VALUES,
     "after_status": _STATUS_VALUES,
     "revocation_reason": frozenset(
-        {"logout", "account_locked", "account_disabled", "refresh_reuse"}
+        {
+            "logout",
+            "account_locked",
+            "account_disabled",
+            "refresh_reuse",
+            "organization_switch",
+        }
     ),
     "source": frozenset({"access_session", "account_status", "refresh_cookie"}),
     "status": frozenset({"provisioning", "trial", "active", "suspended", "offboarding", "closed"}),

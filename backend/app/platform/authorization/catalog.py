@@ -245,6 +245,7 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     _permission(30, "audit:read:platform", "Read platform operations audit history."),
     _permission(31, "organization:read:tenant", "Read current-tenant organization settings."),
     _permission(32, "organization:update:tenant", "Manage current-tenant organization settings."),
+    _permission(33, "leave:manage:tenant", "Manage leave requests across the current tenant."),
 )
 
 
@@ -294,6 +295,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:read:department",
                 "leave:read:branch",
                 "leave:read:tenant",
+                "leave:manage:tenant",
                 "audit:read:tenant",
                 "organization:read:tenant",
                 "organization:update:tenant",
@@ -312,6 +314,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:read:department",
                 "leave:read:branch",
                 "leave:read:tenant",
+                "leave:manage:tenant",
                 "organization:read:tenant",
                 "organization:update:tenant",
             }

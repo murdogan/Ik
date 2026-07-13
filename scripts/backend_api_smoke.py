@@ -59,6 +59,7 @@ REQUESTING_USER_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 APPROVER_USER_ID = UUID("33333333-cccc-4333-8333-333333333333")
 OTHER_REQUESTING_USER_ID = UUID("55555555-eeee-4555-8555-555555555555")
 SMOKE_ADMIN_CREDENTIAL = "Backend smoke admin credential"
+SMOKE_OTHER_ADMIN_CREDENTIAL = "Backend smoke other admin credential"
 SMOKE_ACTIVATED_CREDENTIAL = "Backend smoke activated user credential"
 SMOKE_INVITED_EMAIL = "invited.user@wealthyfalcon.test"
 TENANT_HEADERS = {
@@ -373,6 +374,20 @@ PHASE0_CURSOR_LIST_PATHS = {
     "/api/v1/employees",
     "/api/v1/leave-requests",
 }
+P3K_AUTH_MIGRATED_OPERATIONS = {
+    ("get", "/api/v1/dashboard/summary"),
+    ("get", "/api/v1/employees"),
+    ("post", "/api/v1/employees"),
+    ("get", "/api/v1/employees/{employee_id}"),
+    ("patch", "/api/v1/employees/{employee_id}"),
+    ("delete", "/api/v1/employees/{employee_id}"),
+    ("get", "/api/v1/employees/{employee_id}/leave-balances"),
+    ("get", "/api/v1/leave-requests"),
+    ("post", "/api/v1/leave-requests"),
+    ("post", "/api/v1/leave-requests/{leave_request_id}/approve"),
+    ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
+    ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
+}
 RESPONSE_META_FIELDS = {"request_id", "trace_id", "correlation_id"}
 PAGE_META_FIELDS = RESPONSE_META_FIELDS | {"limit", "next_cursor"}
 CORRELATION_RESPONSE_HEADERS = (
@@ -415,7 +430,10 @@ async def main(database_url: str | None = None) -> None:
             tenant_principal_scope = _install_test_principal_overrides(app)
             await _smoke_system_endpoints(client)
             _smoke_documented_endpoint_tables()
-            tenant_admin_headers = await _smoke_auth_endpoints(client)
+            tenant_admin_headers, other_admin_headers = await _smoke_auth_endpoints(
+                client
+            )
+            client.headers["Authorization"] = tenant_admin_headers["Authorization"]
             assignment_structure = await _smoke_organization_endpoints(
                 client,
                 tenant_admin_headers,
@@ -423,9 +441,9 @@ async def main(database_url: str | None = None) -> None:
             provisioned_tenant_id = await _smoke_platform_tenant_endpoints(client)
             tenant_principal_scope["tenant_id"] = provisioned_tenant_id
             await _smoke_current_tenant_endpoints(client, provisioned_tenant_id)
-            await _smoke_tenant_header_errors(client)
+            await _smoke_tenant_auth_boundary(client)
             primary_employee_id, secondary_employee_id, other_employee_id = (
-                await _smoke_employee_endpoints(client)
+                await _smoke_employee_endpoints(client, other_admin_headers)
             )
             await _smoke_employee_assignment_endpoints(
                 client,
@@ -438,6 +456,7 @@ async def main(database_url: str | None = None) -> None:
                 primary_employee_id,
                 secondary_employee_id,
                 other_employee_id,
+                other_admin_headers,
             )
             await _smoke_leave_balance_endpoint(
                 client,
@@ -450,6 +469,7 @@ async def main(database_url: str | None = None) -> None:
                 client,
                 other_employee_id=other_employee_id,
                 other_tenant_leave_request_id=leave_request_ids["other_tenant"],
+                other_admin_headers=other_admin_headers,
             )
             _expect_executed_documented_endpoint_coverage()
 
@@ -507,6 +527,14 @@ async def _prepare_smoke_database(
                     locale="tr-TR",
                     timezone="Europe/Istanbul",
                 ),
+            ]
+        )
+        # SQLAlchemy flush ordering is relationship-driven. These smoke models keep
+        # relationships deliberately lean, so persist tenant roots before their
+        # settings, rollout, organization and user rows on real PostgreSQL.
+        await session.flush()
+        session.add_all(
+            [
                 TenantSettings(tenant_id=TENANT_ID),
                 TenantSettings(tenant_id=OTHER_TENANT_ID),
                 TenantFeatureFlag(
@@ -565,6 +593,9 @@ async def _prepare_smoke_database(
                     email="requester@otherfalcon.test",
                     full_name="Other Requesting User",
                     status=UserStatus.ACTIVE.value,
+                    password_hash=PasswordManager().hash(
+                        SMOKE_OTHER_ADMIN_CREDENTIAL
+                    ),
                 ),
             ]
         )
@@ -591,20 +622,34 @@ async def _prepare_smoke_database(
                 user_id=user_id,
                 role_code="employee",
             )
+        await assign_system_role(
+            session,
+            tenant_id=OTHER_TENANT_ID,
+            user_id=OTHER_REQUESTING_USER_ID,
+            role_code="hr_director",
+        )
         if engine.dialect.name != "postgresql":
-            requesting_user = await session.get(User, REQUESTING_USER_ID)
-            assert requesting_user is not None
-            await sync_identity_membership_projection(session, requesting_user)
+            for requesting_user_id in (
+                REQUESTING_USER_ID,
+                OTHER_REQUESTING_USER_ID,
+            ):
+                requesting_user = await session.get(User, requesting_user_id)
+                assert requesting_user is not None
+                await sync_identity_membership_projection(session, requesting_user)
             await _seed_smoke_platform_role(session)
         await session.commit()
 
     if engine.dialect.name == "postgresql":
-        async with bootstrap_sessions() as session:
-            configure_tenant_database_access(session, TENANT_ID)
-            async with session.begin():
-                requesting_user = await session.get(User, REQUESTING_USER_ID)
-                assert requesting_user is not None
-                await sync_identity_membership_projection(session, requesting_user)
+        for tenant_id, user_id in (
+            (TENANT_ID, REQUESTING_USER_ID),
+            (OTHER_TENANT_ID, OTHER_REQUESTING_USER_ID),
+        ):
+            async with bootstrap_sessions() as session:
+                configure_tenant_database_access(session, tenant_id)
+                async with session.begin():
+                    requesting_user = await session.get(User, user_id)
+                    assert requesting_user is not None
+                    await sync_identity_membership_projection(session, requesting_user)
         async with bootstrap_sessions.begin() as session:
             await _seed_smoke_platform_role(session)
 
@@ -822,7 +867,9 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
     _expect_f2a_openapi_contracts(openapi)
 
 
-async def _smoke_auth_endpoints(client: AsyncClient) -> dict[str, str]:
+async def _smoke_auth_endpoints(
+    client: AsyncClient,
+) -> tuple[dict[str, str], dict[str, str]]:
     reset_request = _expect_phase1_data(
         await _request_documented(
             client,
@@ -917,6 +964,18 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> dict[str, str]:
         401,
         "authentication_required",
         "platform audience cannot call tenant me",
+    )
+    _expect_error_code(
+        await client.get(
+            "/api/v1/employees",
+            headers={
+                **TENANT_HEADERS,
+                "Authorization": f"Bearer {platform_access}",
+            },
+        ),
+        401,
+        "authentication_required",
+        "platform audience cannot call tenant employee APIs",
     )
     platform_me = _expect_phase1_data(
         await _request_documented(
@@ -1035,7 +1094,7 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> dict[str, str]:
         "GET /api/v1/permissions",
     )
     permission_codes = {permission["code"] for permission in permissions_body["data"]}
-    if "role:assign:tenant" not in permission_codes or any(
+    if not {"role:assign:tenant", "leave:manage:tenant"} <= permission_codes or any(
         code.endswith(":platform") for code in permission_codes
     ):
         raise AssertionError("tenant permission catalog leaked or omitted an authority boundary")
@@ -1197,6 +1256,32 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> dict[str, str]:
         "activated login user",
     )
     activated_access = activated_login["access_token"]
+    _expect_error_code(
+        await client.get(
+            "/api/v1/employees",
+            headers={"Authorization": f"Bearer {activated_access}"},
+        ),
+        403,
+        "authorization_denied",
+        "employee role cannot list the tenant-wide employee directory",
+    )
+    leave_start = date.today() + timedelta(days=60)
+    _expect_error_code(
+        await client.post(
+            "/api/v1/leave-requests",
+            headers={"Authorization": f"Bearer {activated_access}"},
+            json={
+                "employee_id": str(uuid4()),
+                "leave_type": "annual",
+                "start_date": leave_start.isoformat(),
+                "end_date": (leave_start + timedelta(days=1)).isoformat(),
+                "requested_by_user_id": invitation["user"]["id"],
+            },
+        ),
+        403,
+        "authorization_denied",
+        "employee role cannot mutate tenant leave requests",
+    )
     current_user = _expect_phase1_data(
         await _request_documented(
             client,
@@ -1239,7 +1324,28 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> dict[str, str]:
         "POST /api/v1/auth/refresh after logout",
     )
     await _smoke_tenant_audit_endpoints(client, admin_headers)
-    return admin_headers
+
+    other_login = _expect_phase1_data(
+        await client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "requester@otherfalcon.test",
+                "password": SMOKE_OTHER_ADMIN_CREDENTIAL,
+            },
+        ),
+        200,
+        "POST /api/v1/auth/login for other tenant HR admin",
+        {"status", "access_token", "token_type", "expires_in", "user"},
+    )
+    _assert_equal(
+        other_login["user"]["tenant_id"],
+        str(OTHER_TENANT_ID),
+        "other tenant auth login scope",
+    )
+    return admin_headers, {
+        **TENANT_HEADERS,
+        "Authorization": f"Bearer {other_login['access_token']}",
+    }
 
 
 async def _smoke_organization_endpoints(
@@ -2648,6 +2754,27 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
         [{"BearerAuth": []}],
         "P3C organization switch bearer requirement",
     )
+    for method, path in P3K_AUTH_MIGRATED_OPERATIONS:
+        operation = paths[path][method]
+        _assert_equal(
+            operation.get("security"),
+            [{"BearerAuth": []}],
+            f"{method.upper()} {path} P3K tenant bearer requirement",
+        )
+        caller_tenant_headers = {
+            parameter["name"]
+            for parameter in operation.get("parameters", [])
+            if parameter.get("in") == "header"
+        } & {"X-Tenant-Id", "X-Tenant-Slug"}
+        _assert_equal(
+            caller_tenant_headers,
+            set(),
+            f"{method.upper()} {path} caller tenant selector removal",
+        )
+        if not {"401", "403"} <= set(operation["responses"]):
+            raise AssertionError(
+                f"{method.upper()} {path} does not document authentication and authorization"
+            )
 
     for operation, success_status, label in (
         (login, "200", "F2A login"),
@@ -2790,44 +2917,42 @@ def _parse_markdown_endpoint_table(lines: list[str]) -> set[tuple[str, str]]:
     return endpoints
 
 
-async def _smoke_tenant_header_errors(client: AsyncClient) -> None:
-    _expect_error_code(
-        await client.get(
-            "/api/v1/dashboard/summary",
-            headers={"X-Correlation-Id": "smoke-tenant-missing"},
-        ),
-        400,
-        "tenant_header_missing",
-        "GET /api/v1/dashboard/summary missing tenant header",
-    )
-    _expect_error_code(
-        await client.get(
-            "/api/v1/dashboard/summary",
-            headers={
-                "X-Tenant-Id": str(TENANT_ID).replace("-", ""),
-                "X-Correlation-Id": "smoke-tenant-invalid",
-            },
-        ),
-        400,
-        "tenant_header_invalid",
-        "GET /api/v1/dashboard/summary invalid tenant header",
-    )
-    _expect_error_code(
+async def _smoke_tenant_auth_boundary(client: AsyncClient) -> None:
+    access_header = client.headers.pop("Authorization")
+    try:
+        _expect_error_code(
+            await client.get(
+                "/api/v1/dashboard/summary",
+                headers={
+                    **OTHER_TENANT_HEADERS,
+                    "X-Correlation-Id": "smoke-tenant-header-only",
+                },
+            ),
+            401,
+            "authentication_required",
+            "GET /api/v1/dashboard/summary rejects tenant headers without session",
+        )
+    finally:
+        client.headers["Authorization"] = access_header
+
+    _expect_json(
         await client.get(
             "/api/v1/dashboard/summary",
             headers=[
-                ("X-Tenant-Id", str(TENANT_ID)),
                 ("X-Tenant-Id", str(OTHER_TENANT_ID)),
-                ("X-Correlation-Id", "smoke-tenant-repeated"),
+                ("X-Tenant-Id", str(TENANT_ID)),
+                ("X-Tenant-Slug", "caller-controlled-and-ignored"),
             ],
         ),
-        400,
-        "tenant_header_invalid",
-        "GET /api/v1/dashboard/summary repeated tenant header",
+        200,
+        "GET /api/v1/dashboard/summary ignores caller tenant selectors",
     )
 
 
-async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]:
+async def _smoke_employee_endpoints(
+    client: AsyncClient,
+    other_admin_headers: dict[str, str],
+) -> tuple[str, str, str]:
     today = date.today().isoformat()
     employee_idempotency_headers = {
         **TENANT_HEADERS,
@@ -2878,7 +3003,7 @@ async def _smoke_employee_endpoints(client: AsyncClient) -> tuple[str, str, str]
             "position": "Tenant Isolation Check",
             "employment_start_date": today,
         },
-        headers=OTHER_TENANT_HEADERS,
+        headers=other_admin_headers,
     )
     other_employee_id = other_tenant_employee["id"]
 
@@ -3382,6 +3507,7 @@ async def _smoke_leave_request_endpoints(
     employee_id: str,
     secondary_employee_id: str,
     other_employee_id: str,
+    other_admin_headers: dict[str, str],
 ) -> dict[str, str]:
     pending_request = await _create_leave_request(
         client,
@@ -3396,7 +3522,7 @@ async def _smoke_leave_request_endpoints(
         client,
         other_employee_id,
         day_offset=35,
-        headers=OTHER_TENANT_HEADERS,
+        headers=other_admin_headers,
         requested_by_user_id=str(OTHER_REQUESTING_USER_ID),
     )
 
@@ -3920,6 +4046,7 @@ async def _smoke_dashboard_endpoint(
     *,
     other_employee_id: str,
     other_tenant_leave_request_id: str,
+    other_admin_headers: dict[str, str],
 ) -> None:
     summary = _expect_json(
         await _request_documented(
@@ -3973,7 +4100,7 @@ async def _smoke_dashboard_endpoint(
     other_summary = _expect_json(
         await client.get(
             "/api/v1/dashboard/summary",
-            headers=OTHER_TENANT_HEADERS,
+            headers=other_admin_headers,
         ),
         200,
         "GET other tenant /api/v1/dashboard/summary",

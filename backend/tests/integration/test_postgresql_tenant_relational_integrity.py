@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = ROOT / "alembic.ini"
 PRE_P0D_REVISION = "0008_employee_lifecycle_status_dates"
 EXPAND_REVISION = "0009_expand_tenant_relational_integrity"
+RELATIONAL_CONTRACT_REVISION = "0011_p0e_concurrency_idempotency_archive"
 COMPOSITE_CONSTRAINTS = {
     "fk_leave_requests_tenant_employee_id_employees": (
         "FOREIGN KEY (tenant_id, employee_id) "
@@ -163,7 +164,9 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
         )
     )
 
-    alembic_command.upgrade(config, "head")
+    # Finish the P0D/P0E round trip before later additive migrations create
+    # intentionally retained organization-assignment history.
+    alembic_command.upgrade(config, RELATIONAL_CONTRACT_REVISION)
 
     assert asyncio.run(
         _relationship_snapshot(p0d_postgres_database, fixture_ids)
@@ -207,6 +210,8 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
     assert set(COMPOSITE_CONSTRAINTS).isdisjoint(downgraded_constraints)
     assert set(CANDIDATE_KEY_CONSTRAINTS).isdisjoint(downgraded_constraints)
 
+    # Current-head compatibility remains part of this gate. P3I's guarded
+    # downgrade correctly prevents discarding the backfilled history after this point.
     alembic_command.upgrade(config, "head")
     assert asyncio.run(
         _relationship_snapshot(p0d_postgres_database, fixture_ids)

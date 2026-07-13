@@ -335,7 +335,7 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
             employee.position = "Stale legacy position"
         legacy = await harness.client.get(
             f"/api/v1/employees/{TEAM_EMPLOYEE_ID}",
-            headers={"X-Tenant-Id": str(TENANT_A_ID)},
+            headers=hr_headers,
         )
         assert legacy.status_code == 200
         assert set(legacy.json()) == {
@@ -355,7 +355,7 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
 
         legacy_patch = await harness.client.patch(
             f"/api/v1/employees/{TEAM_EMPLOYEE_ID}",
-            headers={"X-Tenant-Id": str(TENANT_A_ID)},
+            headers=hr_headers,
             json={
                 "department": "Submitted legacy department",
                 "position": "Submitted legacy position",
@@ -366,7 +366,7 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
         assert legacy_patch.json()["position"] == "Senior Backend Engineer"
         legacy_after_patch = await harness.client.get(
             f"/api/v1/employees/{TEAM_EMPLOYEE_ID}",
-            headers={"X-Tenant-Id": str(TENANT_A_ID)},
+            headers=hr_headers,
         )
         assert legacy_after_patch.json() == legacy_patch.json()
         async with harness.session_factory() as session:

@@ -1,4 +1,3 @@
-from app.api.errors import TENANT_ID_HEADER, TENANT_SLUG_HEADER
 from app.api.openapi import (
     DASHBOARD_TAG,
     EMPLOYEES_TAG,
@@ -569,7 +568,7 @@ def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:
     assert tagged_mutations == []
 
 
-def test_domain_operations_document_required_tenant_headers() -> None:
+def test_domain_operations_document_authenticated_tenant_session() -> None:
     client = TestClient(create_app())
 
     response = client.get("/openapi.json")
@@ -591,16 +590,14 @@ def test_domain_operations_document_required_tenant_headers() -> None:
         ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"),
     }
     for path, method in protected_operations:
-        params = {parameter["name"]: parameter for parameter in paths[path][method]["parameters"]}
-        tenant_id_header = params[TENANT_ID_HEADER]
-        tenant_slug_header = params[TENANT_SLUG_HEADER]
+        operation = paths[path][method]
+        parameters = operation.get("parameters", [])
 
-        assert tenant_id_header["in"] == "header"
-        assert tenant_id_header["required"] is True
-        assert "single canonical hyphenated UUID" in tenant_id_header["description"]
-        assert tenant_slug_header["in"] == "header"
-        assert tenant_slug_header["required"] is False
-        assert "non-empty when provided" in tenant_slug_header["description"]
+        assert operation["security"] == [{"BearerAuth": []}]
+        assert not {
+            parameter["name"] for parameter in parameters if parameter["in"] == "header"
+        } & {"X-Tenant-Id", "X-Tenant-Slug"}
+        assert {"401", "403"}.issubset(operation["responses"])
 
 
 def test_employee_list_openapi_documents_filter_query_params() -> None:

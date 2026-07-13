@@ -1,7 +1,13 @@
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID
 
+from app.api.auth_dependencies import require_authenticated_session
 from app.api.dashboard import get_dashboard_service
+from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
+    get_phase0_tenant_request_context,
+)
 from app.db.base import Base
 from app.main import create_app
 from app.models.department import Department, DepartmentStatus
@@ -629,6 +635,12 @@ async def test_dashboard_summary_endpoint_reads_enriched_metrics_from_database()
         return DashboardService(session=session, today=TODAY, recent_activity_limit=0)
 
     app.dependency_overrides[get_dashboard_service] = override_dashboard_service
+    app.dependency_overrides[get_authenticated_tenant_request_context] = (
+        get_phase0_tenant_request_context
+    )
+    app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
+        user=SimpleNamespace(permissions=("dashboard:read:tenant",))
+    )
 
     try:
         async with AsyncClient(
@@ -688,6 +700,12 @@ def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
 
     app = create_app()
     app.dependency_overrides[get_dashboard_service] = override_dashboard_service
+    app.dependency_overrides[get_authenticated_tenant_request_context] = (
+        get_phase0_tenant_request_context
+    )
+    app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
+        user=SimpleNamespace(permissions=("dashboard:read:tenant",))
+    )
     client = TestClient(app)
 
     response = client.get(
@@ -703,33 +721,33 @@ def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
     assert response.json()["recent_activity"] == []
 
 
-def test_dashboard_summary_endpoint_requires_tenant_header() -> None:
+def test_dashboard_summary_endpoint_requires_tenant_session() -> None:
     with TestClient(create_app()) as client:
         response = client.get("/api/v1/dashboard/summary")
 
-    assert response.status_code == 400
+    assert response.status_code == 401
     assert response.json() == {
         "error": {
-            "code": "tenant_header_missing",
-            "message": "X-Tenant-Id header is required",
+            "code": "authentication_required",
+            "message": "A valid access credential is required",
             "details": None,
             "correlation_id": None,
         }
     }
 
 
-def test_dashboard_summary_endpoint_rejects_invalid_tenant_header() -> None:
+def test_dashboard_summary_endpoint_ignores_tenant_header_without_session() -> None:
     with TestClient(create_app()) as client:
         response = client.get(
             "/api/v1/dashboard/summary",
             headers={"X-Tenant-Id": "not-a-uuid", "X-Correlation-Id": "dashboard-tenant"},
         )
 
-    assert response.status_code == 400
+    assert response.status_code == 401
     assert response.json() == {
         "error": {
-            "code": "tenant_header_invalid",
-            "message": "X-Tenant-Id header must be a single canonical hyphenated UUID",
+            "code": "authentication_required",
+            "message": "A valid access credential is required",
             "details": None,
             "correlation_id": "dashboard-tenant",
         }

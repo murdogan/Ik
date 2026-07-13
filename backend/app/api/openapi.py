@@ -71,9 +71,10 @@ OPENAPI_TAGS = [
     {
         "name": AUTHENTICATION_TAG,
         "description": (
-            "Email-first tenant login and activation plus cookie-backed refresh rotation, logout, "
-            "and live-session current-user validation. Memberships are disclosed only after "
-            "credential verification and credential-bearing responses are non-cacheable."
+            "Email-first tenant login, post-credential organization selection, and activation "
+            "plus cookie-backed refresh rotation, logout, and live-session current-user "
+            "validation. Memberships are disclosed only after credential verification; the "
+            "platform login realm and token audience remain separate from tenant sessions."
         ),
     },
     {
@@ -107,8 +108,9 @@ OPENAPI_TAGS = [
     {
         "name": ORGANIZATION_TAG,
         "description": (
-            "Authenticated tenant legal-entity settings and bounded branch/location "
-            "administration with stable codes, terminal archive history, and audited writes."
+            "Authenticated tenant legal-entity, branch/location, department hierarchy, position, "
+            "effective-dated assignment, team, and bounded org-chart administration with stable "
+            "codes, terminal archive history, derived manager scope, and audited writes."
         ),
     },
     {

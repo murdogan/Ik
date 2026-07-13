@@ -166,6 +166,20 @@ P3I_ADDITIVE_OPERATIONS = {
 P3I_BEARER_OPERATIONS = P3I_ADDITIVE_OPERATIONS
 P3J_ADDITIVE_OPERATIONS = {"GET /api/v1/org-chart"}
 P3J_BEARER_OPERATIONS = P3J_ADDITIVE_OPERATIONS
+P3K_AUTH_MIGRATED_OPERATIONS = {
+    "GET /api/v1/dashboard/summary",
+    "GET /api/v1/employees",
+    "POST /api/v1/employees",
+    "GET /api/v1/employees/{employee_id}",
+    "PATCH /api/v1/employees/{employee_id}",
+    "DELETE /api/v1/employees/{employee_id}",
+    "GET /api/v1/employees/{employee_id}/leave-balances",
+    "GET /api/v1/leave-requests",
+    "POST /api/v1/leave-requests",
+    "POST /api/v1/leave-requests/{leave_request_id}/approve",
+    "POST /api/v1/leave-requests/{leave_request_id}/reject",
+    "POST /api/v1/leave-requests/{leave_request_id}/cancel",
+}
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -183,11 +197,11 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
     assert {
         operation: current["operations"].get(operation)
         for operation in snapshot["contract"]["operations"]
-        if operation not in P3D_PLATFORM_BEARER_OPERATIONS
+        if operation not in P3D_PLATFORM_BEARER_OPERATIONS | P3K_AUTH_MIGRATED_OPERATIONS
     } == {
         operation: digest
         for operation, digest in snapshot["contract"]["operations"].items()
-        if operation not in P3D_PLATFORM_BEARER_OPERATIONS
+        if operation not in P3D_PLATFORM_BEARER_OPERATIONS | P3K_AUTH_MIGRATED_OPERATIONS
     }
     for group_name, components in snapshot["contract"]["components"].items():
         assert {
@@ -230,6 +244,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3H_BEARER_OPERATIONS
         | P3I_BEARER_OPERATIONS
         | P3J_BEARER_OPERATIONS
+        | P3K_AUTH_MIGRATED_OPERATIONS
     )
     platform_bearer_security = [{"PlatformBearerAuth": []}]
     assert {
@@ -285,6 +300,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
                 | P3H_BEARER_OPERATIONS
                 | P3I_BEARER_OPERATIONS
                 | P3J_BEARER_OPERATIONS
+                | P3K_AUTH_MIGRATED_OPERATIONS
             ):
                 assert "security" not in operation
 
@@ -294,8 +310,14 @@ def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:
     current = build_openapi_contract_manifest(create_app().openapi())
 
     assert {
-        operation: current["operations"].get(operation) for operation in phase0["operations"]
-    } == phase0["operations"]
+        operation: current["operations"].get(operation)
+        for operation in phase0["operations"]
+        if operation not in P3K_AUTH_MIGRATED_OPERATIONS
+    } == {
+        operation: digest
+        for operation, digest in phase0["operations"].items()
+        if operation not in P3K_AUTH_MIGRATED_OPERATIONS
+    }
     for group_name, components in phase0["components"].items():
         assert {
             component: current["components"].get(group_name, {}).get(component)

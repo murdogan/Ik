@@ -13,7 +13,7 @@ from uuid import uuid4
 from sqlalchemy import select, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "backend"
@@ -28,7 +28,12 @@ from app.models.auth import (
     RefreshSessionFamily,
     UserActivationToken,
 )
-from app.models.identity import Identity, IdentityStatus, TenantMembership
+from app.models.identity import (
+    Identity,
+    IdentityStatus,
+    MembershipStatus,
+    TenantMembership,
+)
 from app.models.user import User, UserStatus
 from app.platform.identity import issue_activation_token
 from app.services.demo_seed_service import (
@@ -40,6 +45,7 @@ from app.services.demo_seed_service import (
 
 LOCAL_DEMO_ENVIRONMENTS = {"local", "dev"}
 LOCAL_DATABASE_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+AUTH_DEMO_USER_KEYS = ("wf_admin", "wf_manager")
 
 
 def main() -> int:
@@ -62,7 +68,7 @@ def main() -> int:
         return 2
 
     try:
-        result, activation_url = asyncio.run(
+        result, activation_urls = asyncio.run(
             _run_seed(
                 database_url,
                 auth_demo=args.auth_demo,
@@ -78,8 +84,12 @@ def main() -> int:
         return 1
 
     print(_format_success(result))
-    if activation_url is not None:
-        print(f"DEMO_AUTH_ACTIVATION_URL {activation_url}")
+    for user_key, activation_url in activation_urls:
+        print(
+            "DEMO_AUTH_ACTIVATION_URL "
+            f"user={user_key} "
+            f"url={activation_url}"
+        )
     return 0
 
 
@@ -98,8 +108,8 @@ def _parse_args() -> argparse.Namespace:
         "--auth-demo",
         action="store_true",
         help=(
-            "Reset the local Wealthy Falcon demo admin to invited and print one single-use "
-            "activation URL. Never enabled implicitly."
+            "Reset the local Wealthy Falcon demo admin and manager to invited and print "
+            "labeled single-use activation URLs. Never enabled implicitly."
         ),
     )
     return parser.parse_args()
@@ -128,40 +138,50 @@ async def _run_seed(
     auth_demo: bool = False,
     frontend_base_url: str = "http://localhost:3000",
     activation_ttl_hours: int = 48,
-) -> tuple[DemoSeedResult, str | None]:
+) -> tuple[DemoSeedResult, tuple[tuple[str, str], ...]]:
     engine = create_async_engine(database_url, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with session_factory.begin() as session:
             result = await seed_demo_data(session)
-            activation_url = None
+            activation_urls: tuple[tuple[str, str], ...] = ()
             if auth_demo:
-                activation_url = await _reset_demo_admin_activation(
-                    session,
-                    frontend_base_url=frontend_base_url,
-                    activation_ttl_hours=activation_ttl_hours,
-                )
-            return result, activation_url
+                reset_urls: list[tuple[str, str]] = []
+                for user_key in AUTH_DEMO_USER_KEYS:
+                    reset_urls.append(
+                        (
+                            user_key,
+                            await _reset_demo_user_activation(
+                                session,
+                                user_key=user_key,
+                                frontend_base_url=frontend_base_url,
+                                activation_ttl_hours=activation_ttl_hours,
+                            ),
+                        )
+                    )
+                activation_urls = tuple(reset_urls)
+            return result, activation_urls
     finally:
         await engine.dispose()
 
 
-async def _reset_demo_admin_activation(
-    session,
+async def _reset_demo_user_activation(
+    session: AsyncSession,
     *,
+    user_key: str,
     frontend_base_url: str,
     activation_ttl_hours: int,
 ) -> str:
-    demo_admin_id = next(fixture.id for fixture in DEMO_USERS if fixture.key == "wf_admin")
-    user = await session.get(User, demo_admin_id)
+    fixture = next(fixture for fixture in DEMO_USERS if fixture.key == user_key)
+    user = await session.get(User, fixture.id)
     if user is None:  # pragma: no cover - seed invariant
-        raise DemoSeedConflictError("Wealthy Falcon demo admin was not seeded")
+        raise DemoSeedConflictError(f"Wealthy Falcon demo user {user_key!r} was not seeded")
 
     now = datetime.now(UTC)
     token = issue_activation_token(user.tenant_id)
     user.status = UserStatus.INVITED.value
     user.password_hash = None
-    user.can_invite_users = True
+    user.can_invite_users = user_key == "wf_admin"
     identity = await session.scalar(
         select(Identity).where(Identity.email_normalized == user.email_normalized)
     )
@@ -179,6 +199,14 @@ async def _reset_demo_admin_activation(
         update(User)
         .where(User.id.in_(legacy_user_ids))
         .values(password_hash=None)
+    )
+    await session.execute(
+        update(TenantMembership)
+        .where(
+            TenantMembership.tenant_id == user.tenant_id,
+            TenantMembership.legacy_user_id == user.id,
+        )
+        .values(status=MembershipStatus.INVITED.value)
     )
     await session.execute(
         update(RefreshSessionFamily)

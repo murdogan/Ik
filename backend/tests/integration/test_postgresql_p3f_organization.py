@@ -347,7 +347,8 @@ async def _assert_branch_create_and_parent_deactivation_serialize(
     engine: AsyncEngine,
 ) -> None:
     async with engine.begin() as connection:
-        await _set_local_tenant_role(connection, TENANT_A_ID)
+        # Feature rollout is platform-controlled; the tenant capability is read-only.
+        await _set_local_role(connection, PLATFORM_APPLICATION_ROLE)
         await connection.execute(
             text(
                 "insert into tenant_feature_flags (tenant_id, key, enabled) "
@@ -356,6 +357,9 @@ async def _assert_branch_create_and_parent_deactivation_serialize(
             ),
             {"tenant_id": TENANT_A_ID},
         )
+
+    async with engine.begin() as connection:
+        await _set_local_tenant_role(connection, TENANT_A_ID)
         await connection.execute(
             text(
                 "insert into legal_entities ("

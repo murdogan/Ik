@@ -76,7 +76,21 @@ async def test_current_demo_seed_repoints_pre_p3_membership_idempotently(
                         "(select count(*) from identities), "
                         "(select count(distinct identity_id) from tenant_memberships), "
                         "(select count(*) from tenant_memberships), "
-                        "(select count(*) from membership_roles)"
+                        "(select count(*) from membership_roles), "
+                        "(select count(*) from platform_identity_roles "
+                        "where active is true)"
+                    )
+                )
+            ).one()
+            shared_platform_role = (
+                await connection.execute(
+                    text(
+                        "select identities.id, roles.code "
+                        "from platform_identity_roles "
+                        "join identities on identities.id = "
+                        "platform_identity_roles.identity_id "
+                        "join roles on roles.id = platform_identity_roles.role_id "
+                        "where platform_identity_roles.active is true"
                     )
                 )
             ).one()
@@ -101,7 +115,8 @@ async def test_current_demo_seed_repoints_pre_p3_membership_idempotently(
         )
         # Four identities back the five current demo memberships. The fifth row is the deliberately
         # retained, detached historical identity from the pre-P3 Atlas fixture.
-        assert counts == (5, 4, 5, 5)
+        assert counts == (5, 4, 5, 6, 1)
+        assert shared_platform_role == (WF_ADMIN_ID, "super_admin")
     finally:
         await engine.dispose()
 

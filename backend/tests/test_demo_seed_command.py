@@ -60,7 +60,7 @@ def test_demo_seed_command_refuses_staging_environment() -> None:
     )
 
 
-def test_demo_seed_command_can_print_one_hashed_local_activation_path(
+def test_demo_seed_command_prints_labeled_hashed_local_activation_paths(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "demo-auth-command.sqlite3"
@@ -74,13 +74,26 @@ def test_demo_seed_command_can_print_one_hashed_local_activation_path(
     )
 
     assert result.returncode == 0
-    activation_line = next(
+    activation_lines = [
         line
         for line in result.stdout.splitlines()
         if line.startswith("DEMO_AUTH_ACTIVATION_URL ")
-    )
-    activation_url = activation_line.removeprefix("DEMO_AUTH_ACTIVATION_URL ")
-    token = parse_qs(urlsplit(activation_url).fragment)["token"][0]
+    ]
+    assert len(activation_lines) == 2
+    activation_urls: dict[str, str] = {}
+    for line in activation_lines:
+        user_field, url_field = line.removeprefix(
+            "DEMO_AUTH_ACTIVATION_URL "
+        ).split(" ", maxsplit=1)
+        activation_urls[user_field.removeprefix("user=")] = url_field.removeprefix(
+            "url="
+        )
+    assert tuple(activation_urls) == ("wf_admin", "wf_manager")
+    tokens = {
+        user_key: parse_qs(urlsplit(activation_url).fragment)["token"][0]
+        for user_key, activation_url in activation_urls.items()
+    }
+    assert tokens["wf_admin"] != tokens["wf_manager"]
 
     engine = create_engine(f"sqlite:///{database_path}")
     try:
@@ -91,12 +104,53 @@ def test_demo_seed_command_can_print_one_hashed_local_activation_path(
                     "where full_name = 'Maya Stone'"
                 )
             ).one()
-            identity = connection.execute(
+            manager = connection.execute(
                 text(
-                    "select status, password_hash from identities "
-                    "where email_normalized = 'admin@wealthyfalcon.demo'"
+                    "select status, password_hash, can_invite_users from users "
+                    "where full_name = 'Leila Morgan'"
                 )
             ).one()
+            identities = dict(
+                connection.execute(
+                    text(
+                        "select email_normalized, status || ':' || "
+                        "case when password_hash is null then 'none' else 'set' end "
+                        "from identities where email_normalized in "
+                        "('admin@wealthyfalcon.demo', 'manager@wealthyfalcon.demo')"
+                    )
+                ).all()
+            )
+            membership_statuses = dict(
+                connection.execute(
+                    text(
+                        "select users.full_name, tenant_memberships.status "
+                        "from tenant_memberships join users "
+                        "on users.tenant_id = tenant_memberships.tenant_id "
+                        "and users.id = tenant_memberships.legacy_user_id "
+                        "where users.full_name in "
+                        "('Maya Stone', 'Arda Blake', 'Leila Morgan')"
+                    )
+                ).all()
+            )
+            platform_role = connection.execute(
+                text(
+                    "select roles.code, platform_identity_roles.active "
+                    "from platform_identity_roles join roles "
+                    "on roles.id = platform_identity_roles.role_id"
+                )
+            ).one()
+            admin_roles = {
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "select roles.code from user_roles join roles "
+                        "on roles.id = user_roles.role_id "
+                        "where user_roles.user_id = "
+                        "(select id from users where full_name = 'Maya Stone') "
+                        "and user_roles.active = true"
+                    )
+                ).all()
+            }
             membership_count = connection.scalar(
                 text(
                     "select count(*) from tenant_memberships where identity_id = "
@@ -104,14 +158,38 @@ def test_demo_seed_command_can_print_one_hashed_local_activation_path(
                     "email_normalized = 'admin@wealthyfalcon.demo')"
                 )
             )
-            token_hash = connection.execute(
-                text("select token_hash from user_activation_tokens")
-            ).scalar_one()
+            token_hashes = dict(
+                connection.execute(
+                    text(
+                        "select users.full_name, user_activation_tokens.token_hash "
+                        "from user_activation_tokens join users "
+                        "on users.tenant_id = user_activation_tokens.tenant_id "
+                        "and users.id = user_activation_tokens.user_id "
+                        "where user_activation_tokens.consumed_at is null "
+                        "and user_activation_tokens.revoked_at is null"
+                    )
+                ).all()
+            )
         assert admin == ("invited", None, True)
-        assert identity == ("pending", None)
+        assert manager == ("invited", None, False)
+        assert identities == {
+            "admin@wealthyfalcon.demo": "pending:none",
+            "manager@wealthyfalcon.demo": "pending:none",
+        }
+        assert membership_statuses == {
+            "Maya Stone": "invited",
+            "Arda Blake": "active",
+            "Leila Morgan": "invited",
+        }
+        assert platform_role == ("super_admin", True)
+        assert admin_roles == {"tenant_admin", "hr_specialist"}
         assert membership_count == 2
-        assert token_hash == hash_activation_token(token)
-        assert token not in token_hash
+        assert token_hashes == {
+            "Maya Stone": hash_activation_token(tokens["wf_admin"]),
+            "Leila Morgan": hash_activation_token(tokens["wf_manager"]),
+        }
+        for token in tokens.values():
+            assert token not in token_hashes.values()
     finally:
         engine.dispose()
 

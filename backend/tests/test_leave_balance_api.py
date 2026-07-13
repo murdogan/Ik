@@ -1,7 +1,13 @@
 from collections.abc import AsyncIterator
 from datetime import date
+from types import SimpleNamespace
 from uuid import UUID
 
+from app.api.auth_dependencies import require_authenticated_session
+from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
+    get_phase0_tenant_request_context,
+)
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
@@ -171,6 +177,14 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
 
     app = create_app()
     app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_authenticated_tenant_request_context] = (
+        get_phase0_tenant_request_context
+    )
+    app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
+        user=SimpleNamespace(
+            permissions=("leave:read:tenant", "employee:update:tenant")
+        )
+    )
 
     return (
         AsyncClient(

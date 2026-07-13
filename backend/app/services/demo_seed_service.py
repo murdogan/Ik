@@ -13,6 +13,7 @@ from app.models.identity import (
     Identity,
     IdentityStatus,
     MembershipRole,
+    PlatformIdentityRole,
     TenantMembership,
 )
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
@@ -26,6 +27,7 @@ from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.modules.core.domain.feature_flags import FeatureFlagKey
+from app.platform.authorization import ROLES_BY_CODE
 from app.services.authorization_service import (
     assign_system_role,
     seed_authorization_catalog,
@@ -53,6 +55,7 @@ class DemoUserFixture:
     email: str
     full_name: str
     role_code: str = "employee"
+    additional_role_codes: tuple[str, ...] = ()
     status: UserStatus = UserStatus.ACTIVE
 
 
@@ -133,6 +136,7 @@ DEMO_USERS: tuple[DemoUserFixture, ...] = (
         email="admin@wealthyfalcon.demo",
         full_name="Maya Stone",
         role_code="tenant_admin",
+        additional_role_codes=("hr_specialist",),
     ),
     DemoUserFixture(
         key="wf_people_partner",
@@ -346,6 +350,8 @@ async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
 
     users = await _upsert_users(session, tenants)
     await session.flush()
+    await _ensure_shared_admin_platform_role(session, users)
+    await session.flush()
 
     employees = await _upsert_employees(session, tenants)
     await session.flush()
@@ -494,15 +500,59 @@ async def _upsert_users(session: AsyncSession, tenants: dict[str, Tenant]) -> di
             user.status = fixture.status.value
             user.password_hash = None
         await session.flush()
-        await assign_system_role(
-            session,
-            tenant_id=tenant.id,
-            user_id=user.id,
-            role_code=fixture.role_code,
-        )
+        for role_code in (fixture.role_code, *fixture.additional_role_codes):
+            await assign_system_role(
+                session,
+                tenant_id=tenant.id,
+                user_id=user.id,
+                role_code=role_code,
+            )
         await _upsert_identity_membership_projection(session, user)
         users[fixture.key] = user
     return users
+
+
+async def _ensure_shared_admin_platform_role(
+    session: AsyncSession,
+    users: dict[str, User],
+) -> None:
+    identity_ids: set[UUID] = set()
+    for user_key in ("wf_admin", "atlas_admin"):
+        user = users[user_key]
+        membership = await session.scalar(
+            select(TenantMembership).where(
+                TenantMembership.tenant_id == user.tenant_id,
+                TenantMembership.legacy_user_id == user.id,
+            )
+        )
+        if membership is None:  # pragma: no cover - demo projection invariant
+            raise DemoSeedConflictError(
+                f"Demo shared admin membership {user_key!r} was not seeded"
+            )
+        identity_ids.add(membership.identity_id)
+
+    if len(identity_ids) != 1:
+        raise DemoSeedConflictError(
+            "Demo shared admin users did not resolve to one canonical identity"
+        )
+
+    identity_id = identity_ids.pop()
+    super_admin_role = ROLES_BY_CODE["super_admin"]
+    assignment = await session.get(
+        PlatformIdentityRole,
+        (identity_id, super_admin_role.id),
+    )
+    if assignment is None:
+        session.add(
+            PlatformIdentityRole(
+                identity_id=identity_id,
+                role_id=super_admin_role.id,
+                role_scope_type=super_admin_role.scope_type.value,
+                active=True,
+            )
+        )
+    else:
+        assignment.active = True
 
 
 async def _upsert_identity_membership_projection(
@@ -583,8 +633,9 @@ async def _upsert_identity_membership_projection(
             )
         membership = stable_membership
         membership.identity_id = identity.id
-        # The superseded identity is intentionally retained. The demo seed does not own any
-        # platform roles, recovery/session history, or other state that may reference it.
+        # The superseded identity is intentionally retained. Beyond the designated shared demo
+        # admin role, the seed does not own platform roles, recovery/session history, or other
+        # state that may reference an identity.
     elif canonical_membership is not None:
         if canonical_membership.legacy_user_id != user.id:
             raise DemoSeedConflictError(

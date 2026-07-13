@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth_dependencies import (
     PlatformAuthenticatedSession,
+    get_authenticated_request_context,
     require_platform_authenticated_session,
 )
 from app.api.errors import (
@@ -286,6 +287,31 @@ def get_phase0_tenant_request_context(
         ),
     )
     return replace_request_context(request, context.derive(tenant=tenant))
+
+
+def get_authenticated_tenant_request_context(
+    request: Request,
+    context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_request_context),
+    ],
+) -> RequestContext:
+    """Bind legacy session-backed routes to the authenticated tenant's DB path.
+
+    These routes still use the request-scoped SQLAlchemy session introduced in Phase 0. The
+    tenant identity comes only from the validated access token and live session; caller-supplied
+    tenant headers are intentionally ignored.
+    """
+
+    tenant_id = context.require_tenant().tenant_id
+    _set_request_database_access(
+        request,
+        DatabaseAccessContext(
+            path=DatabaseAccessPath.TENANT,
+            tenant_id=tenant_id,
+        ),
+    )
+    return context
 
 
 def _set_request_database_access(

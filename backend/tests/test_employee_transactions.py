@@ -1,10 +1,16 @@
 from collections.abc import AsyncIterator
 from datetime import date
+from types import SimpleNamespace
 from typing import Annotated
 from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
+from app.api.auth_dependencies import require_authenticated_session
+from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
+    get_phase0_tenant_request_context,
+)
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
@@ -226,6 +232,12 @@ async def test_employee_unique_constraint_failure_maps_to_stable_conflict_envelo
     app = create_app()
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_employee_command_handler] = override_command_handler
+    app.dependency_overrides[get_authenticated_tenant_request_context] = (
+        get_phase0_tenant_request_context
+    )
+    app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
+        user=SimpleNamespace(permissions=("employee:update:tenant",))
+    )
     client = AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
