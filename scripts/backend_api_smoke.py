@@ -1973,6 +1973,32 @@ async def _smoke_employee_assignment_endpoints(
     )
     _assert_equal(created["is_current"], True, "initial current assignment")
 
+    structured_employee_page = _expect_phase0_list(
+        await client.get(
+            "/api/v1/employees",
+            headers=admin_headers,
+            params={**structure, "q": "Ada Yilmaz", "limit": 25},
+        ),
+        200,
+        "GET /api/v1/employees structured current-assignment filters",
+    )
+    _assert_equal(
+        [employee["id"] for employee in structured_employee_page],
+        [str(employee_id)],
+        "employee structured filter intersection",
+    )
+    current_assignment = structured_employee_page[0]["current_assignment"]
+    _assert_equal(
+        current_assignment["id"],
+        created["id"],
+        "employee current-assignment summary",
+    )
+    _assert_equal(
+        current_assignment["department"]["id"],
+        structure["department_id"],
+        "employee current department reference",
+    )
+
     roots, roots_cursor = _expect_phase1_list(
         await _request_documented(
             client,
@@ -2978,6 +3004,8 @@ async def _smoke_employee_endpoints(
         headers=employee_idempotency_headers,
     )
     _assert_equal(replayed_create, created, "employee create idempotency replay")
+    _assert_equal(created["version"], 1, "employee initial optimistic version")
+    _assert_equal(created["current_assignment"], None, "new employee assignment summary")
     employee_id = created["id"]
     secondary = await _create_employee(
         client,
@@ -3006,6 +3034,35 @@ async def _smoke_employee_endpoints(
         headers=other_admin_headers,
     )
     other_employee_id = other_tenant_employee["id"]
+
+    _expect_error_code(
+        await client.post(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            json={
+                **employee_payload,
+                "employee_number": " wf-smoke-001 ",
+                "email": "unique.number-conflict@wealthyfalcon.test",
+            },
+        ),
+        409,
+        "employee_number_conflict",
+        "POST /api/v1/employees normalized employee-number conflict",
+    )
+    _expect_error_code(
+        await client.post(
+            "/api/v1/employees",
+            headers=TENANT_HEADERS,
+            json={
+                **employee_payload,
+                "employee_number": "WF-SMOKE-EMAIL-CONFLICT",
+                "email": " ADA.SMOKE@WEALTHYFALCON.TEST ",
+            },
+        ),
+        409,
+        "employee_work_email_conflict",
+        "POST /api/v1/employees normalized work-email conflict",
+    )
 
     employees = _expect_phase0_list(
         await _request_documented(
@@ -3172,9 +3229,9 @@ async def _smoke_employee_endpoints(
         "GET /api/v1/employees?q=Yilmaz",
     )
     _assert_equal(
-        name_search_filtered,
-        [],
-        "employee q filter does not search names",
+        [employee["employee_number"] for employee in name_search_filtered],
+        ["WF-SMOKE-001"],
+        "employee q filter searches full name",
     )
 
     detail = _expect_json(
@@ -3197,12 +3254,26 @@ async def _smoke_employee_endpoints(
             f"/api/v1/employees/{employee_id}",
             documented_path="/api/v1/employees/{employee_id}",
             headers=TENANT_HEADERS,
-            json={"status": EmployeeStatus.ON_LEAVE.value},
+            json={
+                "status": EmployeeStatus.ON_LEAVE.value,
+                "version": detail["version"],
+            },
         ),
         200,
         "PATCH /api/v1/employees/{employee_id}",
     )
     _assert_equal(updated["status"], EmployeeStatus.ON_LEAVE.value, "employee status")
+    _assert_equal(updated["version"], 2, "employee optimistic version increment")
+    _expect_error_code(
+        await client.patch(
+            f"/api/v1/employees/{employee_id}",
+            headers=TENANT_HEADERS,
+            json={"position": "Stale update", "version": detail["version"]},
+        ),
+        409,
+        "concurrent_write_conflict",
+        "PATCH /api/v1/employees/{employee_id} stale version",
+    )
 
     status_filtered = _expect_json(
         await client.get(

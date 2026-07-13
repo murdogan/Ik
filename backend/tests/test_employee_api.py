@@ -34,6 +34,11 @@ OTHER_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 async def _client_with_database(
     extra_current_employee_count: int = 0,
+    *,
+    permissions: tuple[str, ...] = (
+        "employee:read:tenant",
+        "employee:update:tenant",
+    ),
 ) -> tuple[AsyncClient, AsyncEngine]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
@@ -141,7 +146,7 @@ async def _client_with_database(
         get_phase0_tenant_request_context
     )
     app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
-        user=SimpleNamespace(permissions=("employee:read:tenant", "employee:update:tenant"))
+        user=SimpleNamespace(permissions=permissions)
     )
 
     return (
@@ -186,7 +191,7 @@ async def test_create_employee_uses_tenant_header_and_server_generated_id() -> N
                 "employee_number": "WF-002",
                 "first_name": "Bora",
                 "last_name": "Demir",
-                "email": "bora@wealthyfalcon.test",
+                "email": "new.employee@wealthyfalcon.test",
                 "department": "Engineering",
                 "position": "Backend Engineer",
                 "employment_start_date": "2026-07-08",
@@ -211,6 +216,50 @@ async def test_create_employee_uses_tenant_header_and_server_generated_id() -> N
     finally:
         await client.aclose()
         await engine.dispose()
+
+
+async def test_employee_api_enforces_read_and_update_permissions_independently() -> None:
+    read_client, read_engine = await _client_with_database(
+        permissions=("employee:read:tenant",)
+    )
+    denied_client, denied_engine = await _client_with_database(permissions=())
+    try:
+        assert (
+            await read_client.get("/api/v1/employees", headers=_tenant_headers())
+        ).status_code == 200
+        read_only_create = await read_client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-READ-ONLY",
+                "first_name": "Read",
+                "last_name": "Only",
+                "employment_start_date": "2026-07-08",
+            },
+        )
+        assert read_only_create.status_code == 403
+        assert read_only_create.json()["error"]["code"] == "authorization_denied"
+
+        denied_read = await denied_client.get(
+            "/api/v1/employees", headers=_tenant_headers()
+        )
+        denied_create = await denied_client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-DENIED",
+                "first_name": "Denied",
+                "last_name": "Actor",
+                "employment_start_date": "2026-07-08",
+            },
+        )
+        assert denied_read.status_code == 403
+        assert denied_create.status_code == 403
+    finally:
+        await read_client.aclose()
+        await read_engine.dispose()
+        await denied_client.aclose()
+        await denied_engine.dispose()
 
 
 async def test_create_employee_accepts_terminated_lifecycle_with_end_date() -> None:
@@ -498,6 +547,26 @@ async def test_list_employee_blank_filter_values_are_ignored() -> None:
             "WF-010",
             "WF-020",
         ]
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_list_employees_validates_structured_assignment_filter_ids() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={"department_id": "not-a-uuid"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_validation_error",
+            message="Employee request validation failed",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -806,7 +875,7 @@ async def test_list_employee_filters_are_combined_within_current_tenant() -> Non
         await engine.dispose()
 
 
-async def test_list_employee_query_does_not_search_names() -> None:
+async def test_list_employee_query_searches_full_name() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get(
@@ -816,7 +885,7 @@ async def test_list_employee_query_does_not_search_names() -> None:
         )
 
         assert response.status_code == 200
-        assert response.json() == []
+        assert [employee["employee_number"] for employee in response.json()] == ["WF-010"]
     finally:
         await client.aclose()
         await engine.dispose()
@@ -937,6 +1006,26 @@ async def test_update_employee_rejects_duplicate_employee_number_within_tenant()
             status_code=409,
             code="employee_number_conflict",
             message="Employee number already exists for this tenant",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_stale_version_with_stable_conflict() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.patch(
+            f"/api/v1/employees/{EMPLOYEE_ID}",
+            headers=_tenant_headers(),
+            json={"version": 2, "position": "People Lead"},
+        )
+
+        _assert_error_response(
+            response,
+            status_code=409,
+            code="concurrent_write_conflict",
+            message="The request conflicted with another write; retry the request",
         )
     finally:
         await client.aclose()
@@ -1182,6 +1271,32 @@ async def test_create_employee_rejects_duplicate_employee_number_within_tenant()
             code="employee_number_conflict",
             message="Employee number already exists for this tenant",
             correlation_id="w1a6-employee-error",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_create_employee_rejects_duplicate_work_email_with_stable_conflict() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            json={
+                "employee_number": "WF-099",
+                "first_name": "Duplicate",
+                "last_name": "Email",
+                "email": "ADA@WEALTHYFALCON.TEST",
+                "employment_start_date": "2026-07-08",
+            },
+        )
+
+        _assert_error_response(
+            response,
+            status_code=409,
+            code="employee_work_email_conflict",
+            message="Work email already exists for this tenant",
         )
     finally:
         await client.aclose()
@@ -1435,7 +1550,18 @@ async def test_employee_routes_are_exposed_in_openapi() -> None:
         employee_list_parameters = {
             parameter["name"] for parameter in paths["/api/v1/employees"]["get"]["parameters"]
         }
-        assert {"department", "status", "q", "limit", "offset"}.issubset(
+        assert {
+            "department",
+            "status",
+            "q",
+            "legal_entity_id",
+            "branch_id",
+            "department_id",
+            "position_id",
+            "limit",
+            "offset",
+            "cursor",
+        }.issubset(
             employee_list_parameters
         )
     finally:

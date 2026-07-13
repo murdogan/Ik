@@ -4,6 +4,7 @@ LEAVE_REQUEST_VALIDATION_FAILED_MESSAGE = "Leave request validation failed"
 
 EMPLOYEE_NOT_FOUND_MESSAGE = "Employee not found"
 EMPLOYEE_NUMBER_CONFLICT_MESSAGE = "Employee number already exists for this tenant"
+EMPLOYEE_WORK_EMAIL_CONFLICT_MESSAGE = "Work email already exists for this tenant"
 EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE = (
     "Employment end date must be on or after start date"
 )

@@ -133,6 +133,22 @@ class EmployeeAssignment(Base, TimestampMixin):
             "branch_id",
             "effective_from",
         ),
+        Index(
+            "ix_employee_assignments_tenant_legal_entity_effective",
+            "tenant_id",
+            "legal_entity_id",
+            "effective_from",
+            "effective_to",
+            "employee_id",
+        ),
+        Index(
+            "ix_employee_assignments_tenant_position_effective",
+            "tenant_id",
+            "position_id",
+            "effective_from",
+            "effective_to",
+            "employee_id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)

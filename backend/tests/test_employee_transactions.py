@@ -14,10 +14,15 @@ from app.api.dependencies import (
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
+from app.models.audit import AuditEvent
 from app.models.employee import Employee, EmployeeStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.platform.db import SqlAlchemyUnitOfWork
+from app.platform.request_context import RequestContext
+from app.platform.tenancy import TenantContext
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
+from app.services.command_idempotency import CommandIdempotencyService
 from app.services.employee_commands import EmployeeCommandHandler
 from app.services.employee_service import EmployeeLifecycleError, EmployeeService
 from fastapi import Depends
@@ -35,6 +40,7 @@ TENANT_ID = UUID("11111111-aaaa-4111-8111-111111111111")
 OTHER_TENANT_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 OTHER_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+ACTOR_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 
 EmployeeDatabase = tuple[AsyncEngine, async_sessionmaker[AsyncSession]]
 
@@ -186,6 +192,172 @@ async def test_employee_command_handler_commits_a_successful_write(
         assert persisted.employee_number == "WF-002"
 
 
+async def test_employee_command_handler_audits_create_without_employee_values(
+    employee_database: EmployeeDatabase,
+) -> None:
+    _, session_factory = employee_database
+    async with session_factory() as session:
+        handler = EmployeeCommandHandler(
+            service=EmployeeService(session),
+            unit_of_work=SqlAlchemyUnitOfWork(session),
+            audit_recorder=SqlAlchemyAuditRecorder(session),
+        )
+
+        created = await handler.create_employee(
+            TENANT_ID,
+            EmployeeCreate(
+                employee_number="WF-AUDIT",
+                first_name="Private",
+                last_name="Person",
+                email="private.person@example.test",
+                employment_start_date=date(2026, 7, 10),
+            ),
+            request_context=_request_context(),
+        )
+
+    async with session_factory() as verification_session:
+        event = await verification_session.scalar(
+            select(AuditEvent).where(AuditEvent.resource_id == created.id)
+        )
+
+    assert event is not None
+    assert event.event_type == "employee.created"
+    assert event.category == "hr_operations"
+    assert event.resource_type == "employee"
+    assert event.actor_user_id == ACTOR_ID
+    assert event.changed_fields == [
+        "email",
+        "employee_number",
+        "employment_start_date",
+        "first_name",
+        "last_name",
+        "status",
+    ]
+    assert event.before_data == {}
+    assert event.after_data == {}
+    assert event.metadata_ == {}
+    assert "private" not in repr(event).lower()
+
+
+async def test_employee_idempotent_create_replay_writes_one_audit_event(
+    employee_database: EmployeeDatabase,
+) -> None:
+    _, session_factory = employee_database
+    async with session_factory() as session:
+        handler = EmployeeCommandHandler(
+            service=EmployeeService(session),
+            unit_of_work=SqlAlchemyUnitOfWork(session),
+            idempotency=CommandIdempotencyService(session),
+            audit_recorder=SqlAlchemyAuditRecorder(session),
+        )
+        payload = _create_payload("WF-AUDIT-IDEMPOTENT")
+
+        created = await handler.create_employee(
+            TENANT_ID,
+            payload,
+            "p4a-audit-idempotent-create",
+            request_context=_request_context(),
+        )
+        replayed = await handler.create_employee(
+            TENANT_ID,
+            payload,
+            "p4a-audit-idempotent-create",
+            request_context=_request_context(),
+        )
+
+    async with session_factory() as verification_session:
+        events = list(
+            await verification_session.scalars(
+                select(AuditEvent).where(AuditEvent.resource_id == created.id)
+            )
+        )
+
+    assert replayed.id == created.id
+    assert [(event.event_type, event.changed_fields) for event in events] == [
+        (
+            "employee.created",
+            [
+                "employee_number",
+                "employment_start_date",
+                "first_name",
+                "last_name",
+                "status",
+            ],
+        )
+    ]
+
+
+async def test_employee_command_handler_audits_only_actual_update_changes(
+    employee_database: EmployeeDatabase,
+) -> None:
+    _, session_factory = employee_database
+    async with session_factory() as session:
+        handler = EmployeeCommandHandler(
+            service=EmployeeService(session),
+            unit_of_work=SqlAlchemyUnitOfWork(session),
+            audit_recorder=SqlAlchemyAuditRecorder(session),
+        )
+
+        updated = await handler.update_employee(
+            TENANT_ID,
+            EMPLOYEE_ID,
+            EmployeeUpdate(position="People Lead"),
+            request_context=_request_context(),
+        )
+        await handler.update_employee(
+            TENANT_ID,
+            EMPLOYEE_ID,
+            EmployeeUpdate(position="People Lead"),
+            request_context=_request_context(),
+        )
+
+    async with session_factory() as verification_session:
+        events = list(
+            await verification_session.scalars(
+                select(AuditEvent).where(AuditEvent.resource_id == EMPLOYEE_ID)
+            )
+        )
+
+    assert updated.position == "People Lead"
+    assert [(event.event_type, event.changed_fields) for event in events] == [
+        ("employee.updated", ["position"])
+    ]
+
+
+async def test_employee_command_handler_audits_only_first_archive(
+    employee_database: EmployeeDatabase,
+) -> None:
+    _, session_factory = employee_database
+    async with session_factory() as session:
+        handler = EmployeeCommandHandler(
+            service=EmployeeService(session),
+            unit_of_work=SqlAlchemyUnitOfWork(session),
+            audit_recorder=SqlAlchemyAuditRecorder(session),
+        )
+
+        await handler.delete_employee(
+            TENANT_ID,
+            EMPLOYEE_ID,
+            request_context=_request_context(),
+        )
+        await handler.delete_employee(
+            TENANT_ID,
+            EMPLOYEE_ID,
+            request_context=_request_context(),
+        )
+
+    async with session_factory() as verification_session:
+        events = list(
+            await verification_session.scalars(
+                select(AuditEvent).where(AuditEvent.resource_id == EMPLOYEE_ID)
+            )
+        )
+
+    assert [(event.event_type, event.changed_fields) for event in events] == [
+        ("employee.archived", ["archived_at"])
+    ]
+
+
 async def test_employee_command_handler_rolls_back_when_service_fails_after_flush(
     employee_database: EmployeeDatabase,
 ) -> None:
@@ -250,7 +422,7 @@ async def test_employee_unique_constraint_failure_maps_to_stable_conflict_envelo
                 "X-Correlation-Id": "p0c-employee-unique-conflict",
             },
             json={
-                "employee_number": "WF-001",
+                "employee_number": "wf-001",
                 "first_name": "Duplicate",
                 "last_name": "Employee",
                 "employment_start_date": "2026-07-10",
@@ -277,6 +449,71 @@ async def test_employee_unique_constraint_failure_maps_to_stable_conflict_envelo
         await client.aclose()
 
 
+async def test_employee_work_email_constraint_failure_maps_to_stable_conflict_envelope(
+    employee_database: EmployeeDatabase,
+) -> None:
+    from app.api.employees import get_employee_command_handler
+
+    _, session_factory = employee_database
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        async with session_factory() as session:
+            yield session
+
+    def override_command_handler(
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> EmployeeCommandHandler:
+        return EmployeeCommandHandler(
+            service=_StaleWorkEmailCheckService(session),
+            unit_of_work=SqlAlchemyUnitOfWork(session),
+        )
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_employee_command_handler] = override_command_handler
+    app.dependency_overrides[get_authenticated_tenant_request_context] = (
+        get_phase0_tenant_request_context
+    )
+    app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
+        user=SimpleNamespace(permissions=("employee:update:tenant",))
+    )
+    client = AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    )
+    try:
+        response = await client.post(
+            "/api/v1/employees",
+            headers={
+                "X-Tenant-Id": str(TENANT_ID),
+                "X-Correlation-Id": "p4a-employee-email-conflict",
+            },
+            json={
+                "employee_number": "WF-002",
+                "first_name": "Duplicate",
+                "last_name": "Email",
+                "email": " ADA@EXAMPLE.TEST ",
+                "employment_start_date": "2026-07-10",
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json() == {
+            "error": {
+                "code": "employee_work_email_conflict",
+                "message": "Work email already exists for this tenant",
+                "details": None,
+                "correlation_id": "p4a-employee-email-conflict",
+            }
+        }
+
+        async with session_factory() as verification_session:
+            assert await _employee_count(verification_session, TENANT_ID) == 1
+            assert await _employee_count(verification_session, OTHER_TENANT_ID) == 1
+    finally:
+        await client.aclose()
+
+
 class _FailingAfterCreateFlushEmployeeService(EmployeeService):
     async def create_employee(self, tenant_id: UUID, payload: EmployeeCreate) -> Employee:
         await super().create_employee(tenant_id, payload)
@@ -292,6 +529,17 @@ class _StaleEmployeeNumberCheckService(EmployeeService):
     ) -> None:
         # Simulate two requests having both passed the advisory availability query. The database
         # constraint remains authoritative, and the command/API boundary must map its failure.
+        return None
+
+
+class _StaleWorkEmailCheckService(EmployeeService):
+    async def _ensure_work_email_available(
+        self,
+        tenant_id: UUID,
+        work_email: str,
+        exclude_employee_id: UUID | None = None,
+    ) -> None:
+        # Model a concurrent insert after both requests pass the advisory availability query.
         return None
 
 
@@ -355,3 +603,12 @@ async def _employee_count(session: AsyncSession, tenant_id: UUID) -> int:
     )
     assert count is not None
     return count
+
+
+def _request_context() -> RequestContext:
+    return RequestContext(
+        request_id="req-p4a-employee-audit",
+        trace_id="0123456789abcdef0123456789abcdef",
+        tenant=TenantContext(tenant_id=TENANT_ID, slug="wealthy-falcon"),
+        actor_id=ACTOR_ID,
+    )

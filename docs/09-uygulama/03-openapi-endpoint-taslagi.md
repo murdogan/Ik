@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-13 / P3K combined identity and organization hardening gate.
+Son güncelleme: 2026-07-13 / P4A employee directory and minimal HR create.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -30,7 +30,10 @@ P3I altı assignment/team operation'ı, P3J bir lazy org-chart operation'ı ekle
 74 generated operation ve runtime `/openapi.json` ile 75 documented endpoint'tir. P3K yeni
 operation eklemez; historical dashboard/employee/leave yüzeyindeki 12 operation'ı
 caller-controlled tenant header sözleşmesinden canlı tenant `BearerAuth` + exact permission
-sözleşmesine geçirir. Response body/path compatibility korunur.
+sözleşmesine geçirir. P4A yeni operation eklemez; employee read/update component'larını version ve
+current-assignment özetiyle additive genişletir, employee list/create operation metadata ve conflict
+örneklerini günceller. Historical snapshot'lar yeniden yazılmaz; intentional P4A component diff'i
+executable contract testinde allowlist ve hassas-alan reddiyle sabitlenir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -98,11 +101,11 @@ sözleşmesine geçirir. Response body/path compatibility korunur.
 | GET | `/api/v1/teams/me` | P3I uygulandı | Yalnız authenticated user'a bağlı güncel structured assignment'lardan türetilen doğrudan ekip |
 | GET | `/api/v1/org-chart` | P3J uygulandı | `root=true` veya `parent_id` ile tek bounded reporting seviyesi; parent-bound opaque cursor, resolved organizasyon etiketleri ve lazy child ipucu |
 | GET | `/api/v1/dashboard/summary` | P3K doğrulandı | `BearerAuth` + `dashboard:read:tenant`; scope canlı session'dan gelir, tenant header okunmaz |
-| GET | `/api/v1/employees` | P3K doğrulandı | `BearerAuth` + `employee:read:tenant`; filtreler, deterministic cursor ve deprecated offset uyumluluğu |
-| POST | `/api/v1/employees` | P3K doğrulandı | `BearerAuth` + `employee:update:tenant`; duplicate koruması ve tenant-global idempotency |
-| GET | `/api/v1/employees/{employee_id}` | P3K doğrulandı | `BearerAuth` + `employee:read:tenant`; cross-tenant/missing aynı `404` |
-| PATCH | `/api/v1/employees/{employee_id}` | P3K doğrulandı | `BearerAuth` + `employee:update:tenant`; partial update ve tarih aralığı validasyonu |
-| DELETE | `/api/v1/employees/{employee_id}` | P3K doğrulandı | `BearerAuth` + `employee:update:tenant`; idempotent archive ve retained history |
+| GET | `/api/v1/employees` | P4A uygulandı | `BearerAuth` + `employee:read:tenant`; identity/status/current-assignment filtreleri, assignment özeti, deterministic cursor ve deprecated offset |
+| POST | `/api/v1/employees` | P4A uygulandı | `BearerAuth` + `employee:update:tenant`; minimal HR create, normalized number/work-email uniqueness, idempotency ve audit |
+| GET | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:read:tenant`; additive version/current-assignment özeti, cross-tenant/missing aynı `404` |
+| PATCH | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:update:tenant`; compatible partial update, optional optimistic version ve audit |
+| DELETE | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:update:tenant`; idempotent archive, retained history ve ilk-transition audit |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | P3K doğrulandı | `BearerAuth` + `leave:read:tenant`; read-only manuel özet ve `period_year` filtresi |
 | GET | `/api/v1/leave-requests` | P3K doğrulandı | `BearerAuth` + `leave:read:tenant`; mixed-order cursor ve deprecated offset uyumluluğu |
 | POST | `/api/v1/leave-requests` | P3K doğrulandı | `BearerAuth` + `leave:manage:tenant`; pending create ve tenant-global idempotency |
@@ -878,7 +881,9 @@ Query:
 
 - `department`: Departman adına göre case-insensitive exact match.
 - `status`: `active`, `on_leave`, `terminated`.
-- `q`: `employee_number` ve `email` üzerinde case-insensitive contains araması.
+- `q`: `employee_number`, ad+soyad ve `email` üzerinde case-insensitive contains araması.
+- `legal_entity_id`, `branch_id`, `department_id`, `position_id`: Aynı currently-effective
+  structured assignment satırında kesişen UUID filtreleri.
 - `limit`: Dönen kayıt sayısı. Varsayılan `50`, maksimum `200`.
 - `cursor`: Önceki response'un `X-Next-Cursor` header'ından opaque keyset değeri.
 - `offset`: Deprecated compatibility yolu; cursor ile positive değer birlikte kullanılamaz.
@@ -907,7 +912,9 @@ Response `200` örneği:
     "position": "Backend Engineer",
     "status": "active",
     "employment_start_date": "2026-06-10",
-    "employment_end_date": null
+    "employment_end_date": null,
+    "version": 1,
+    "current_assignment": null
   }
 ]
 ```
@@ -938,11 +945,8 @@ Content-Type: application/json
   "first_name": "Selin",
   "last_name": "Arslan",
   "email": "selin.arslan@wealthyfalcon.demo",
-  "department": "People",
-  "position": "HR Operations Specialist",
   "status": "active",
-  "employment_start_date": "2026-08-01",
-  "employment_end_date": null
+  "employment_start_date": "2026-08-01"
 }
 ```
 
@@ -955,11 +959,13 @@ Response `201` örneği:
   "first_name": "Selin",
   "last_name": "Arslan",
   "email": "selin.arslan@wealthyfalcon.demo",
-  "department": "People",
-  "position": "HR Operations Specialist",
+  "department": null,
+  "position": null,
   "status": "active",
   "employment_start_date": "2026-08-01",
-  "employment_end_date": null
+  "employment_end_date": null,
+  "version": 1,
+  "current_assignment": null
 }
 ```
 
@@ -968,6 +974,11 @@ edilmiş body tekrar gönderilirse yeni employee oluşturulmaz; yukarıdaki ilk 
 snapshot'ı aynı `id` ile replay edilir. Aynı key başka bir create body veya başka bir komut için
 kullanılırsa `409 idempotency_key_mismatch` döner. Arşivlenen kayıt satırda kaldığı için employee
 number da tenant içinde rezerve kalır ve yeni create `employee_number_conflict` alır.
+
+Employee number ve non-null iş e-postası Unicode uç whitespace trim + lowercase normalize edilir.
+Aynı tenant içinde named DB indexleri concurrency sınırıdır; birden çok `NULL` iş e-postası
+geçerlidir, blank e-posta reddedilir. Work-email çakışması
+`409 employee_work_email_conflict` döner.
 
 Lifecycle kuralı: `terminated` status `employment_end_date` gerektirir; `active` ve `on_leave`
 kayıtlarda `employment_end_date` `null` olmalıdır.
@@ -1028,9 +1039,18 @@ X-Correlation-Id: req_wf_demo_001
   "email": "bora.demir@wealthyfalcon.demo",
   "department": "Engineering",
   "position": "Backend Engineer",
-  "status": "active",
-  "employment_start_date": "2026-06-10",
-  "employment_end_date": null
+    "status": "active",
+    "employment_start_date": "2026-06-10",
+    "employment_end_date": null,
+    "version": 3,
+    "current_assignment": {
+      "id": "fa500000-0000-4000-8000-000000000001",
+      "legal_entity": {"id": "fa010000-0000-4000-8000-000000000001", "code": "WF", "name": "Wealthy Falcon"},
+      "branch": {"id": "fa100000-0000-4000-8000-000000000001", "code": "IST", "name": "İstanbul"},
+      "department": {"id": "fa200000-0000-4000-8000-000000000001", "code": "ENG", "name": "Engineering"},
+      "position": {"id": "fa300000-0000-4000-8000-000000000001", "code": "BE", "title": "Backend Engineer"},
+      "effective_from": "2026-06-10"
+    }
 }
 ```
 
@@ -1054,7 +1074,8 @@ Not-found `404` örneği:
 
 Yetki: `employee:update:tenant`.
 
-Hedef davranış: critical update işlemleri before/after audit üretir.
+Gerçek alan değişikliği aynı transaction'da yalnız allowlisted changed-field adlarını içeren audit
+eventi üretir; before/after değer snapshot'ları ve e-posta değeri saklanmaz.
 
 Request örneği:
 
@@ -1068,7 +1089,8 @@ Content-Type: application/json
 ```json
 {
   "position": "Senior Backend Engineer",
-  "status": "on_leave"
+  "status": "on_leave",
+  "version": 3
 }
 ```
 
@@ -1085,9 +1107,15 @@ Response `200` örneği:
   "position": "Senior Backend Engineer",
   "status": "on_leave",
   "employment_start_date": "2026-06-10",
-  "employment_end_date": null
+  "employment_end_date": null,
+  "version": 4,
+  "current_assignment": null
 }
 ```
+
+`version` opsiyoneldir ve legacy PATCH çağrılarını bozmaz. Gönderilen last-read version güncel
+değilse veya SQLAlchemy mapper iki eşzamanlı update'ten birini kaybederse
+`409 concurrent_write_conflict` döner.
 
 Invalid date range `422` örneği:
 

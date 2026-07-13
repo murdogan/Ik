@@ -77,6 +77,47 @@ def test_employee_number_is_unique_within_tenant() -> None:
     assert Employee.__table__.columns["employee_number"].unique is not True
 
 
+def test_employee_has_normalized_tenant_uniqueness_for_number_and_work_email() -> None:
+    columns = Employee.__table__.columns
+    indexes = {index.name: index for index in Employee.__table__.indexes}
+    check_names = {
+        constraint.name
+        for constraint in Employee.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert columns["employee_number_normalized"].computed is not None
+    assert columns["employee_number_normalized"].nullable is False
+    assert columns["email_normalized"].computed is not None
+    assert columns["email_normalized"].nullable is True
+    assert tuple(
+        column.name
+        for column in indexes["uq_employees_tenant_employee_number_normalized"].columns
+    ) == ("tenant_id", "employee_number_normalized")
+    assert indexes["uq_employees_tenant_employee_number_normalized"].unique is True
+    assert tuple(
+        column.name
+        for column in indexes["uq_employees_tenant_email_normalized"].columns
+    ) == ("tenant_id", "email_normalized")
+    assert indexes["uq_employees_tenant_email_normalized"].unique is True
+    assert "ck_employees_employee_number_not_blank" in check_names
+    assert "ck_employees_email_not_blank" in check_names
+
+
+def test_employee_has_positive_optimistic_version_column() -> None:
+    columns = Employee.__table__.columns
+    check_names = {
+        constraint.name
+        for constraint in Employee.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert columns["version"].nullable is False
+    assert columns["version"].server_default is not None
+    assert Employee.__mapper__.version_id_col is columns["version"]
+    assert "ck_employees_version_positive" in check_names
+
+
 def test_employee_has_tenant_id_candidate_key_for_tenant_owned_children() -> None:
     unique_constraints = {
         tuple(column.name for column in constraint.columns): constraint.name

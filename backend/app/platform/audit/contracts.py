@@ -95,6 +95,9 @@ class AuditEventType(StrEnum):
     POSITION_CREATED = "position.created"
     POSITION_UPDATED = "position.updated"
     POSITION_ARCHIVED = "position.archived"
+    EMPLOYEE_CREATED = "employee.created"
+    EMPLOYEE_UPDATED = "employee.updated"
+    EMPLOYEE_ARCHIVED = "employee.archived"
     EMPLOYEE_ASSIGNMENT_CHANGED = "employee.assignment.changed"
     REPORTING_LINE_CHANGED = "reporting_line.changed"
 

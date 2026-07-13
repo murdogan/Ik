@@ -1,13 +1,62 @@
 # API Implementation Status Report
 
 Date: 2026-07-13
-Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3K combined identity and organization hardening gate`
-Review checkpoint: `P3A-P3J product slices are present; P3K is the final Phase 3 repair gate`
-Review decision: `P3K implementation and local verification are recorded below`
-Push state: `P3K commit is intentionally left unpushed for the supervisor; no merge or deploy`
+Branch: `codex/mvp-phase4-employee-master`
+Task: `P4A HR employee directory, minimal create and summary`
+Review checkpoint: `P4A only; P4B and later Phase 4 blocks remain unopened`
+Review decision: `P4A implementation and local verification are recorded below`
+Push state: `P4A commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
+
+### P4A employee directory and minimal HR create
+
+- An HR director/specialist with `employee:read:tenant` sees **Çalışanlar** in desktop/mobile
+  navigation and can open `/employees`; direct routing is permission-gated before employee API
+  mounting. Create UI additionally requires `employee:update:tenant`. The authorization catalog is
+  unchanged, so `tenant_admin` alone receives neither permission.
+- The responsive directory preserves the legacy plain-list API and `X-Next-Cursor`, uses a
+  bounded 25-row UI page, and supports name/employee-number/work-email query, status, and current
+  legal entity/branch/department/position filters. Catalog failures degrade independently without
+  taking down basic search. Loading, error/retry, base-empty and filtered-empty states are explicit.
+- The minimal create dialog accepts employee number, first/last name, optional work email, active
+  or on-leave status, and start date. It does not chain a structured assignment transaction. On
+  success the route-backed `/employees/{employee_id}` summary opens with legacy work labels,
+  optimistic version, and the current Phase 3 assignment reference when one exists.
+- `0032_p4a_employee_directory` adds generated normalized employee-number/email/full-name columns,
+  tenant unique indexes, positive SQLAlchemy optimistic versioning, bounded directory/search
+  indexes and missing assignment filter indexes without removing legacy columns/history. Non-null
+  work email and employee number are trim/lowercase unique per tenant; multiple null emails are
+  allowed and blank identifiers are rejected at schema and DB boundaries.
+- Create, actual update and first archive write same-transaction `employee.created|updated|archived`
+  audit events with allowlisted field names only. Idempotent create replay writes one event.
+- Document upload, sensitive identity/financial/health fields, payroll/compensation/performance,
+  leave workflow, import/export, report, notification, dynamic fields, hard delete and real mail
+  remain outside P4A.
+
+### P4A verification gates
+
+The exact local results are recorded at the P4A commit below. `IK_TEST_DATABASE_URL` and a usable
+local PostgreSQL/Docker client are unavailable in this execution environment, so no real
+PostgreSQL pass is claimed. Focused opt-in PostgreSQL migration, RLS/ACL, normalized-race and
+two-session version tests are committed for the disposable `-m postgres` lane and remain a P4H
+execution risk until that lane is run.
+
+| Gate | Command | Result |
+|---|---|---|
+| Focused employee/assignment backend | `uv run pytest -q backend/tests/test_employee_model.py backend/tests/test_employee_schemas.py backend/tests/test_employee_service.py backend/tests/test_employee_api.py backend/tests/test_employee_transactions.py backend/tests/test_employee_assignment_api.py` | Passed: 162 tests in 32.46s |
+| Migration fast lane | `uv run pytest -q backend/tests/test_migrations.py` | Passed: 61 tests in 113.09s; linear head, collision/version preflight, upgrade/downgrade/offline SQL and schema drift |
+| OpenAPI compatibility/metadata | `uv run pytest -q backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py` | Passed: 30 tests; one known Starlette/httpx deprecation warning |
+| Audit/dashboard regression | `uv run pytest -q backend/tests/test_audit_recorder.py backend/tests/test_audit_api.py backend/tests/test_dashboard.py` | Passed: 20 tests in 12.57s; one known Starlette/httpx deprecation warning |
+| Authorization catalog/API | `uv run pytest -q backend/tests/test_authorization_api.py` | Passed: 3 tests in 4.58s; employee API also tests read/update permissions independently |
+| Backend Ruff | `uv run ruff check backend scripts/backend_api_smoke.py` | Passed: `All checks passed!` |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 75 documented endpoints executed, including P4A create/conflict/version/name/structured-filter/summary behavior |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0032_p4a_employee_directory` |
+| PostgreSQL P4A path | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p4a_employee_master.py backend/tests/integration/test_postgresql_command_transactions.py` | Not run: disposable PostgreSQL admin DSN/runtime unavailable; test path committed for P4H |
+| Frontend lint/typecheck/build | `npm --prefix frontend run lint`, `npm --prefix frontend run typecheck`, Playwright webServer production build | Passed: exit 0 for lint/typecheck/build |
+| Focused browser journey | `cd frontend && PLAYWRIGHT_BROWSERS_PATH=/tmp/pw1223 npm run test:e2e -- --project=chromium tests/employee-directory-flow.spec.ts` | Passed: 2 Chromium tests in 28.9s covering HR create/open and permission-shaped navigation/direct denial |
+
+P4A stops after the single local commit. The supervisor owns review and push; P4B does not begin.
 
 ### P3K combined identity and organization hardening gate
 
@@ -941,11 +990,11 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/teams/me` | Implemented for P3I | Authenticated manager's current direct team derived only from structured assignments |
 | GET | `/api/v1/org-chart` | Implemented for P3J | Organization-read protected bounded root/direct-report pages with parent-bound cursor and resolved labels |
 | GET | `/api/v1/dashboard/summary` | P3K verified | Live tenant `BearerAuth` + `dashboard:read:tenant`; bounded tenant metrics; headers cannot select scope |
-| GET | `/api/v1/employees` | P3K verified | Live tenant `BearerAuth` + `employee:read:tenant`; deterministic cursor and deprecated offset compatibility |
-| POST | `/api/v1/employees` | P3K verified | `employee:update:tenant`; duplicate protection and optional tenant-global idempotent replay |
-| GET | `/api/v1/employees/{employee_id}` | P3K verified | `employee:read:tenant`; active detail/archive hiding and indistinguishable cross-tenant `404` |
-| PATCH | `/api/v1/employees/{employee_id}` | P3K verified | `employee:update:tenant`; partial update and lifecycle/archive rules |
-| DELETE | `/api/v1/employees/{employee_id}` | P3K verified | `employee:update:tenant`; idempotent archive and retained history |
+| GET | `/api/v1/employees` | P4A implemented | Live tenant `BearerAuth` + `employee:read:tenant`; bounded cursor, full-name/identity/status/current-assignment filters and batched assignment summary |
+| POST | `/api/v1/employees` | P4A implemented | `employee:update:tenant`; minimal HR create, normalized number/work-email conflicts, optional tenant-global idempotent replay and audit |
+| GET | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:read:tenant`; active summary with additive version/current assignment and indistinguishable cross-tenant `404` |
+| PATCH | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:update:tenant`; compatible partial update plus optional optimistic version and actual-change audit |
+| DELETE | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:update:tenant`; idempotent archive, retained history and first-transition audit |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | P3K verified | `leave:read:tenant`; active-employee manual summaries and cross-tenant hiding |
 | GET | `/api/v1/leave-requests` | P3K verified | `leave:read:tenant`; tenant filters, mixed-order cursor and deprecated offset compatibility |
 | POST | `/api/v1/leave-requests` | P3K verified | HR-only `leave:manage:tenant`; pending create, tenant validation and optional replay |

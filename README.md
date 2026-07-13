@@ -297,8 +297,11 @@ P3F–P3J legal entity/branch, department hierarchy, position catalog, effective
 assignment, derived team ve lazy organization chart ürün yüzeylerini tamamlar. P3K final hardening
 gate'i legacy dashboard/employee/leave route'larını caller-controlled tenant header'larından
 ayırır: tenant yalnız doğrulanmış canlı `BearerAuth` session'ından gelir. Güncel tek Alembic head
-`0031_p3k_legacy_tenant_auth_boundary` katalog-only revision'ıdır; `leave:manage:tenant` yalnız HR
-director/specialist rollerine verilir. Phase 4 modülü veya destructive contract adımı eklenmez.
+P4A'nın additive `0032_p4a_employee_directory` revision'ıdır. P3K'nin katalog-only
+`0031_p3k_legacy_tenant_auth_boundary` revision'ı `leave:manage:tenant` yetkisini yalnız HR
+director/specialist rollerine verir. P4A mevcut employee/assignment sözleşmesini daraltmadan
+normalized numara/iş-e-postası benzersizliği, optimistic version ve indexed directory desteği
+ekler; tenant admin employee yetkisini implicit olarak almaz.
 
 Veritabanı migration komutları:
 
@@ -367,9 +370,11 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
   tenant A/B izolasyonu
 - `/api/v1/dashboard/summary` active employee count, pending leave count, this-month
   starters, department distribution and recent activity
-- `/api/v1/employees` liste + `department`/`status`/`q` filtreleri, deterministic
+- `/api/v1/employees` liste + `department`/`status`/`q` ve güncel
+  `legal_entity_id`/`branch_id`/`department_id`/`position_id` filtreleri, deterministic
   `cursor`/`X-Next-Cursor` keyset pagination, geriye uyumlu deprecated `offset`, default
-  `limit=50`, max `limit=200`, oluşturma/detay/güncelleme/silme
+  `limit=50`, max `limit=200`, normalized number/iş-e-postası conflict'leri, optimistic version,
+  güncel assignment özeti ve oluşturma/detay/güncelleme/silme
 - `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
   `period_year` filtresi, tenant-scoped çalışan kontrolü ve mevcut leave requestlerden otomatik
   bakiye üretmeme davranışı
@@ -974,6 +979,37 @@ assignments, derived team view, lazy org chart, protected navigation and platfor
 separation. PostgreSQL RLS, grants, audit immutability and cross-tenant storage claims remain in
 the separate disposable-database `-m postgres` lane.
 
+## P4A çalışan dizini manuel demo
+
+P3K demo kurulumu ve `wf_admin` activation/login adımlarını yukarıdaki gibi tamamlayın. Bu demo
+membership'i `tenant_admin + hr_specialist` rollerini birlikte taşır; **Çalışanlar** menüsünü açan
+yetki `tenant_admin` değil, explicit HR `employee:read:tenant` grant'idir.
+
+1. `uv run alembic heads` çıktısında tek head olarak
+   `0032_p4a_employee_directory` bulunduğunu doğrulayın; ardından API ve frontend'i ayrı
+   terminallerde başlatın.
+2. `http://localhost:3000/login` üzerinden Wealthy Falcon tenant'ına girin ve **Çalışanlar**
+   menüsünü açın. İlk yükleme, boş/filtered-empty, error-retry ve responsive tablo/kart durumları
+   `/employees` yüzeyindedir.
+3. Ad/employee number/iş e-postası aramasını ve durum filtresini deneyin. Organization katalogları
+   okunabiliyorsa tüzel kişilik, şube, departman ve pozisyon filtreleri de aynı bounded cursor
+   listesini daraltır; katalog çağrısı hata verirse temel arama/durum filtresi çalışmaya devam eder.
+4. **Yeni çalışan** seçip örneğin `P4A-DEMO-001`, `Selin`, `Deneme`, benzersiz bir iş e-postası,
+   `Aktif` ve başlangıç tarihi girin. Form başarıda doğrudan
+   `/employees/<created-employee-id>` route'undaki çalışan özetini açar.
+5. Özette version `1`, temel iş bilgileri ve henüz atama yok durumu görünür. Çalışanı
+   Organization çalışma alanında mevcut Phase 3 assignment akışıyla atadıktan sonra özeti yeniden
+   açarak legal entity/branch/department/position referanslarını doğrulayabilirsiniz.
+6. Aynı numarayı farklı case/kenar boşluklarıyla veya aynı non-null iş e-postasını yeniden girin;
+   UI sırasıyla deterministic numara/e-posta conflict mesajını göstermelidir. Boş e-posta ise
+   `NULL` olarak oluşturulur ve başka boş e-postalı çalışanları engellemez.
+7. Yalnız `employee:read:own`/team yetkili manager veya employee oturumunda **Çalışanlar** menüsü
+   görünmez ve doğrudan `/employees` navigasyonu çalışan API'sini mount etmeden geri yönlenir.
+
+P4A create akışı SMTP/e-posta göndermez; notification ve gerçek mail entegrasyonu Phase 7'ye
+ertelenmiştir. Assignment, belge, import/export, raporlama veya hassas profil alanı da create
+transaction'ına eklenmez.
+
 ## Branch iş akışı
 
 `main` korumalıdır; değişiklikler kısa ömürlü branch üzerinde yapılır.
@@ -1010,17 +1046,17 @@ henüz yoktur:
 
 ## Durum
 
-P0A–P0G Faz 0, F1A–F1E Faz 1, F2A–F2F Faz 2 ve P3A–P3J Phase 3 identity/organization ürün
-dilimleri tamamlanmıştır. P3K birleşik hardening gate'i migration/backfill, PostgreSQL RLS/grant,
-realm/membership abuse, hierarchy/concurrency, manager scope, audit, OpenAPI, browser ve bounded
-query kanıtlarını kapatır; Phase 4 başlatılmaz. Güncel uygulama yüzeyi ve kanıtlar
+P0A–P0G Faz 0, F1A–F1E Faz 1, F2A–F2F Faz 2 ve P3A–P3K Phase 3 identity/organization ürün
+dilimleri tamamlanmıştır. Phase 4 yalnız P4A çalışan dizini/minimal create/summary bloğuyla
+başlatılmıştır; P4B ve sonraki profil, belge, import, workflow, notification ve raporlama blokları
+başlatılmamıştır. Güncel uygulama yüzeyi ve kanıtlar
 [API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md), migration
 zinciri ve populated backfill sonucu ise
 [Phase 3 Migration and Backfill Report](docs/09-uygulama/13-phase-3-migration-backfill-report.md)
 içinde kayıtlıdır.
 
-P3K commit'inden sonra `STOP — supervisor push pending; awaiting Murat review`
-checkpoint'inde kalır. Codex push/merge/deploy yapmaz; review branch push'u ve remote sync
+P4A commit'inden sonra supervisor review/push checkpoint'inde kalır. Codex push/merge/deploy
+yapmaz; review branch push'u ve remote sync
 doğrulaması supervisor sorumluluğundadır. Yürütme otoritesi
 [MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;
 [Implementation Readiness Checklist](docs/09-uygulama/08-implementation-readiness-checklist.md)

@@ -35,6 +35,13 @@ const navigationItems = [
     feature: null,
   },
   {
+    href: "/employees",
+    label: "Çalışanlar",
+    icon: "Ç",
+    permission: AUTHORIZATION_PERMISSIONS.readTenantEmployees,
+    feature: null,
+  },
+  {
     href: "/organization",
     label: "Organizasyon",
     icon: "O",

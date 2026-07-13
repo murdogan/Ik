@@ -17,10 +17,12 @@ from app.schemas.employee import (
 )
 from app.services.employee_service import (
     DuplicateEmployeeNumberError,
+    DuplicateWorkEmailError,
     EmployeeDateRangeError,
     EmployeeLifecycleError,
     EmployeeNotFoundError,
     EmployeeService,
+    EmployeeVersionConflictError,
 )
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
@@ -281,6 +283,53 @@ async def test_department_filter_prefers_current_assignment_and_bounds_queries()
         await engine.dispose()
 
 
+async def test_structured_assignment_filters_share_one_current_row_and_bound_queries() -> None:
+    session, engine = await _session_with_seed_data()
+    await _add_structured_assignment_history(session)
+    statements: list[str] = []
+
+    def capture_statement(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters,
+        _context,
+        _executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        employees = await EmployeeService(
+            session,
+            today=ASSIGNMENT_EFFECTIVE_ON,
+        ).list_employees(
+            TENANT_ID,
+            filters=EmployeeListFilters(
+                legal_entity_id=TENANT_ID,
+                branch_id=BRANCH_ID,
+                department_id=STRUCTURED_DEPARTMENT_ID,
+                position_id=STRUCTURED_POSITION_ID,
+            ),
+        )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+
+    try:
+        assert len(statements) == 2
+        assert [employee.employee_number for employee in employees] == ["WF-001"]
+        assignment = employees[0].current_assignment
+        assert assignment is not None
+        assert assignment.legal_entity.name == "Wealthy Falcon HR"
+        assert assignment.branch.name == "Headquarters"
+        assert assignment.department.name == "Structured Engineering"
+        assert assignment.position.title == "Structured Platform Engineer"
+        assert assignment.effective_from == date(2026, 7, 1)
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_list_employees_treats_wildcard_search_as_literal_text() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -290,6 +339,20 @@ async def test_list_employees_treats_wildcard_search_as_literal_text() -> None:
         )
 
         assert employees == []
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_list_employees_query_matches_full_name_case_insensitively() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        employees = await EmployeeService(session).list_employees(
+            TENANT_ID,
+            filters=EmployeeListFilters(q="ada yilmaz"),
+        )
+
+        assert [employee.employee_number for employee in employees] == ["WF-001"]
     finally:
         await session.close()
         await engine.dispose()
@@ -361,6 +424,43 @@ async def test_create_employee_rejects_duplicate_number_before_insert() -> None:
         await engine.dispose()
 
 
+async def test_create_employee_rejects_normalized_duplicate_number_before_insert() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        with pytest.raises(DuplicateEmployeeNumberError):
+            await EmployeeService(session).create_employee(
+                TENANT_ID,
+                EmployeeCreate(
+                    employee_number="wf-001",
+                    first_name="Duplicate",
+                    last_name="Employee",
+                    employment_start_date=date(2026, 7, 8),
+                ),
+            )
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_create_employee_rejects_normalized_duplicate_work_email() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        with pytest.raises(DuplicateWorkEmailError):
+            await EmployeeService(session).create_employee(
+                TENANT_ID,
+                EmployeeCreate(
+                    employee_number="WF-099",
+                    first_name="Duplicate",
+                    last_name="Email",
+                    email="ADA@WEALTHYFALCON.TEST",
+                    employment_start_date=date(2026, 7, 8),
+                ),
+            )
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
 async def test_update_employee_can_keep_existing_employee_number() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -372,6 +472,43 @@ async def test_update_employee_can_keep_existing_employee_number() -> None:
 
         assert employee.employee_number == "WF-001"
         assert employee.position == "Senior HR Specialist"
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_update_employee_rejects_stale_expected_version_without_mutation() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        with pytest.raises(EmployeeVersionConflictError):
+            await EmployeeService(session).update_employee(
+                TENANT_ID,
+                EMPLOYEE_ID,
+                EmployeeUpdate(version=2, position="People Lead"),
+            )
+
+        employee = await session.get(Employee, EMPLOYEE_ID)
+        assert employee is not None
+        assert employee.position == "HR Specialist"
+        assert employee.version == 1
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_update_employee_with_current_version_increments_optimistic_version() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        employee = await EmployeeService(session).update_employee(
+            TENANT_ID,
+            EMPLOYEE_ID,
+            EmployeeUpdate(version=1, position="People Lead"),
+        )
+
+        assert employee.position == "People Lead"
+        assert employee.version == 2
+        read = await EmployeeService(session).get_employee_read(TENANT_ID, EMPLOYEE_ID)
+        assert read.version == 2
     finally:
         await session.close()
         await engine.dispose()

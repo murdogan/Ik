@@ -533,6 +533,40 @@ def _run_alembic_p3i_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p4a_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0031_p3k_legacy_tenant_auth_boundary:0032_p4a_employee_directory",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p4a_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0032_p4a_employee_directory:0031_p3k_legacy_tenant_auth_boundary",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -604,8 +638,9 @@ def test_core_migration_chain_is_linear() -> None:
     p3k_auth_boundary_revision = script.get_revision(
         "0031_p3k_legacy_tenant_auth_boundary"
     )
+    p4a_employee_master_revision = script.get_revision("0032_p4a_employee_directory")
 
-    assert script.get_heads() == ["0031_p3k_legacy_tenant_auth_boundary"]
+    assert script.get_heads() == ["0032_p4a_employee_directory"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -686,6 +721,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3i_assignment_revision.down_revision == "0029_p3h_position_catalog"
     assert p3k_auth_boundary_revision is not None
     assert p3k_auth_boundary_revision.down_revision == "0030_p3i_employee_assignments"
+    assert p4a_employee_master_revision is not None
+    assert p4a_employee_master_revision.down_revision == (
+        "0031_p3k_legacy_tenant_auth_boundary"
+    )
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -708,6 +747,237 @@ def test_alembic_upgrade_head_subprocess_creates_current_model_schema(
 
     assert result.returncode == 0, result.stderr or result.stdout
     _assert_database_matches_current_model_schema(database_path)
+
+
+def test_sqlite_p4a_normalized_identifier_collisions_refuse_atomically(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p4a-collision.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0031_p3k_legacy_tenant_auth_boundary")
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_id = "a1000000000040008000000000000032"
+    try:
+        with engine.begin() as connection:
+            _seed_p4a_tenant(connection, tenant_id)
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000031",
+                tenant_id=tenant_id,
+                employee_number="WF-001",
+                email="Ada@Example.test",
+            )
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000032",
+                tenant_id=tenant_id,
+                employee_number="wf-001",
+                email="ada@example.test",
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "P4A employee preflight failed: "
+                "normalized_number_collisions=1, blank_employee_numbers=0, "
+                "normalized_email_collisions=1, blank_work_emails=0"
+            ),
+        ):
+            alembic_command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            revision = connection.scalar(text("select version_num from alembic_version"))
+        assert revision == "0031_p3k_legacy_tenant_auth_boundary"
+        assert "employee_number_normalized" not in {
+            column["name"] for column in inspect(engine).get_columns("employees")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p4a_upgrade_enforces_normalized_keys_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p4a-round-trip.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0031_p3k_legacy_tenant_auth_boundary")
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_id = "a1000000000040008000000000000032"
+    try:
+        with engine.begin() as connection:
+            _seed_p4a_tenant(connection, tenant_id)
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000031",
+                tenant_id=tenant_id,
+                employee_number=" WF-001 ",
+                email=" Ada@Example.test ",
+            )
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000032",
+                tenant_id=tenant_id,
+                employee_number="WF-002",
+                email=None,
+            )
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            normalized = connection.execute(
+                text(
+                    "select employee_number, employee_number_normalized, email, "
+                    "email_normalized, full_name_normalized, version from employees "
+                    "where tenant_id = :tenant_id order by employee_number"
+                ),
+                {"tenant_id": tenant_id},
+            ).tuples().all()
+        assert normalized == [
+            (" WF-001 ", "wf-001", " Ada@Example.test ", "ada@example.test", "ada employee", 1),
+            ("WF-002", "wf-002", None, None, "ada employee", 1),
+        ]
+
+        with engine.begin() as connection, pytest.raises(IntegrityError):
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000033",
+                tenant_id=tenant_id,
+                employee_number="wf-001",
+                email=None,
+            )
+        with engine.begin() as connection, pytest.raises(IntegrityError):
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000034",
+                tenant_id=tenant_id,
+                employee_number="WF-004",
+                email="ADA@EXAMPLE.TEST",
+            )
+        with engine.begin() as connection, pytest.raises(IntegrityError):
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000035",
+                tenant_id=tenant_id,
+                employee_number="\t\n\u00a0",
+                email=None,
+            )
+        with engine.begin() as connection, pytest.raises(IntegrityError):
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000036",
+                tenant_id=tenant_id,
+                employee_number="WF-006",
+                email="\t\n\u00a0",
+            )
+
+        alembic_command.downgrade(config, "0031_p3k_legacy_tenant_auth_boundary")
+        with engine.connect() as connection:
+            raw_values = connection.execute(
+                text(
+                    "select employee_number, email from employees "
+                    "where tenant_id = :tenant_id order by employee_number"
+                ),
+                {"tenant_id": tenant_id},
+            ).tuples().all()
+        assert raw_values == [
+            (" WF-001 ", " Ada@Example.test "),
+            ("WF-002", None),
+        ]
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0032_p4a_employee_directory"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p4a_downgrade_refuses_to_rebaseline_changed_versions(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p4a-version-downgrade.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_id = "a1000000000040008000000000000032"
+    try:
+        with engine.begin() as connection:
+            _seed_p4a_tenant(connection, tenant_id)
+            _seed_p4a_employee(
+                connection,
+                employee_id="a2000000000040008000000000000031",
+                tenant_id=tenant_id,
+                employee_number="WF-001",
+                email=None,
+            )
+            connection.execute(
+                text("update employees set version = 2 where tenant_id = :tenant_id"),
+                {"tenant_id": tenant_id},
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match="P4A employee downgrade refused: changed_versions=1",
+        ):
+            alembic_command.downgrade(config, "0031_p3k_legacy_tenant_auth_boundary")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0032_p4a_employee_directory"
+            )
+            assert connection.scalar(
+                text("select version from employees where tenant_id = :tenant_id"),
+                {"tenant_id": tenant_id},
+            ) == 2
+    finally:
+        engine.dispose()
+
+
+def _seed_p4a_tenant(connection, tenant_id: str) -> None:
+    connection.execute(
+        text(
+            "insert into tenants ("
+            "id, slug, name, status, plan_code, data_region, locale, timezone, "
+            "created_at, updated_at"
+            ") values ("
+            ":tenant_id, 'p4a-employee', 'P4A Employee Tenant', 'active', 'core', "
+            "'tr-1', 'en-US', 'UTC', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+            ")"
+        ),
+        {"tenant_id": tenant_id},
+    )
+
+
+def _seed_p4a_employee(
+    connection,
+    *,
+    employee_id: str,
+    tenant_id: str,
+    employee_number: str,
+    email: str | None,
+) -> None:
+    connection.execute(
+        text(
+            "insert into employees ("
+            "id, tenant_id, employee_number, first_name, last_name, email, department, "
+            "position, status, employment_start_date, employment_end_date, archived_at, "
+            "created_at, updated_at"
+            ") values ("
+            ":employee_id, :tenant_id, :employee_number, 'Ada', 'Employee', :email, "
+            "'People', 'Specialist', 'active', '2026-07-01', null, null, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+            ")"
+        ),
+        {
+            "employee_id": employee_id,
+            "tenant_id": tenant_id,
+            "employee_number": employee_number,
+            "email": email,
+        },
+    )
 
 
 def test_sqlite_p3i_backfills_legacy_employee_strings_without_contracting_them(
@@ -1311,6 +1581,52 @@ def test_alembic_offline_p3i_downgrade_guards_retained_assignment_history() -> N
         in result.stdout
     )
     assert "DROP TABLE employee_assignments" in result.stdout
+
+
+def test_alembic_offline_p4a_renders_preflight_generated_keys_and_indexes() -> None:
+    result = _run_alembic_p4a_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p4a_employee_normalization_preflight$" in result.stdout
+    assert "P4A employee preflight failed" in result.stdout
+    assert 'ALTER TABLE "employees" NO FORCE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "employees" FORCE ROW LEVEL SECURITY' in result.stdout
+    preflight_position = result.stdout.index("DO $p4a_employee_normalization_preflight$")
+    first_column_position = result.stdout.index("ADD COLUMN version")
+    assert preflight_position < first_column_position
+    for column_name in (
+        "employee_number_normalized",
+        "email_normalized",
+        "full_name_normalized",
+    ):
+        assert column_name in result.stdout
+    for index_name in (
+        "uq_employees_tenant_employee_number_normalized",
+        "uq_employees_tenant_email_normalized",
+        "ix_employees_tenant_directory_cursor",
+        "ix_employees_tenant_status_directory_cursor",
+        "ix_employees_full_name_normalized_trgm",
+        "ix_employee_assignments_tenant_legal_entity_effective",
+        "ix_employee_assignments_tenant_position_effective",
+    ):
+        assert index_name in result.stdout
+
+
+def test_alembic_offline_p4a_downgrade_guards_changed_versions_before_drops() -> None:
+    result = _run_alembic_p4a_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p4a_employee_version_downgrade_preflight$" in result.stdout
+    assert "P4A employee downgrade refused" in result.stdout
+    preflight_position = result.stdout.index(
+        "DO $p4a_employee_version_downgrade_preflight$"
+    )
+    first_drop_position = result.stdout.index(
+        "ix_employee_assignments_tenant_position_effective"
+    )
+    assert preflight_position < first_drop_position
+    assert 'ALTER TABLE "employees" NO FORCE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "employees" FORCE ROW LEVEL SECURITY' in result.stdout
 
 
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
@@ -1964,7 +2280,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0031_p3k_legacy_tenant_auth_boundary"
+        assert revision == "0032_p4a_employee_directory"
     finally:
         engine.dispose()
 

@@ -12,6 +12,16 @@ export interface ApiSuccessEnvelope<TResponse, TMeta = unknown> {
   meta: TMeta;
 }
 
+export interface ApiPlainSuccess<TResponse> {
+  data: TResponse;
+  status: number;
+  headers: Headers;
+}
+
+export interface ApiPlainCursorSuccess<TResponse> extends ApiPlainSuccess<TResponse> {
+  nextCursor: string | null;
+}
+
 export interface ApiRequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: object;
@@ -151,6 +161,29 @@ export async function requestApiEnvelope<TResponse, TMeta = unknown>(
   }
 
   return payload as unknown as ApiSuccessEnvelope<TResponse, TMeta>;
+}
+
+export async function requestApiPlainSuccess<TResponse>(
+  path: `/api/${string}`,
+  options: ApiRequestOptions = {},
+): Promise<ApiPlainSuccess<TResponse>> {
+  const { payload, response } = await sendApiRequest(path, options);
+  return {
+    data: payload as TResponse,
+    status: response.status,
+    headers: response.headers,
+  };
+}
+
+export async function requestApiPlainCursorSuccess<TResponse>(
+  path: `/api/${string}`,
+  options: ApiRequestOptions = {},
+): Promise<ApiPlainCursorSuccess<TResponse>> {
+  const response = await requestApiPlainSuccess<TResponse>(path, options);
+  return {
+    ...response,
+    nextCursor: response.headers.get("x-next-cursor")?.trim() || null,
+  };
 }
 
 export async function requestApiNoContent(

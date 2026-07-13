@@ -248,6 +248,35 @@ Employee purge için HTTP endpoint yoktur. Child employee ilişkileri geçmişi 
 offboarding kontrolleri olan kısıtlı tenant-root operasyonuna aittir; normal employee API'sinin
 yetkisi değildir.
 
+### 6.2 P4A employee directory uyumluluk sözleşmesi
+
+`GET /api/v1/employees`, mevcut plain JSON array response'unu ve `X-Next-Cursor` header'ını
+korur; `{data,meta}` zarfına geçirilmez. Default `limit=50`, max `200` ve deprecated bounded
+`offset` uyumluluğu devam eder. P4A aşağıdaki additive query alanlarını kullanır:
+
+- `q`: employee number, ad+soyad ve non-null iş e-postasında case-insensitive contains;
+- `status`: mevcut employee lifecycle enum'u;
+- `department`: legacy/current projection üzerinde exact case-insensitive uyumluluk filtresi;
+- `legal_entity_id`, `branch_id`, `department_id`, `position_id`: aynı currently-effective Phase 3
+  assignment satırında kesişen UUID filtreleri.
+
+List/detail item'ına optional-compatible `version` ve `current_assignment` eklenir. Legacy
+`department`/`position` alanları kaldırılmaz; current structured değer varsa onu projekte eder,
+yoksa raw legacy text'e düşer. Page employee query'sinden sonra bütün current assignment etiketleri
+tek bounded batch query ile çözülür; per-row assignment sorgusu yapılmaz.
+
+Employee number ve non-null `email` (UI: **İş e-postası**) Unicode uç whitespace trim + lowercase
+normalizasyonuyla tenant içinde DB-enforced unique'tir; arşivli kayıt anahtarı reserve etmeye devam
+eder. Birden çok `NULL` e-posta geçerlidir, blank e-posta geçersizdir. Advisory service precheck'i
+ürün mesajını hızlandırır; named DB index'i yarışın authoritative sınırıdır. Çakışmalar sırasıyla
+`409 employee_number_conflict` ve `409 employee_work_email_conflict` döner.
+
+PATCH body'deki optional pozitif `version`, last-read token ile eşleşmezse
+`409 concurrent_write_conflict` döner. Alanı göndermemek legacy partial-update contract'ını korur;
+SQLAlchemy mapper version predicate'i iki eşzamanlı yazardan kaybedeni yine aynı conflict ailesine
+çevirir. Employee create/update/archive audit'i yalnız allowlisted changed-field adlarını taşır;
+değer snapshot'ı, e-posta veya hassas payload taşımaz.
+
 ## 7. Async operation standardı
 
 Bu bölüm hedef sözleşmeyi tanımlar. Faz 0 yalnız provider-neutral worker portu/fake'i

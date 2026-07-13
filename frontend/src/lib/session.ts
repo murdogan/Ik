@@ -7,11 +7,15 @@ import type {
 } from "./auth-contracts";
 import {
   ApiClientError,
+  type ApiPlainCursorSuccess,
+  type ApiPlainSuccess,
   type ApiRequestOptions,
   type ApiSuccessEnvelope,
   requestApi,
   requestApiEnvelope,
   requestApiNoContent,
+  requestApiPlainCursorSuccess,
+  requestApiPlainSuccess,
 } from "./api-client";
 
 const REFRESH_PATH = "/api/v1/auth/refresh" as const;
@@ -213,6 +217,24 @@ export async function requestAuthenticatedApiEnvelope<TResponse, TMeta = unknown
     options,
     (requestPath, requestOptions) =>
       requestApiEnvelope<TResponse, TMeta>(requestPath, requestOptions),
+  );
+}
+
+export async function requestAuthenticatedApiPlainSuccess<TResponse>(
+  path: `/api/${string}`,
+  options: AuthenticatedRequestOptions = {},
+): Promise<ApiPlainSuccess<TResponse>> {
+  return requestAuthenticated(path, options, (requestPath, requestOptions) =>
+    requestApiPlainSuccess<TResponse>(requestPath, requestOptions),
+  );
+}
+
+export async function requestAuthenticatedApiPlainCursorSuccess<TResponse>(
+  path: `/api/${string}`,
+  options: AuthenticatedRequestOptions = {},
+): Promise<ApiPlainCursorSuccess<TResponse>> {
+  return requestAuthenticated(path, options, (requestPath, requestOptions) =>
+    requestApiPlainCursorSuccess<TResponse>(requestPath, requestOptions),
   );
 }
 

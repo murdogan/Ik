@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,7 @@ from app.core.error_messages import (
 from app.models.department import Department
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.organization import Branch, LegalEntity
 from app.models.position import Position
 from app.platform.db import constraint_name_from_error
 from app.platform.errors.application import ApplicationError
@@ -31,8 +34,18 @@ from app.schemas.employee import (
 )
 
 EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT = "uq_employees_tenant_employee_number"
+EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT = (
+    "uq_employees_tenant_employee_number_normalized"
+)
+EMPLOYEE_WORK_EMAIL_NORMALIZED_UNIQUE_CONSTRAINT = "uq_employees_tenant_email_normalized"
 _SQLITE_EMPLOYEE_NUMBER_UNIQUE_SIGNATURE = (
     "UNIQUE constraint failed: employees.tenant_id, employees.employee_number"
+)
+_SQLITE_EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_SIGNATURE = (
+    "UNIQUE constraint failed: employees.tenant_id, employees.employee_number_normalized"
+)
+_SQLITE_EMPLOYEE_WORK_EMAIL_NORMALIZED_UNIQUE_SIGNATURE = (
+    "UNIQUE constraint failed: employees.tenant_id, employees.email_normalized"
 )
 
 
@@ -44,11 +57,19 @@ class DuplicateEmployeeNumberError(ApplicationError):
     pass
 
 
+class DuplicateWorkEmailError(ApplicationError):
+    pass
+
+
 class EmployeeDateRangeError(ApplicationError, ValueError):
     pass
 
 
 class EmployeeLifecycleError(ApplicationError, ValueError):
+    pass
+
+
+class EmployeeVersionConflictError(ApplicationError):
     pass
 
 
@@ -67,6 +88,32 @@ class EmployeeReadProjection:
     status: str
     employment_start_date: date
     employment_end_date: date | None
+    version: int
+    current_assignment: EmployeeCurrentAssignmentProjection | None
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeeOrganizationReferenceProjection:
+    id: UUID
+    code: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeePositionReferenceProjection:
+    id: UUID
+    code: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeeCurrentAssignmentProjection:
+    id: UUID
+    legal_entity: EmployeeOrganizationReferenceProjection
+    branch: EmployeeOrganizationReferenceProjection
+    department: EmployeeOrganizationReferenceProjection
+    position: EmployeePositionReferenceProjection
+    effective_from: date
 
 
 class EmployeeService:
@@ -144,6 +191,11 @@ class EmployeeService:
             tenant_id=tenant_id,
             employee_number=payload.employee_number,
         )
+        if payload.email is not None:
+            await self._ensure_work_email_available(
+                tenant_id=tenant_id,
+                work_email=payload.email,
+            )
         employee = Employee(
             id=uuid4(),
             tenant_id=tenant_id,
@@ -161,12 +213,20 @@ class EmployeeService:
         payload: EmployeeUpdate,
     ) -> Employee:
         employee = await self.get_employee(tenant_id, employee_id)
+        if "version" in payload.model_fields_set and payload.version != employee.version:
+            raise EmployeeVersionConflictError
         values = _employee_update_values(payload)
 
         if "employee_number" in values and values["employee_number"] != employee.employee_number:
             await self._ensure_employee_number_available(
                 tenant_id=tenant_id,
                 employee_number=values["employee_number"],
+                exclude_employee_id=employee_id,
+            )
+        if "email" in values and values["email"] is not None:
+            await self._ensure_work_email_available(
+                tenant_id=tenant_id,
+                work_email=values["email"],
                 exclude_employee_id=employee_id,
             )
 
@@ -186,7 +246,7 @@ class EmployeeService:
         await self.session.refresh(employee)
         return employee
 
-    async def delete_employee(self, tenant_id: UUID, employee_id: UUID) -> None:
+    async def delete_employee(self, tenant_id: UUID, employee_id: UUID) -> bool:
         employee = await self._get_employee_or_none(
             tenant_id,
             employee_id,
@@ -194,9 +254,11 @@ class EmployeeService:
         )
         if employee is None:
             raise EmployeeNotFoundError
-        if employee.archived_at is None:
-            employee.archived_at = datetime.now(UTC)
+        if employee.archived_at is not None:
+            return False
+        employee.archived_at = datetime.now(UTC)
         await self.session.flush()
+        return True
 
     async def _flush_employee_write(self) -> None:
         try:
@@ -204,6 +266,8 @@ class EmployeeService:
         except IntegrityError as exc:
             if _is_employee_number_unique_violation(exc):
                 raise DuplicateEmployeeNumberError from exc
+            if _is_employee_work_email_unique_violation(exc):
+                raise DuplicateWorkEmailError from exc
             raise
 
     async def _get_employee_or_none(
@@ -231,13 +295,37 @@ class EmployeeService:
         statement = (
             select(Employee.id)
             .where(Employee.tenant_id == tenant_id)
-            .where(Employee.employee_number == employee_number)
+            .where(
+                Employee.employee_number_normalized
+                == _normalize_uniqueness_text(employee_number)
+            )
         )
         if exclude_employee_id is not None:
             statement = statement.where(Employee.id != exclude_employee_id)
 
         if await self.session.scalar(statement) is not None:
             raise DuplicateEmployeeNumberError
+
+    async def _ensure_work_email_available(
+        self,
+        tenant_id: UUID,
+        work_email: str,
+        exclude_employee_id: UUID | None = None,
+    ) -> None:
+        statement = (
+            select(Employee.id)
+            .where(Employee.tenant_id == tenant_id)
+            .where(Employee.email_normalized == _normalize_uniqueness_text(work_email))
+        )
+        if exclude_employee_id is not None:
+            statement = statement.where(Employee.id != exclude_employee_id)
+
+        if await self.session.scalar(statement) is not None:
+            raise DuplicateWorkEmailError
+
+
+def _normalize_uniqueness_text(value: str) -> str:
+    return value.strip().lower()
 
 
 async def _employee_read_projections(
@@ -256,9 +344,35 @@ async def _employee_read_projections(
     rows = (
         await session.execute(
             select(
-                EmployeeAssignment.employee_id,
-                Department.name,
-                Position.title,
+                EmployeeAssignment.employee_id.label("employee_id"),
+                EmployeeAssignment.id.label("assignment_id"),
+                EmployeeAssignment.effective_from.label("effective_from"),
+                LegalEntity.id.label("legal_entity_id"),
+                LegalEntity.code.label("legal_entity_code"),
+                LegalEntity.name.label("legal_entity_name"),
+                Branch.id.label("branch_id"),
+                Branch.code.label("branch_code"),
+                Branch.name.label("branch_name"),
+                Department.id.label("department_id"),
+                Department.code.label("department_code"),
+                Department.name.label("department_name"),
+                Position.id.label("position_id"),
+                Position.code.label("position_code"),
+                Position.title.label("position_title"),
+            )
+            .join(
+                LegalEntity,
+                and_(
+                    LegalEntity.tenant_id == EmployeeAssignment.tenant_id,
+                    LegalEntity.id == EmployeeAssignment.legal_entity_id,
+                ),
+            )
+            .join(
+                Branch,
+                and_(
+                    Branch.tenant_id == EmployeeAssignment.tenant_id,
+                    Branch.id == EmployeeAssignment.branch_id,
+                ),
             )
             .join(
                 Department,
@@ -286,8 +400,31 @@ async def _employee_read_projections(
         )
     ).all()
     structured = {
-        employee_id: (department_name, position_title)
-        for employee_id, department_name, position_title in rows
+        row.employee_id: EmployeeCurrentAssignmentProjection(
+            id=row.assignment_id,
+            effective_from=row.effective_from,
+            legal_entity=EmployeeOrganizationReferenceProjection(
+                id=row.legal_entity_id,
+                code=row.legal_entity_code,
+                name=row.legal_entity_name,
+            ),
+            branch=EmployeeOrganizationReferenceProjection(
+                id=row.branch_id,
+                code=row.branch_code,
+                name=row.branch_name,
+            ),
+            department=EmployeeOrganizationReferenceProjection(
+                id=row.department_id,
+                code=row.department_code,
+                name=row.department_name,
+            ),
+            position=EmployeePositionReferenceProjection(
+                id=row.position_id,
+                code=row.position_code,
+                title=row.position_title,
+            ),
+        )
+        for row in rows
     }
     return [
         EmployeeReadProjection(
@@ -297,11 +434,21 @@ async def _employee_read_projections(
             first_name=employee.first_name,
             last_name=employee.last_name,
             email=employee.email,
-            department=structured.get(employee.id, (employee.department, employee.position))[0],
-            position=structured.get(employee.id, (employee.department, employee.position))[1],
+            department=(
+                structured[employee.id].department.name
+                if employee.id in structured
+                else employee.department
+            ),
+            position=(
+                structured[employee.id].position.title
+                if employee.id in structured
+                else employee.position
+            ),
             status=employee.status,
             employment_start_date=employee.employment_start_date,
             employment_end_date=employee.employment_end_date,
+            version=employee.version,
+            current_assignment=structured.get(employee.id),
         )
         for employee in employees
     ]
@@ -317,7 +464,7 @@ def _employee_update_values(payload: EmployeeUpdate) -> dict[str, object]:
     values = {
         field_name: getattr(payload, field_name)
         for field_name in EmployeeUpdate.model_fields
-        if field_name in payload.model_fields_set
+        if field_name in payload.model_fields_set and field_name != "version"
     }
     if "status" in values:
         values["status"] = _status_value(values["status"])
@@ -379,16 +526,42 @@ def _employee_list_statement(
                 current_department_normalized,
                 Employee.department_normalized,
             )
-            == filters.department.casefold()
+            == filters.department.lower()
         )
     if filters.status is not None:
         statement = statement.where(Employee.status == _status_value(filters.status))
+    structured_filter_values = {
+        EmployeeAssignment.legal_entity_id: filters.legal_entity_id,
+        EmployeeAssignment.branch_id: filters.branch_id,
+        EmployeeAssignment.department_id: filters.department_id,
+        EmployeeAssignment.position_id: filters.position_id,
+    }
+    if any(value is not None for value in structured_filter_values.values()):
+        effective_on = effective_on or date.today()
+        assignment_predicates = [
+            EmployeeAssignment.tenant_id == tenant_id,
+            EmployeeAssignment.employee_id == Employee.id,
+            EmployeeAssignment.effective_from <= effective_on,
+            or_(
+                EmployeeAssignment.effective_to.is_(None),
+                EmployeeAssignment.effective_to > effective_on,
+            ),
+        ]
+        assignment_predicates.extend(
+            column == value
+            for column, value in structured_filter_values.items()
+            if value is not None
+        )
+        statement = statement.where(
+            exists(select(EmployeeAssignment.id).where(*assignment_predicates))
+        )
     if filters.q is not None:
-        search_pattern = _escaped_contains_pattern(filters.q.casefold())
+        search_pattern = _escaped_contains_pattern(filters.q.lower())
         statement = statement.where(
             or_(
                 Employee.employee_number.ilike(search_pattern, escape="\\"),
                 Employee.email.ilike(search_pattern, escape="\\"),
+                Employee.full_name_normalized.like(search_pattern, escape="\\"),
             )
         )
 
@@ -422,9 +595,25 @@ def _escaped_contains_pattern(value: str) -> str:
 
 
 def _is_employee_number_unique_violation(exc: IntegrityError) -> bool:
-    if constraint_name_from_error(exc) == EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT:
+    if constraint_name_from_error(exc) in {
+        EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
+        EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT,
+    }:
         return True
-    return _SQLITE_EMPLOYEE_NUMBER_UNIQUE_SIGNATURE in str(exc.orig)
+    message = str(exc.orig)
+    return any(
+        signature in message
+        for signature in (
+            _SQLITE_EMPLOYEE_NUMBER_UNIQUE_SIGNATURE,
+            _SQLITE_EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_SIGNATURE,
+        )
+    )
+
+
+def _is_employee_work_email_unique_violation(exc: IntegrityError) -> bool:
+    if constraint_name_from_error(exc) == EMPLOYEE_WORK_EMAIL_NORMALIZED_UNIQUE_CONSTRAINT:
+        return True
+    return _SQLITE_EMPLOYEE_WORK_EMAIL_NORMALIZED_UNIQUE_SIGNATURE in str(exc.orig)
 
 
 def _validate_date_order(start_date: date, end_date: date | None) -> None:

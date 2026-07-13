@@ -38,6 +38,7 @@ from app.schemas.employee import (
     EmployeeRead,
     EmployeeUpdate,
 )
+from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.command_idempotency import CommandIdempotencyService
 from app.services.employee_commands import EmployeeCommandHandler
 from app.services.employee_service import EmployeeService
@@ -71,6 +72,7 @@ def get_employee_command_handler(
         service=service,
         unit_of_work=unit_of_work,
         idempotency=idempotency,
+        audit_recorder=SqlAlchemyAuditRecorder(service.session),
     )
 
 
@@ -91,13 +93,38 @@ def get_employee_list_filters(
         str | None,
         Query(
             description=(
-                "Case-insensitive search over employee_number and email within the tenant."
+                "Case-insensitive search over employee number, full name, and work email "
+                "within the tenant."
             ),
             max_length=320,
         ),
     ] = None,
+    legal_entity_id: Annotated[
+        UUID | None,
+        Query(description="Filters by the currently effective legal entity."),
+    ] = None,
+    branch_id: Annotated[
+        UUID | None,
+        Query(description="Filters by the currently effective branch."),
+    ] = None,
+    department_id: Annotated[
+        UUID | None,
+        Query(description="Filters by the currently effective structured department."),
+    ] = None,
+    position_id: Annotated[
+        UUID | None,
+        Query(description="Filters by the currently effective structured position."),
+    ] = None,
 ) -> EmployeeListFilters:
-    return EmployeeListFilters(department=department, status=status_filter, q=q)
+    return EmployeeListFilters(
+        department=department,
+        status=status_filter,
+        q=q,
+        legal_entity_id=legal_entity_id,
+        branch_id=branch_id,
+        department_id=department_id,
+        position_id=position_id,
+    )
 
 
 def get_employee_list_pagination(
@@ -149,8 +176,9 @@ def get_employee_list_pagination(
     summary="List tenant employees",
     description=(
         "Lists employee directory records for the authenticated tenant session. "
-        "Optional filters cover department, lifecycle status, and employee number or email "
-        "search; tenant isolation is applied before bounded keyset pagination. The bounded "
+        "Optional filters cover lifecycle status, full-text identity search, preserved legacy "
+        "department text, and the currently effective legal entity, branch, department, and "
+        "position; tenant isolation is applied before bounded keyset pagination. The bounded "
         "limit/offset path remains available for compatibility."
     ),
     response_description="Employee list.",
@@ -196,9 +224,11 @@ async def list_employees(
     summary="Create tenant employee",
     description=(
         "Creates an employee master-data record in the authenticated tenant session. Employee "
-        "numbers must remain unique within that tenant, and lifecycle date "
-        "rules are enforced before persistence. An optional X-Idempotency-Key replays the first "
-        "successful response for an equivalent retry in this tenant."
+        "numbers and non-null work emails are normalized and must remain unique within that "
+        "tenant; multiple null work emails are allowed and blank values are rejected. Lifecycle "
+        "checks ensure lifecycle date rules are enforced before persistence. An optional "
+        "X-Idempotency-Key replays the "
+        "first successful response for an equivalent retry in this tenant."
     ),
     response_description="Created employee record.",
     responses={
@@ -226,6 +256,7 @@ async def create_employee(
         request_context.require_tenant().tenant_id,
         payload,
         idempotency_key,
+        request_context=request_context,
     )
 
 
@@ -263,7 +294,9 @@ async def get_employee(
     summary="Update tenant employee",
     description=(
         "Partially updates an employee master-data record in the current tenant while preserving "
-        "tenant isolation, employee number uniqueness, and employment lifecycle date rules."
+        "tenant isolation, normalized employee number/work-email uniqueness, and employment "
+        "lifecycle date rules. Clients may send the last-read version for optimistic conflict "
+        "detection; omitting it preserves the existing compatible patch contract."
     ),
     response_description="Updated employee record.",
     responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
@@ -288,6 +321,7 @@ async def update_employee(
         request_context.require_tenant().tenant_id,
         employee_id,
         payload,
+        request_context=request_context,
     )
 
 
@@ -322,5 +356,6 @@ async def delete_employee(
     await command_handler.delete_employee(
         request_context.require_tenant().tenant_id,
         employee_id,
+        request_context=request_context,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

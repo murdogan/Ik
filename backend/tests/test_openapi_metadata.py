@@ -154,7 +154,7 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         ("/api/v1/employees/{employee_id}", "patch"): (
             EMPLOYEES_TAG,
             "Update tenant employee",
-            "employee number uniqueness",
+            "normalized employee number/work-email uniqueness",
         ),
         ("/api/v1/employees/{employee_id}", "delete"): (
             EMPLOYEES_TAG,
@@ -609,13 +609,27 @@ def test_employee_list_openapi_documents_filter_query_params() -> None:
     operation = response.json()["paths"]["/api/v1/employees"]["get"]
     params = {parameter["name"]: parameter for parameter in operation["parameters"]}
 
-    assert {"department", "status", "q", "limit", "offset", "cursor"}.issubset(params)
+    assert {
+        "department",
+        "status",
+        "q",
+        "legal_entity_id",
+        "branch_id",
+        "department_id",
+        "position_id",
+        "limit",
+        "offset",
+        "cursor",
+    }.issubset(params)
     assert params["department"]["in"] == "query"
     assert "exact department value within the tenant" in params["department"]["description"]
     assert params["status"]["in"] == "query"
     assert "employment lifecycle status" in params["status"]["description"]
     assert params["q"]["in"] == "query"
     assert "within the tenant" in params["q"]["description"]
+    for name in ("legal_entity_id", "branch_id", "department_id", "position_id"):
+        assert params[name]["in"] == "query"
+        assert "currently effective" in params[name]["description"]
     assert params["limit"]["schema"]["default"] == EMPLOYEE_LIST_DEFAULT_LIMIT
     assert params["limit"]["schema"]["maximum"] == EMPLOYEE_LIST_MAX_LIMIT
     assert params["limit"]["schema"]["minimum"] == 1
@@ -697,12 +711,14 @@ def test_employee_and_leave_commands_document_stable_conflict_envelopes() -> Non
     operations = {
         ("/api/v1/employees", "post"): {
             "employee_number_conflict",
+            "employee_work_email_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
             "idempotency_key_mismatch",
         },
         ("/api/v1/employees/{employee_id}", "patch"): {
             "employee_number_conflict",
+            "employee_work_email_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
         },

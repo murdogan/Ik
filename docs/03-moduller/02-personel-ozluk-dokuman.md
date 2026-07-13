@@ -12,6 +12,27 @@ Karar özeti:
 
 Bu modülün başarısı, ürünün “tek çalışan veri modeli” farklılaşmasını doğrudan belirler.
 
+### 1.1 P4A uygulanan ürün sınırı
+
+Phase 4 P4A, bu dokümandaki geniş MVP vizyonunun yalnız ilk çalışan-ana-veri dilimini uygular:
+
+- `employee:read:tenant` yetkili HR kullanıcısı `/employees` altında bounded cursor sayfalı dizini,
+  ad/numara/iş e-postası, durum ve güncel legal entity/branch/department/position filtreleriyle
+  kullanır; `employee:update:tenant` ayrıca minimal çalışan oluşturmayı açar.
+- Minimal kayıt employee number, ad, soyad, optional iş e-postası, durum ve başlangıç tarihidir.
+  Employee number ile non-null iş e-postası tenant içinde trim/lowercase normalize edilerek
+  benzersizdir; `NULL` e-posta tekrarlanabilir, blank e-posta reddedilir.
+- Detail özeti mevcut legacy departman/pozisyon alanlarını ve varsa Phase 3 effective-dated güncel
+  yapısal atamayı birlikte gösterir. Create içinde ikinci bir assignment transaction'ı zincirlenmez;
+  atama mevcut Organization çalışma alanından yapılır.
+- Create, gerçek update ve ilk archive aynı transaction içinde yalnız allowlisted alan adlarını
+  içeren audit eventi yazar; değer, e-posta veya başka hassas payload audit'e kopyalanmaz.
+
+P4A belge yükleme/checklist, self-servis profil, profil değişiklik talebi, import/export,
+notification/mail, raporlama, dinamik alan, ücret/bordro/performans ve hassas kimlik/finans/sağlık
+alanlarını başlatmaz. Aşağıdaki geniş MVP/V1 maddeleri ürün yönü olarak korunur ve sonraki onaylı
+bloklara aittir; P4A teslim edilmiş yüzey iddiası değildir.
+
 ## 2. Kapsam içi / kapsam dışı
 
 | Kapsam içi | Kapsam dışı |

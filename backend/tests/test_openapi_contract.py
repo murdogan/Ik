@@ -180,6 +180,7 @@ P3K_AUTH_MIGRATED_OPERATIONS = {
     "POST /api/v1/leave-requests/{leave_request_id}/reject",
     "POST /api/v1/leave-requests/{leave_request_id}/cancel",
 }
+P4A_APPROVED_COMPONENT_MIGRATIONS = {"EmployeeRead", "EmployeeUpdate"}
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -207,7 +208,12 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
         assert {
             component: current["components"].get(group_name, {}).get(component)
             for component in components
-        } == components
+            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+        } == {
+            component: digest
+            for component, digest in components.items()
+            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+        }
 
 
 def test_current_openapi_surface_is_the_approved_additive_identity_contract() -> None:
@@ -305,6 +311,83 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
                 assert "security" not in operation
 
 
+def test_p4a_employee_schema_expands_the_legacy_contract_without_sensitive_fields() -> None:
+    schemas = create_app().openapi()["components"]["schemas"]
+    employee_read = schemas["EmployeeRead"]
+    legacy_fields = {
+        "id",
+        "employee_number",
+        "first_name",
+        "last_name",
+        "email",
+        "department",
+        "position",
+        "status",
+        "employment_start_date",
+        "employment_end_date",
+    }
+
+    assert set(employee_read["properties"]) == legacy_fields | {
+        "version",
+        "current_assignment",
+    }
+    assert set(employee_read["required"]) == legacy_fields
+    assert employee_read["properties"]["version"] == {
+        "type": "integer",
+        "minimum": 1.0,
+        "title": "Version",
+        "default": 1,
+    }
+    assert employee_read["properties"]["current_assignment"]["anyOf"][0] == {
+        "$ref": "#/components/schemas/EmployeeCurrentAssignmentRead"
+    }
+    employee_update = schemas["EmployeeUpdate"]
+    assert set(employee_update["properties"]) == {
+        "employee_number",
+        "first_name",
+        "last_name",
+        "email",
+        "department",
+        "position",
+        "status",
+        "employment_start_date",
+        "employment_end_date",
+        "version",
+    }
+    assert employee_update["additionalProperties"] is False
+    assert employee_update["properties"]["version"]["anyOf"][0] == {
+        "type": "integer",
+        "minimum": 1.0,
+    }
+    assert set(schemas["EmployeeCurrentAssignmentRead"]["properties"]) == {
+        "id",
+        "legal_entity",
+        "branch",
+        "department",
+        "position",
+        "effective_from",
+    }
+    assert schemas["EmployeeCurrentAssignmentRead"]["additionalProperties"] is False
+    assert set(schemas["EmployeeOrganizationReferenceRead"]["properties"]) == {
+        "id",
+        "code",
+        "name",
+    }
+    assert set(schemas["EmployeePositionReferenceRead"]["properties"]) == {
+        "id",
+        "code",
+        "title",
+    }
+    assert not {
+        "tckn",
+        "passport",
+        "iban",
+        "health",
+        "payroll",
+        "compensation",
+    } & set(employee_read["properties"])
+
+
 def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:
     phase0 = _load_contract(PHASE0_SNAPSHOT_PATH)
     current = build_openapi_contract_manifest(create_app().openapi())
@@ -322,7 +405,12 @@ def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:
         assert {
             component: current["components"].get(group_name, {}).get(component)
             for component in components
-        } == components
+            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+        } == {
+            component: digest
+            for component, digest in components.items()
+            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+        }
 
 
 def test_historical_f1a_is_the_approved_additive_phase0_contract() -> None:

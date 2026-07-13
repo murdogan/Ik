@@ -16,6 +16,7 @@ from app.core.error_messages import (
     EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE,
     EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE,
     EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
+    EMPLOYEE_WORK_EMAIL_CONFLICT_MESSAGE,
     IDEMPOTENCY_KEY_INVALID_MESSAGE,
     IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
     LEAVE_BALANCE_REQUEST_VALIDATION_FAILED_MESSAGE,
@@ -63,11 +64,15 @@ from app.services.employee_assignment_service import (
     EmployeeAssignmentNotFoundError,
 )
 from app.services.employee_service import (
+    EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT,
     EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
+    EMPLOYEE_WORK_EMAIL_NORMALIZED_UNIQUE_CONSTRAINT,
     DuplicateEmployeeNumberError,
+    DuplicateWorkEmailError,
     EmployeeDateRangeError,
     EmployeeLifecycleError,
     EmployeeNotFoundError,
+    EmployeeVersionConflictError,
 )
 from app.services.leave_request_service import (
     LeaveRequestDateRangeError,
@@ -151,6 +156,8 @@ EMPLOYEE_NOT_FOUND_ERROR_CODE = "employee_not_found"
 EMPLOYEE_NOT_FOUND_ERROR_MESSAGE = EMPLOYEE_NOT_FOUND_MESSAGE
 EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE = "employee_number_conflict"
 EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE = EMPLOYEE_NUMBER_CONFLICT_MESSAGE
+EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE = "employee_work_email_conflict"
+EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_MESSAGE = EMPLOYEE_WORK_EMAIL_CONFLICT_MESSAGE
 EMPLOYEE_INVALID_DATE_RANGE_ERROR_CODE = "employee_invalid_date_range"
 EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE = "employee_invalid_lifecycle"
 LEAVE_REQUEST_NOT_FOUND_ERROR_CODE = "leave_request_not_found"
@@ -869,6 +876,10 @@ EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
             EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE,
             EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE,
         ),
+        EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE: _error_example(
+            EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE,
+            EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_MESSAGE,
+        ),
         DATA_INTEGRITY_CONFLICT_ERROR_CODE: _error_example(
             DATA_INTEGRITY_CONFLICT_ERROR_CODE,
             DATA_INTEGRITY_CONFLICT_MESSAGE,
@@ -1046,10 +1057,14 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return employee_not_found_error()
     if isinstance(exc, DuplicateEmployeeNumberError):
         return employee_number_conflict_error()
+    if isinstance(exc, DuplicateWorkEmailError):
+        return employee_work_email_conflict_error()
     if isinstance(exc, EmployeeDateRangeError):
         return employee_date_range_error(str(exc))
     if isinstance(exc, EmployeeLifecycleError):
         return employee_lifecycle_error(str(exc))
+    if isinstance(exc, EmployeeVersionConflictError):
+        return concurrent_write_conflict_error()
     if isinstance(exc, LeaveRequestNotFoundError):
         return leave_request_not_found_error()
     if isinstance(exc, LeaveRequestUserNotFoundError):
@@ -1065,8 +1080,13 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
     if isinstance(exc, PersistenceConcurrencyError):
         return concurrent_write_conflict_error()
     if isinstance(exc, PersistenceIntegrityError):
-        if exc.constraint_name == EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT:
+        if exc.constraint_name in {
+            EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
+            EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT,
+        }:
             return employee_number_conflict_error()
+        if exc.constraint_name == EMPLOYEE_WORK_EMAIL_NORMALIZED_UNIQUE_CONSTRAINT:
+            return employee_work_email_conflict_error()
         return data_integrity_conflict_error()
     return application_command_failed_error()
 
@@ -1492,6 +1512,14 @@ def employee_number_conflict_error() -> ApiError:
         status_code=status.HTTP_409_CONFLICT,
         code=EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE,
         message=EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def employee_work_email_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE,
+        message=EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_MESSAGE,
     )
 
 

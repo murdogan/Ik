@@ -393,4 +393,28 @@ tamamlayan katalog-only revision'dır. Fiziksel ürün tablosu veya Phase 4 alan
 - Upgrade mevcut aynı ID/code satırı farklı anlam taşıyorsa veya permission beklenmeyen role
   grant edilmişse fail closed olur. Downgrade da beklenmeyen retained grant'i silmez.
 
-Bu revision sonrası tek head `0031_p3k_legacy_tenant_auth_boundary`'dır.
+Bu revision sonrası Phase 3 tek head'i `0031_p3k_legacy_tenant_auth_boundary`'dır.
+
+## P4A employee directory expand-contract
+
+`0032_p4a_employee_directory`, mevcut `employees` ve Phase 3 `employee_assignments` sözleşmesini
+daraltmadan HR çalışan dizini için gereken en küçük persistence genişlemesidir.
+
+- `employee_number_normalized`, nullable `email_normalized` ve `full_name_normalized` generated
+  kolonları ile tenant-scoped named unique/index sözleşmeleri eklenir. Employee number ve non-null
+  iş e-postası Unicode uç boşlukları temizlenip lowercase edilerek tenant içinde benzersizdir;
+  birden çok `NULL` e-posta geçerlidir, blank değerler DB check ile reddedilir. Arşivli satırlar da
+  kimlikleri reserve etmeye devam eder.
+- Pozitif `version` optimistic concurrency kolonu, bounded directory/status cursor indexleri,
+  full-name trigram indexi ve legal-entity/position effective-assignment filter indexleri eklenir.
+  Legacy `department`/`position`, raw employee number/email ve assignment history korunur.
+- Upgrade, herhangi bir kolon/index eklemeden önce normalized collision ve blank preflight yapar.
+  PostgreSQL'de global preflight için `employees` FORCE RLS transaction içinde geçici kaldırılır ve
+  başarıda geri kurulur; hata transaction rollback'iyle güvenlik durumunu korur.
+- Downgrade yalnız bütün employee version değerleri `1` iken çalışır. İlerlemiş optimistic token'ı
+  sessizce yeniden `1` yapmak yerine counted preflight ile durur; raw employee değerleri silinmez.
+
+Güncel tek head `0032_p4a_employee_directory`'dır. SQLite migration hattı tamamlayıcıdır;
+generated-column, named-index, ACL/RLS ve concurrency iddialarının gerçek PostgreSQL yolu
+`backend/tests/integration/test_postgresql_p4a_employee_master.py` ve
+`test_postgresql_command_transactions.py` içindedir.

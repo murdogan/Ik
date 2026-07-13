@@ -75,6 +75,7 @@ class EmployeeUpdate(BaseModel):
     status: EmployeeStatus | None = None
     employment_start_date: DateOnly | None = None
     employment_end_date: DateOnly | None = None
+    version: int | None = Field(default=None, ge=1)
 
     @field_validator("employee_number", "first_name", "last_name")
     @classmethod
@@ -107,6 +108,8 @@ class EmployeeUpdate(BaseModel):
             raise ValueError(EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
         if "status" in fields_set and self.status is None:
             raise ValueError(EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE)
+        if "version" in fields_set and self.version is None:
+            raise ValueError("Version must not be null")
         if "status" in fields_set and "employment_end_date" in fields_set:
             _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
         return self
@@ -118,6 +121,10 @@ class EmployeeListFilters(BaseModel):
     department: str | None = None
     status: EmployeeStatus | None = None
     q: str | None = Field(default=None, max_length=320)
+    legal_entity_id: UUID | None = None
+    branch_id: UUID | None = None
+    department_id: UUID | None = None
+    position_id: UUID | None = None
 
     @field_validator("department", "q")
     @classmethod
@@ -157,6 +164,33 @@ class EmployeeListPagination(BaseModel):
         return self
 
 
+class EmployeeOrganizationReferenceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    code: str
+    name: str
+
+
+class EmployeePositionReferenceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    code: str
+    title: str
+
+
+class EmployeeCurrentAssignmentRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    legal_entity: EmployeeOrganizationReferenceRead
+    branch: EmployeeOrganizationReferenceRead
+    department: EmployeeOrganizationReferenceRead
+    position: EmployeePositionReferenceRead
+    effective_from: DateOnly
+
+
 class EmployeeRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -170,6 +204,8 @@ class EmployeeRead(BaseModel):
     status: EmployeeStatus
     employment_start_date: DateOnly
     employment_end_date: DateOnly | None
+    version: int = Field(default=1, ge=1)
+    current_assignment: EmployeeCurrentAssignmentRead | None = None
 
     @model_validator(mode="after")
     def validate_lifecycle_status_end_date(self) -> Self:

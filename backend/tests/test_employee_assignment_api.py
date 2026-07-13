@@ -327,7 +327,7 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
             item["employee"]["id"] for item in other_team_after.json()["data"]
         } == {str(TEAM_EMPLOYEE_ID), str(OTHER_EMPLOYEE_ID)}
 
-        # Structured current names win on the frozen legacy response shape without removing text.
+        # Structured current names win while the legacy text fields remain available.
         async with harness.session_factory.begin() as session:
             employee = await session.get(Employee, TEAM_EMPLOYEE_ID)
             assert employee is not None
@@ -349,9 +349,16 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
             "status",
             "employment_start_date",
             "employment_end_date",
+            "version",
+            "current_assignment",
         }
         assert legacy.json()["department"] == "Platform"
         assert legacy.json()["position"] == "Senior Backend Engineer"
+        assert legacy.json()["current_assignment"]["department"]["name"] == "Platform"
+        assert (
+            legacy.json()["current_assignment"]["position"]["title"]
+            == "Senior Backend Engineer"
+        )
 
         legacy_patch = await harness.client.patch(
             f"/api/v1/employees/{TEAM_EMPLOYEE_ID}",
