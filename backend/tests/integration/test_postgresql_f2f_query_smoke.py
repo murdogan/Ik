@@ -128,8 +128,10 @@ async def test_login_user_list_and_audit_list_stay_bounded(
         print(f"F2F_QUERY_BUDGET_EVIDENCE={json.dumps(evidence, sort_keys=True)}")
 
         assert grant.user.id == ADMIN_ID
-        assert login_counts["SELECT"] <= 4
-        assert sum(login_counts.values()) <= 13
+        # P3E adds two constant-cost credential serialization calls: one before global
+        # membership discovery and one before the tenant session family is minted.
+        assert login_counts["SELECT"] <= 6
+        assert sum(login_counts.values()) <= 15
 
         assert len(user_page.items) == 25
         assert user_page.next_cursor is not None

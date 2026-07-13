@@ -43,6 +43,7 @@ from app.services.authorization_service import (
     AuthorizationSnapshot,
     load_authorization_snapshot,
 )
+from app.services.identity_credential_lock_service import IdentityCredentialLockService
 
 _SESSION_TENANT_STATUSES = frozenset({TenantStatus.TRIAL.value, TenantStatus.ACTIVE.value})
 
@@ -100,6 +101,7 @@ class AuthSessionService:
         self._access_tokens = access_tokens
         self._refresh_ttl = refresh_ttl
         self._audit_recorder_factory = audit_recorder_factory
+        self._credential_locks = IdentityCredentialLockService()
 
     async def start_session(
         self,
@@ -108,6 +110,7 @@ class AuthSessionService:
         tenant_slug: str,
         user_id: UUID,
         membership_id: UUID,
+        verified_password_hash: str,
         authentication_method: str = "local",
         audit_context: AuditContext | None = None,
     ) -> SessionGrant:
@@ -122,6 +125,15 @@ class AuthSessionService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> AuthenticatedUser:
+                credential_current = await self._credential_locks.lock_tenant_membership(
+                    session,
+                    tenant_id=tenant_id,
+                    membership_id=membership_id,
+                    user_id=user_id,
+                    verified_password_hash=verified_password_hash,
+                )
+                if not credential_current:
+                    raise InvalidSessionError()
                 row = (
                     await session.execute(
                         select(User, Tenant, TenantMembership)

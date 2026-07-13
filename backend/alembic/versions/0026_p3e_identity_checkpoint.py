@@ -47,6 +47,8 @@ _SYNC_FUNCTION = "sync_current_tenant_identity_membership"
 _ACCEPT_FUNCTION = "accept_existing_identity_membership"
 _ISSUE_RESET_FUNCTION = "issue_identity_password_reset"
 _COMPLETE_RESET_FUNCTION = "complete_identity_password_reset"
+_GLOBAL_CREDENTIAL_LOCK_FUNCTION = "lock_identity_credential"
+_TENANT_CREDENTIAL_LOCK_FUNCTION = "lock_membership_identity_credential"
 _PROJECTION_ROLE = "wealthy_falcon_identity_projection"
 _RECOVERY_ROLE = "wealthy_falcon_identity_recovery"
 
@@ -76,6 +78,7 @@ def upgrade() -> None:
     _expand_rate_limit_scopes()
     if op.get_bind().dialect.name == "postgresql":
         _configure_postgresql_security()
+        _create_identity_credential_lock_functions()
         _create_existing_identity_acceptance_function()
         _create_password_reset_issue_function()
         _create_password_reset_completion_function()
@@ -86,6 +89,7 @@ def downgrade() -> None:
         _drop_password_reset_completion_function()
         _drop_password_reset_issue_function()
         _drop_existing_identity_acceptance_function()
+        _drop_identity_credential_lock_functions()
         _remove_postgresql_security()
     _contract_rate_limit_scopes()
     op.drop_table(_RESET_TABLE)
@@ -502,6 +506,112 @@ def _create_existing_identity_acceptance_function() -> None:
     )
 
 
+def _create_identity_credential_lock_functions() -> None:
+    op.execute(
+        sa.text(
+            f"""
+            CREATE FUNCTION public.{_GLOBAL_CREDENTIAL_LOCK_FUNCTION}(
+                requested_identity_id uuid,
+                verified_password_hash text
+            )
+            RETURNS boolean
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $p3e_global_credential_lock$
+            DECLARE
+                locked_password_hash text;
+            BEGIN
+                IF verified_password_hash IS NULL
+                   OR length(verified_password_hash) > 1024 THEN
+                    RETURN false;
+                END IF;
+                SELECT identities.password_hash INTO locked_password_hash
+                FROM public.identities AS identities
+                WHERE identities.id = requested_identity_id
+                  AND identities.status = 'active'
+                FOR UPDATE OF identities;
+                RETURN FOUND
+                   AND locked_password_hash IS NOT DISTINCT FROM verified_password_hash;
+            END
+            $p3e_global_credential_lock$
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            f"""
+            CREATE FUNCTION public.{_TENANT_CREDENTIAL_LOCK_FUNCTION}(
+                requested_membership_id uuid,
+                requested_user_id uuid,
+                verified_password_hash text
+            )
+            RETURNS boolean
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $p3e_tenant_credential_lock$
+            DECLARE
+                current_tenant_id uuid;
+                locked_password_hash text;
+            BEGIN
+                current_tenant_id := nullif(
+                    current_setting('app.tenant_id', true), ''
+                )::uuid;
+                IF current_tenant_id IS NULL
+                   OR verified_password_hash IS NULL
+                   OR length(verified_password_hash) > 1024 THEN
+                    RETURN false;
+                END IF;
+                SELECT identities.password_hash INTO locked_password_hash
+                FROM public.identities AS identities
+                JOIN public.tenant_memberships AS memberships
+                  ON memberships.identity_id = identities.id
+                WHERE memberships.tenant_id = current_tenant_id
+                  AND memberships.id = requested_membership_id
+                  AND memberships.legacy_user_id = requested_user_id
+                  AND memberships.status = 'active'
+                  AND identities.status = 'active'
+                FOR UPDATE OF identities;
+                RETURN FOUND
+                   AND locked_password_hash IS NOT DISTINCT FROM verified_password_hash;
+            END
+            $p3e_tenant_credential_lock$
+            """
+        )
+    )
+    for function_name, role_name in (
+        (_GLOBAL_CREDENTIAL_LOCK_FUNCTION, AUTHENTICATION_APPLICATION_ROLE),
+        (_TENANT_CREDENTIAL_LOCK_FUNCTION, TENANT_APPLICATION_ROLE),
+    ):
+        signature = (
+            f"public.{function_name}(uuid, uuid, text)"
+            if function_name == _TENANT_CREDENTIAL_LOCK_FUNCTION
+            else f"public.{function_name}(uuid, text)"
+        )
+        op.execute(sa.text(f'ALTER FUNCTION {signature} OWNER TO "{_RECOVERY_ROLE}"'))
+        op.execute(sa.text(f"REVOKE ALL ON FUNCTION {signature} FROM PUBLIC"))
+        op.execute(sa.text(f'GRANT EXECUTE ON FUNCTION {signature} TO "{role_name}"'))
+
+
+def _drop_identity_credential_lock_functions() -> None:
+    for function_name, signature_arguments, role_name in (
+        (
+            _TENANT_CREDENTIAL_LOCK_FUNCTION,
+            "uuid, uuid, text",
+            TENANT_APPLICATION_ROLE,
+        ),
+        (
+            _GLOBAL_CREDENTIAL_LOCK_FUNCTION,
+            "uuid, text",
+            AUTHENTICATION_APPLICATION_ROLE,
+        ),
+    ):
+        signature = f"public.{function_name}({signature_arguments})"
+        op.execute(sa.text(f'REVOKE EXECUTE ON FUNCTION {signature} FROM "{role_name}"'))
+        op.execute(sa.text(f"DROP FUNCTION IF EXISTS {signature}"))
+
+
 def _drop_existing_identity_acceptance_function() -> None:
     op.execute(
         sa.text(
@@ -529,7 +639,8 @@ def _create_password_reset_completion_function() -> None:
             DECLARE
                 reset_row public.password_reset_tokens%ROWTYPE;
                 identity_row public.identities%ROWTYPE;
-                reset_at timestamptz := clock_timestamp();
+                validation_at timestamptz := clock_timestamp();
+                reset_at timestamptz;
             BEGIN
                 IF length(requested_token_hash) <> 64
                    OR replacement_password_hash NOT LIKE '$argon2id$%'
@@ -542,9 +653,8 @@ def _create_password_reset_completion_function() -> None:
                 WHERE tokens.identity_id = requested_identity_id
                   AND tokens.token_hash = requested_token_hash
                   AND tokens.consumed_at IS NULL
-                  AND tokens.revoked_at IS NULL
-                FOR UPDATE;
-                IF NOT FOUND OR reset_row.expires_at <= reset_at THEN
+                  AND tokens.revoked_at IS NULL;
+                IF NOT FOUND OR reset_row.expires_at <= validation_at THEN
                     RETURN false;
                 END IF;
 
@@ -557,13 +667,31 @@ def _create_password_reset_completion_function() -> None:
                     RETURN false;
                 END IF;
 
+                SELECT tokens.* INTO reset_row
+                FROM public.password_reset_tokens AS tokens
+                WHERE tokens.identity_id = requested_identity_id
+                  AND tokens.token_hash = requested_token_hash
+                  AND tokens.consumed_at IS NULL
+                  AND tokens.revoked_at IS NULL
+                FOR UPDATE;
+                IF NOT FOUND THEN
+                    RETURN false;
+                END IF;
+                reset_at := clock_timestamp();
+                IF reset_row.expires_at <= reset_at THEN
+                    RETURN false;
+                END IF;
+
                 UPDATE public.identities
                 SET password_hash = replacement_password_hash,
                     updated_at = reset_at
                 WHERE id = requested_identity_id;
 
                 UPDATE public.users AS users
-                SET password_hash = replacement_password_hash,
+                SET password_hash = CASE
+                        WHEN users.status = 'invited' THEN NULL
+                        ELSE replacement_password_hash
+                    END,
                     updated_at = reset_at
                 FROM public.tenant_memberships AS memberships
                 WHERE memberships.identity_id = requested_identity_id
@@ -639,11 +767,12 @@ def _create_password_reset_issue_function() -> None:
             AS $p3e_reset_issue$
             DECLARE
                 locked_identity_id uuid;
-                issued_at timestamptz := clock_timestamp();
+                validation_at timestamptz := clock_timestamp();
+                issued_at timestamptz;
             BEGIN
                 IF requested_token_hash !~ '^[0-9a-f]{{64}}$'
-                   OR requested_expires_at <= issued_at
-                   OR requested_expires_at > issued_at + interval '1 hour' THEN
+                   OR requested_expires_at <= validation_at
+                   OR requested_expires_at > validation_at + interval '1 hour' THEN
                     RETURN false;
                 END IF;
                 SELECT id INTO locked_identity_id
@@ -651,6 +780,11 @@ def _create_password_reset_issue_function() -> None:
                 WHERE id = requested_identity_id AND status = 'active'
                 FOR UPDATE;
                 IF NOT FOUND THEN
+                    RETURN false;
+                END IF;
+                issued_at := clock_timestamp();
+                IF requested_expires_at <= issued_at
+                   OR requested_expires_at > issued_at + interval '1 hour' THEN
                     RETURN false;
                 END IF;
                 UPDATE public.password_reset_tokens

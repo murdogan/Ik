@@ -42,6 +42,12 @@ from app.services.authentication_rate_limit_service import (
     AuthenticationRateLimitExceededError,
     AuthenticationRateLimitService,
 )
+from app.services.authentication_service import (
+    AuthenticationService,
+    InvalidCredentialsError,
+    InvalidOrganizationSelectionError,
+    OrganizationSelectionRequired,
+)
 from app.services.authorization_service import assign_system_role, seed_authorization_catalog
 from app.services.identity_projection_service import (
     sync_identity_membership_projection,
@@ -958,6 +964,145 @@ async def test_existing_identity_invitation_accepts_only_the_verified_global_pas
         assert reused.json()["error"]["code"] == "activation_invalid"
 
 
+async def test_password_reset_preserves_pending_existing_identity_reinvitation() -> None:
+    async with _auth_api() as harness:
+        async with harness.session_factory.begin() as session:
+            other_admin = User(
+                id=OTHER_TENANT_ACTIVE_USER_ID,
+                tenant_id=OTHER_TENANT_ID,
+                email=OTHER_TENANT_ACTIVE_EMAIL,
+                full_name="Other Tenant Invite Capable User",
+                status=UserStatus.ACTIVE.value,
+                password_hash=harness.password_manager.hash(OTHER_TENANT_PASSWORD),
+                can_invite_users=True,
+            )
+            session.add(other_admin)
+            await session.flush()
+            await assign_system_role(
+                session,
+                tenant_id=OTHER_TENANT_ID,
+                user_id=other_admin.id,
+                role_code="tenant_admin",
+            )
+            await sync_identity_membership_projection(session, other_admin)
+
+        other_access_token, _ = await _login(
+            harness.client,
+            email=OTHER_TENANT_ACTIVE_EMAIL,
+            password=OTHER_TENANT_PASSWORD,
+        )
+        first_invitation = await harness.client.post(
+            "/api/v1/users/invitations",
+            headers={"Authorization": f"Bearer {other_access_token}"},
+            json={
+                "email": ADMIN_EMAIL,
+                "full_name": "Admin Pending in Other Organization",
+            },
+        )
+        assert first_invitation.status_code == 201
+        invited_user_id = UUID(first_invitation.json()["data"]["user"]["id"])
+        first_activation_token = _activation_token(
+            first_invitation.json()["data"]["activation_url"]
+        )
+
+        delivery = CapturingPasswordResetDelivery(messages=[])
+        recovery = PasswordRecoveryService(
+            session_factory=harness.session_factory,
+            password_manager=harness.password_manager,
+            reset_ttl=timedelta(minutes=15),
+            frontend_base_url="http://frontend.test",
+            delivery=delivery,
+        )
+        harness.app.dependency_overrides[get_password_recovery_service] = lambda: recovery
+        requested = await harness.client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": ADMIN_EMAIL},
+        )
+        assert requested.status_code == 202
+        reset_token = parse_qs(urlsplit(delivery.messages[0].reset_url).fragment)["token"][0]
+        confirmed = await harness.client.post(
+            "/api/v1/auth/password-reset/confirm",
+            json={"token": reset_token, "password": RESET_PASSWORD},
+        )
+        assert confirmed.status_code == 200
+
+        async with harness.session_factory() as session:
+            pending_user = await session.get(User, invited_user_id)
+            canonical_identity = await session.scalar(
+                select(Identity).where(Identity.email_normalized == ADMIN_EMAIL)
+            )
+            first_activation = await session.scalar(
+                select(UserActivationToken).where(
+                    UserActivationToken.token_hash == hash_activation_token(first_activation_token)
+                )
+            )
+        assert pending_user is not None
+        assert pending_user.status == UserStatus.INVITED.value
+        assert pending_user.password_hash is None
+        assert canonical_identity is not None and canonical_identity.password_hash is not None
+        assert harness.password_manager.verify(
+            RESET_PASSWORD,
+            canonical_identity.password_hash,
+        )
+        assert first_activation is not None
+        assert first_activation.consumed_at is None
+        assert first_activation.revoked_at is None
+
+        reinvitation = await harness.client.post(
+            "/api/v1/users/invitations",
+            headers={"Authorization": f"Bearer {other_access_token}"},
+            json={
+                "email": ADMIN_EMAIL,
+                "full_name": "Admin Reinvited to Other Organization",
+            },
+        )
+        assert reinvitation.status_code == 201
+        assert reinvitation.json()["data"]["user"]["id"] == str(invited_user_id)
+        second_activation_token = _activation_token(reinvitation.json()["data"]["activation_url"])
+        assert second_activation_token != first_activation_token
+
+        async with harness.session_factory() as session:
+            first_activation = await session.scalar(
+                select(UserActivationToken).where(
+                    UserActivationToken.token_hash == hash_activation_token(first_activation_token)
+                )
+            )
+            second_activation = await session.scalar(
+                select(UserActivationToken).where(
+                    UserActivationToken.token_hash == hash_activation_token(second_activation_token)
+                )
+            )
+        assert first_activation is not None and first_activation.revoked_at is not None
+        assert second_activation is not None
+        assert second_activation.consumed_at is None
+        assert second_activation.revoked_at is None
+
+        revoked_activation = await harness.client.post(
+            "/api/v1/auth/activate",
+            json={"token": first_activation_token, "password": RESET_PASSWORD},
+        )
+        assert revoked_activation.status_code == 400
+        assert revoked_activation.json()["error"]["code"] == "activation_invalid"
+        activated = await harness.client.post(
+            "/api/v1/auth/activate",
+            json={"token": second_activation_token, "password": RESET_PASSWORD},
+        )
+        assert activated.status_code == 200
+        assert activated.json()["data"]["user"]["tenant_id"] == str(OTHER_TENANT_ID)
+
+        login = await harness.client.post(
+            "/api/v1/auth/login",
+            json={"email": ADMIN_EMAIL, "password": RESET_PASSWORD},
+        )
+        assert login.status_code == 200
+        login_data = login.json()["data"]
+        assert login_data["status"] == "organization_selection_required"
+        assert {choice["display_name"] for choice in login_data["organizations"]} == {
+            "Other Falcon HR",
+            "Wealthy Falcon HR",
+        }
+
+
 async def test_password_reset_is_non_enumerating_single_use_and_revokes_sessions() -> None:
     async with _auth_api() as harness:
         delivery = CapturingPasswordResetDelivery(messages=[])
@@ -1075,6 +1220,90 @@ async def test_password_reset_is_non_enumerating_single_use_and_revokes_sessions
         )
         assert expired.status_code == 400
         assert expired.json()["error"]["code"] == "password_reset_invalid"
+
+
+async def test_reset_commit_blocks_in_flight_single_org_login_session_start() -> None:
+    async with _auth_api() as harness:
+        auth_runtime = getattr(harness.app.state, AUTH_RUNTIME_STATE_KEY)
+        assert isinstance(auth_runtime, AuthRuntime)
+        service = AuthenticationService(
+            session_factory=harness.session_factory,
+            password_manager=harness.password_manager,
+            access_tokens=auth_runtime.access_tokens,
+            refresh_ttl=auth_runtime.refresh_ttl,
+            organization_selection_ttl=auth_runtime.organization_selection_ttl,
+        )
+        replacement_hash = harness.password_manager.hash(RESET_PASSWORD)
+        original_start_session = service._sessions.start_session
+        reset_committed = False
+
+        async def start_session_after_reset(**kwargs: object):
+            nonlocal reset_committed
+            if not reset_committed:
+                async with harness.session_factory.begin() as session:
+                    identity = await session.scalar(
+                        select(Identity).where(Identity.email_normalized == ADMIN_EMAIL)
+                    )
+                    assert identity is not None
+                    identity.password_hash = replacement_hash
+                reset_committed = True
+            return await original_start_session(**kwargs)
+
+        service._sessions.start_session = start_session_after_reset  # type: ignore[method-assign]
+
+        with pytest.raises(InvalidCredentialsError):
+            await service.login(email=ADMIN_EMAIL, password=ADMIN_PASSWORD)
+
+        async with harness.session_factory() as session:
+            assert len(tuple(await session.scalars(select(RefreshSessionFamily)))) == 0
+
+        replacement_login = await service.login(email=ADMIN_EMAIL, password=RESET_PASSWORD)
+        assert not isinstance(replacement_login, OrganizationSelectionRequired)
+        assert replacement_login.user.email == ADMIN_EMAIL
+
+
+async def test_reset_commit_blocks_in_flight_multi_org_selection_session_start() -> None:
+    async with _auth_api() as harness:
+        await _add_admin_membership_in_other_tenant(harness)
+        auth_runtime = getattr(harness.app.state, AUTH_RUNTIME_STATE_KEY)
+        assert isinstance(auth_runtime, AuthRuntime)
+        service = AuthenticationService(
+            session_factory=harness.session_factory,
+            password_manager=harness.password_manager,
+            access_tokens=auth_runtime.access_tokens,
+            refresh_ttl=auth_runtime.refresh_ttl,
+            organization_selection_ttl=auth_runtime.organization_selection_ttl,
+        )
+        selection = await service.login(email=ADMIN_EMAIL, password=ADMIN_PASSWORD)
+        assert isinstance(selection, OrganizationSelectionRequired)
+        selected = next(
+            choice for choice in selection.organizations if choice.display_name == "Other Falcon HR"
+        )
+        replacement_hash = harness.password_manager.hash(RESET_PASSWORD)
+        original_start_session = service._sessions.start_session
+
+        async def start_session_after_reset(**kwargs: object):
+            async with harness.session_factory.begin() as session:
+                identity = await session.scalar(
+                    select(Identity).where(Identity.email_normalized == ADMIN_EMAIL)
+                )
+                assert identity is not None
+                identity.password_hash = replacement_hash
+            return await original_start_session(**kwargs)
+
+        service._sessions.start_session = start_session_after_reset  # type: ignore[method-assign]
+
+        with pytest.raises(InvalidOrganizationSelectionError):
+            await service.select_organization(
+                raw_token=selection.selection_transaction,
+                selection_key=selected.selection_key,
+            )
+
+        async with harness.session_factory() as session:
+            assert len(tuple(await session.scalars(select(RefreshSessionFamily)))) == 0
+
+        replacement_login = await service.login(email=ADMIN_EMAIL, password=RESET_PASSWORD)
+        assert isinstance(replacement_login, OrganizationSelectionRequired)
 
 
 async def test_activation_and_recovery_public_attempts_are_rate_limited() -> None:

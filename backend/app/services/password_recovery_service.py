@@ -19,7 +19,7 @@ from app.models.auth import (
     RefreshSessionFamily,
 )
 from app.models.identity import Identity, IdentityStatus, TenantMembership
-from app.models.user import User
+from app.models.user import User, UserStatus
 from app.platform.audit import (
     AuditActorType,
     AuditCategory,
@@ -287,8 +287,19 @@ class PasswordRecoveryService:
         )
         await session.execute(
             update(User)
-            .where(User.id.in_(membership_user_ids))
+            .where(
+                User.id.in_(membership_user_ids),
+                User.status != UserStatus.INVITED.value,
+            )
             .values(password_hash=replacement_hash)
+        )
+        await session.execute(
+            update(User)
+            .where(
+                User.id.in_(membership_user_ids),
+                User.status == UserStatus.INVITED.value,
+            )
+            .values(password_hash=None)
         )
         await session.execute(
             update(PasswordResetToken)

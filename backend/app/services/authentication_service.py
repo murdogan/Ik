@@ -54,6 +54,7 @@ from app.services.auth_session_service import (
     SessionGrant,
 )
 from app.services.authorization_service import load_authorization_snapshot
+from app.services.identity_credential_lock_service import IdentityCredentialLockService
 from app.services.identity_projection_service import (
     IdentityCredentialConflictError,
     IdentityProjectionConflictError,
@@ -94,6 +95,7 @@ class EligibleMembership:
     tenant_slug: str
     tenant_name: str
     legacy_user_id: UUID
+    verified_password_hash: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +131,7 @@ class AuthenticationService:
         if organization_selection_ttl <= timedelta(0):
             raise ValueError("Organization selection TTL must be positive")
         self._organization_selection_ttl = organization_selection_ttl
+        self._credential_locks = IdentityCredentialLockService()
         self._sessions = AuthSessionService(
             session_factory=session_factory,
             access_tokens=access_tokens,
@@ -153,6 +156,7 @@ class AuthenticationService:
         if (
             identity is None
             or identity.status != IdentityStatus.ACTIVE.value
+            or password_hash is None
             or not valid_password
         ):
             await self.record_global_login_failure(context)
@@ -176,6 +180,7 @@ class AuthenticationService:
                 tenant_slug=membership.tenant_slug,
                 user_id=membership.legacy_user_id,
                 membership_id=membership.membership_id,
+                verified_password_hash=membership.verified_password_hash,
                 audit_context=context,
             )
         except InvalidSessionError as exc:
@@ -238,6 +243,7 @@ class AuthenticationService:
                 tenant_slug=membership.tenant_slug,
                 user_id=membership.legacy_user_id,
                 membership_id=membership.membership_id,
+                verified_password_hash=membership.verified_password_hash,
                 authentication_method="organization_selection",
                 audit_context=context,
             )
@@ -256,15 +262,28 @@ class AuthenticationService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> OrganizationSelectionRequired:
-                current_identity_id = await session.scalar(
-                    select(TenantMembership.identity_id).where(
-                        TenantMembership.tenant_id == tenant_id,
-                        TenantMembership.id == membership_id,
-                        TenantMembership.legacy_user_id == user_id,
-                        TenantMembership.status == MembershipStatus.ACTIVE.value,
+                current_identity = (
+                    await session.execute(
+                        select(TenantMembership.identity_id, Identity.password_hash)
+                        .join(Identity, Identity.id == TenantMembership.identity_id)
+                        .where(
+                            TenantMembership.tenant_id == tenant_id,
+                            TenantMembership.id == membership_id,
+                            TenantMembership.legacy_user_id == user_id,
+                            TenantMembership.status == MembershipStatus.ACTIVE.value,
+                            Identity.status == IdentityStatus.ACTIVE.value,
+                        )
                     )
+                ).one_or_none()
+                if current_identity is None or current_identity.password_hash is None:
+                    raise OrganizationSwitchUnavailableError()
+                current_identity_id = current_identity.identity_id
+                credential_current = await self._credential_locks.lock_global(
+                    session,
+                    identity_id=current_identity_id,
+                    verified_password_hash=current_identity.password_hash,
                 )
-                if current_identity_id is None:
+                if not credential_current:
                     raise OrganizationSwitchUnavailableError()
 
                 rows = list(
@@ -308,6 +327,7 @@ class AuthenticationService:
                         tenant_slug=row.slug,
                         tenant_name=row.name,
                         legacy_user_id=row.legacy_user_id,
+                        verified_password_hash=current_identity.password_hash,
                     )
                     for row in rows
                 )
@@ -530,6 +550,13 @@ class AuthenticationService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> EligibleMembership | OrganizationSelectionRequired | None:
+                credential_current = await self._credential_locks.lock_global(
+                    session,
+                    identity_id=identity_id,
+                    verified_password_hash=verified_password_hash,
+                )
+                if not credential_current or verified_password_hash is None:
+                    return None
                 rows = list(
                     (
                         await session.execute(
@@ -571,6 +598,7 @@ class AuthenticationService:
                         tenant_slug=row.slug,
                         tenant_name=row.name,
                         legacy_user_id=row.legacy_user_id,
+                        verified_password_hash=verified_password_hash,
                     )
                     for row in rows
                 )
@@ -599,6 +627,33 @@ class AuthenticationService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> EligibleMembership | None:
+                credential = (
+                    await session.execute(
+                        select(
+                            OrganizationSelectionTransaction.identity_id,
+                            Identity.password_hash,
+                        )
+                        .join(
+                            Identity,
+                            Identity.id == OrganizationSelectionTransaction.identity_id,
+                        )
+                        .where(
+                            OrganizationSelectionTransaction.id == transaction_id,
+                            OrganizationSelectionTransaction.token_hash == token_hash,
+                            OrganizationSelectionTransaction.consumed_at.is_(None),
+                            Identity.status == IdentityStatus.ACTIVE.value,
+                        )
+                    )
+                ).one_or_none()
+                if credential is None or credential.password_hash is None:
+                    return None
+                credential_current = await self._credential_locks.lock_global(
+                    session,
+                    identity_id=credential.identity_id,
+                    verified_password_hash=credential.password_hash,
+                )
+                if not credential_current:
+                    return None
                 row = (
                     await session.execute(
                         select(
@@ -640,13 +695,12 @@ class AuthenticationService:
                             OrganizationSelectionTransaction.consumed_at.is_(None),
                             OrganizationSelectionChoice.selection_key == selection_key,
                             Identity.status == IdentityStatus.ACTIVE.value,
+                            Identity.password_hash == credential.password_hash,
                             TenantMembership.status == MembershipStatus.ACTIVE.value,
                             Tenant.status.in_(_LOGIN_TENANT_STATUSES),
                             User.status == UserStatus.ACTIVE.value,
                         )
-                        .with_for_update(
-                            of=OrganizationSelectionTransaction
-                        )
+                        .with_for_update(of=OrganizationSelectionTransaction)
                     )
                 ).one_or_none()
                 if row is None:
@@ -670,6 +724,7 @@ class AuthenticationService:
                     tenant_slug=tenant_slug,
                     tenant_name=tenant_name,
                     legacy_user_id=legacy_user_id,
+                    verified_password_hash=credential.password_hash,
                 )
 
             return await unit_of_work.execute(operation)

@@ -39,6 +39,7 @@ from app.platform.identity import (
 from app.platform.request_context import AuthenticationStrength
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.authorization_service import AssignedRole, AuthorizationSnapshot
+from app.services.identity_credential_lock_service import IdentityCredentialLockService
 
 
 class InvalidPlatformSessionError(ApplicationError):
@@ -94,11 +95,13 @@ class PlatformAuthSessionService:
         self._access_tokens = access_tokens
         self._refresh_ttl = refresh_ttl
         self._audit_recorder_factory = audit_recorder_factory
+        self._credential_locks = IdentityCredentialLockService()
 
     async def start_session(
         self,
         *,
         identity_id: UUID,
+        verified_password_hash: str,
         authentication_strength: AuthenticationStrength = AuthenticationStrength.SINGLE_FACTOR,
         audit_context: AuditContext | None = None,
     ) -> PlatformSessionGrant:
@@ -113,6 +116,13 @@ class PlatformAuthSessionService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> PlatformAuthenticatedUser | None:
+                credential_current = await self._credential_locks.lock_global(
+                    session,
+                    identity_id=identity_id,
+                    verified_password_hash=verified_password_hash,
+                )
+                if not credential_current:
+                    raise InvalidPlatformSessionError()
                 identity = await session.scalar(
                     select(Identity).where(Identity.id == identity_id)
                 )

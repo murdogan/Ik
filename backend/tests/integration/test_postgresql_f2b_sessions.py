@@ -237,6 +237,7 @@ async def test_concurrent_refresh_replay_commits_revoke_and_kills_successor_sess
             tenant_slug="f2b-pg-tenant-a",
             user_id=USER_A_ID,
             membership_id=USER_A_ID,
+            verified_password_hash=PASSWORD_HASH,
         )
         original_material = parse_refresh_token(original.refresh_token)
         start = asyncio.Event()

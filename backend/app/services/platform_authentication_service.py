@@ -28,6 +28,7 @@ from app.platform.errors.application import ApplicationError
 from app.platform.identity import PasswordManager, PlatformAccessTokenCodec
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.platform_auth_session_service import (
+    InvalidPlatformSessionError,
     PlatformAuthSessionService,
     PlatformSessionGrant,
 )
@@ -78,14 +79,20 @@ class PlatformAuthenticationService:
         if (
             identity is None
             or identity.status != IdentityStatus.ACTIVE.value
+            or password_hash is None
             or not valid_password
         ):
             await self.record_login_failure(context)
             raise InvalidPlatformCredentialsError()
-        return await self._sessions.start_session(
-            identity_id=identity.id,
-            audit_context=context,
-        )
+        try:
+            return await self._sessions.start_session(
+                identity_id=identity.id,
+                verified_password_hash=password_hash,
+                audit_context=context,
+            )
+        except InvalidPlatformSessionError as exc:
+            await self.record_login_failure(context)
+            raise InvalidPlatformCredentialsError() from exc
 
     async def record_login_failure(self, context: AuditContext) -> None:
         async with self._session_factory() as session:

@@ -425,12 +425,33 @@ async def _upsert_identity_membership_projection(
 ) -> None:
     """Keep the local demo usable through the canonical P3 identity boundary."""
 
-    identity = await session.scalar(
-        select(Identity).where(
-            Identity.email_normalized == user.email.strip().lower()
+    stable_membership = await session.scalar(
+        select(TenantMembership)
+        .where(
+            TenantMembership.tenant_id == user.tenant_id,
+            TenantMembership.legacy_user_id == user.id,
         )
+        .with_for_update()
+    )
+    previous_identity = None
+    if stable_membership is not None:
+        previous_identity = await session.scalar(
+            select(Identity)
+            .where(Identity.id == stable_membership.identity_id)
+            .with_for_update()
+        )
+
+    identity = await session.scalar(
+        select(Identity)
+        .where(Identity.email_normalized == user.email.strip().lower())
+        .with_for_update()
     )
     if identity is None:
+        if previous_identity is not None:
+            raise DemoSeedConflictError(
+                "Demo user email changed without an existing canonical identity; "
+                f"refusing to reinterpret identity {previous_identity.id}"
+            )
         identity = Identity(
             id=user.id,
             email=user.email,
@@ -443,7 +464,13 @@ async def _upsert_identity_membership_projection(
         )
         session.add(identity)
         await session.flush()
-    elif (
+
+    _ensure_compatible_identity_passwords(
+        user=user,
+        identity=identity,
+        previous_identity=previous_identity,
+    )
+    if (
         identity.status == IdentityStatus.PENDING.value
         and user.password_hash is not None
     ):
@@ -451,13 +478,35 @@ async def _upsert_identity_membership_projection(
         identity.status = IdentityStatus.ACTIVE.value
         identity.password_hash = user.password_hash
 
-    membership = await session.scalar(
-        select(TenantMembership).where(
+    canonical_membership = await session.scalar(
+        select(TenantMembership)
+        .where(
             TenantMembership.tenant_id == user.tenant_id,
             TenantMembership.identity_id == identity.id,
         )
+        .with_for_update()
     )
-    if membership is None:
+    if stable_membership is not None:
+        if (
+            canonical_membership is not None
+            and canonical_membership.id != stable_membership.id
+        ):
+            raise DemoSeedConflictError(
+                "Demo identity already has a different membership in tenant "
+                f"{user.tenant_id}"
+            )
+        membership = stable_membership
+        membership.identity_id = identity.id
+        # The superseded identity is intentionally retained. The demo seed does not own any
+        # platform roles, recovery/session history, or other state that may reference it.
+    elif canonical_membership is not None:
+        if canonical_membership.legacy_user_id != user.id:
+            raise DemoSeedConflictError(
+                "Demo identity membership belongs to a different legacy user in tenant "
+                f"{user.tenant_id}"
+            )
+        membership = canonical_membership
+    else:
         membership = TenantMembership(
             id=user.id,
             tenant_id=user.tenant_id,
@@ -468,10 +517,9 @@ async def _upsert_identity_membership_projection(
             permission_version=user.permission_version,
         )
         session.add(membership)
-    else:
-        membership.full_name = user.full_name
-        membership.status = user.status
-        membership.permission_version = user.permission_version
+    membership.full_name = user.full_name
+    membership.status = user.status
+    membership.permission_version = user.permission_version
     await session.flush()
 
     assignments = tuple(
@@ -506,6 +554,28 @@ async def _upsert_identity_membership_projection(
         else:
             projected.active = assignment.active
     await session.flush()
+
+
+def _ensure_compatible_identity_passwords(
+    *,
+    user: User,
+    identity: Identity,
+    previous_identity: Identity | None,
+) -> None:
+    password_hashes = {
+        password_hash
+        for password_hash in (
+            user.password_hash,
+            identity.password_hash,
+            previous_identity.password_hash if previous_identity is not None else None,
+        )
+        if password_hash is not None
+    }
+    if len(password_hashes) > 1:
+        raise DemoSeedConflictError(
+            "Demo identity credential hashes disagree for legacy user "
+            f"{user.id}; refusing to merge identities"
+        )
 
 
 async def _upsert_employees(

@@ -289,6 +289,9 @@ membership tabloları tenant RLS altında read-only'dir. Güncel tek Alembic hea
 P3D ayrı platform auth realm'ini ve P3E existing-identity membership kabulü ile global password
 recovery'yi tamamlar. `password_reset_tokens` yalnız hash/süre/tek-kullanım durumu saklar; P3E
 reset confirm bütün tenant/platform session family'lerini ve açık kurum seçimlerini geçersiz kılar.
+Global credential satır kilidi, doğrulanmış eski hash ile devam eden login/session oluşturma işlemini
+reset ile atomik olarak sıralar; invited membership'in legacy hash'i null kaldığı için reset sonrası
+reinvite ve mevcut global parola ile activation akışı korunur.
 P3A–P3E Phase 3A identity checkpoint'i kapalıdır; P3F organization work bu committe başlamaz.
 
 Veritabanı migration komutları:
@@ -314,8 +317,12 @@ uv run python scripts/seed_demo_data.py
 ```
 
 Seed komutu yalnız `IK_ENVIRONMENT=local` veya `IK_ENVIRONMENT=dev` iken çalışır. Komut
-idempotenttir; iki demo tenant, beş membership kullanıcısı, dört global identity, sekiz çalışan ve beş izin talebini stabil UUID'ler
-ile oluşturur veya demo fixture değerlerine geri günceller. Lokal test/smoke kullanımında hedef
+idempotenttir; iki demo tenant, beş membership kullanıcısı, dört membership-backed canonical demo
+identity, sekiz çalışan ve beş izin talebini stabil UUID'ler ile oluşturur veya demo fixture
+değerlerine geri günceller. P3 öncesi Atlas admin fixture'ından yükseltilen veritabanında membership
+aynı public ID ile ortak admin identity'ye taşınır; artık membership'i olmayan eski identity olası
+security/history bağlantılarını silmemek için korunur ve canonical demo identity sayısına dahil
+edilmez. Lokal test/smoke kullanımında hedef
 veritabanı `--database-url` ile geçici olarak override edilebilir; komut SQLite veya local host
 veritabanı dışındaki hedefleri reddeder. Production/staging deploy, cron, token, credential veya
 `.env` değişikliği yapmaz.

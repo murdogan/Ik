@@ -23,11 +23,23 @@ Push state: `P3E HEAD is intentionally left unpushed for the supervisor; no merg
   The delivery port uses a local/dev console fake only; production mail integration remains outside
   this task. Confirm consumes a hashed 15-minute token once, reconciles legacy credential
   projections, and revokes tenant sessions, platform sessions and pending organization selections.
+  Invited legacy users deliberately keep a null local hash, so an existing identity can still be
+  safely reinvited and activate that pending membership with the new global password after reset.
+- Credential verification and session creation are serialized on the global identity row. A reset
+  that wins the lock makes an in-flight tenant/platform login fail generically; a login that wins
+  creates its family before reset atomically revokes it. Reset issue/completion use the same lock
+  order and take terminal timestamps only after waiting, preserving expiry and timestamp checks.
 - Revision `0026_p3e_identity_checkpoint` is additive. `password_reset_tokens` is FORCE-RLS,
   tenant/platform/authentication capabilities have no table access, and a narrow non-login
-  recovery owner exposes only atomic issuance and token-checked completion functions to the
-  authentication capability. Reused-role stale grants are cleared, unexpected owner members or
-  pre-owned public objects fail closed, and reset-confirm source/token limits run before Argon2id.
+  recovery owner exposes atomic issuance, token-checked completion and exact-hash locking only
+  through narrow functions. Credential-lock execution is granted reciprocally to the
+  authentication or current-tenant capability; platform and cross-tenant calls are denied.
+  Reused-role stale grants are cleared, unexpected owner members or pre-owned public objects fail
+  closed, and reset-confirm source/token limits run before Argon2id.
+- The current demo seed upgrades the pre-P3 Atlas admin without replacing its stable membership
+  ID: that membership is repointed to the shared canonical admin identity, a detached historical
+  identity is retained for possible references, conflicting non-null hashes fail closed, and a
+  second seed run is idempotent.
 - This checkpoint closes Phase 3A only. No legal entity, branch, department, position, assignment
   or other P3F organization work is present.
 
@@ -36,11 +48,11 @@ Push state: `P3E HEAD is intentionally left unpushed for the supervisor; no merg
 | Gate | Command | Result |
 |---|---|---|
 | Backend Ruff | `uv run ruff check backend scripts` | Passed: `All checks passed!` |
-| Full fast backend suite | `uv run pytest -q` | Passed: 819 tests; 50 PostgreSQL tests deselected; one known Starlette/httpx deprecation warning |
-| Focused P3E contracts | `uv run pytest -q backend/tests/test_auth_api.py backend/tests/test_demo_seed_command.py backend/tests/test_demo_seed_service.py backend/tests/test_migrations.py backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py` | Passed: 106 tests; one known Starlette/httpx warning |
+| Full fast backend suite | `uv run pytest -q` | Passed: 825 tests; 51 PostgreSQL tests deselected; one known Starlette/httpx deprecation warning |
+| Focused P3E contracts | `uv run pytest -q backend/tests/test_auth_api.py backend/tests/test_demo_seed_command.py backend/tests/test_demo_seed_service.py backend/tests/test_migrations.py backend/tests/test_openapi_contract.py backend/tests/test_openapi_metadata.py` | Passed: 111 tests; one known Starlette/httpx warning |
 | Alembic head | `uv run alembic heads` | Passed: sole head `0026_p3e_identity_checkpoint` |
 | Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 48 documented runtime endpoints executed |
-| Full PostgreSQL 17.6 lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed: 50 tests; migration round-trip/drift, hostile reused-role cleanup, exact RLS/ACLs, safe rate-scope downgrade, invitation acceptance, reset atomicity and all prior persistence gates |
+| Full PostgreSQL 17.10 lane | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres` | Passed: 51 tests; migration round-trip/drift, hostile reused-role cleanup, exact RLS/ACLs, credential/reset serialization, safe pre-P3 demo upgrade, invitation acceptance, reset atomicity and all prior persistence gates |
 | Frontend static gates | `npm run lint && npm run typecheck && npm run build` in `frontend/` | Passed; production build includes `/forgot-password` and `/reset-password` |
 | Full browser E2E | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npm run test:e2e` in `frontend/` | Passed: 17 Chromium tests, including recovery and existing-identity activation → organization selection |
 | Git hygiene | `git diff --check` plus task-scope review | Passed; no deployment, staging, cron, secret, P3F organization or later-phase change |

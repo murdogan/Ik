@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import UUID
 
+import pytest
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, AuthRuntime
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
 from app.main import create_app
 from app.models.audit import AuditEvent
+from app.models.auth import PlatformRefreshSessionFamily
 from app.models.identity import Identity, PlatformIdentityRole
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
@@ -18,6 +20,10 @@ from app.platform.authorization import ROLE_PERMISSION_CODES, ROLES_BY_CODE
 from app.platform.identity import PasswordManager
 from app.services.authorization_service import assign_system_role, seed_authorization_catalog
 from app.services.identity_projection_service import sync_identity_membership_projection
+from app.services.platform_authentication_service import (
+    InvalidPlatformCredentialsError,
+    PlatformAuthenticationService,
+)
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -330,6 +336,50 @@ async def test_platform_login_contract_forbids_tenant_and_organization_selectors
             assert response.status_code == 422
             assert response.json()["error"]["code"] == "auth_validation_error"
             assert harness.client.cookies.get("wf_platform_refresh") is None
+
+
+async def test_reset_commit_blocks_in_flight_platform_login_session_start() -> None:
+    async with _platform_auth_api() as harness:
+        service = PlatformAuthenticationService(
+            session_factory=harness.session_factory,
+            password_manager=harness.auth_runtime.password_manager,
+            access_tokens=harness.auth_runtime.platform_access_tokens,
+            refresh_ttl=harness.auth_runtime.refresh_ttl,
+        )
+        replacement_password = "Replacement P3E platform credential"
+        replacement_hash = harness.auth_runtime.password_manager.hash(replacement_password)
+        original_start_session = service._sessions.start_session
+        reset_committed = False
+
+        async def start_session_after_reset(**kwargs: object):
+            nonlocal reset_committed
+            if not reset_committed:
+                async with harness.session_factory.begin() as session:
+                    identity = await session.scalar(
+                        select(Identity).where(Identity.email_normalized == PLATFORM_ADMIN_EMAIL)
+                    )
+                    assert identity is not None
+                    identity.password_hash = replacement_hash
+                reset_committed = True
+            return await original_start_session(**kwargs)
+
+        service._sessions.start_session = start_session_after_reset  # type: ignore[method-assign]
+
+        with pytest.raises(InvalidPlatformCredentialsError):
+            await service.login(
+                email=PLATFORM_ADMIN_EMAIL,
+                password=PLATFORM_ADMIN_PASSWORD,
+            )
+
+        async with harness.session_factory() as session:
+            families = tuple(await session.scalars(select(PlatformRefreshSessionFamily)))
+        assert families == ()
+
+        replacement_login = await service.login(
+            email=PLATFORM_ADMIN_EMAIL,
+            password=replacement_password,
+        )
+        assert replacement_login.user.email == PLATFORM_ADMIN_EMAIL
 
 
 async def test_platform_refresh_reuse_revokes_only_the_platform_family() -> None:
