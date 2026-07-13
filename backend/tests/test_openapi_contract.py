@@ -155,6 +155,15 @@ P3H_ADDITIVE_OPERATIONS = {
     "DELETE /api/v1/positions/{position_id}",
 }
 P3H_BEARER_OPERATIONS = P3H_ADDITIVE_OPERATIONS
+P3I_ADDITIVE_OPERATIONS = {
+    "GET /api/v1/employee-assignments",
+    "POST /api/v1/employee-assignments",
+    "GET /api/v1/employee-assignments/options",
+    "GET /api/v1/employee-assignments/{assignment_id}",
+    "PATCH /api/v1/employee-assignments/{assignment_id}",
+    "GET /api/v1/teams/me",
+}
+P3I_BEARER_OPERATIONS = P3I_ADDITIVE_OPERATIONS
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -192,7 +201,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
 
-    assert current["operation_count"] == 67
+    assert current["operation_count"] == 73
     assert set(current["operations"]) == (
         set(f1e["operations"])
         | F2_APPROVED_ADDITIVE_OPERATIONS
@@ -202,6 +211,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3F_ADDITIVE_OPERATIONS
         | P3G_ADDITIVE_OPERATIONS
         | P3H_ADDITIVE_OPERATIONS
+        | P3I_ADDITIVE_OPERATIONS
     )
     bearer_security = [{"BearerAuth": []}]
     assert {
@@ -215,6 +225,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3F_BEARER_OPERATIONS
         | P3G_BEARER_OPERATIONS
         | P3H_BEARER_OPERATIONS
+        | P3I_BEARER_OPERATIONS
     )
     platform_bearer_security = [{"PlatformBearerAuth": []}]
     assert {
@@ -268,6 +279,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
                 | P3F_BEARER_OPERATIONS
                 | P3G_BEARER_OPERATIONS
                 | P3H_BEARER_OPERATIONS
+                | P3I_BEARER_OPERATIONS
             ):
                 assert "security" not in operation
 

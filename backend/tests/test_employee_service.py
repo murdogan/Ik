@@ -3,7 +3,11 @@ from uuid import UUID
 
 import pytest
 from app.db.base import Base
+from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_assignment import EmployeeAssignment
+from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
+from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.schemas.employee import (
     EmployeeCreate,
@@ -18,7 +22,7 @@ from app.services.employee_service import (
     EmployeeNotFoundError,
     EmployeeService,
 )
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -28,6 +32,11 @@ EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SECOND_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 OTHER_EMPLOYEE_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 TERMINATED_EMPLOYEE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+ASSIGNMENT_EFFECTIVE_ON = date(2026, 7, 13)
+BRANCH_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+STRUCTURED_DEPARTMENT_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1")
+EXPIRED_DEPARTMENT_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2")
+STRUCTURED_POSITION_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3")
 
 
 async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
@@ -117,6 +126,95 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
     return session, engine
 
 
+async def _add_structured_assignment_history(session: AsyncSession) -> None:
+    session.add_all(
+        [
+            LegalEntity(
+                id=TENANT_ID,
+                tenant_id=TENANT_ID,
+                code="DEFAULT",
+                name="Wealthy Falcon HR",
+                registered_name="Wealthy Falcon HR",
+                timezone="Europe/Istanbul",
+                status=LegalEntityStatus.ACTIVE.value,
+                is_default=True,
+            ),
+            Branch(
+                id=BRANCH_ID,
+                tenant_id=TENANT_ID,
+                legal_entity_id=TENANT_ID,
+                code="HQ",
+                name="Headquarters",
+                timezone="Europe/Istanbul",
+                status=BranchStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Department(
+                id=STRUCTURED_DEPARTMENT_ID,
+                tenant_id=TENANT_ID,
+                parent_id=None,
+                code="STRUCTURED",
+                name="Structured Engineering",
+                status=DepartmentStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Department(
+                id=EXPIRED_DEPARTMENT_ID,
+                tenant_id=TENANT_ID,
+                parent_id=None,
+                code="EXPIRED",
+                name="Expired Sales",
+                status=DepartmentStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Position(
+                id=STRUCTURED_POSITION_ID,
+                tenant_id=TENANT_ID,
+                code="STRUCTURED",
+                title="Structured Platform Engineer",
+                status=PositionStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+        ]
+    )
+    await session.flush()
+    session.add_all(
+        [
+            EmployeeAssignment(
+                id=UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4"),
+                tenant_id=TENANT_ID,
+                employee_id=EMPLOYEE_ID,
+                legal_entity_id=TENANT_ID,
+                branch_id=BRANCH_ID,
+                department_id=STRUCTURED_DEPARTMENT_ID,
+                position_id=STRUCTURED_POSITION_ID,
+                manager_user_id=None,
+                supersedes_assignment_id=None,
+                effective_from=date(2026, 7, 1),
+                effective_to=None,
+                change_reason="Current structured assignment",
+                created_by_user_id=None,
+            ),
+            EmployeeAssignment(
+                id=UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee5"),
+                tenant_id=TENANT_ID,
+                employee_id=SECOND_EMPLOYEE_ID,
+                legal_entity_id=TENANT_ID,
+                branch_id=BRANCH_ID,
+                department_id=EXPIRED_DEPARTMENT_ID,
+                position_id=STRUCTURED_POSITION_ID,
+                manager_user_id=None,
+                supersedes_assignment_id=None,
+                effective_from=date(2026, 6, 1),
+                effective_to=ASSIGNMENT_EFFECTIVE_ON,
+                change_reason="Expired structured assignment",
+                created_by_user_id=None,
+            ),
+        ]
+    )
+    await session.commit()
+
+
 async def test_list_employees_department_filter_trims_stored_department() -> None:
     session, engine = await _session_with_seed_data()
     try:
@@ -126,6 +224,58 @@ async def test_list_employees_department_filter_trims_stored_department() -> Non
         )
 
         assert [employee.employee_number for employee in employees] == ["WF-001", "WF-002"]
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_department_filter_prefers_current_assignment_and_bounds_queries() -> None:
+    session, engine = await _session_with_seed_data()
+    await _add_structured_assignment_history(session)
+    statements: list[str] = []
+
+    def capture_statement(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters,
+        _context,
+        _executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        service = EmployeeService(session, today=ASSIGNMENT_EFFECTIVE_ON)
+        all_employees = await service.list_employees(TENANT_ID)
+        structured = await service.list_employees(
+            TENANT_ID,
+            filters=EmployeeListFilters(
+                department="structured engineering",
+                status=EmployeeStatus.ACTIVE,
+            ),
+        )
+        legacy_fallback = await service.list_employees(
+            TENANT_ID,
+            filters=EmployeeListFilters(department="people"),
+        )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+
+    try:
+        assert len(statements) == 6
+        assert [employee.employee_number for employee in all_employees] == [
+            "WF-001",
+            "WF-002",
+            "WF-003",
+        ]
+        assert [employee.employee_number for employee in structured] == ["WF-001"]
+        assert structured[0].department == "Structured Engineering"
+        assert structured[0].position == "Structured Platform Engineer"
+
+        assert [employee.employee_number for employee in legacy_fallback] == ["WF-002"]
+        assert legacy_fallback[0].department == " People "
+        assert legacy_fallback[0].position == "People Partner"
     finally:
         await session.close()
         await engine.dispose()

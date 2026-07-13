@@ -118,6 +118,7 @@
 .viewTabs button:focus-visible,
 .dangerButton:focus-visible,
 .iconButton:focus-visible,
+.selectorField input:focus-visible,
 .selectorField select:focus-visible,
 .statusFilter select:focus-visible,
 .positionSearch input:focus-visible,
@@ -161,6 +162,7 @@
   font-weight: 750;
 }
 
+.selectorField input,
 .selectorField select,
 .statusFilter select,
 .formField input,
@@ -174,6 +176,7 @@
   font-size: 14px;
 }
 
+.selectorField input,
 .selectorField select,
 .statusFilter select,
 .formField input,
@@ -185,6 +188,10 @@
 .statusFilter select,
 .formField select {
   padding: 0 35px 0 13px;
+}
+
+.selectorField input {
+  padding: 0 13px;
 }
 
 .formField input {
@@ -1319,6 +1326,161 @@
   line-height: 1.55;
 }
 
+.assignmentSelector {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 17px 20px;
+  border-bottom: 1px solid var(--wf-line);
+  background: #fbfdfc;
+}
+
+.assignmentSearch {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 20px 0;
+  background: #fbfdfc;
+}
+
+.assignmentSearch .selectorField {
+  width: min(560px, 100%);
+}
+
+.assignmentSelector .selectorField {
+  width: min(560px, 100%);
+}
+
+.selectedEmployeeSummary {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+  color: var(--wf-muted);
+  font-size: 11px;
+}
+
+.selectedEmployeeSummary strong {
+  font-weight: 650;
+}
+
+.statusBadge[data-status="on_leave"] {
+  border-color: #c7ddfa;
+  color: #315f9c;
+  background: #eef5ff;
+}
+
+.statusBadge[data-status="terminated"] {
+  border-color: #ead7ba;
+  color: #815c2c;
+  background: #fff8ed;
+}
+
+.assignmentHistoryLoading {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--wf-muted);
+  font-size: 13px;
+}
+
+.assignmentHistoryLoading .spinner,
+.dialogLoading .spinner {
+  margin: 0;
+}
+
+.assignmentEmptyState {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 20px;
+}
+
+.assignmentEmptyState > div {
+  display: grid;
+  max-width: 620px;
+  gap: 6px;
+}
+
+.assignmentEmptyState strong {
+  color: var(--wf-ink);
+  font-size: 15px;
+}
+
+.assignmentEmptyState span {
+  color: var(--wf-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.assignmentTable {
+  min-width: 980px;
+}
+
+.assignmentTable th:first-child {
+  width: 22%;
+}
+
+.assignmentTable th:nth-child(2) {
+  width: 17%;
+}
+
+.assignmentTable th:nth-child(3) {
+  width: 18%;
+}
+
+.assignmentTable th:nth-child(4) {
+  width: 15%;
+}
+
+.assignmentTable th:nth-child(5) {
+  width: 18%;
+}
+
+.assignmentTable th:last-child {
+  width: 10%;
+}
+
+.assignmentPageError,
+.assignmentPagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--wf-line);
+}
+
+.assignmentPageError {
+  color: #783936;
+  background: #fff9f8;
+  font-size: 12px;
+}
+
+.dialogLoading {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--wf-muted);
+  font-size: 13px;
+}
+
+.inlineWarning {
+  padding: 12px 14px;
+  border: 1px solid #ead7ba;
+  border-radius: 12px;
+  color: #704d23;
+  background: #fff9ee;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .visuallyHidden {
   position: absolute;
   width: 1px;
@@ -1397,6 +1559,16 @@
     justify-content: flex-start;
   }
 
+  .assignmentSearch,
+  .assignmentSelector,
+  .assignmentEmptyState {
+    display: grid;
+  }
+
+  .selectedEmployeeSummary {
+    justify-items: start;
+  }
+
   .departmentNode {
     grid-template-columns: 34px minmax(0, 1fr) auto;
   }
@@ -1439,6 +1611,10 @@
   .branchTable td {
     display: block;
     width: 100%;
+  }
+
+  .assignmentTable {
+    min-width: 0;
   }
 
   .branchTable thead {

@@ -1,12 +1,14 @@
 from dataclasses import dataclass
-from datetime import date
-from uuid import UUID
+from datetime import date, timedelta
+from uuid import UUID, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.authorization import UserRole
+from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_assignment import EmployeeAssignment
 from app.models.identity import (
     Identity,
     IdentityStatus,
@@ -14,7 +16,13 @@ from app.models.identity import (
     TenantMembership,
 )
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
-from app.models.organization import LegalEntity, LegalEntityStatus
+from app.models.organization import (
+    Branch,
+    BranchStatus,
+    LegalEntity,
+    LegalEntityStatus,
+)
+from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.modules.core.domain.feature_flags import FeatureFlagKey
@@ -90,6 +98,14 @@ class DemoSeedResult:
 
 class DemoSeedConflictError(RuntimeError):
     pass
+
+
+_DEMO_STRUCTURE_NAMESPACE = UUID("f9000000-0000-4000-8000-000000000001")
+_DEMO_MANAGER_USER_KEY_BY_TENANT = {
+    "wealthy_falcon": "wf_manager",
+    "atlas": "atlas_manager",
+}
+_DEMO_BRANCH_NAME = "Demo Main Branch"
 
 
 DEMO_TENANTS: tuple[DemoTenantFixture, ...] = (
@@ -332,6 +348,14 @@ async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
     await session.flush()
 
     employees = await _upsert_employees(session, tenants)
+    await session.flush()
+
+    await _ensure_structured_employee_assignments(
+        session,
+        tenants=tenants,
+        users=users,
+        employees=employees,
+    )
     await session.flush()
 
     await _upsert_leave_requests(session, tenants, users, employees)
@@ -681,6 +705,310 @@ async def _upsert_employees(
         employee.archived_at = None
         employees[fixture.key] = employee
     return employees
+
+
+async def _ensure_structured_employee_assignments(
+    session: AsyncSession,
+    *,
+    tenants: dict[str, Tenant],
+    users: dict[str, User],
+    employees: dict[str, Employee],
+) -> None:
+    """Add the P3I demo projection without taking ownership of existing history."""
+
+    legal_entities: dict[str, LegalEntity] = {}
+    branches: dict[str, Branch] = {}
+    for tenant_key, tenant in tenants.items():
+        legal_entity = await _active_default_legal_entity(session, tenant)
+        legal_entities[tenant_key] = legal_entity
+        branches[tenant_key] = await _ensure_demo_branch(
+            session,
+            tenant_key=tenant_key,
+            tenant=tenant,
+            legal_entity=legal_entity,
+        )
+
+    departments: dict[tuple[str, str], Department] = {}
+    positions: dict[tuple[str, str], Position] = {}
+    for fixture in DEMO_EMPLOYEES:
+        tenant = tenants[fixture.tenant_key]
+        department_key = (fixture.tenant_key, _normalized_demo_label(fixture.department))
+        if department_key not in departments:
+            departments[department_key] = await _ensure_demo_department(
+                session,
+                tenant=tenant,
+                label=fixture.department,
+            )
+
+        position_key = (fixture.tenant_key, _normalized_demo_label(fixture.position))
+        if position_key not in positions:
+            positions[position_key] = await _ensure_demo_position(
+                session,
+                tenant=tenant,
+                title=fixture.position,
+            )
+
+    for fixture in DEMO_EMPLOYEES:
+        employee = employees[fixture.key]
+        existing_assignment_id = await session.scalar(
+            select(EmployeeAssignment.id)
+            .where(
+                EmployeeAssignment.tenant_id == employee.tenant_id,
+                EmployeeAssignment.employee_id == employee.id,
+            )
+            .limit(1)
+        )
+        if existing_assignment_id is not None:
+            # The seed is an expand-side bootstrap only. Once any history exists, P3I commands
+            # exclusively own that employee's assignment chain.
+            continue
+
+        manager_key = _DEMO_MANAGER_USER_KEY_BY_TENANT[fixture.tenant_key]
+        manager = users[manager_key]
+        _ensure_same_tenant(
+            manager.tenant_id,
+            employee.tenant_id,
+            f"assignment manager {manager.id}",
+        )
+        if manager.status != UserStatus.ACTIVE.value:
+            raise DemoSeedConflictError(
+                f"Demo assignment manager {manager.id} is not active"
+            )
+
+        assignment_id = _demo_structure_id(
+            "assignment",
+            employee.tenant_id,
+            str(employee.id),
+        )
+        conflicting_assignment = await session.get(EmployeeAssignment, assignment_id)
+        if conflicting_assignment is not None:
+            raise DemoSeedConflictError(
+                f"Demo assignment id {assignment_id} is already in use"
+            )
+
+        effective_to = None
+        if fixture.status is EmployeeStatus.TERMINATED:
+            if fixture.employment_end_date is None:
+                raise DemoSeedConflictError(
+                    f"Terminated demo employee {employee.id} has no employment end date"
+                )
+            effective_to = fixture.employment_end_date + timedelta(days=1)
+
+        session.add(
+            EmployeeAssignment(
+                id=assignment_id,
+                tenant_id=employee.tenant_id,
+                employee_id=employee.id,
+                legal_entity_id=legal_entities[fixture.tenant_key].id,
+                branch_id=branches[fixture.tenant_key].id,
+                department_id=departments[
+                    (fixture.tenant_key, _normalized_demo_label(fixture.department))
+                ].id,
+                position_id=positions[
+                    (fixture.tenant_key, _normalized_demo_label(fixture.position))
+                ].id,
+                manager_user_id=manager.id,
+                supersedes_assignment_id=None,
+                effective_from=fixture.employment_start_date,
+                effective_to=effective_to,
+                change_reason="Demo structured employee assignment",
+                created_by_user_id=None,
+            )
+        )
+
+
+async def _active_default_legal_entity(
+    session: AsyncSession,
+    tenant: Tenant,
+) -> LegalEntity:
+    legal_entity = await session.scalar(
+        select(LegalEntity).where(
+            LegalEntity.tenant_id == tenant.id,
+            LegalEntity.is_default.is_(True),
+        )
+    )
+    if legal_entity is None:
+        raise DemoSeedConflictError(
+            f"Demo tenant {tenant.id} has no default legal entity"
+        )
+    if legal_entity.status != LegalEntityStatus.ACTIVE.value:
+        raise DemoSeedConflictError(
+            f"Demo tenant {tenant.id} default legal entity is not active"
+        )
+    return legal_entity
+
+
+async def _ensure_demo_branch(
+    session: AsyncSession,
+    *,
+    tenant_key: str,
+    tenant: Tenant,
+    legal_entity: LegalEntity,
+) -> Branch:
+    code = f"DEMO-B-{tenant_key.replace('_', '-').upper()}"
+    branch = await session.scalar(
+        select(Branch)
+        .where(
+            Branch.tenant_id == tenant.id,
+            Branch.legal_entity_id == legal_entity.id,
+            func.lower(func.trim(Branch.code)) == code.casefold(),
+        )
+        .order_by(Branch.id)
+    )
+    if branch is not None:
+        if (
+            branch.status != BranchStatus.ACTIVE.value
+            or branch.archived_at is not None
+        ):
+            raise DemoSeedConflictError(
+                f"Demo branch code {code!r} is retained by an archived branch"
+            )
+        return branch
+
+    branch_id = _demo_structure_id("branch", tenant.id, tenant_key)
+    if await session.get(Branch, branch_id) is not None:
+        raise DemoSeedConflictError(f"Demo branch id {branch_id} is already in use")
+    branch = Branch(
+        id=branch_id,
+        tenant_id=tenant.id,
+        legal_entity_id=legal_entity.id,
+        code=code,
+        name=_DEMO_BRANCH_NAME,
+        timezone=tenant.timezone,
+        country_code=None,
+        city=None,
+        address=None,
+        status=BranchStatus.ACTIVE.value,
+        archived_at=None,
+    )
+    session.add(branch)
+    await session.flush()
+    return branch
+
+
+async def _ensure_demo_department(
+    session: AsyncSession,
+    *,
+    tenant: Tenant,
+    label: str,
+) -> Department:
+    normalized = _normalized_demo_label(label)
+    department = await session.scalar(
+        select(Department)
+        .where(
+            Department.tenant_id == tenant.id,
+            Department.status == DepartmentStatus.ACTIVE.value,
+            Department.archived_at.is_(None),
+            func.lower(func.trim(Department.name)) == normalized,
+        )
+        .order_by(Department.id)
+    )
+    if department is not None:
+        return department
+
+    department_id = _demo_structure_id("department", tenant.id, normalized)
+    code = _demo_catalog_code("D", department_id)
+    await _ensure_demo_catalog_identity_available(
+        session,
+        model=Department,
+        tenant_id=tenant.id,
+        resource_id=department_id,
+        code=code,
+        resource_name="department",
+    )
+    department = Department(
+        id=department_id,
+        tenant_id=tenant.id,
+        parent_id=None,
+        code=code,
+        name=label.strip(),
+        status=DepartmentStatus.ACTIVE.value,
+        archived_at=None,
+    )
+    session.add(department)
+    await session.flush()
+    return department
+
+
+async def _ensure_demo_position(
+    session: AsyncSession,
+    *,
+    tenant: Tenant,
+    title: str,
+) -> Position:
+    normalized = _normalized_demo_label(title)
+    position = await session.scalar(
+        select(Position)
+        .where(
+            Position.tenant_id == tenant.id,
+            Position.status == PositionStatus.ACTIVE.value,
+            Position.archived_at.is_(None),
+            func.lower(func.trim(Position.title)) == normalized,
+        )
+        .order_by(Position.id)
+    )
+    if position is not None:
+        return position
+
+    position_id = _demo_structure_id("position", tenant.id, normalized)
+    code = _demo_catalog_code("P", position_id)
+    await _ensure_demo_catalog_identity_available(
+        session,
+        model=Position,
+        tenant_id=tenant.id,
+        resource_id=position_id,
+        code=code,
+        resource_name="position",
+    )
+    position = Position(
+        id=position_id,
+        tenant_id=tenant.id,
+        code=code,
+        title=title.strip(),
+        status=PositionStatus.ACTIVE.value,
+        archived_at=None,
+    )
+    session.add(position)
+    await session.flush()
+    return position
+
+
+async def _ensure_demo_catalog_identity_available(
+    session: AsyncSession,
+    *,
+    model: type[Department] | type[Position],
+    tenant_id: UUID,
+    resource_id: UUID,
+    code: str,
+    resource_name: str,
+) -> None:
+    if await session.get(model, resource_id) is not None:
+        raise DemoSeedConflictError(
+            f"Demo {resource_name} id {resource_id} is already in use"
+        )
+    code_column = model.code
+    conflicting_code_id = await session.scalar(
+        select(model.id).where(
+            model.tenant_id == tenant_id,
+            func.lower(func.trim(code_column)) == code.casefold(),
+        )
+    )
+    if conflicting_code_id is not None:
+        raise DemoSeedConflictError(
+            f"Demo {resource_name} code {code!r} is already in use"
+        )
+
+
+def _normalized_demo_label(value: str) -> str:
+    return value.strip().casefold()
+
+
+def _demo_structure_id(resource: str, tenant_id: UUID, key: str) -> UUID:
+    return uuid5(_DEMO_STRUCTURE_NAMESPACE, f"{resource}:{tenant_id}:{key}")
+
+
+def _demo_catalog_code(resource: str, resource_id: UUID) -> str:
+    return f"DEMO-{resource}-{resource_id.hex[:16].upper()}"
 
 
 async def _upsert_leave_requests(

@@ -1,7 +1,8 @@
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +15,10 @@ from app.core.error_messages import (
     EMPLOYEE_STATUS_REQUIRED_MESSAGE,
     EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
 )
+from app.models.department import Department
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_assignment import EmployeeAssignment
+from app.models.position import Position
 from app.platform.db import constraint_name_from_error
 from app.platform.errors.application import ApplicationError
 from app.platform.pagination import CursorPage
@@ -48,16 +52,34 @@ class EmployeeLifecycleError(ApplicationError, ValueError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class EmployeeReadProjection:
+    """Legacy employee shape with structured current organization values when present."""
+
+    id: UUID
+    tenant_id: UUID
+    employee_number: str
+    first_name: str
+    last_name: str
+    email: str | None
+    department: str | None
+    position: str | None
+    status: str
+    employment_start_date: date
+    employment_end_date: date | None
+
+
 class EmployeeService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, today: date | None = None) -> None:
         self.session = session
+        self.today = today or date.today()
 
     async def list_employees(
         self,
         tenant_id: UUID,
         filters: EmployeeListFilters | None = None,
         pagination: EmployeeListPagination | None = None,
-    ) -> list[Employee]:
+    ) -> list[EmployeeReadProjection]:
         page = await self.list_employee_page(tenant_id, filters, pagination)
         return page.items
 
@@ -66,20 +88,45 @@ class EmployeeService:
         tenant_id: UUID,
         filters: EmployeeListFilters | None = None,
         pagination: EmployeeListPagination | None = None,
-    ) -> CursorPage[Employee]:
+    ) -> CursorPage[EmployeeReadProjection]:
         filters = filters or EmployeeListFilters()
         pagination = pagination or EmployeeListPagination()
-        statement = _employee_list_statement(tenant_id, filters, pagination)
+        statement = _employee_list_statement(
+            tenant_id,
+            filters,
+            pagination,
+            effective_on=self.today,
+        )
         rows = list(await self.session.scalars(statement))
-        items = rows[: pagination.limit]
+        employees = rows[: pagination.limit]
+        items = await _employee_read_projections(
+            self.session,
+            tenant_id=tenant_id,
+            employees=employees,
+            effective_on=self.today,
+        )
         next_cursor = None
         if len(rows) > pagination.limit:
-            last_item = items[-1]
+            last_item = employees[-1]
             next_cursor = EmployeeListCursor(
                 employee_number=last_item.employee_number,
                 id=last_item.id,
             ).to_token()
         return CursorPage(items=items, next_cursor=next_cursor)
+
+    async def get_employee_read(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+    ) -> EmployeeReadProjection:
+        employee = await self.get_employee(tenant_id, employee_id)
+        projections = await _employee_read_projections(
+            self.session,
+            tenant_id=tenant_id,
+            employees=[employee],
+            effective_on=self.today,
+        )
+        return projections[0]
 
     async def get_employee(self, tenant_id: UUID, employee_id: UUID) -> Employee:
         employee = await self._get_employee_or_none(tenant_id, employee_id)
@@ -193,6 +240,73 @@ class EmployeeService:
             raise DuplicateEmployeeNumberError
 
 
+async def _employee_read_projections(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    employees: list[Employee],
+    effective_on: date | None = None,
+) -> list[EmployeeReadProjection]:
+    """Batch-resolve structured current names, falling back to preserved legacy strings."""
+
+    if not employees:
+        return []
+    employee_ids = tuple(employee.id for employee in employees)
+    effective_on = effective_on or date.today()
+    rows = (
+        await session.execute(
+            select(
+                EmployeeAssignment.employee_id,
+                Department.name,
+                Position.title,
+            )
+            .join(
+                Department,
+                and_(
+                    Department.tenant_id == EmployeeAssignment.tenant_id,
+                    Department.id == EmployeeAssignment.department_id,
+                ),
+            )
+            .join(
+                Position,
+                and_(
+                    Position.tenant_id == EmployeeAssignment.tenant_id,
+                    Position.id == EmployeeAssignment.position_id,
+                ),
+            )
+            .where(
+                EmployeeAssignment.tenant_id == tenant_id,
+                EmployeeAssignment.employee_id.in_(employee_ids),
+                EmployeeAssignment.effective_from <= effective_on,
+                or_(
+                    EmployeeAssignment.effective_to.is_(None),
+                    EmployeeAssignment.effective_to > effective_on,
+                ),
+            )
+        )
+    ).all()
+    structured = {
+        employee_id: (department_name, position_title)
+        for employee_id, department_name, position_title in rows
+    }
+    return [
+        EmployeeReadProjection(
+            id=employee.id,
+            tenant_id=employee.tenant_id,
+            employee_number=employee.employee_number,
+            first_name=employee.first_name,
+            last_name=employee.last_name,
+            email=employee.email,
+            department=structured.get(employee.id, (employee.department, employee.position))[0],
+            position=structured.get(employee.id, (employee.department, employee.position))[1],
+            status=employee.status,
+            employment_start_date=employee.employment_start_date,
+            employment_end_date=employee.employment_end_date,
+        )
+        for employee in employees
+    ]
+
+
 def _employee_create_values(payload: EmployeeCreate) -> dict[str, object]:
     values = payload.model_dump()
     values["status"] = _status_value(values["status"])
@@ -220,6 +334,8 @@ def _employee_list_statement(
     tenant_id: UUID,
     filters: EmployeeListFilters,
     pagination: EmployeeListPagination,
+    *,
+    effective_on: date | None = None,
 ):
     statement = (
         select(Employee)
@@ -228,8 +344,42 @@ def _employee_list_statement(
     )
 
     if filters.department is not None:
+        effective_on = effective_on or date.today()
+        current_department_normalized = (
+            select(func.lower(func.trim(Department.name)))
+            .select_from(EmployeeAssignment)
+            .join(
+                Department,
+                and_(
+                    Department.tenant_id == EmployeeAssignment.tenant_id,
+                    Department.id == EmployeeAssignment.department_id,
+                ),
+            )
+            .where(
+                EmployeeAssignment.tenant_id == tenant_id,
+                EmployeeAssignment.employee_id == Employee.id,
+                EmployeeAssignment.effective_from <= effective_on,
+                or_(
+                    EmployeeAssignment.effective_to.is_(None),
+                    EmployeeAssignment.effective_to > effective_on,
+                ),
+            )
+            .order_by(
+                EmployeeAssignment.effective_from.desc(),
+                EmployeeAssignment.id.desc(),
+            )
+            .limit(1)
+            .correlate(Employee)
+            .scalar_subquery()
+        )
         statement = statement.where(
-            Employee.department_normalized == filters.department.casefold()
+            # Department names are non-null on a valid assignment, so COALESCE reaches the
+            # legacy projection only when no assignment is effective on this date.
+            func.coalesce(
+                current_department_normalized,
+                Employee.department_normalized,
+            )
+            == filters.department.casefold()
         )
     if filters.status is not None:
         statement = statement.where(Employee.status == _status_value(filters.status))

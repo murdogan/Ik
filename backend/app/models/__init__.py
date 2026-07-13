@@ -20,6 +20,7 @@ from app.models.department import (
     DepartmentStatus,
 )
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_assignment import EmployeeAssignment
 from app.models.identity import (
     Identity,
     IdentityStatus,
@@ -45,6 +46,7 @@ __all__ = [
     "DepartmentHierarchyWriteFence",
     "DepartmentStatus",
     "Employee",
+    "EmployeeAssignment",
     "EmployeeStatus",
     "Identity",
     "IdentityStatus",

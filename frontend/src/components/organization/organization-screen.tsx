@@ -19,6 +19,7 @@ import {
 import { ArchiveBranchDialog } from "./archive-branch-dialog";
 import { BranchDialog } from "./branch-dialog";
 import { DepartmentHierarchy } from "./department-hierarchy";
+import { EmployeeAssignmentPanel } from "./employee-assignment-panel";
 import { LegalEntityForm } from "./legal-entity-form";
 import styles from "./organization.module.css";
 import {
@@ -36,6 +37,10 @@ export function OrganizationScreen() {
   const canUpdate = hasPermission(
     user,
     AUTHORIZATION_PERMISSIONS.updateOrganization,
+  );
+  const canManageEmployeeAssignments = hasPermission(
+    user,
+    AUTHORIZATION_PERMISSIONS.updateEmployees,
   );
 
   const [legalEntities, setLegalEntities] = useState<LegalEntity[]>([]);
@@ -634,6 +639,9 @@ export function OrganizationScreen() {
 
           <DepartmentHierarchy canUpdate={canUpdate} />
           <PositionCatalog canUpdate={canUpdate} />
+          {canManageEmployeeAssignments ? (
+            <EmployeeAssignmentPanel key={legalEntity.id} legalEntity={legalEntity} />
+          ) : null}
         </>
       ) : (
         <div className={styles.emptyState}>

@@ -232,7 +232,7 @@ async def get_employee(
     ],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> EmployeeRead:
-    return await service.get_employee(
+    return await service.get_employee_read(
         request_context.require_tenant().tenant_id,
         employee_id,
     )

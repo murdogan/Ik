@@ -499,6 +499,40 @@ def _run_alembic_p3h_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p3i_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0029_p3h_position_catalog:0030_p3i_employee_assignments",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p3i_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0030_p3i_employee_assignments:0029_p3h_position_catalog",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -566,8 +600,9 @@ def test_core_migration_chain_is_linear() -> None:
         "0028_p3g_department_hierarchy"
     )
     p3h_position_revision = script.get_revision("0029_p3h_position_catalog")
+    p3i_assignment_revision = script.get_revision("0030_p3i_employee_assignments")
 
-    assert script.get_heads() == ["0029_p3h_position_catalog"]
+    assert script.get_heads() == ["0030_p3i_employee_assignments"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -644,6 +679,8 @@ def test_core_migration_chain_is_linear() -> None:
     )
     assert p3h_position_revision is not None
     assert p3h_position_revision.down_revision == "0028_p3g_department_hierarchy"
+    assert p3i_assignment_revision is not None
+    assert p3i_assignment_revision.down_revision == "0029_p3h_position_catalog"
 
 
 def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
@@ -666,6 +703,147 @@ def test_alembic_upgrade_head_subprocess_creates_current_model_schema(
 
     assert result.returncode == 0, result.stderr or result.stdout
     _assert_database_matches_current_model_schema(database_path)
+
+
+def test_sqlite_p3i_backfills_legacy_employee_strings_without_contracting_them(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p3i-legacy-backfill.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0029_p3h_position_catalog")
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_id = "d1000000000040008000000000000001"
+    department_id = "d2000000000040008000000000000001"
+    position_id = "d3000000000040008000000000000001"
+    employee_ids = tuple(
+        f"d400000000004000800000000000000{suffix}" for suffix in range(1, 5)
+    )
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'p3i-backfill', 'P3I Backfill', 'active', 'core', 'tr-1', "
+                    "'tr-TR', 'Europe/Istanbul', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into legal_entities ("
+                    "id, tenant_id, code, name, registered_name, timezone, status, is_default, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, :id, 'DEFAULT', 'P3I Backfill', 'P3I Backfill', "
+                    "'Europe/Istanbul', 'active', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into departments ("
+                    "id, tenant_id, parent_id, code, name, status, archived_at, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, :tenant_id, null, 'ENG', 'Engineering', 'active', null, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": department_id, "tenant_id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into positions ("
+                    "id, tenant_id, code, title, status, archived_at, created_at, updated_at"
+                    ") values ("
+                    ":id, :tenant_id, 'DEV', 'Developer', 'active', null, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"id": position_id, "tenant_id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into employees ("
+                    "id, tenant_id, employee_number, first_name, last_name, department, "
+                    "position, status, employment_start_date, employment_end_date, archived_at"
+                    ", created_at, updated_at"
+                    ") values "
+                    "(:active_id, :tenant_id, 'P3I-001', 'Ada', 'Active', "
+                    "' engineering ', ' developer ', 'active', '2025-01-01', null, null, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                    "(:leave_id, :tenant_id, 'P3I-002', 'Bora', 'Leave', "
+                    "null, '  ', 'on_leave', '2025-02-01', null, null, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                    "(:terminated_id, :tenant_id, 'P3I-003', 'Cem', 'Terminated', "
+                    "'ENGINEERING', 'Developer', 'terminated', '2025-03-01', "
+                    "'2026-06-30', null, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                    "(:archived_id, :tenant_id, 'P3I-004', 'Derya', 'Archived', "
+                    "'People', 'Partner', 'active', '2025-04-01', null, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "active_id": employee_ids[0],
+                    "leave_id": employee_ids[1],
+                    "terminated_id": employee_ids[2],
+                    "archived_id": employee_ids[3],
+                },
+            )
+
+        alembic_command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            assignments = connection.execute(
+                text(
+                    "select employee.employee_number, department.id, department.name, "
+                    "position.id, position.title, assignment.effective_from, "
+                    "assignment.effective_to, employee.department, employee.position "
+                    "from employee_assignments as assignment "
+                    "join employees as employee on employee.tenant_id = assignment.tenant_id "
+                    "and employee.id = assignment.employee_id "
+                    "join departments as department "
+                    "on department.tenant_id = assignment.tenant_id "
+                    "and department.id = assignment.department_id "
+                    "join positions as position on position.tenant_id = assignment.tenant_id "
+                    "and position.id = assignment.position_id "
+                    "order by employee.employee_number"
+                )
+            ).all()
+            branch = connection.execute(
+                text(
+                    "select code, name, status, legal_entity_id from branches "
+                    "where tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            ).one()
+
+        assert len(assignments) == 4
+        assert assignments[0] == (
+            "P3I-001",
+            department_id,
+            "Engineering",
+            position_id,
+            "Developer",
+            "2025-01-01",
+            None,
+            " engineering ",
+            " developer ",
+        )
+        assert assignments[1][2:5:2] == ("Unspecified", "Unspecified")
+        assert assignments[2][1] == department_id
+        assert assignments[2][3] == position_id
+        assert assignments[2][6] == "2026-07-01"
+        assert assignments[3][2:5:2] == ("People", "Partner")
+        assert branch == ("LEGACY", "Legacy / Unspecified", "active", tenant_id)
+    finally:
+        engine.dispose()
 
 
 def test_alembic_offline_sql_renders_p0d_preflight_and_expand_contract() -> None:
@@ -1067,6 +1245,67 @@ def test_alembic_offline_p3h_downgrade_guards_retained_position_history() -> Non
         result.stdout
     )
     assert "DROP TABLE positions" in result.stdout
+
+
+def test_alembic_offline_p3i_renders_assignment_backfill_rls_acl_and_trigger() -> None:
+    result = _run_alembic_p3i_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "CREATE TABLE employee_assignments" in result.stdout
+    for constraint_name in (
+        "ck_employee_assignments_effective_range",
+        "fk_employee_assignments_tenant_employee_id_employees",
+        "fk_employee_assignments_tenant_legal_entity_id_legal_entities",
+        "fk_employee_assignments_tenant_branch_id_branches",
+        "fk_employee_assignments_tenant_department_id_departments",
+        "fk_employee_assignments_tenant_position_id_positions",
+        "uq_employee_assignments_tenant_supersedes_assignment_id",
+    ):
+        assert constraint_name in result.stdout
+    assert "INSERT INTO public.employee_assignments" in result.stdout
+    assert "P3I legacy employee backfill" in result.stdout
+    assert (
+        'ALTER TABLE "employee_assignments" ENABLE ROW LEVEL SECURITY'
+        in result.stdout
+    )
+    assert (
+        'ALTER TABLE "employee_assignments" FORCE ROW LEVEL SECURITY'
+        in result.stdout
+    )
+    assert (
+        'GRANT SELECT, INSERT ON TABLE "employee_assignments" '
+        'TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert (
+        'GRANT UPDATE ("effective_to", "updated_at") '
+        'ON TABLE "employee_assignments" TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert "CREATE FUNCTION public.enforce_employee_assignment_integrity()" in (
+        result.stdout
+    )
+    assert "current_user <> 'wealthy_falcon_app'" in result.stdout
+    assert "CONSTRAINT = 'ck_employee_assignments_runtime_insert_open'" in (
+        result.stdout
+    )
+    assert "GRANT DELETE" not in result.stdout
+
+
+def test_alembic_offline_p3i_downgrade_guards_retained_assignment_history() -> None:
+    result = _run_alembic_p3i_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p3i_downgrade_preflight$" in result.stdout
+    assert "P3I downgrade preflight failed" in result.stdout
+    preflight_position = result.stdout.index("DO $p3i_downgrade_preflight$")
+    trigger_drop_position = result.stdout.index(
+        "DROP TRIGGER IF EXISTS trg_employee_assignments_integrity"
+    )
+    assert preflight_position < trigger_drop_position
+    assert (
+        "DROP FUNCTION IF EXISTS public.enforce_employee_assignment_integrity()"
+        in result.stdout
+    )
+    assert "DROP TABLE employee_assignments" in result.stdout
 
 
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
@@ -1720,7 +1959,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0029_p3h_position_catalog"
+        assert revision == "0030_p3i_employee_assignments"
     finally:
         engine.dispose()
 

@@ -326,6 +326,230 @@
   line-height: 1.5;
 }
 
+.teamCard {
+  overflow: hidden;
+  margin-top: 22px;
+  border: 1px solid var(--wf-line);
+  border-radius: var(--wf-radius-md);
+  background: #ffffff;
+  box-shadow: 0 15px 42px rgba(28, 64, 49, 0.055);
+}
+
+.teamHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--wf-line);
+  background: #fbfdfc;
+}
+
+.teamHeader > div {
+  max-width: 700px;
+}
+
+.teamHeader span {
+  color: var(--wf-green);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.teamHeader h2 {
+  margin: 5px 0;
+  font-size: 21px;
+  letter-spacing: -0.025em;
+}
+
+.teamHeader p {
+  margin: 0;
+  color: var(--wf-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.teamHeader button,
+.teamError button,
+.teamPageError button,
+.teamPagination button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #ccd9d3;
+  border-radius: 11px;
+  color: var(--wf-ink);
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.teamHeader button:hover:not(:disabled),
+.teamError button:hover,
+.teamPageError button:hover,
+.teamPagination button:hover:not(:disabled) {
+  border-color: #a9beb4;
+  background: #f8fbf9;
+}
+
+.teamHeader button:focus-visible,
+.teamError button:focus-visible,
+.teamPageError button:focus-visible,
+.teamPagination button:focus-visible {
+  outline: 3px solid rgba(49, 107, 255, 0.27);
+  outline-offset: 2px;
+}
+
+.teamHeader button:disabled,
+.teamPagination button:disabled {
+  opacity: 0.58;
+  cursor: wait;
+}
+
+.teamError,
+.teamLoading,
+.teamEmpty {
+  min-height: 160px;
+  padding: 28px 22px;
+}
+
+.teamError {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  color: #783936;
+  background: #fff9f8;
+}
+
+.teamError > div {
+  display: grid;
+  max-width: 520px;
+  gap: 5px;
+}
+
+.teamError span,
+.teamError small {
+  font-size: 12px;
+}
+
+.teamLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--wf-muted);
+  font-size: 13px;
+}
+
+.teamSpinner {
+  display: inline-block;
+  width: 23px;
+  height: 23px;
+  border: 3px solid #d6e5de;
+  border-top-color: var(--wf-green);
+  border-radius: 50%;
+  animation: teamSpin 0.8s linear infinite;
+}
+
+@keyframes teamSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.teamEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.teamEmpty > span {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-weight: 900;
+}
+
+.teamEmpty p {
+  margin: 5px 0 0;
+  color: var(--wf-muted);
+  font-size: 12px;
+}
+
+.teamTableScroller {
+  overflow-x: auto;
+}
+
+.teamTable {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.teamTable th {
+  padding: 11px 14px;
+  color: #718078;
+  background: #f8fbf9;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.teamTable td {
+  height: 76px;
+  padding: 12px 14px;
+  border-top: 1px solid #edf2ef;
+  color: #45524c;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.teamTable td strong,
+.teamTable td small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamTable td strong {
+  color: var(--wf-ink);
+  font-size: 13px;
+}
+
+.teamTable td small {
+  margin-top: 4px;
+  color: var(--wf-muted);
+  font-size: 10px;
+}
+
+.teamPageError,
+.teamPagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid #edf2ef;
+}
+
+.teamPageError {
+  color: #783936;
+  background: #fff9f8;
+  font-size: 12px;
+}
+
 @media (max-width: 780px) {
   .application {
     display: block;
@@ -402,6 +626,16 @@
 
   .cards {
     grid-template-columns: 1fr;
+  }
+
+  .teamHeader,
+  .teamError {
+    display: grid;
+  }
+
+  .teamHeader button,
+  .teamError button {
+    justify-self: start;
   }
 }
 

@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-13 / P3H position catalog vertical slice.
+Son güncelleme: 2026-07-13 / P3I employee assignment and derived team scope vertical slice.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -25,9 +25,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: executable contract testi
 F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
 canlı OpenAPI'den doğrular. P3C iki organization-selection, P3D dört platform-auth, P3E iki
-password-recovery, P3F dokuz legal-entity/branch, P3G altı department ve P3H beş position catalog
-operation'ı ekler; güncel registry 67 generated operation ve runtime `/openapi.json` ile 68
-documented endpoint'tir.
+password-recovery, P3F dokuz legal-entity/branch, P3G altı department, P3H beş position catalog ve
+P3I altı assignment/team operation'ı ekler; güncel registry 73 generated operation ve runtime
+`/openapi.json` ile 74 documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -87,6 +87,12 @@ documented endpoint'tir.
 | GET | `/api/v1/positions/{position_id}` | P3H uygulandı | Aktif veya arşivlenmiş current-tenant pozisyon detayı; missing/cross-tenant aynı `404` |
 | PATCH | `/api/v1/positions/{position_id}` | P3H uygulandı | Aktif pozisyonun unvanını günceller; kalıcı kod immutable |
 | DELETE | `/api/v1/positions/{position_id}` | P3H uygulandı | Terminal archive ile kod/tarihçe korunur ve yeni atamalar kapanır |
+| GET | `/api/v1/employee-assignments` | P3I uygulandı | HR için bounded güncel/tarihsel yapısal atamalar; employee filtresi ve resolved organizasyon etiketleri |
+| POST | `/api/v1/employee-assignments` | P3I uygulandı | Aktif tüzel kişilik/şube/departman/pozisyonla ilk yürürlük tarihli atama ve atomik audit |
+| GET | `/api/v1/employee-assignments/options` | P3I uygulandı | HR formu için aktif çalışanlar ve team scope yetkili yönetici seçenekleri |
+| GET | `/api/v1/employee-assignments/{assignment_id}` | P3I uygulandı | Tenant HR scope içinde güncel veya immutable tarihsel atama detayı |
+| PATCH | `/api/v1/employee-assignments/{assignment_id}` | P3I uygulandı | Open aralığı kapatır, immutable successor ve reporting-line audit ekler |
+| GET | `/api/v1/teams/me` | P3I uygulandı | Yalnız authenticated user'a bağlı güncel structured assignment'lardan türetilen doğrudan ekip |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |

@@ -11,7 +11,7 @@ from app.services.command_idempotency import (
     CommandIdempotencyService,
     IdempotentCommandExecutor,
 )
-from app.services.employee_service import EmployeeService
+from app.services.employee_service import EmployeeReadProjection, EmployeeService
 
 
 @dataclass(slots=True)
@@ -48,10 +48,12 @@ class EmployeeCommandHandler:
         tenant_id: UUID,
         employee_id: UUID,
         payload: EmployeeUpdate,
-    ) -> Employee:
-        return await self.unit_of_work.execute(
-            lambda: self.service.update_employee(tenant_id, employee_id, payload)
-        )
+    ) -> EmployeeReadProjection:
+        async def operation() -> EmployeeReadProjection:
+            await self.service.update_employee(tenant_id, employee_id, payload)
+            return await self.service.get_employee_read(tenant_id, employee_id)
+
+        return await self.unit_of_work.execute(operation)
 
     async def delete_employee(self, tenant_id: UUID, employee_id: UUID) -> None:
         await self.unit_of_work.execute(

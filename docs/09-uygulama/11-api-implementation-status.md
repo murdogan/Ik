@@ -2,14 +2,46 @@
 
 Date: 2026-07-13
 Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3H position catalog vertical slice`
-Review checkpoint: `P3G was green, committed and pushed before P3H began`
-Review decision: `P3H implementation and local verification are recorded below`
-Push state: `P3H commit is intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P3I employee assignments and derived manager team scope`
+Review checkpoint: `P3H was green, committed and pushed before P3I began`
+Review decision: `P3I implementation and local verification are recorded below`
+Push state: `P3I commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### P3H position catalog
+### P3I employee assignments and derived manager team scope
+
+- Authorized tenant admin/HR users can assign an employee to a legal entity, branch, department,
+  position and optional manager from the existing `/organization` workspace, then schedule a
+  dated change while retaining the prior assignment as readable history.
+- Every new assignment validates active organization references. Assignment changes close and
+  supersede the prior row in the same transaction, update the legacy employee projection, and
+  record assignment and reporting-line audit events atomically.
+- Legacy employee reads, filters and dashboard department distributions prefer the current
+  structured assignment and fall back to the retained free-text fields only when no current
+  assignment exists. The expand-contract migration backfills legacy employees without removing
+  those fields.
+- `/teams/me` derives direct reports exclusively from the authenticated manager's effective
+  assignments. It uses bounded, opaque-cursor pagination and does not accept an employee or
+  manager selector, so a manager cannot broaden the derived scope through request parameters.
+- PostgreSQL FORCE RLS, narrow runtime ACLs and assignment-history triggers are proven on an
+  isolated local PostgreSQL 17.10 database, including tenant isolation, archived-reference
+  rejection, the owner-only terminated-history import exception and immutable history.
+
+### P3I verification gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend scripts/backend_api_smoke.py` | Passed: `All checks passed!` |
+| Focused backend regression | `PYTHONPATH=backend uv run pytest -q` with the assignment, employee, dashboard, demo seed, migration, OpenAPI, audit and dependency suites | Passed: 213 tests; one known Starlette/httpx warning |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0030_p3i_employee_assignments` |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 74 documented endpoints executed, including assignment create/read/change/history and derived team scope |
+| PostgreSQL P3I proof | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p3i_employee_assignments.py` | Passed: one focused test on isolated PostgreSQL 17.10 covering FORCE RLS, ACLs, tenant isolation, archived-reference rejection and immutable effective history |
+| Frontend static gates | `npm run lint`, `npm run typecheck`, `npm run build` in `frontend/` | Passed; production build includes `/organization` and manager team dashboard UI |
+| Browser E2E regression | `npm run test:e2e` with the installed Chromium executable | Passed: 24 flows, including two P3I flows covering server-side employee search, create/change/history pagination, non-team exclusion and derived-team pagination |
+| Git hygiene | `git diff --check` plus independent backend/frontend/scope review | Passed; no Phase 4, deployment, environment, credential or generated-artifact change |
+
+### Historical P3H position catalog
 
 - Authorized tenant admin/HR users can create reusable job titles with stable codes, search and
   paginate the tenant catalog, rename active titles, archive them and retain readable history from
@@ -28,7 +60,7 @@ Push state: `P3H commit is intentionally left unpushed for the supervisor; no me
   FORCE RLS, narrow column ACLs and an immutable/terminal-history trigger are covered by a focused
   test that passed on an ephemeral local PostgreSQL 17.10 database.
 
-### P3H verification gates
+### Historical P3H verification gates
 
 | Gate | Command | Result |
 |---|---|---|
@@ -824,6 +856,12 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/positions/{position_id}` | Implemented for P3H | Active or archived current-tenant detail with identical missing/cross-tenant `404` |
 | PATCH | `/api/v1/positions/{position_id}` | Implemented for P3H | Active-only title update while stable code remains immutable |
 | DELETE | `/api/v1/positions/{position_id}` | Implemented for P3H | Terminal archive preserves code/history and closes new assignments |
+| GET | `/api/v1/employee-assignments` | Implemented for P3I | HR-only bounded current/history view with employee filter and structured organization labels |
+| POST | `/api/v1/employee-assignments` | Implemented for P3I | First effective-dated structured assignment with active-reference validation and atomic audit |
+| GET | `/api/v1/employee-assignments/options` | Implemented for P3I | Bounded active employee and team-capable manager choices for the HR form |
+| GET | `/api/v1/employee-assignments/{assignment_id}` | Implemented for P3I | Current or retained historical assignment within authenticated tenant HR scope |
+| PATCH | `/api/v1/employee-assignments/{assignment_id}` | Implemented for P3I | Closes the open interval and appends an immutable successor plus reporting-line audit |
+| GET | `/api/v1/teams/me` | Implemented for P3I | Authenticated manager's current direct team derived only from structured assignments |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |

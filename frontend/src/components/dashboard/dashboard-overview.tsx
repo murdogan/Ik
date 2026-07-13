@@ -1,7 +1,12 @@
 "use client";
 
 import { useSession } from "@/components/session/session-provider";
+import {
+  AUTHORIZATION_PERMISSIONS,
+  hasPermission,
+} from "@/lib/authorization";
 
+import { ManagerTeam } from "./manager-team";
 import styles from "./tenant-shell.module.css";
 
 function displayName(fullName: string | null, email: string): string {
@@ -11,6 +16,10 @@ function displayName(fullName: string | null, email: string): string {
 export function DashboardOverview() {
   const { user } = useSession();
   const name = displayName(user.full_name, user.email);
+  const canReadTeam = hasPermission(
+    user,
+    AUTHORIZATION_PERMISSIONS.readTeamEmployees,
+  );
 
   return (
     <section aria-labelledby="dashboard-title">
@@ -46,6 +55,8 @@ export function DashboardOverview() {
           </div>
         </article>
       </div>
+
+      {canReadTeam ? <ManagerTeam /> : null}
     </section>
   );
 }

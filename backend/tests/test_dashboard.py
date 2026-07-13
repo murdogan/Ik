@@ -4,8 +4,12 @@ from uuid import UUID
 from app.api.dashboard import get_dashboard_service
 from app.db.base import Base
 from app.main import create_app
+from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_assignment import EmployeeAssignment
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
+from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
+from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from app.schemas.dashboard import DashboardSummary, DepartmentDistributionItem
@@ -27,6 +31,10 @@ USER_ID = UUID("33333333-3333-4333-8333-333333333333")
 OTHER_USER_ID = UUID("44444444-4444-4444-8444-444444444444")
 TODAY = date(2026, 7, 8)
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+STRUCTURED_BRANCH_ID = UUID("a3000000-0000-4000-8000-000000000001")
+STRUCTURED_DEPARTMENT_ID = UUID("a3000000-0000-4000-8000-000000000002")
+EXPIRED_DEPARTMENT_ID = UUID("a3000000-0000-4000-8000-000000000003")
+STRUCTURED_POSITION_ID = UUID("a3000000-0000-4000-8000-000000000004")
 
 
 async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
@@ -190,6 +198,95 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
     return session, engine
 
 
+async def _add_structured_assignment_history(session: AsyncSession) -> None:
+    session.add_all(
+        [
+            LegalEntity(
+                id=TENANT_ID,
+                tenant_id=TENANT_ID,
+                code="DEFAULT",
+                name="Wealthy Falcon HR",
+                registered_name="Wealthy Falcon HR",
+                timezone="Europe/Istanbul",
+                status=LegalEntityStatus.ACTIVE.value,
+                is_default=True,
+            ),
+            Branch(
+                id=STRUCTURED_BRANCH_ID,
+                tenant_id=TENANT_ID,
+                legal_entity_id=TENANT_ID,
+                code="HQ",
+                name="Headquarters",
+                timezone="Europe/Istanbul",
+                status=BranchStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Department(
+                id=STRUCTURED_DEPARTMENT_ID,
+                tenant_id=TENANT_ID,
+                parent_id=None,
+                code="ENGINEERING",
+                name="Engineering",
+                status=DepartmentStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Department(
+                id=EXPIRED_DEPARTMENT_ID,
+                tenant_id=TENANT_ID,
+                parent_id=None,
+                code="SALES",
+                name="Sales",
+                status=DepartmentStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Position(
+                id=STRUCTURED_POSITION_ID,
+                tenant_id=TENANT_ID,
+                code="ENGINEER",
+                title="Platform Engineer",
+                status=PositionStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+        ]
+    )
+    await session.flush()
+    session.add_all(
+        [
+            EmployeeAssignment(
+                id=UUID("a3000000-0000-4000-8000-000000000005"),
+                tenant_id=TENANT_ID,
+                employee_id=UUID("5aaaaaaa-5555-4555-8555-555555555555"),
+                legal_entity_id=TENANT_ID,
+                branch_id=STRUCTURED_BRANCH_ID,
+                department_id=STRUCTURED_DEPARTMENT_ID,
+                position_id=STRUCTURED_POSITION_ID,
+                manager_user_id=None,
+                supersedes_assignment_id=None,
+                effective_from=date(2026, 7, 1),
+                effective_to=None,
+                change_reason="Current structured assignment",
+                created_by_user_id=None,
+            ),
+            EmployeeAssignment(
+                id=UUID("a3000000-0000-4000-8000-000000000006"),
+                tenant_id=TENANT_ID,
+                employee_id=UUID("7ccccccc-7777-4777-8777-777777777777"),
+                legal_entity_id=TENANT_ID,
+                branch_id=STRUCTURED_BRANCH_ID,
+                department_id=EXPIRED_DEPARTMENT_ID,
+                position_id=STRUCTURED_POSITION_ID,
+                manager_user_id=None,
+                supersedes_assignment_id=None,
+                effective_from=date(2026, 6, 1),
+                effective_to=TODAY,
+                change_reason="Expired structured assignment",
+                created_by_user_id=None,
+            ),
+        ]
+    )
+    await session.commit()
+
+
 async def test_dashboard_summary_counts_are_tenant_scoped_from_database() -> None:
     session, engine = await _session_with_seed_data()
 
@@ -209,6 +306,42 @@ async def test_dashboard_summary_counts_are_tenant_scoped_from_database() -> Non
 
     await session.close()
     await engine.dispose()
+
+
+async def test_dashboard_department_distribution_prefers_current_assignment() -> None:
+    session, engine = await _session_with_seed_data()
+    await _add_structured_assignment_history(session)
+    statement_count = 0
+
+    def count_statements(
+        _connection,
+        _cursor,
+        _statement: str,
+        _parameters,
+        _context,
+        _executemany: bool,
+    ) -> None:
+        nonlocal statement_count
+        statement_count += 1
+
+    event.listen(engine.sync_engine, "before_cursor_execute", count_statements)
+    try:
+        summary = await DashboardService(
+            session=session,
+            today=TODAY,
+            recent_activity_limit=0,
+        ).get_summary(TENANT_ID)
+
+        assert statement_count == 2
+        assert summary.department_distribution == [
+            DepartmentDistributionItem(department="Engineering", count=2),
+            DepartmentDistributionItem(department="People", count=1),
+            DepartmentDistributionItem(department="Unassigned", count=1),
+        ]
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", count_statements)
+        await session.close()
+        await engine.dispose()
 
 
 async def test_dashboard_excludes_archived_employees_from_workforce_views() -> None:

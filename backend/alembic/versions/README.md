@@ -354,4 +354,30 @@ terminal archive kanıtı disposable PostgreSQL üzerinde
 `backend/tests/integration/test_postgresql_p3h_positions.py` ile çalışır; SQLite hattı migration
 ve model metadata parity kanıtıdır.
 
-Bu revision sonrası tek head `0029_p3h_position_catalog`'dır.
+## P3I effective-dated employee assignments
+
+`0030_p3i_employee_assignments`, legacy employee metinlerini koruyan expand adımıyla structured
+organization/reporting-line history ekler:
+
+- Her employee assignment legal entity, branch, department, position ve nullable manager user'a
+  tenant-qualified foreign key'lerle bağlanır. Exclusive `effective_to` sınırı, tek open row ve
+  predecessor candidate key'i change işlemini önceki satırı kapatıp immutable successor eklemeye
+  zorlar.
+- Upgrade her mevcut employee için default entity altında aktif `LEGACY` placeholder branch'i
+  üretir veya uygun mevcut satırı reuse eder (rezerv kod çakışmasında deterministic suffix kullanır);
+  case-insensitive eşleşen aktif department/position satırlarını reuse eder, eksik legacy değerler
+  için `LEGACY-*` catalog ve `Unspecified` placeholder'ları oluşturur. Terminated employee history'si
+  `employment_end_date + 1` exclusive sınırıyla kapanır; eski `employees.department` ve
+  `employees.position` alanları dual-read geçişi için değiştirilmez.
+- PostgreSQL integrity trigger'ı tenant sentinel row'unu kilitler; tenant runtime insert'ini
+  open-ended ve current employee + active organization kayıtlarıyla sınırlar, branch/entity
+  uyumunu ve active manager user'ı doğrular. Owner-run local import/demo bootstrap yalnız
+  non-archived terminated employee'nin tam `[employment_start_date, employment_end_date + 1)`
+  tarihsel aralığını `created_by_user_id = NULL` olarak ekleyebilir; tenant runtime role bu dar
+  yola giremez. Tarihsel structural alanlar UPDATE edilemez; runtime role yalnız
+  `effective_to,updated_at` ile open interval kapatabilir, DELETE alamaz.
+- Tablo tenant policy altında `ENABLE + FORCE RLS` kullanır. Downgrade retained assignment history
+  varsa export/remediation olmadan veri düşürmez. SQLite hattı schema/backfill parity içindir;
+  trigger, exact ACL/RLS ve cross-tenant güvenlik iddiaları gerçek PostgreSQL kanıtı gerektirir.
+
+Bu revision sonrası tek head `0030_p3i_employee_assignments`'dır.

@@ -57,6 +57,11 @@ from app.services.department_service import (
     DepartmentNotFoundError,
     DuplicateDepartmentCodeError,
 )
+from app.services.employee_assignment_service import (
+    EmployeeAssignmentAccessDeniedError,
+    EmployeeAssignmentConflictError,
+    EmployeeAssignmentNotFoundError,
+)
 from app.services.employee_service import (
     EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
     DuplicateEmployeeNumberError,
@@ -132,6 +137,8 @@ LEGAL_ENTITY_API_PREFIX = "/api/v1/legal-entities"
 BRANCH_API_PREFIX = "/api/v1/branches"
 DEPARTMENT_API_PREFIX = "/api/v1/departments"
 POSITION_API_PREFIX = "/api/v1/positions"
+EMPLOYEE_ASSIGNMENT_API_PREFIX = "/api/v1/employee-assignments"
+MANAGER_TEAM_API_PREFIX = "/api/v1/teams/me"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -259,6 +266,16 @@ POSITION_CODE_CONFLICT_ERROR_CODE = "position_code_conflict"
 POSITION_CODE_CONFLICT_ERROR_MESSAGE = "Position code is already in use"
 ORGANIZATION_CONFLICT_ERROR_CODE = "organization_conflict"
 ORGANIZATION_CONFLICT_ERROR_MESSAGE = "The requested organization change is not allowed"
+EMPLOYEE_ASSIGNMENT_ACCESS_DENIED_ERROR_CODE = "employee_assignment_access_denied"
+EMPLOYEE_ASSIGNMENT_ACCESS_DENIED_ERROR_MESSAGE = (
+    "You do not have permission to access employee assignments"
+)
+EMPLOYEE_ASSIGNMENT_VALIDATION_ERROR_CODE = "employee_assignment_validation_error"
+EMPLOYEE_ASSIGNMENT_VALIDATION_ERROR_MESSAGE = "Employee assignment request validation failed"
+EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_CODE = "employee_assignment_not_found"
+EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_MESSAGE = "Employee assignment was not found"
+EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_CODE = "employee_assignment_conflict"
+EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE = "The requested employee assignment is not allowed"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -785,6 +802,64 @@ POSITION_CONFLICT_RESPONSES = _conflict_response(
     },
 )
 
+EMPLOYEE_ASSIGNMENT_AUTHORIZATION_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {
+        "model": ApiErrorResponse,
+        "description": "The authenticated actor is outside the required employee scope.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    EMPLOYEE_ASSIGNMENT_ACCESS_DENIED_ERROR_CODE,
+                    EMPLOYEE_ASSIGNMENT_ACCESS_DENIED_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+EMPLOYEE_ASSIGNMENT_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Employee assignment request validation error envelope.",
+    }
+}
+EMPLOYEE_ASSIGNMENT_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "The assignment is absent or outside the authenticated tenant.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    TENANT_NOT_FOUND_ERROR_CODE: _error_example(
+                        TENANT_NOT_FOUND_ERROR_CODE,
+                        TENANT_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_CODE: _error_example(
+                        EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_CODE,
+                        EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE: _error_example(
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE,
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_MESSAGE,
+                    ),
+                }
+            }
+        },
+    }
+}
+EMPLOYEE_ASSIGNMENT_CONFLICT_RESPONSES = _conflict_response(
+    description="Employee assignment history or reference conflict envelope.",
+    examples={
+        EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_CODE: _error_example(
+            EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_CODE,
+            EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE,
+        ),
+        CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
+            CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
+            CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+    },
+)
+
 
 EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Employee command conflict envelope.",
@@ -920,6 +995,12 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return user_not_found_error()
     if isinstance(exc, UserAdministrationStatusConflictError):
         return user_administration_status_conflict_error(str(exc))
+    if isinstance(exc, EmployeeAssignmentAccessDeniedError):
+        return employee_assignment_access_denied_error()
+    if isinstance(exc, EmployeeAssignmentNotFoundError):
+        return employee_assignment_not_found_error()
+    if isinstance(exc, EmployeeAssignmentConflictError):
+        return employee_assignment_conflict_error(str(exc))
     if isinstance(exc, OrganizationAccessDeniedError):
         return organization_access_denied_error()
     if isinstance(exc, OrganizationFeatureUnavailableError):
@@ -1349,6 +1430,38 @@ def organization_conflict_error(message: str) -> ApiError:
     )
 
 
+def employee_assignment_access_denied_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=EMPLOYEE_ASSIGNMENT_ACCESS_DENIED_ERROR_CODE,
+        message=EMPLOYEE_ASSIGNMENT_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def employee_assignment_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_CODE,
+        message=EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def employee_assignment_conflict_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_CODE,
+        message=message or EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def employee_assignment_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=EMPLOYEE_ASSIGNMENT_VALIDATION_ERROR_CODE,
+        message=EMPLOYEE_ASSIGNMENT_VALIDATION_ERROR_MESSAGE,
+    )
+
+
 def organization_pagination_validation_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1501,6 +1614,10 @@ def _domain_request_validation_error(
         or _matches_api_prefix(path, POSITION_API_PREFIX)
     ):
         return organization_pagination_validation_error()
+    if _matches_api_prefix(
+        path, EMPLOYEE_ASSIGNMENT_API_PREFIX
+    ) or _matches_api_prefix(path, MANAGER_TEAM_API_PREFIX):
+        return employee_assignment_validation_error()
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):
         return ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

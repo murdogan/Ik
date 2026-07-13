@@ -165,6 +165,22 @@ POSITION_FIELDS = {
     "created_at",
     "updated_at",
 }
+EMPLOYEE_ASSIGNMENT_FIELDS = {
+    "id",
+    "employee",
+    "legal_entity",
+    "branch",
+    "department",
+    "position",
+    "manager",
+    "effective_from",
+    "effective_to",
+    "supersedes_assignment_id",
+    "change_reason",
+    "is_current",
+    "created_at",
+    "updated_at",
+}
 AUDIT_EVENT_FIELDS = {
     "id",
     "occurred_at",
@@ -300,6 +316,12 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/positions/{position_id}"),
     ("patch", "/api/v1/positions/{position_id}"),
     ("delete", "/api/v1/positions/{position_id}"),
+    ("get", "/api/v1/employee-assignments"),
+    ("post", "/api/v1/employee-assignments"),
+    ("get", "/api/v1/employee-assignments/options"),
+    ("get", "/api/v1/employee-assignments/{assignment_id}"),
+    ("patch", "/api/v1/employee-assignments/{assignment_id}"),
+    ("get", "/api/v1/teams/me"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -374,13 +396,22 @@ async def main(database_url: str | None = None) -> None:
             await _smoke_system_endpoints(client)
             _smoke_documented_endpoint_tables()
             tenant_admin_headers = await _smoke_auth_endpoints(client)
-            await _smoke_organization_endpoints(client, tenant_admin_headers)
+            assignment_structure = await _smoke_organization_endpoints(
+                client,
+                tenant_admin_headers,
+            )
             provisioned_tenant_id = await _smoke_platform_tenant_endpoints(client)
             tenant_principal_scope["tenant_id"] = provisioned_tenant_id
             await _smoke_current_tenant_endpoints(client, provisioned_tenant_id)
             await _smoke_tenant_header_errors(client)
             primary_employee_id, secondary_employee_id, other_employee_id = (
                 await _smoke_employee_endpoints(client)
+            )
+            await _smoke_employee_assignment_endpoints(
+                client,
+                tenant_admin_headers,
+                employee_id=primary_employee_id,
+                structure=assignment_structure,
             )
             leave_request_ids = await _smoke_leave_request_endpoints(
                 client,
@@ -413,6 +444,7 @@ async def main(database_url: str | None = None) -> None:
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
         "legal_entities,branches,branch_archive_history,departments,department_lazy_tree,"
         "department_move_cycle_archive_history,positions,position_search_archive_history,"
+        "employee_assignments,assignment_history,derived_manager_team,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
         "leave_balances,leave_filters,leave_requests,workflow_transitions,auth"
@@ -522,6 +554,12 @@ async def _prepare_smoke_database(
             tenant_id=TENANT_ID,
             user_id=REQUESTING_USER_ID,
             role_code="tenant_admin",
+        )
+        await assign_system_role(
+            session,
+            tenant_id=TENANT_ID,
+            user_id=REQUESTING_USER_ID,
+            role_code="hr_director",
         )
         for tenant_id, user_id in (
             (TENANT_ID, APPROVER_USER_ID),
@@ -1187,7 +1225,7 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> dict[str, str]:
 async def _smoke_organization_endpoints(
     client: AsyncClient,
     admin_headers: dict[str, str],
-) -> None:
+) -> dict[str, str]:
     legal_entities, next_cursor = _expect_phase1_list(
         await _request_documented(
             client,
@@ -1399,6 +1437,27 @@ async def _smoke_organization_endpoints(
         BRANCH_FIELDS,
     )
     _assert_equal(historical_branch, archived_branch, "archived branch history")
+
+    assignment_branch = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/branches",
+            headers=admin_headers,
+            json={
+                "legal_entity_id": str(TENANT_ID),
+                "code": "assignment-hq",
+                "name": "Assignment Headquarters",
+                "timezone": "Europe/Istanbul",
+                "country_code": "tr",
+                "city": "Istanbul",
+                "address": "Levent",
+            },
+        ),
+        201,
+        "POST /api/v1/branches assignment-active",
+        BRANCH_FIELDS,
+    )
 
     engineering = _expect_phase1_data(
         await _request_documented(
@@ -1706,6 +1765,188 @@ async def _smoke_organization_endpoints(
         POSITION_FIELDS,
     )
     _assert_equal(historical_position, archived_position, "archived position history")
+
+    assignment_position = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/positions",
+            headers=admin_headers,
+            json={"code": "assignment-role", "title": "Assignment Engineer"},
+        ),
+        201,
+        "POST /api/v1/positions assignment-active",
+        POSITION_FIELDS,
+    )
+    return {
+        "legal_entity_id": str(TENANT_ID),
+        "branch_id": assignment_branch["id"],
+        "department_id": engineering["id"],
+        "position_id": assignment_position["id"],
+    }
+
+
+async def _smoke_employee_assignment_endpoints(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    *,
+    employee_id: UUID,
+    structure: dict[str, str],
+) -> None:
+    options = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/employee-assignments/options",
+            headers=admin_headers,
+            params={"limit": 100},
+        ),
+        200,
+        "GET /api/v1/employee-assignments/options",
+        {"employees", "managers"},
+    )
+    employee_option = next(
+        (item for item in options["employees"] if item["id"] == str(employee_id)),
+        None,
+    )
+    if employee_option is None:
+        raise AssertionError("assignment options omitted the active smoke employee")
+    _assert_equal(
+        employee_option["current_assignment_id"],
+        None,
+        "unassigned employee option",
+    )
+    manager_ids = {manager["id"] for manager in options["managers"]}
+    if not {str(REQUESTING_USER_ID), str(APPROVER_USER_ID)} <= manager_ids:
+        raise AssertionError("assignment options omitted an active team-capable manager")
+
+    effective_from = date.today().isoformat()
+    created = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/employee-assignments",
+            headers=admin_headers,
+            json={
+                "employee_id": str(employee_id),
+                **structure,
+                "manager_id": str(REQUESTING_USER_ID),
+                "effective_from": effective_from,
+                "change_reason": "Backend smoke structured assignment",
+            },
+        ),
+        201,
+        "POST /api/v1/employee-assignments",
+        EMPLOYEE_ASSIGNMENT_FIELDS,
+    )
+    _assert_equal(created["employee"]["id"], str(employee_id), "assigned employee")
+    _assert_equal(
+        created["manager"]["id"],
+        str(REQUESTING_USER_ID),
+        "initial reporting manager",
+    )
+    _assert_equal(created["is_current"], True, "initial current assignment")
+
+    detail = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/employee-assignments/{created['id']}",
+            documented_path="/api/v1/employee-assignments/{assignment_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/employee-assignments/{assignment_id}",
+        EMPLOYEE_ASSIGNMENT_FIELDS,
+    )
+    _assert_equal(detail, created, "created assignment detail")
+
+    team, team_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/teams/me",
+            headers=admin_headers,
+            params={"limit": 50},
+        ),
+        200,
+        "GET /api/v1/teams/me",
+        expected_limit=50,
+    )
+    _assert_equal(team_cursor, None, "derived team terminal cursor")
+    _assert_equal(len(team), 1, "derived direct-team size")
+    _assert_exact_fields(team[0], {"employee", "assignment"}, "derived team item")
+    _assert_equal(team[0]["employee"]["id"], str(employee_id), "derived team employee")
+    _assert_equal(team[0]["assignment"]["id"], created["id"], "derived team assignment")
+
+    successor = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/employee-assignments/{created['id']}",
+            documented_path="/api/v1/employee-assignments/{assignment_id}",
+            headers=admin_headers,
+            json={
+                "manager_id": str(APPROVER_USER_ID),
+                "effective_from": effective_from,
+                "change_reason": "Backend smoke reporting-line change",
+            },
+        ),
+        200,
+        "PATCH /api/v1/employee-assignments/{assignment_id}",
+        EMPLOYEE_ASSIGNMENT_FIELDS,
+    )
+    _assert_equal(
+        successor["supersedes_assignment_id"],
+        created["id"],
+        "assignment history predecessor",
+    )
+    _assert_equal(
+        successor["manager"]["id"],
+        str(APPROVER_USER_ID),
+        "changed reporting manager",
+    )
+
+    history, history_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/employee-assignments",
+            headers=admin_headers,
+            params={
+                "employee_id": str(employee_id),
+                "include_history": "true",
+                "limit": 50,
+            },
+        ),
+        200,
+        "GET /api/v1/employee-assignments history",
+        expected_limit=50,
+    )
+    _assert_equal(history_cursor, None, "assignment history terminal cursor")
+    _assert_equal(
+        {assignment["id"] for assignment in history},
+        {created["id"], successor["id"]},
+        "retained assignment history",
+    )
+    for assignment in history:
+        _assert_exact_fields(
+            assignment,
+            EMPLOYEE_ASSIGNMENT_FIELDS,
+            "GET /api/v1/employee-assignments item",
+        )
+
+    former_team, _former_team_cursor = _expect_phase1_list(
+        await client.get(
+            "/api/v1/teams/me",
+            headers=admin_headers,
+            params={"limit": 50},
+        ),
+        200,
+        "GET /api/v1/teams/me after reporting-line change",
+        expected_limit=50,
+    )
+    _assert_equal(former_team, [], "former manager derived team after change")
 
 
 async def _smoke_tenant_audit_endpoints(
@@ -3638,10 +3879,7 @@ async def _smoke_dashboard_endpoint(
     _assert_equal(summary["open_tasks"], 0, "dashboard open_tasks")
     _assert_equal(
         summary["department_distribution"],
-        [
-            {"department": "Engineering", "count": 1},
-            {"department": "People", "count": 1},
-        ],
+        [{"department": "Engineering", "count": 2}],
         "dashboard department_distribution",
     )
     _assert_equal(len(summary["recent_activity"]), 5, "dashboard recent_activity count")

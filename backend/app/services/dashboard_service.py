@@ -2,10 +2,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.department import Department
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_assignment import EmployeeAssignment
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.schemas.dashboard import (
     DashboardActivityItem,
@@ -54,6 +56,7 @@ class DashboardService:
         department_distribution = await _query_department_distribution(
             session=self.session,
             tenant_id=tenant_id,
+            effective_on=self.today,
         )
         recent_activity = await _query_recent_activity(
             session=self.session,
@@ -100,8 +103,15 @@ async def _query_dashboard_counts(
 async def _query_department_distribution(
     session: AsyncSession,
     tenant_id: UUID,
+    effective_on: date,
 ) -> list[DepartmentDistributionItem]:
-    rows = await _mapped_rows(session, _department_distribution_statement(tenant_id))
+    rows = await _mapped_rows(
+        session,
+        _department_distribution_statement(
+            tenant_id,
+            effective_on=effective_on,
+        ),
+    )
     return [_department_distribution_item(row) for row in rows]
 
 
@@ -251,13 +261,55 @@ def _dashboard_counts_statement(tenant_id: UUID, start_date: date, end_date: dat
     )
 
 
-def _department_distribution_statement(tenant_id: UUID):
-    department_label = _department_label()
+def _department_distribution_statement(
+    tenant_id: UUID,
+    *,
+    effective_on: date | None = None,
+):
+    effective_on = effective_on or date.today()
+    current_assignments = (
+        select(
+            EmployeeAssignment.employee_id,
+            EmployeeAssignment.department_id,
+        )
+        .where(
+            EmployeeAssignment.tenant_id == tenant_id,
+            EmployeeAssignment.effective_from <= effective_on,
+            or_(
+                EmployeeAssignment.effective_to.is_(None),
+                EmployeeAssignment.effective_to > effective_on,
+            ),
+        )
+        .subquery("current_employee_assignments")
+    )
+    legacy_department_label = _legacy_department_label()
+    department_label = case(
+        (
+            current_assignments.c.employee_id.is_not(None),
+            func.coalesce(
+                func.nullif(func.trim(Department.name), ""),
+                "Unassigned",
+            ),
+        ),
+        else_=legacy_department_label,
+    )
     employee_count = func.count(Employee.id)
     return (
         select(
             department_label.label("department"),
             employee_count.label("employee_count"),
+        )
+        .select_from(Employee)
+        .outerjoin(
+            current_assignments,
+            current_assignments.c.employee_id == Employee.id,
+        )
+        .outerjoin(
+            Department,
+            and_(
+                Department.tenant_id == Employee.tenant_id,
+                Department.id == current_assignments.c.department_id,
+            ),
         )
         .where(Employee.tenant_id == tenant_id)
         .where(Employee.archived_at.is_(None))
@@ -267,7 +319,7 @@ def _department_distribution_statement(tenant_id: UUID):
     )
 
 
-def _department_label():
+def _legacy_department_label():
     return func.coalesce(
         func.nullif(func.trim(Employee.department), ""),
         "Unassigned",
