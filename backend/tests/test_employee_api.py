@@ -595,7 +595,7 @@ async def test_list_employees_paginates_current_tenant_records() -> None:
         await engine.dispose()
 
 
-async def test_list_employees_exposes_deterministic_cursor_while_preserving_array_body() -> None:
+async def test_list_employees_exposes_deterministic_id_cursor_with_array_body() -> None:
     client, engine = await _client_with_database()
     try:
         first_response = await client.get(
@@ -605,9 +605,7 @@ async def test_list_employees_exposes_deterministic_cursor_while_preserving_arra
         )
 
         assert first_response.status_code == 200
-        assert [employee["employee_number"] for employee in first_response.json()] == [
-            "WF-001"
-        ]
+        assert [employee["id"] for employee in first_response.json()] == [str(EMPLOYEE_ID)]
         first_cursor = first_response.headers["X-Next-Cursor"]
 
         second_response = await client.get(
@@ -617,8 +615,8 @@ async def test_list_employees_exposes_deterministic_cursor_while_preserving_arra
         )
 
         assert second_response.status_code == 200
-        assert [employee["employee_number"] for employee in second_response.json()] == [
-            "WF-010"
+        assert [employee["id"] for employee in second_response.json()] == [
+            str(ON_LEAVE_EMPLOYEE_ID)
         ]
         second_cursor = second_response.headers["X-Next-Cursor"]
 
@@ -629,8 +627,8 @@ async def test_list_employees_exposes_deterministic_cursor_while_preserving_arra
         )
 
         assert final_response.status_code == 200
-        assert [employee["employee_number"] for employee in final_response.json()] == [
-            "WF-020"
+        assert [employee["id"] for employee in final_response.json()] == [
+            str(TERMINATED_EMPLOYEE_ID)
         ]
         assert "X-Next-Cursor" not in final_response.headers
     finally:
@@ -746,6 +744,19 @@ async def test_list_employees_rejects_invalid_cursor_and_cursor_offset_mix() -> 
                 )
             },
         )
+        legacy_created_at_cursor_response = await client.get(
+            "/api/v1/employees",
+            headers=_tenant_headers(),
+            params={
+                "cursor": encode_cursor(
+                    "employees",
+                    {
+                        "created_at": "2026-07-13T09:00:00.000001Z",
+                        "id": str(EMPLOYEE_ID),
+                    },
+                )
+            },
+        )
         wrong_resource_response = await client.get(
             "/api/v1/employees",
             headers=_tenant_headers(),
@@ -753,7 +764,6 @@ async def test_list_employees_rejects_invalid_cursor_and_cursor_offset_mix() -> 
                 "cursor": encode_cursor(
                     "leave_requests",
                     {
-                        "created_at": "2026-07-13T09:00:00Z",
                         "id": str(EMPLOYEE_ID),
                     },
                 )
@@ -776,6 +786,7 @@ async def test_list_employees_rejects_invalid_cursor_and_cursor_offset_mix() -> 
         for response in (
             invalid_response,
             legacy_cursor_response,
+            legacy_created_at_cursor_response,
             wrong_resource_response,
             mixed_response,
         ):

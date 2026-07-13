@@ -36,6 +36,8 @@ SECOND_EMPLOYEE_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 OTHER_EMPLOYEE_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 TERMINATED_EMPLOYEE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 LOW_ID_LATER_EMPLOYEE_ID = UUID("09999999-0000-4000-8000-00000000000a")
+MICROSECOND_LATER_LOW_ID = UUID("10000000-0000-4000-8000-00000000000a")
+MICROSECOND_EARLIER_HIGH_ID = UUID("eeeeeeee-0000-4000-8000-000000000001")
 ASSIGNMENT_EFFECTIVE_ON = date(2026, 7, 13)
 BRANCH_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 STRUCTURED_DEPARTMENT_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1")
@@ -479,7 +481,7 @@ async def test_employee_cursor_does_not_duplicate_seen_employee_when_number_move
         await engine.dispose()
 
 
-async def test_employee_cursor_uses_full_created_at_id_lexicographic_predicate() -> None:
+async def test_employee_cursor_orders_and_filters_by_immutable_id_only() -> None:
     session, engine = await _session_with_seed_data()
     try:
         session.add(
@@ -496,22 +498,90 @@ async def test_employee_cursor_uses_full_created_at_id_lexicographic_predicate()
         )
         await session.commit()
 
-        page = await EmployeeService(session).list_employee_page(
+        service = EmployeeService(session)
+        first_page = await service.list_employee_page(
+            TENANT_ID,
+            pagination=EmployeeListPagination(limit=2),
+        )
+        assert [employee.id for employee in first_page.items] == [
+            LOW_ID_LATER_EMPLOYEE_ID,
+            EMPLOYEE_ID,
+        ]
+        assert first_page.next_cursor is not None
+
+        second_page = await service.list_employee_page(
             TENANT_ID,
             pagination=EmployeeListPagination(
-                limit=10,
-                cursor=EmployeeListCursor(
-                    created_at=FIRST_CREATED_AT,
-                    id=EMPLOYEE_ID,
-                ),
+                limit=2,
+                cursor=EmployeeListCursor.from_token(first_page.next_cursor),
             ),
         )
-
-        assert [employee.id for employee in page.items] == [
+        assert [employee.id for employee in second_page.items] == [
             SECOND_EMPLOYEE_ID,
             TERMINATED_EMPLOYEE_ID,
-            LOW_ID_LATER_EMPLOYEE_ID,
         ]
+        assert second_page.next_cursor is None
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+async def test_employee_id_cursor_ignores_created_at_microsecond_rounding() -> None:
+    session, engine = await _session_with_seed_data()
+    try:
+        # The former SQLite julianday order puts 400us before 500us across its
+        # millisecond rounding boundary, which is the opposite of these IDs.
+        session.add_all(
+            [
+                Employee(
+                    id=MICROSECOND_LATER_LOW_ID,
+                    tenant_id=TENANT_ID,
+                    employee_number="WF-MICRO-LOW",
+                    first_name="Later",
+                    last_name="LowId",
+                    department="Microseconds",
+                    status=EmployeeStatus.ACTIVE.value,
+                    employment_start_date=date(2026, 7, 4),
+                    created_at=datetime(2026, 7, 13, 9, 0, 0, 500, tzinfo=UTC),
+                ),
+                Employee(
+                    id=MICROSECOND_EARLIER_HIGH_ID,
+                    tenant_id=TENANT_ID,
+                    employee_number="WF-MICRO-HIGH",
+                    first_name="Earlier",
+                    last_name="HighId",
+                    department="Microseconds",
+                    status=EmployeeStatus.ACTIVE.value,
+                    employment_start_date=date(2026, 7, 4),
+                    created_at=datetime(2026, 7, 13, 9, 0, 0, 400, tzinfo=UTC),
+                ),
+            ]
+        )
+        await session.commit()
+
+        service = EmployeeService(session)
+        first_page = await service.list_employee_page(
+            TENANT_ID,
+            filters=EmployeeListFilters(department="microseconds"),
+            pagination=EmployeeListPagination(limit=1),
+        )
+        assert [employee.id for employee in first_page.items] == [
+            MICROSECOND_LATER_LOW_ID
+        ]
+        assert first_page.next_cursor is not None
+
+        second_page = await service.list_employee_page(
+            TENANT_ID,
+            filters=EmployeeListFilters(department="microseconds"),
+            pagination=EmployeeListPagination(
+                limit=1,
+                cursor=EmployeeListCursor.from_token(first_page.next_cursor),
+            ),
+        )
+        assert [employee.id for employee in second_page.items] == [
+            MICROSECOND_EARLIER_HIGH_ID
+        ]
+        assert second_page.next_cursor is None
     finally:
         await session.close()
         await engine.dispose()

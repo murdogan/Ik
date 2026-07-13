@@ -143,7 +143,6 @@ class EmployeeService:
             filters,
             pagination,
             effective_on=self.today,
-            dialect_name=self.session.get_bind().dialect.name,
         )
         rows = list(await self.session.scalars(statement))
         employees = rows[: pagination.limit]
@@ -156,15 +155,7 @@ class EmployeeService:
         next_cursor = None
         if len(rows) > pagination.limit:
             last_item = employees[-1]
-            created_at = last_item.created_at
-            if not isinstance(created_at, datetime):  # pragma: no cover - ORM contract guard
-                raise RuntimeError("Employee created_at must be a datetime")
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=UTC)
-            next_cursor = EmployeeListCursor(
-                created_at=created_at,
-                id=last_item.id,
-            ).to_token()
+            next_cursor = EmployeeListCursor(id=last_item.id).to_token()
         return CursorPage(items=items, next_cursor=next_cursor)
 
     async def get_employee_read(
@@ -489,7 +480,6 @@ def _employee_list_statement(
     pagination: EmployeeListPagination,
     *,
     effective_on: date | None = None,
-    dialect_name: str,
 ):
     statement = (
         select(Employee)
@@ -572,46 +562,13 @@ def _employee_list_statement(
             )
         )
 
-    is_sqlite = dialect_name == "sqlite"
-    created_at_key = func.julianday(Employee.created_at) if is_sqlite else Employee.created_at
-    if pagination.cursor is not None:
-        cursor_created_at_key = (
-            func.julianday(pagination.cursor.created_at)
-            if is_sqlite
-            else pagination.cursor.created_at
-        )
-        statement = statement.where(
-            _employee_cursor_predicate(
-                pagination.cursor,
-                created_at_key=created_at_key,
-                cursor_created_at_key=cursor_created_at_key,
-            )
-        )
+    cursor = pagination.cursor
+    if cursor is not None:
+        statement = statement.where(Employee.id > cursor.id)
     else:
         statement = statement.offset(pagination.offset)
 
-    return statement.order_by(
-        created_at_key.asc(),
-        Employee.id.asc(),
-    ).limit(pagination.limit + 1)
-
-
-def _employee_cursor_predicate(
-    cursor: EmployeeListCursor,
-    *,
-    created_at_key,
-    cursor_created_at_key,
-):
-    return and_(
-        created_at_key >= cursor_created_at_key,
-        or_(
-            created_at_key > cursor_created_at_key,
-            and_(
-                created_at_key == cursor_created_at_key,
-                Employee.id > cursor.id,
-            ),
-        ),
-    )
+    return statement.order_by(Employee.id.asc()).limit(pagination.limit + 1)
 
 
 def _escaped_contains_pattern(value: str) -> str:

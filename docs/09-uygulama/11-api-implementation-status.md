@@ -25,8 +25,8 @@ Push state: `P4A commit is intentionally left unpushed for the supervisor; no me
   optimistic version, and the current Phase 3 assignment reference when one exists.
 - `0032_p4a_employee_directory` adds generated normalized employee-number/email/full-name columns,
   tenant unique indexes, positive SQLAlchemy optimistic versioning, immutable
-  `(tenant_id, created_at, id)` and `(tenant_id, status, created_at, id)` bounded directory
-  indexes, and missing assignment filter indexes without removing legacy columns/history. Non-null
+  `(tenant_id, id)` and `(tenant_id, status, id)` bounded directory indexes, and missing assignment
+  filter indexes without removing legacy columns/history. Non-null
   work email and employee number are trim/lowercase unique per tenant; multiple null emails are
   allowed and blank identifiers are rejected at schema and DB boundaries.
 - Create, actual update and first archive write same-transaction `employee.created|updated|archived`
@@ -767,8 +767,8 @@ the expected local commits ahead of the review-branch remote after the final com
 ### Historical P0F pagination, search and query-performance baseline
 
 The bullets in this subsection preserve what P0F implemented and measured. P4A later superseded
-the employee cursor only: the current directory uses immutable `(created_at asc, id asc)`, and the
-old employee-number PostgreSQL plan evidence was not rerun or relabeled as repair evidence.
+the employee cursor only: the current directory uses `Employee.id ASC`, and the old employee-number
+PostgreSQL plan evidence was not rerun or relabeled as repair evidence.
 
 - Added versioned opaque keyset cursors to employee and leave-request high-growth lists while
   preserving their plain-array bodies and bounded `offset` compatibility path. A page that proves
@@ -1095,9 +1095,10 @@ flows, legacy HR authorization and contract-table drift without printing credent
 - Employee list supports `department`, `status`, `q`, `limit`, deterministic `cursor`, and the
   deprecated `offset` compatibility path. Filters and archive visibility are tenant-scoped before
   pagination. `limit` defaults to `50` and is capped at `200`; another page is exposed only through
-  `X-Next-Cursor` after a `limit + 1` probe. The current immutable ordering is
-  `(created_at asc, id asc)` with
-  `created_at > cursor.created_at OR (created_at = cursor.created_at AND id > cursor.id)`.
+  `X-Next-Cursor` after a `limit + 1` probe. The opaque cursor payload is only `id: UUID`; current
+  ordering is `Employee.id ASC` with the exact predicate `Employee.id > cursor.id`. Strict extra
+  rejection makes old `employee_number` and `created_at` cursor payloads invalid. There is no
+  datetime normalization or dialect-specific `julianday` path.
 - Employee lifecycle validation is active: `terminated` requires `employment_end_date`; `active`
   and `on_leave` require `employment_end_date: null`. Violations return
   `employee_invalid_lifecycle`, and the database also has

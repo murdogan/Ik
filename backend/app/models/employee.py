@@ -78,7 +78,6 @@ class Employee(Base, TimestampMixin):
         Index(
             "ix_employees_tenant_directory_cursor",
             "tenant_id",
-            "created_at",
             "id",
             postgresql_where=text("archived_at IS NULL"),
             sqlite_where=text("archived_at IS NULL"),
@@ -87,7 +86,6 @@ class Employee(Base, TimestampMixin):
             "ix_employees_tenant_status_directory_cursor",
             "tenant_id",
             "status",
-            "created_at",
             "id",
             postgresql_where=text("archived_at IS NULL"),
             sqlite_where=text("archived_at IS NULL"),

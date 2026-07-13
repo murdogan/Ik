@@ -301,7 +301,10 @@ P4A'nın additive `0032_p4a_employee_directory` revision'ıdır. P3K'nin katalog
 `0031_p3k_legacy_tenant_auth_boundary` revision'ı `leave:manage:tenant` yetkisini yalnız HR
 director/specialist rollerine verir. P4A mevcut employee/assignment sözleşmesini daraltmadan
 normalized numara/iş-e-postası benzersizliği, optimistic version ve indexed directory desteği
-ekler; tenant admin employee yetkisini implicit olarak almaz.
+ekler; tenant admin employee yetkisini implicit olarak almaz. Employee directory opaque cursor
+payload'ı yalnız `id: UUID` taşır; sıra `Employee.id ASC`, devam predicate'i tam olarak
+`Employee.id > cursor.id` ve fiziksel cursor indexleri `(tenant_id, id)` ile
+`(tenant_id, status, id)`'dir.
 
 Veritabanı migration komutları:
 

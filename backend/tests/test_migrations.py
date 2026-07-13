@@ -833,10 +833,30 @@ def test_sqlite_p4a_upgrade_enforces_normalized_keys_and_round_trips(
                 ),
                 {"tenant_id": tenant_id},
             ).tuples().all()
+            directory_indexes = {
+                row.name: row.sql
+                for row in connection.execute(
+                    text(
+                        "select name, sql from sqlite_master where type = 'index' "
+                        "and name in ('ix_employees_tenant_directory_cursor', "
+                        "'ix_employees_tenant_status_directory_cursor')"
+                    )
+                )
+            }
         assert normalized == [
             (" WF-001 ", "wf-001", " Ada@Example.test ", "ada@example.test", "ada employee", 1),
             ("WF-002", "wf-002", None, None, "ada employee", 1),
         ]
+        assert directory_indexes == {
+            "ix_employees_tenant_directory_cursor": (
+                "CREATE INDEX ix_employees_tenant_directory_cursor ON employees "
+                "(tenant_id, id) WHERE archived_at IS NULL"
+            ),
+            "ix_employees_tenant_status_directory_cursor": (
+                "CREATE INDEX ix_employees_tenant_status_directory_cursor ON employees "
+                "(tenant_id, status, id) WHERE archived_at IS NULL"
+            ),
+        }
 
         with engine.begin() as connection, pytest.raises(IntegrityError):
             _seed_p4a_employee(
@@ -1612,12 +1632,12 @@ def test_alembic_offline_p4a_renders_preflight_generated_keys_and_indexes() -> N
         assert index_name in result.stdout
     assert (
         "CREATE INDEX ix_employees_tenant_directory_cursor ON employees "
-        "(tenant_id, created_at, id) WHERE archived_at IS NULL;"
+        "(tenant_id, id) WHERE archived_at IS NULL;"
         in result.stdout
     )
     assert (
         "CREATE INDEX ix_employees_tenant_status_directory_cursor ON employees "
-        "(tenant_id, status, created_at, id) WHERE archived_at IS NULL;"
+        "(tenant_id, status, id) WHERE archived_at IS NULL;"
         in result.stdout
     )
 

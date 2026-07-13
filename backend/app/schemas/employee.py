@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from re import Pattern, compile
 from typing import Self
 from uuid import UUID
@@ -135,19 +135,11 @@ class EmployeeListFilters(BaseModel):
 
 
 class EmployeeListCursor(BaseModel):
-    """Opaque employee continuation key for immutable creation order."""
+    """Opaque employee continuation key for immutable identifier order."""
 
     model_config = ConfigDict(extra="forbid")
 
-    created_at: datetime
     id: UUID
-
-    @field_validator("created_at")
-    @classmethod
-    def require_timezone_aware_created_at(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("Employee cursor created_at must include a timezone")
-        return value
 
     @classmethod
     def from_token(cls, token: str) -> "EmployeeListCursor":

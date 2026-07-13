@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -313,7 +313,6 @@ def test_employee_list_pagination_rejects_unbounded_values(data: dict[str, int])
 
 def test_employee_list_pagination_rejects_cursor_with_positive_offset() -> None:
     cursor = EmployeeListCursor(
-        created_at=datetime(2026, 7, 13, 9, 0, tzinfo=UTC),
         id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
     )
 
@@ -321,25 +320,28 @@ def test_employee_list_pagination_rejects_cursor_with_positive_offset() -> None:
         EmployeeListPagination(offset=1, cursor=cursor)
 
 
-def test_employee_list_cursor_round_trips_immutable_creation_key_opaquely() -> None:
+def test_employee_list_cursor_round_trips_immutable_id_key_opaquely() -> None:
     cursor = EmployeeListCursor(
-        created_at=datetime(2026, 7, 13, 9, 0, tzinfo=UTC),
         id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
     )
 
     token = cursor.to_token()
 
     assert EmployeeListCursor.from_token(token) == cursor
-    assert "2026-07-13" not in token
     assert str(cursor.id) not in token
 
 
-def test_employee_list_cursor_requires_timezone_aware_created_at() -> None:
+def test_employee_list_cursor_rejects_legacy_created_at_token() -> None:
+    token = encode_cursor(
+        "employees",
+        {
+            "created_at": "2026-07-13T09:00:00.000001Z",
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+    )
+
     with pytest.raises(ValidationError):
-        EmployeeListCursor(
-            created_at=datetime(2026, 7, 13, 9, 0),
-            id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-        )
+        EmployeeListCursor.from_token(token)
 
 
 def test_employee_list_cursor_rejects_legacy_mutable_employee_number_token() -> None:
@@ -359,7 +361,6 @@ def test_employee_list_cursor_rejects_token_for_another_resource() -> None:
     token = encode_cursor(
         "leave_requests",
         {
-            "created_at": "2026-07-13T09:00:00Z",
             "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         },
     )

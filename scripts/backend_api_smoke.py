@@ -3079,6 +3079,15 @@ async def _smoke_employee_endpoints(
         ["WF-SMOKE-001", "WF-SMOKE-002"],
         "employee list tenant scope",
     )
+    expected_employee_id_order = sorted(
+        (employee_id, secondary_employee_id),
+        key=UUID,
+    )
+    _assert_equal(
+        [employee["id"] for employee in employees],
+        expected_employee_id_order,
+        "employee list ID ordering",
+    )
 
     blank_filter_employees = _expect_json(
         await client.get(
@@ -3384,12 +3393,12 @@ async def _smoke_employee_endpoints(
         "GET /api/v1/employees?limit=1&cursor=<cursor>",
     )
     _assert_equal(
-        sorted(
-            employee["employee_number"]
+        [
+            employee["id"]
             for employee in employee_cursor_page + employee_next_page
-        ),
-        ["WF-SMOKE-001", "WF-SMOKE-002"],
-        "employee deterministic cursor pagination",
+        ],
+        expected_employee_id_order,
+        "employee deterministic ID cursor pagination",
     )
     _expect_error_code(
         await client.get(

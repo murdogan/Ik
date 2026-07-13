@@ -116,7 +116,6 @@ async def _capture_representative_plans(database_url: URL) -> dict[str, object]:
                         TENANT_ID,
                         EmployeeListFilters(q="employee009999"),
                         EmployeeListPagination(limit=50),
-                        dialect_name="postgresql",
                     ),
                 ),
                 "employee_cursor": await _explain_statement(
@@ -127,11 +126,9 @@ async def _capture_representative_plans(database_url: URL) -> dict[str, object]:
                         EmployeeListPagination(
                             limit=50,
                             cursor=EmployeeListCursor(
-                                created_at=datetime(2026, 7, 1, tzinfo=UTC),
-                                id=UUID("10000000-0000-4000-8000-000000005000"),
+                                id=UUID("10000000-0000-4000-8000-000000004999"),
                             ),
                         ),
-                        dialect_name="postgresql",
                     ),
                 ),
                 "leave_request_cursor": await _explain_statement(
@@ -208,13 +205,15 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
         ),
         {"user_id": USER_ID, "tenant_id": TENANT_ID},
     )
+    # Interleaving archived even IDs makes the non-archived partial cursor index
+    # observably preferable to the primary-key and tenant/id unique indexes.
     await connection.execute(
         text(
             """
             insert into employees (
                 id, tenant_id, employee_number, first_name, last_name, email,
                 department, position, status, employment_start_date,
-                employment_end_date, created_at, updated_at
+                employment_end_date, archived_at, created_at, updated_at
             )
             select
                 ('10000000-0000-4000-8000-' || lpad(gs::text, 12, '0'))::uuid,
@@ -232,6 +231,10 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
                 end,
                 date '2024-01-01' + (gs % 700),
                 case when gs % 20 = 0 then date '2026-06-30' else null end,
+                case
+                    when gs % 2 = 0 then timestamptz '2026-07-02 00:00:00+00'
+                    else null
+                end,
                 timestamptz '2026-07-01 00:00:00+00'
                     + (gs - 5000) * interval '1 second',
                 timestamptz '2026-07-01 00:00:00+00'
@@ -251,7 +254,7 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
             select
                 ('30000000-0000-4000-8000-' || lpad(gs::text, 12, '0'))::uuid,
                 :tenant_id,
-                ('10000000-0000-4000-8000-' || lpad((gs * 2)::text, 12, '0'))::uuid,
+                ('10000000-0000-4000-8000-' || lpad((gs * 2 - 1)::text, 12, '0'))::uuid,
                 case when gs % 5 = 0 then 'sick' else 'annual' end,
                 date '2026-08-01' + (gs % 90),
                 date '2026-08-03' + (gs % 90),

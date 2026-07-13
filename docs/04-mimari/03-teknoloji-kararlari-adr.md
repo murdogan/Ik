@@ -465,11 +465,11 @@ Sonuç:
 - OpenSearch, response envelope standardizasyonu, audit-derived dashboard activity ve cache
   invalidation bu Phase-0 kararının kapsamı değildir.
 
-P4A review blocker onarımı, güncellenebilir `employee_number` nedeniyle sayfalar arasında oluşan
-skip/duplicate riskini kapatmak için ADR'nin employee tarafını immutable
-`(created_at asc, id asc)` ile supersede eder. Tam devam predicate'i
-`created_at > cursor.created_at OR (created_at = cursor.created_at AND id > cursor.id)`'dir;
-leave ordering'i ve P0F zamanında kaydedilmiş ölçüm kanıtı değişmez.
+P4A'nın final cross-dialect review-blocker onarımı ADR'nin employee tarafını yalnız `id: UUID`
+taşıyan opaque cursor ile supersede eder. Sıra `Employee.id ASC`, tam devam predicate'i
+`Employee.id > cursor.id`'dir; güncellenebilir `employee_number` ve datetime alanları cursor
+ordering/key'i değildir. Leave ordering'i ve P0F zamanında kaydedilmiş employee-number ölçüm kanıtı
+değişmez.
 
 Kanıt ve tekrar prosedürü:
 
