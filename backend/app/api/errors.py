@@ -65,6 +65,15 @@ from app.services.leave_request_service import (
     LeaveRequestTransitionError,
     LeaveRequestUserNotFoundError,
 )
+from app.services.organization_service import (
+    BranchNotFoundError,
+    DuplicateBranchCodeError,
+    DuplicateLegalEntityCodeError,
+    LegalEntityNotFoundError,
+    OrganizationAccessDeniedError,
+    OrganizationConflictError,
+    OrganizationFeatureUnavailableError,
+)
 from app.services.password_recovery_service import InvalidPasswordResetError
 from app.services.platform_auth_session_service import (
     InvalidPlatformSessionError,
@@ -108,6 +117,8 @@ AUTH_API_PREFIX = "/api/v1/auth"
 PLATFORM_AUTH_API_PREFIX = "/api/v1/platform/auth"
 USER_INVITATION_API_PREFIX = "/api/v1/users/invitations"
 USER_ADMINISTRATION_API_PREFIX = "/api/v1/users"
+LEGAL_ENTITY_API_PREFIX = "/api/v1/legal-entities"
+BRANCH_API_PREFIX = "/api/v1/branches"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -209,6 +220,24 @@ AUDIT_EVENT_NOT_FOUND_ERROR_CODE = "audit_event_not_found"
 AUDIT_EVENT_NOT_FOUND_ERROR_MESSAGE = "Audit event was not found"
 AUDIT_VALIDATION_ERROR_CODE = "audit_validation_error"
 AUDIT_VALIDATION_ERROR_MESSAGE = "Audit query validation failed"
+ORGANIZATION_ACCESS_DENIED_ERROR_CODE = "organization_access_denied"
+ORGANIZATION_ACCESS_DENIED_ERROR_MESSAGE = (
+    "You do not have permission to manage organization settings"
+)
+ORGANIZATION_VALIDATION_ERROR_CODE = "organization_validation_error"
+ORGANIZATION_VALIDATION_ERROR_MESSAGE = "Organization request validation failed"
+ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE = "organization_feature_unavailable"
+ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_MESSAGE = "Organization module is not enabled"
+LEGAL_ENTITY_NOT_FOUND_ERROR_CODE = "legal_entity_not_found"
+LEGAL_ENTITY_NOT_FOUND_ERROR_MESSAGE = "Legal entity was not found"
+BRANCH_NOT_FOUND_ERROR_CODE = "branch_not_found"
+BRANCH_NOT_FOUND_ERROR_MESSAGE = "Branch was not found"
+LEGAL_ENTITY_CODE_CONFLICT_ERROR_CODE = "legal_entity_code_conflict"
+LEGAL_ENTITY_CODE_CONFLICT_ERROR_MESSAGE = "Legal entity code is already in use"
+BRANCH_CODE_CONFLICT_ERROR_CODE = "branch_code_conflict"
+BRANCH_CODE_CONFLICT_ERROR_MESSAGE = "Branch code is already in use"
+ORGANIZATION_CONFLICT_ERROR_CODE = "organization_conflict"
+ORGANIZATION_CONFLICT_ERROR_MESSAGE = "The requested organization change is not allowed"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -575,6 +604,86 @@ USER_ADMINISTRATION_CONFLICT_RESPONSES = _conflict_response(
     },
 )
 
+ORGANIZATION_AUTHORIZATION_RESPONSES = {
+    status.HTTP_403_FORBIDDEN: {
+        "model": ApiErrorResponse,
+        "description": "The authenticated actor cannot administer organization settings.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    ORGANIZATION_ACCESS_DENIED_ERROR_CODE,
+                    ORGANIZATION_ACCESS_DENIED_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+ORGANIZATION_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Organization request validation error envelope.",
+    }
+}
+ORGANIZATION_FEATURE_UNAVAILABLE_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "The organization module is not enabled for this tenant.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE,
+                    ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+ORGANIZATION_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "The resource is absent or outside the authenticated tenant.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    TENANT_NOT_FOUND_ERROR_CODE: _error_example(
+                        TENANT_NOT_FOUND_ERROR_CODE,
+                        TENANT_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    LEGAL_ENTITY_NOT_FOUND_ERROR_CODE: _error_example(
+                        LEGAL_ENTITY_NOT_FOUND_ERROR_CODE,
+                        LEGAL_ENTITY_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    BRANCH_NOT_FOUND_ERROR_CODE: _error_example(
+                        BRANCH_NOT_FOUND_ERROR_CODE,
+                        BRANCH_NOT_FOUND_ERROR_MESSAGE,
+                    ),
+                    ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE: _error_example(
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE,
+                        ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_MESSAGE,
+                    ),
+                }
+            }
+        },
+    }
+}
+ORGANIZATION_CONFLICT_RESPONSES = _conflict_response(
+    description="Organization code or lifecycle conflict envelope.",
+    examples={
+        LEGAL_ENTITY_CODE_CONFLICT_ERROR_CODE: _error_example(
+            LEGAL_ENTITY_CODE_CONFLICT_ERROR_CODE,
+            LEGAL_ENTITY_CODE_CONFLICT_ERROR_MESSAGE,
+        ),
+        BRANCH_CODE_CONFLICT_ERROR_CODE: _error_example(
+            BRANCH_CODE_CONFLICT_ERROR_CODE,
+            BRANCH_CODE_CONFLICT_ERROR_MESSAGE,
+        ),
+        ORGANIZATION_CONFLICT_ERROR_CODE: _error_example(
+            ORGANIZATION_CONFLICT_ERROR_CODE,
+            ORGANIZATION_CONFLICT_ERROR_MESSAGE,
+        ),
+    },
+)
+
 
 EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Employee command conflict envelope.",
@@ -709,6 +818,20 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return user_not_found_error()
     if isinstance(exc, UserAdministrationStatusConflictError):
         return user_administration_status_conflict_error(str(exc))
+    if isinstance(exc, OrganizationAccessDeniedError):
+        return organization_access_denied_error()
+    if isinstance(exc, OrganizationFeatureUnavailableError):
+        return organization_feature_unavailable_error()
+    if isinstance(exc, LegalEntityNotFoundError):
+        return legal_entity_not_found_error()
+    if isinstance(exc, BranchNotFoundError):
+        return branch_not_found_error()
+    if isinstance(exc, DuplicateLegalEntityCodeError):
+        return legal_entity_code_conflict_error()
+    if isinstance(exc, DuplicateBranchCodeError):
+        return branch_code_conflict_error()
+    if isinstance(exc, OrganizationConflictError):
+        return organization_conflict_error(str(exc))
     if isinstance(exc, TenantNotFoundError):
         return tenant_not_found_error()
     if isinstance(exc, DuplicateTenantSlugError):
@@ -1014,6 +1137,70 @@ def user_administration_status_conflict_error(message: str) -> ApiError:
     )
 
 
+def organization_access_denied_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code=ORGANIZATION_ACCESS_DENIED_ERROR_CODE,
+        message=ORGANIZATION_ACCESS_DENIED_ERROR_MESSAGE,
+    )
+
+
+def organization_feature_unavailable_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_CODE,
+        message=ORGANIZATION_FEATURE_UNAVAILABLE_ERROR_MESSAGE,
+    )
+
+
+def legal_entity_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=LEGAL_ENTITY_NOT_FOUND_ERROR_CODE,
+        message=LEGAL_ENTITY_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def branch_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=BRANCH_NOT_FOUND_ERROR_CODE,
+        message=BRANCH_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def legal_entity_code_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=LEGAL_ENTITY_CODE_CONFLICT_ERROR_CODE,
+        message=LEGAL_ENTITY_CODE_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def branch_code_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=BRANCH_CODE_CONFLICT_ERROR_CODE,
+        message=BRANCH_CODE_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def organization_conflict_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ORGANIZATION_CONFLICT_ERROR_CODE,
+        message=message or ORGANIZATION_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def organization_pagination_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=ORGANIZATION_VALIDATION_ERROR_CODE,
+        message=ORGANIZATION_VALIDATION_ERROR_MESSAGE,
+    )
+
+
 def platform_tenant_pagination_validation_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1151,6 +1338,10 @@ def _domain_request_validation_error(
         )
     if _matches_api_prefix(path, USER_ADMINISTRATION_API_PREFIX):
         return user_administration_validation_error()
+    if _matches_api_prefix(path, LEGAL_ENTITY_API_PREFIX) or _matches_api_prefix(
+        path, BRANCH_API_PREFIX
+    ):
+        return organization_pagination_validation_error()
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):
         return ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

@@ -5,6 +5,8 @@ export const AUTHORIZATION_PERMISSIONS = {
   inviteUsers: "user:invite:tenant",
   updateUsers: "user:update:tenant",
   assignRoles: "role:assign:tenant",
+  readOrganization: "organization:read:tenant",
+  updateOrganization: "organization:update:tenant",
   readTenantAudit: "audit:read:tenant",
   readPlatformAudit: "audit:read:platform",
 } as const;

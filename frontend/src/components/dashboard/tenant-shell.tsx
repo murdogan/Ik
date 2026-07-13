@@ -5,11 +5,13 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { useSession } from "@/components/session/session-provider";
+import { useTenantFeatures } from "@/components/session/tenant-feature-provider";
 import type { AuthUser } from "@/lib/auth-contracts";
 import {
   AUTHORIZATION_PERMISSIONS,
   hasPermission,
 } from "@/lib/authorization";
+import { TENANT_FEATURES } from "@/lib/feature-rollout";
 
 import styles from "./tenant-shell.module.css";
 
@@ -18,25 +20,44 @@ function displayName(fullName: string | null, email: string): string {
 }
 
 const navigationItems = [
-  { href: "/dashboard", label: "Genel bakış", icon: "⌂", permission: null },
+  {
+    href: "/dashboard",
+    label: "Genel bakış",
+    icon: "⌂",
+    permission: null,
+    feature: null,
+  },
   {
     href: "/users",
     label: "Kullanıcılar",
     icon: "K",
     permission: AUTHORIZATION_PERMISSIONS.readUsers,
+    feature: null,
+  },
+  {
+    href: "/organization",
+    label: "Organizasyon",
+    icon: "O",
+    permission: AUTHORIZATION_PERMISSIONS.readOrganization,
+    feature: TENANT_FEATURES.organization,
   },
   {
     href: "/audit",
     label: "Denetim kayıtları",
     icon: "D",
     permission: AUTHORIZATION_PERMISSIONS.readTenantAudit,
+    feature: null,
   },
 ] as const;
 
 function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
   const pathname = usePathname();
+  const { status: featureStatus, isEnabled } = useTenantFeatures();
   const visibleItems = navigationItems.filter(
-    (item) => item.permission === null || hasPermission(user, item.permission),
+    (item) =>
+      (item.permission === null || hasPermission(user, item.permission)) &&
+      (item.feature === null ||
+        (featureStatus === "ready" && isEnabled(item.feature))),
   );
 
   return (

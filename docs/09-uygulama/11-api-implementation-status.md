@@ -2,14 +2,41 @@
 
 Date: 2026-07-13
 Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3E invitation, activation, recovery and identity checkpoint closure`
-Review checkpoint: `STOP — P3A–P3E / Phase 3A identity checkpoint complete; P3F organization work not started`
-Review decision: `P3E product/security scope is green after the recorded gates below`
-Push state: `P3E HEAD is intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P3F legal entities and branch/location vertical slice`
+Review checkpoint: `P3A–P3E identity checkpoint was green and pushed before P3F began`
+Review decision: `P3F implementation and local verification are recorded below`
+Push state: `P3F commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### P3E Phase 3A identity checkpoint closure
+### P3F legal entities and branch/location
+
+- Every existing and newly provisioned tenant has one deterministic active default legal entity.
+  Authorized tenant admin/HR users can read and edit legal settings while stable codes and the
+  default marker remain immutable.
+- Branches carry tenant-unique stable codes, IANA timezones, typed location data and active/archive
+  lifecycle state. Archive retains the row and code for history, rejects later mutation and marks
+  the branch unavailable for new assignments.
+- All nine bearer-authenticated organization operations use current-session tenant scope, exact
+  read/update permissions, the authoritative `organization` rollout flag, bounded cursor lists
+  and same-transaction redacted audit events. Disabled or missing rollout state fails closed.
+- The `/organization` screen exposes legal-entity editing plus branch create, edit, filtering,
+  pagination and archive/history workflows to authorized tenant admin/HR roles.
+
+### P3F verification gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend/app backend/tests scripts` | Passed: `All checks passed!` |
+| Full fast backend suite | `uv run pytest -q` | Passed: 832 tests; 52 PostgreSQL tests deselected; one known Starlette/httpx deprecation warning |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0027_p3f_legal_entities_branches` |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 57 documented runtime endpoints executed, including all nine P3F operations |
+| PostgreSQL P3F proof | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p3f_organization.py` | Not run locally: `IK_TEST_DATABASE_URL` is unavailable; the test is collected and covers RLS/ACLs, provisioning policy, stable history, cross-tenant denial and lifecycle concurrency |
+| Frontend static gates | `npm run lint`, `npm run typecheck`, `npm run build` in `frontend/` | Passed; production build includes `/organization` |
+| Focused browser E2E | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npx playwright test tests/organization-flow.spec.ts` in `frontend/` | Passed: 3 Chromium tests covering admin CRUD/archive, permission denial and rollout denial |
+| Git hygiene | `git diff --check` plus independent task-scope review | Passed; no deployment, staging, cron, secret or post-P3F module change |
+
+### Historical P3E Phase 3A identity checkpoint closure
 
 - Tenant admins can invite either a new email or an existing global identity. A new identity uses
   the hashed, expiring activation link once to establish its first Argon2id password. An existing
@@ -40,8 +67,8 @@ Push state: `P3E HEAD is intentionally left unpushed for the supervisor; no merg
   ID: that membership is repointed to the shared canonical admin identity, a detached historical
   identity is retained for possible references, conflicting non-null hashes fail closed, and a
   second seed run is idempotent.
-- This checkpoint closes Phase 3A only. No legal entity, branch, department, position, assignment
-  or other P3F organization work is present.
+- At the time it was committed, this checkpoint closed Phase 3A only and contained no legal
+  entity, branch, department, position, assignment or other P3F organization work.
 
 ### P3E Phase 3A identity checkpoint gates
 
@@ -715,6 +742,15 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/audit-events` | Implemented for F2E | Bearer + tenant audit permission, role/category filtering, redacted cursor page |
 | GET | `/api/v1/audit-events/{event_id}` | Implemented for F2E | Read-only safe detail with identical hidden/cross-tenant not-found behavior |
 | GET | `/api/v1/platform/audit-events` | Implemented for F2E/P3D | Separate `PlatformBearerAuth`, live platform session, and platform-operations-only projection |
+| GET | `/api/v1/legal-entities` | Implemented for P3F | Current-tenant bounded cursor list, stable codes and default marker |
+| POST | `/api/v1/legal-entities` | Implemented for P3F | Tenant-unique stable code, active create and same-transaction audit |
+| GET | `/api/v1/legal-entities/{legal_entity_id}` | Implemented for P3F | Current-tenant detail with indistinguishable missing/cross-tenant `404` |
+| PATCH | `/api/v1/legal-entities/{legal_entity_id}` | Implemented for P3F | Allowlisted legal settings; stable code/default marker immutable and lifecycle guarded |
+| GET | `/api/v1/branches` | Implemented for P3F | Bounded cursor list with legal-entity/status-bound continuation and archived history |
+| POST | `/api/v1/branches` | Implemented for P3F | Active legal-entity guard, IANA timezone, stable tenant-wide code and audit |
+| GET | `/api/v1/branches/{branch_id}` | Implemented for P3F | Active or archived current-tenant branch detail |
+| PATCH | `/api/v1/branches/{branch_id}` | Implemented for P3F | Active-only allowlisted location update; code and legal-entity binding immutable |
+| DELETE | `/api/v1/branches/{branch_id}` | Implemented for P3F | Terminal archive keeps history/code and closes new assignments |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -730,8 +766,9 @@ the expected local commits ahead of the review-branch remote after the final com
 
 F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
 list/detail and the separate platform audit list. P3C adds two organization-selection operations,
-P3D adds four platform-auth operations and P3E adds two password-recovery operations, bringing the
-current surface to 47 generated operations and 48 documented runtime endpoints
+P3D adds four platform-auth operations, P3E adds two password-recovery operations and P3F adds
+nine organization operations, bringing the current surface to 56 generated operations and 57
+documented runtime endpoints
 including `/openapi.json`. The executable smoke
 covers activation/login/session lifecycle, tenant-admin user/role/audit behavior and contract-table
 drift without printing credential material.

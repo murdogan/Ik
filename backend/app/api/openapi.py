@@ -7,6 +7,7 @@ AUTHORIZATION_TAG = "Authorization"
 AUDIT_TAG = "Audit"
 PLATFORM_AUDIT_TAG = "Platform Audit"
 USER_ADMINISTRATION_TAG = "User Administration"
+ORGANIZATION_TAG = "Organization"
 PLATFORM_TENANTS_TAG = "Platform Tenants"
 TENANT_SETTINGS_TAG = "Tenant Settings"
 DASHBOARD_TAG = "Dashboard"
@@ -101,6 +102,13 @@ OPENAPI_TAGS = [
             "Authenticated tenant user listing, indexed search, account updates, and invitations. "
             "Tenant and actor scope come from a validated session-backed RequestContext and are "
             "never accepted from caller-supplied fields."
+        ),
+    },
+    {
+        "name": ORGANIZATION_TAG,
+        "description": (
+            "Authenticated tenant legal-entity settings and bounded branch/location "
+            "administration with stable codes, terminal archive history, and audited writes."
         ),
     },
     {

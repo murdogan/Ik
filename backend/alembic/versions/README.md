@@ -269,3 +269,31 @@ tenant/platform denial, existing-identity kabulü, tek identity/iki membership v
 revoke iddiaları `backend/tests/integration/test_postgresql_p3e_identity_checkpoint.py` ile gerçek
 PostgreSQL'de doğrulanır. Bu revision sonrası tek head `0026_p3e_identity_checkpoint`'tır; P3F
 organization tabloları bu checkpoint'e dahil değildir.
+
+## P3F legal entity ve branch/location temeli
+
+`0027_p3f_legal_entities_branches`, tenant organization dilimini additive olarak başlatır:
+
+- `legal_entities`, case-insensitive generated `code_normalized`, tenant içi kalıcı kod,
+  active/inactive durum, typed legal metadata (`registered_name`, `country_code`, `tax_number`,
+  timezone) ve tenant başına en fazla bir aktif default entity saklar. Mevcut her tenant için
+  `id=tenant.id`, `code=DEFAULT`, ad/registered-name ve timezone tenant metadata'sından gelen
+  deterministic default satır backfill edilir.
+- `branches`, aynı generated/kod benzersizliğiyle active veya archived location durumunu saklar.
+  `archived_at` durumla birlikte constraint altındadır; `(tenant_id, legal_entity_id)` composite
+  foreign key başka tenant'ın legal entity'sine bağlanmayı veritabanında engeller. Runtime
+  `DELETE` grant'i almaz; archive, allowlisted kolon update'idir ve tarihsel satırı korur.
+- Her iki tablo PostgreSQL'de `ENABLE + FORCE RLS` altındadır. Tenant capability yalnız
+  `SELECT/INSERT` ve modelin mutable/archive kolonlarına column-level `UPDATE` alır; kimlik,
+  tenant, legal-entity bağı, kalıcı kod ve default işareti runtime'da değiştirilemez. Platform
+  capability yeni tenant provisioning'i için yalnız `legal_entities INSERT` ve default-entity
+  şekline kısıtlı insert-only policy alır; legal-entity `SELECT/UPDATE`, bütün branch erişimi ve
+  `DELETE` kapalıdır.
+- Authorization catalog'a stable 31/32 numaralı `organization:read:tenant` ve
+  `organization:update:tenant` permission'ları eklenir. Tenant admin, HR director ve HR specialist
+  read/update; auditor yalnız read grant'i alır.
+- Downgrade, branch veya default placeholder dışı legal-entity state'i varsa veri düşürmek
+  yerine fail eder. PostgreSQL RLS/ACL iddiaları disposable PostgreSQL integration hattında
+  kanıtlanmalıdır; SQLite hattı generated kolon, constraint, backfill ve schema uyumunu kanıtlar.
+
+Bu revision sonrası tek head `0027_p3f_legal_entities_branches`'tır.

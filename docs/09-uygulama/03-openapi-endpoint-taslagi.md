@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-13 / P3E Phase 3A identity checkpoint closure.
+Son güncelleme: 2026-07-13 / P3F legal entity ve branch/location vertical slice.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -24,9 +24,9 @@ eklemeden exact on Faz 1 operation'ına `x-required-principal` metadata'sı ekle
 `backend/tests/contracts/f1e_openapi_contract.json` snapshot'ında dondurur.
 F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: executable contract testi
 F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
-canlı OpenAPI'den doğrular. P3C iki organization-selection, P3D dört platform-auth ve P3E iki
-password-recovery operation'ı ekler; güncel registry 47 generated operation ve runtime
-`/openapi.json` ile 48 documented endpoint'tir.
+canlı OpenAPI'den doğrular. P3C iki organization-selection, P3D dört platform-auth, P3E iki
+password-recovery ve P3F dokuz organization operation'ı ekler; güncel registry 56 generated
+operation ve runtime `/openapi.json` ile 57 documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -66,6 +66,15 @@ password-recovery operation'ı ekler; güncel registry 47 generated operation ve
 | GET | `/api/v1/audit-events` | F2E uygulandı | Bearer + `audit:read:tenant`; role/category filtreli, redakte cursor sayfası |
 | GET | `/api/v1/audit-events/{event_id}` | F2E uygulandı | Yalnız current tenant ve görünür kategoride salt-okunur güvenli detay |
 | GET | `/api/v1/platform/audit-events` | P3D sınırıyla F2E uygulandı | Ayrı `PlatformBearerAuth` ve canlı platform session; yalnız `platform_operations`, HR payload yok |
+| GET | `/api/v1/legal-entities` | P3F uygulandı | Bearer + organization read permission; current-tenant, kod sıralı ve bounded opaque cursor sayfası |
+| POST | `/api/v1/legal-entities` | P3F uygulandı | Current-tenant aktif tüzel kişilik; tenant-unique kalıcı kod ve atomik audit |
+| GET | `/api/v1/legal-entities/{legal_entity_id}` | P3F uygulandı | Current-tenant detay; missing/cross-tenant aynı `404` |
+| PATCH | `/api/v1/legal-entities/{legal_entity_id}` | P3F uygulandı | Allowlisted ayarlar; kod/default işareti immutable, default entity aktif kalır |
+| GET | `/api/v1/branches` | P3F uygulandı | Aktif ve arşiv geçmişi için status/legal-entity filtrelerine bağlı bounded opaque cursor |
+| POST | `/api/v1/branches` | P3F uygulandı | Aktif current-tenant tüzel kişilik altında IANA timezone'lu şube oluşturma |
+| GET | `/api/v1/branches/{branch_id}` | P3F uygulandı | Aktif veya arşivlenmiş current-tenant şube detayı |
+| PATCH | `/api/v1/branches/{branch_id}` | P3F uygulandı | Aktif şubenin allowlisted lokasyon alanları; kalıcı kod ve tüzel kişilik bağı immutable |
+| DELETE | `/api/v1/branches/{branch_id}` | P3F uygulandı | Fiziksel silme yerine terminal archive; tarihçe/kod korunur ve yeni atama kapanır |
 | GET | `/api/v1/dashboard/summary` | Uygulandı | Tenant-scoped DB dashboard metrikleri, departman dağılımı ve son aktiviteler |
 | GET | `/api/v1/employees` | Uygulandı | Tenant-scoped liste; filtreler, deterministic `cursor` + `X-Next-Cursor`, deprecated `offset` uyumluluğu |
 | POST | `/api/v1/employees` | Uygulandı | Server tenant context, duplicate koruması ve opsiyonel tenant-global idempotency |
@@ -88,6 +97,12 @@ değiştiremediğini ve revoke edilen session'ın yeniden kullanılamadığını
 matrix ayrıca yedi tenant rolünün her user/role/audit endpoint kararını ve
 tenant_admin/tenant_security/hr_operations kategori görünürlüğünü doğrular; employee genel
 yönetim/audit center'da fail closed kalır. Credential/token değerleri çıktıya yazılmaz.
+
+P3F organization route'ları mevcut platform rollout sözleşmesindeki `organization` özelliğini
+authoritative olarak tüketir. Flag kapalı veya eksikse permission sahibi kullanıcı için bile modül
+`404 organization_feature_unavailable` ile fail closed kalır; local/demo ürün akışında flag açık
+seed edilir. Frontend permission sahibi kullanıcı için aynı organization sınırında bounded bir
+availability probe yaparak navigasyonu gizler; backend kontrolü esas sınırdır.
 
 Geçerli uygulama notları:
 
@@ -145,7 +160,7 @@ Geçerli uygulama notları:
 
 - OpenAPI dokümanı okunabilir tag kataloğu kullanır: `System`, `Public`, `Authentication`,
   `Authorization`, `User Administration`, `Audit`, `Platform Audit`, `Platform Tenants`,
-  `Tenant Settings`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
+  `Tenant Settings`, `Organization`, `Dashboard`, `Employees`, `Leave Balances`, `Leave Requests`.
   İlk altı ürün/system tag'i W4C5'te sabitlenmiş; F1A `Platform Tenants` ve `Tenant Settings`
   gruplarını additive olarak eklemiştir. F1D feature operation'ları aynı sahiplik tag'lerini
   kullanır; yeni bir audit veya generic feature-admin tag'i açmaz.

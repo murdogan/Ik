@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.organization import LegalEntity, LegalEntityStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
 from app.modules.core.domain.feature_flags import FEATURE_FLAG_DEFAULTS
 from app.modules.core.domain.tenant import (
@@ -137,6 +138,20 @@ class TenantService:
                 week_start_day=payload.settings.week_start_day.value,
                 date_format=payload.settings.date_format.value,
                 time_format=payload.settings.time_format.value,
+            )
+        )
+        self.session.add(
+            LegalEntity(
+                id=tenant.id,
+                tenant_id=tenant.id,
+                code="DEFAULT",
+                name=tenant.name,
+                registered_name=tenant.name,
+                country_code=None,
+                tax_number=None,
+                timezone=tenant.timezone,
+                status=LegalEntityStatus.ACTIVE.value,
+                is_default=True,
             )
         )
         self.session.add_all(

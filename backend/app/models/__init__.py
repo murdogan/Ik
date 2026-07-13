@@ -25,12 +25,15 @@ from app.models.identity import (
 )
 from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
+from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
 from app.models.user import User, UserStatus
 
 __all__ = [
     "AuditEvent",
     "AuthenticationRateLimitBucket",
+    "Branch",
+    "BranchStatus",
     "CommandIdempotency",
     "Employee",
     "EmployeeStatus",
@@ -39,6 +42,8 @@ __all__ = [
     "LeaveBalanceSummary",
     "LeaveRequest",
     "LeaveRequestStatus",
+    "LegalEntity",
+    "LegalEntityStatus",
     "MembershipRole",
     "MembershipStatus",
     "Permission",

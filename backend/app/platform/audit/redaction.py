@@ -56,7 +56,9 @@ _ROLE_CODES = frozenset(
         "employee",
     }
 )
-_STATUS_VALUES = frozenset({"invited", "active", "locked", "disabled"})
+_STATUS_VALUES = frozenset(
+    {"invited", "active", "inactive", "archived", "locked", "disabled"}
+)
 _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "authentication_method": frozenset({"local"}),
     "failure_reason": frozenset({"authentication_failed"}),
@@ -150,6 +152,54 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         changed_fields=frozenset(
             {"locale", "timezone", "week_start_day", "date_format", "time_format"}
         )
+    ),
+    AuditEventType.LEGAL_ENTITY_CREATED: AuditMetadataPolicy(
+        changed_fields=frozenset(
+            {
+                "code",
+                "name",
+                "registered_name",
+                "country_code",
+                "tax_number",
+                "timezone",
+                "status",
+            }
+        )
+    ),
+    AuditEventType.LEGAL_ENTITY_UPDATED: AuditMetadataPolicy(
+        changed_fields=frozenset(
+            {
+                "name",
+                "registered_name",
+                "country_code",
+                "tax_number",
+                "timezone",
+                "status",
+            }
+        )
+    ),
+    AuditEventType.BRANCH_CREATED: AuditMetadataPolicy(
+        changed_fields=frozenset(
+            {
+                "legal_entity_id",
+                "code",
+                "name",
+                "timezone",
+                "country_code",
+                "city",
+                "address",
+                "status",
+            }
+        )
+    ),
+    AuditEventType.BRANCH_UPDATED: AuditMetadataPolicy(
+        changed_fields=frozenset(
+            {"name", "timezone", "country_code", "city", "address"}
+        )
+    ),
+    AuditEventType.BRANCH_ARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_status", "after_status"}),
+        changed_fields=frozenset({"status", "archived_at"}),
     ),
 }
 

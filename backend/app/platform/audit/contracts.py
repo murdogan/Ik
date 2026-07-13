@@ -84,6 +84,11 @@ class AuditEventType(StrEnum):
     PLATFORM_TENANT_SETTING_CHANGED = "platform.tenant.setting_changed"
     PLATFORM_FEATURE_FLAG_CHANGED = "platform.feature_flag.changed"
     TENANT_SETTING_CHANGED = "tenant.setting.changed"
+    LEGAL_ENTITY_CREATED = "legal_entity.created"
+    LEGAL_ENTITY_UPDATED = "legal_entity.updated"
+    BRANCH_CREATED = "branch.created"
+    BRANCH_UPDATED = "branch.updated"
+    BRANCH_ARCHIVED = "branch.archived"
 
 
 @dataclass(frozen=True, slots=True)

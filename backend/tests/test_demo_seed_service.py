@@ -5,8 +5,10 @@ from app.db.base import Base
 from app.models.employee import Employee
 from app.models.identity import Identity, IdentityStatus, MembershipRole, TenantMembership
 from app.models.leave_request import LeaveRequest
-from app.models.tenant import Tenant, TenantSettings, TenantStatus
+from app.models.organization import LegalEntity
+from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User
+from app.modules.core.domain.feature_flags import FeatureFlagKey
 from app.services.demo_seed_service import (
     DEMO_EMPLOYEES,
     DEMO_LEAVE_REQUESTS,
@@ -44,6 +46,9 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         tenant_settings = await session.get(TenantSettings, DEMO_TENANTS[0].id)
         assert tenant_settings is not None
         tenant_settings.week_start_day = "sunday"
+        default_entity = await session.get(LegalEntity, DEMO_TENANTS[0].id)
+        assert default_entity is not None
+        default_entity.name = "Preserved legal entity name"
         await session.commit()
 
         second_result = await seed_demo_data(session)
@@ -51,6 +56,18 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert second_result == first_result
         assert await _count(session, Tenant) == len(DEMO_TENANTS)
         assert await _count(session, TenantSettings) == len(DEMO_TENANTS)
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(TenantFeatureFlag)
+                .where(
+                    TenantFeatureFlag.key == FeatureFlagKey.ORGANIZATION.value,
+                    TenantFeatureFlag.enabled.is_(True),
+                )
+            )
+            == len(DEMO_TENANTS)
+        )
+        assert await _count(session, LegalEntity) == len(DEMO_TENANTS)
         assert await _count(session, User) == len(DEMO_USERS)
         assert await _count(session, Identity) == 4
         assert await _count(session, TenantMembership) == len(DEMO_USERS)
@@ -81,6 +98,10 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         preserved_settings = await session.get(TenantSettings, DEMO_TENANTS[0].id)
         assert preserved_settings is not None
         assert preserved_settings.week_start_day == "sunday"
+        preserved_entity = await session.get(LegalEntity, DEMO_TENANTS[0].id)
+        assert preserved_entity is not None
+        assert preserved_entity.name == "Preserved legal entity name"
+        assert preserved_entity.is_default is True
 
         leave_requests = list(await session.scalars(select(LeaveRequest)))
         assert leave_requests
@@ -191,6 +212,8 @@ async def test_demo_seed_service_flushes_without_completing_transaction() -> Non
         async with AsyncSession(engine, expire_on_commit=False) as verification_session:
             assert await _count(verification_session, Tenant) == 0
             assert await _count(verification_session, TenantSettings) == 0
+            assert await _count(verification_session, TenantFeatureFlag) == 0
+            assert await _count(verification_session, LegalEntity) == 0
             assert await _count(verification_session, User) == 0
             assert await _count(verification_session, Identity) == 0
             assert await _count(verification_session, TenantMembership) == 0

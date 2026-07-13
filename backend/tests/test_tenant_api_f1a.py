@@ -13,6 +13,7 @@ from app.db.session import get_session
 from app.main import create_app
 from app.models.employee import Employee, EmployeeStatus
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
+from app.models.organization import LegalEntity
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.principals import PlatformPrincipal, TenantPrincipal
@@ -350,10 +351,17 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
 
         async with harness.session_factory() as session:
             settings = await session.get(TenantSettings, UUID(created["id"]))
+            default_entity = await session.get(LegalEntity, UUID(created["id"]))
         assert settings is not None
         assert settings.week_start_day == "sunday"
         assert settings.date_format == "MM/DD/YYYY"
         assert settings.time_format == "12h"
+        assert default_entity is not None
+        assert default_entity.tenant_id == UUID(created["id"])
+        assert default_entity.code == "DEFAULT"
+        assert default_entity.name == "Acme Turkiye"
+        assert default_entity.timezone == "Europe/London"
+        assert default_entity.is_default is True
 
 
 async def test_platform_tenant_list_uses_bounded_deterministic_cursor_envelope() -> None:

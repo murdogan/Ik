@@ -39,6 +39,11 @@ const EVENT_LABELS: Record<string, string> = {
   "platform.tenant.setting_changed": "Tenant ayarları değiştirildi",
   "platform.feature_flag.changed": "Özellik bayrağı değiştirildi",
   "tenant.setting.changed": "Tenant ayarları değiştirildi",
+  "legal_entity.created": "Tüzel kişilik oluşturuldu",
+  "legal_entity.updated": "Tüzel kişilik güncellendi",
+  "branch.created": "Şube oluşturuldu",
+  "branch.updated": "Şube güncellendi",
+  "branch.archived": "Şube arşivlendi",
   "platform.tenant.updated": "Tenant güncellendi",
 };
 
@@ -54,6 +59,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   tenant: "Tenant",
   tenant_security: "Tenant güvenliği",
   tenant_admin: "Tenant yönetimi",
+  hr_operations: "İK operasyonları",
   platform_operations: "Platform operasyonları",
 };
 

@@ -126,6 +126,18 @@ P3E_ADDITIVE_OPERATIONS = {
     "POST /api/v1/auth/password-reset/confirm",
     "POST /api/v1/auth/password-reset/request",
 }
+P3F_ADDITIVE_OPERATIONS = {
+    "GET /api/v1/legal-entities",
+    "POST /api/v1/legal-entities",
+    "GET /api/v1/legal-entities/{legal_entity_id}",
+    "PATCH /api/v1/legal-entities/{legal_entity_id}",
+    "GET /api/v1/branches",
+    "POST /api/v1/branches",
+    "GET /api/v1/branches/{branch_id}",
+    "PATCH /api/v1/branches/{branch_id}",
+    "DELETE /api/v1/branches/{branch_id}",
+}
+P3F_BEARER_OPERATIONS = P3F_ADDITIVE_OPERATIONS
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -163,13 +175,14 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
 
-    assert current["operation_count"] == 47
+    assert current["operation_count"] == 56
     assert set(current["operations"]) == (
         set(f1e["operations"])
         | F2_APPROVED_ADDITIVE_OPERATIONS
         | P3C_ADDITIVE_OPERATIONS
         | P3D_ADDITIVE_OPERATIONS
         | P3E_ADDITIVE_OPERATIONS
+        | P3F_ADDITIVE_OPERATIONS
     )
     bearer_security = [{"BearerAuth": []}]
     assert {
@@ -177,7 +190,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         for path, path_item in openapi["paths"].items()
         for method, operation in path_item.items()
         if method in HTTP_METHODS and operation.get("security") == bearer_security
-    } == F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS
+    } == F2_BEARER_OPERATIONS | P3C_BEARER_OPERATIONS | P3F_BEARER_OPERATIONS
     platform_bearer_security = [{"PlatformBearerAuth": []}]
     assert {
         f"{method.upper()} {path}"
@@ -185,6 +198,18 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         for method, operation in path_item.items()
         if method in HTTP_METHODS and operation.get("security") == platform_bearer_security
     } == P3D_PLATFORM_BEARER_OPERATIONS
+    p3f_not_found_examples = {
+        "tenant_not_found",
+        "legal_entity_not_found",
+        "branch_not_found",
+        "organization_feature_unavailable",
+    }
+    for operation_name in P3F_ADDITIVE_OPERATIONS:
+        method, path = operation_name.split(" ", maxsplit=1)
+        examples = openapi["paths"][path][method.lower()]["responses"]["404"][
+            "content"
+        ]["application/json"]["examples"]
+        assert set(examples) == p3f_not_found_examples
     for path, path_item in openapi["paths"].items():
         for method, operation in path_item.items():
             if method not in HTTP_METHODS:
@@ -193,6 +218,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
                 F2_BEARER_OPERATIONS
                 | P3C_BEARER_OPERATIONS
                 | P3D_PLATFORM_BEARER_OPERATIONS
+                | P3F_BEARER_OPERATIONS
             ):
                 assert "security" not in operation
 

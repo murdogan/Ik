@@ -491,8 +491,11 @@ def test_core_migration_chain_is_linear() -> None:
     p3e_identity_checkpoint_revision = script.get_revision(
         "0026_p3e_identity_checkpoint"
     )
+    p3f_organization_revision = script.get_revision(
+        "0027_p3f_legal_entities_branches"
+    )
 
-    assert script.get_heads() == ["0026_p3e_identity_checkpoint"]
+    assert script.get_heads() == ["0027_p3f_legal_entities_branches"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -558,6 +561,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3e_identity_checkpoint_revision is not None
     assert p3e_identity_checkpoint_revision.down_revision == (
         "0025_p3d_platform_authentication"
+    )
+    assert p3f_organization_revision is not None
+    assert p3f_organization_revision.down_revision == (
+        "0026_p3e_identity_checkpoint"
     )
 
 
@@ -1494,7 +1501,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0026_p3e_identity_checkpoint"
+        assert revision == "0027_p3f_legal_entities_branches"
     finally:
         engine.dispose()
 
@@ -1862,6 +1869,19 @@ def test_tenant_settings_downgrade_refuses_custom_values(tmp_path: Path) -> None
                 ),
                 {"tenant_id": tenant_id},
             )
+            connection.execute(
+                text(
+                    "insert into legal_entities ("
+                    "id, tenant_id, code, name, registered_name, timezone, status, "
+                    "is_default, created_at, updated_at"
+                    ") values ("
+                    ":tenant_id, :tenant_id, 'DEFAULT', 'Settings Guard', "
+                    "'Settings Guard', 'Europe/Istanbul', 'active', true, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"tenant_id": tenant_id},
+            )
 
         with pytest.raises(
             RuntimeError,
@@ -1907,6 +1927,19 @@ def test_p0e_downgrade_refuses_to_discard_retained_state(tmp_path: Path) -> None
                     ")"
                 ),
                 {"id": tenant_id},
+            )
+            connection.execute(
+                text(
+                    "insert into legal_entities ("
+                    "id, tenant_id, code, name, registered_name, timezone, status, "
+                    "is_default, created_at, updated_at"
+                    ") values ("
+                    ":tenant_id, :tenant_id, 'DEFAULT', 'P0E Guard', 'P0E Guard', "
+                    "'Europe/Istanbul', 'active', true, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {"tenant_id": tenant_id},
             )
             connection.execute(
                 text(
@@ -1975,6 +2008,46 @@ def test_p0e_downgrade_refuses_to_discard_retained_state(tmp_path: Path) -> None
         with engine.connect() as connection:
             revision = connection.scalar(text("select version_num from alembic_version"))
         assert revision == "0010_contract_tenant_relational_integrity"
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p3f_backfill_preserves_historical_unbounded_tenant_name(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p3f-long-tenant-name.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0026_p3e_identity_checkpoint")
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_id = "cf000000000040008000000000000001"
+    tenant_name = "Historical tenant " + ("x" * 300)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into tenants ("
+                    "id, slug, name, status, plan_code, data_region, locale, timezone, "
+                    "created_at, updated_at"
+                    ") values ("
+                    ":id, 'p3f-long-name', :name, 'active', 'core', 'tr-1', "
+                    "'en-US', 'Europe/Istanbul', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {"id": tenant_id, "name": tenant_name},
+            )
+
+        alembic_command.upgrade(config, "head")
+        with engine.connect() as connection:
+            default_entity = connection.execute(
+                text(
+                    "select name, registered_name from legal_entities "
+                    "where tenant_id = :tenant_id and is_default = true"
+                ),
+                {"tenant_id": tenant_id},
+            ).one()
+        assert default_entity == (tenant_name, tenant_name)
+
+        alembic_command.downgrade(config, "0026_p3e_identity_checkpoint")
     finally:
         engine.dispose()
 

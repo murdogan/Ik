@@ -32,8 +32,10 @@ from app.models.employee import EmployeeStatus
 from app.models.identity import Identity, PlatformIdentityRole
 from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequestStatus
-from app.models.tenant import Tenant, TenantSettings, TenantStatus
+from app.models.organization import LegalEntity, LegalEntityStatus
+from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
+from app.modules.core.domain.feature_flags import FeatureFlagKey
 from app.platform.authorization import ROLES_BY_CODE
 from app.platform.db import configure_tenant_database_access
 from app.platform.identity import PasswordManager, issue_password_reset_token
@@ -110,6 +112,34 @@ USER_ADMIN_FIELDS = {
     "status",
     "roles",
     "permission_version",
+    "created_at",
+    "updated_at",
+}
+LEGAL_ENTITY_FIELDS = {
+    "id",
+    "code",
+    "name",
+    "registered_name",
+    "country_code",
+    "tax_number",
+    "timezone",
+    "status",
+    "is_default",
+    "created_at",
+    "updated_at",
+}
+BRANCH_FIELDS = {
+    "id",
+    "legal_entity_id",
+    "code",
+    "name",
+    "timezone",
+    "country_code",
+    "city",
+    "address",
+    "status",
+    "archived_at",
+    "accepts_new_assignments",
     "created_at",
     "updated_at",
 }
@@ -228,6 +258,15 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("patch", "/api/v1/users/{user_id}"),
     ("put", "/api/v1/users/{user_id}/roles"),
     ("get", "/api/v1/roles"),
+    ("get", "/api/v1/legal-entities"),
+    ("post", "/api/v1/legal-entities"),
+    ("get", "/api/v1/legal-entities/{legal_entity_id}"),
+    ("patch", "/api/v1/legal-entities/{legal_entity_id}"),
+    ("get", "/api/v1/branches"),
+    ("post", "/api/v1/branches"),
+    ("get", "/api/v1/branches/{branch_id}"),
+    ("patch", "/api/v1/branches/{branch_id}"),
+    ("delete", "/api/v1/branches/{branch_id}"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -301,7 +340,8 @@ async def main(database_url: str | None = None) -> None:
             tenant_principal_scope = _install_test_principal_overrides(app)
             await _smoke_system_endpoints(client)
             _smoke_documented_endpoint_tables()
-            await _smoke_auth_endpoints(client)
+            tenant_admin_headers = await _smoke_auth_endpoints(client)
+            await _smoke_organization_endpoints(client, tenant_admin_headers)
             provisioned_tenant_id = await _smoke_platform_tenant_endpoints(client)
             tenant_principal_scope["tenant_id"] = provisioned_tenant_id
             await _smoke_current_tenant_endpoints(client, provisioned_tenant_id)
@@ -338,6 +378,7 @@ async def main(database_url: str | None = None) -> None:
         "correlation_middleware,phase1_envelopes,platform_cursor_pagination,platform_tenants,"
         "tenant_audit,platform_audit,audit_redaction,"
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
+        "legal_entities,branches,branch_archive_history,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
         "leave_balances,leave_filters,leave_requests,workflow_transitions,auth"
@@ -382,6 +423,40 @@ async def _prepare_smoke_database(
                 ),
                 TenantSettings(tenant_id=TENANT_ID),
                 TenantSettings(tenant_id=OTHER_TENANT_ID),
+                TenantFeatureFlag(
+                    tenant_id=TENANT_ID,
+                    key=FeatureFlagKey.ORGANIZATION.value,
+                    enabled=True,
+                ),
+                TenantFeatureFlag(
+                    tenant_id=OTHER_TENANT_ID,
+                    key=FeatureFlagKey.ORGANIZATION.value,
+                    enabled=True,
+                ),
+                LegalEntity(
+                    id=TENANT_ID,
+                    tenant_id=TENANT_ID,
+                    code="DEFAULT",
+                    name="Wealthy Falcon HR",
+                    registered_name="Wealthy Falcon HR",
+                    country_code="TR",
+                    tax_number=None,
+                    timezone="Europe/Istanbul",
+                    status=LegalEntityStatus.ACTIVE.value,
+                    is_default=True,
+                ),
+                LegalEntity(
+                    id=OTHER_TENANT_ID,
+                    tenant_id=OTHER_TENANT_ID,
+                    code="DEFAULT",
+                    name="Other Falcon HR",
+                    registered_name="Other Falcon HR",
+                    country_code="TR",
+                    tax_number=None,
+                    timezone="Europe/Istanbul",
+                    status=LegalEntityStatus.ACTIVE.value,
+                    is_default=True,
+                ),
                 User(
                     id=REQUESTING_USER_ID,
                     tenant_id=TENANT_ID,
@@ -655,7 +730,7 @@ async def _smoke_system_endpoints(client: AsyncClient) -> None:
     _expect_f2a_openapi_contracts(openapi)
 
 
-async def _smoke_auth_endpoints(client: AsyncClient) -> None:
+async def _smoke_auth_endpoints(client: AsyncClient) -> dict[str, str]:
     reset_request = _expect_phase1_data(
         await _request_documented(
             client,
@@ -1072,6 +1147,224 @@ async def _smoke_auth_endpoints(client: AsyncClient) -> None:
         "POST /api/v1/auth/refresh after logout",
     )
     await _smoke_tenant_audit_endpoints(client, admin_headers)
+    return admin_headers
+
+
+async def _smoke_organization_endpoints(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+) -> None:
+    legal_entities, next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/legal-entities",
+            headers=admin_headers,
+            params={"limit": 1},
+        ),
+        200,
+        "GET /api/v1/legal-entities",
+        expected_limit=1,
+    )
+    _assert_equal(len(legal_entities), 1, "seeded default legal entity count")
+    default_legal_entity = legal_entities[0]
+    _assert_exact_fields(
+        default_legal_entity,
+        LEGAL_ENTITY_FIELDS,
+        "GET /api/v1/legal-entities item",
+    )
+    _assert_equal(
+        default_legal_entity["id"],
+        str(TENANT_ID),
+        "default legal entity tenant identity",
+    )
+    _assert_equal(default_legal_entity["code"], "DEFAULT", "default legal entity code")
+    _assert_equal(default_legal_entity["is_default"], True, "default legal entity marker")
+    _assert_equal(next_cursor, None, "default legal entity terminal cursor")
+
+    created_legal_entity = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/legal-entities",
+            headers=admin_headers,
+            json={
+                "code": "wf-eu",
+                "name": "Wealthy Falcon Europe",
+                "registered_name": "Wealthy Falcon Europe B.V.",
+                "country_code": "nl",
+                "tax_number": "NL-SMOKE-100",
+                "timezone": "Europe/Amsterdam",
+            },
+        ),
+        201,
+        "POST /api/v1/legal-entities",
+        LEGAL_ENTITY_FIELDS,
+    )
+    _assert_equal(created_legal_entity["code"], "WF-EU", "created legal entity code")
+    _assert_equal(
+        created_legal_entity["country_code"],
+        "NL",
+        "created legal entity country",
+    )
+    _assert_equal(
+        created_legal_entity["is_default"],
+        False,
+        "created legal entity default marker",
+    )
+
+    legal_entity_detail = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/legal-entities/{TENANT_ID}",
+            documented_path="/api/v1/legal-entities/{legal_entity_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/legal-entities/{legal_entity_id}",
+        LEGAL_ENTITY_FIELDS,
+    )
+    _assert_equal(
+        legal_entity_detail["id"],
+        str(TENANT_ID),
+        "default legal entity detail",
+    )
+
+    updated_legal_entity = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/legal-entities/{TENANT_ID}",
+            documented_path="/api/v1/legal-entities/{legal_entity_id}",
+            headers=admin_headers,
+            json={
+                "name": "Wealthy Falcon HR Turkey",
+                "registered_name": "Wealthy Falcon HR Turkey A.S.",
+                "country_code": "tr",
+                "tax_number": "TR-SMOKE-100",
+                "timezone": "Europe/Istanbul",
+            },
+        ),
+        200,
+        "PATCH /api/v1/legal-entities/{legal_entity_id}",
+        LEGAL_ENTITY_FIELDS,
+    )
+    _assert_equal(
+        updated_legal_entity["name"],
+        "Wealthy Falcon HR Turkey",
+        "updated default legal entity name",
+    )
+    _assert_equal(
+        updated_legal_entity["code"],
+        "DEFAULT",
+        "updated legal entity stable code",
+    )
+
+    created_branch = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/branches",
+            headers=admin_headers,
+            json={
+                "legal_entity_id": str(TENANT_ID),
+                "code": "ist-hq",
+                "name": "Istanbul Headquarters",
+                "timezone": "Europe/Istanbul",
+                "country_code": "tr",
+                "city": "Istanbul",
+                "address": "Maslak",
+            },
+        ),
+        201,
+        "POST /api/v1/branches",
+        BRANCH_FIELDS,
+    )
+    _assert_equal(created_branch["code"], "IST-HQ", "created branch code")
+    _assert_equal(created_branch["status"], "active", "created branch status")
+    _assert_equal(
+        created_branch["accepts_new_assignments"],
+        True,
+        "active branch assignment availability",
+    )
+    branch_id = created_branch["id"]
+
+    branches, next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/branches",
+            headers=admin_headers,
+            params={
+                "limit": 1,
+                "status": "active",
+                "legal_entity_id": str(TENANT_ID),
+            },
+        ),
+        200,
+        "GET /api/v1/branches",
+        expected_limit=1,
+    )
+    _assert_equal(len(branches), 1, "active branch list count")
+    _assert_exact_fields(branches[0], BRANCH_FIELDS, "GET /api/v1/branches item")
+    _assert_equal(branches[0]["id"], branch_id, "active branch list identity")
+    _assert_equal(next_cursor, None, "active branch terminal cursor")
+
+    updated_branch = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/branches/{branch_id}",
+            documented_path="/api/v1/branches/{branch_id}",
+            headers=admin_headers,
+            json={
+                "name": "Istanbul Main Office",
+                "address": "Levent",
+            },
+        ),
+        200,
+        "PATCH /api/v1/branches/{branch_id}",
+        BRANCH_FIELDS,
+    )
+    _assert_equal(updated_branch["name"], "Istanbul Main Office", "updated branch name")
+    _assert_equal(updated_branch["address"], "Levent", "updated branch address")
+    _assert_equal(updated_branch["code"], "IST-HQ", "updated branch stable code")
+
+    archived_branch = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "delete",
+            f"/api/v1/branches/{branch_id}",
+            documented_path="/api/v1/branches/{branch_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "DELETE /api/v1/branches/{branch_id}",
+        BRANCH_FIELDS,
+    )
+    _assert_equal(archived_branch["status"], "archived", "archived branch status")
+    if not archived_branch["archived_at"]:
+        raise AssertionError("archived branch must expose its archive timestamp")
+    _assert_equal(
+        archived_branch["accepts_new_assignments"],
+        False,
+        "archived branch assignment availability",
+    )
+
+    historical_branch = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/branches/{branch_id}",
+            documented_path="/api/v1/branches/{branch_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/branches/{branch_id}",
+        BRANCH_FIELDS,
+    )
+    _assert_equal(historical_branch, archived_branch, "archived branch history")
 
 
 async def _smoke_tenant_audit_endpoints(

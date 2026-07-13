@@ -13,7 +13,7 @@ export interface ApiSuccessEnvelope<TResponse, TMeta = unknown> {
 }
 
 export interface ApiRequestOptions {
-  method?: "GET" | "POST" | "PUT" | "PATCH";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: object;
   accessToken?: string;
 }

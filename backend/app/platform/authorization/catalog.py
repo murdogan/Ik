@@ -243,6 +243,8 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     _permission(28, "feature:read:platform", "Read platform feature rollout metadata."),
     _permission(29, "feature:update:platform", "Update platform feature rollout metadata."),
     _permission(30, "audit:read:platform", "Read platform operations audit history."),
+    _permission(31, "organization:read:tenant", "Read current-tenant organization settings."),
+    _permission(32, "organization:update:tenant", "Manage current-tenant organization settings."),
 )
 
 
@@ -273,6 +275,8 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "role:assign:tenant",
                 "permission:read:tenant",
                 "audit:read:tenant",
+                "organization:read:tenant",
+                "organization:update:tenant",
             }
         ),
         "hr_director": frozenset(
@@ -291,6 +295,8 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:read:branch",
                 "leave:read:tenant",
                 "audit:read:tenant",
+                "organization:read:tenant",
+                "organization:update:tenant",
             }
         ),
         "hr_specialist": frozenset(
@@ -306,6 +312,8 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:read:department",
                 "leave:read:branch",
                 "leave:read:tenant",
+                "organization:read:tenant",
+                "organization:update:tenant",
             }
         ),
         "it_admin": frozenset(
@@ -320,6 +328,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
             {
                 "dashboard:read:own",
                 "audit:read:tenant",
+                "organization:read:tenant",
             }
         ),
         "manager": frozenset(

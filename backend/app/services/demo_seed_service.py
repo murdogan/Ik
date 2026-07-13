@@ -14,8 +14,10 @@ from app.models.identity import (
     TenantMembership,
 )
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
-from app.models.tenant import Tenant, TenantSettings, TenantStatus
+from app.models.organization import LegalEntity, LegalEntityStatus
+from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
+from app.modules.core.domain.feature_flags import FeatureFlagKey
 from app.services.authorization_service import (
     assign_system_role,
     seed_authorization_catalog,
@@ -321,6 +323,10 @@ async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
     await session.flush()
     await _ensure_tenant_settings(session, tenants)
     await session.flush()
+    await _ensure_organization_feature(session, tenants)
+    await session.flush()
+    await _ensure_default_legal_entities(session, tenants)
+    await session.flush()
 
     users = await _upsert_users(session, tenants)
     await session.flush()
@@ -375,6 +381,62 @@ async def _ensure_tenant_settings(
     for tenant in tenants.values():
         if await session.get(TenantSettings, tenant.id) is None:
             session.add(TenantSettings(tenant_id=tenant.id))
+
+
+async def _ensure_default_legal_entities(
+    session: AsyncSession,
+    tenants: dict[str, Tenant],
+) -> None:
+    for tenant in tenants.values():
+        default_entity = await session.scalar(
+            select(LegalEntity).where(
+                LegalEntity.tenant_id == tenant.id,
+                LegalEntity.is_default.is_(True),
+            )
+        )
+        if default_entity is not None:
+            continue
+        entity_with_id = await session.get(LegalEntity, tenant.id)
+        if entity_with_id is not None:
+            raise DemoSeedConflictError(
+                f"Demo tenant {tenant.id} default legal-entity id is already in use"
+            )
+        session.add(
+            LegalEntity(
+                id=tenant.id,
+                tenant_id=tenant.id,
+                code="DEFAULT",
+                name=tenant.name,
+                registered_name=tenant.name,
+                country_code=None,
+                tax_number=None,
+                timezone=tenant.timezone,
+                status=LegalEntityStatus.ACTIVE.value,
+                is_default=True,
+            )
+        )
+
+
+async def _ensure_organization_feature(
+    session: AsyncSession,
+    tenants: dict[str, Tenant],
+) -> None:
+    for tenant in tenants.values():
+        feature = await session.get(
+            TenantFeatureFlag,
+            (tenant.id, FeatureFlagKey.ORGANIZATION.value),
+        )
+        if feature is None:
+            session.add(
+                TenantFeatureFlag(
+                    tenant_id=tenant.id,
+                    key=FeatureFlagKey.ORGANIZATION.value,
+                    enabled=True,
+                )
+            )
+        else:
+            # Demo data is a manually usable P3F product fixture, not a production rollout.
+            feature.enabled = True
 
 
 async def _upsert_users(session: AsyncSession, tenants: dict[str, Tenant]) -> dict[str, User]:
