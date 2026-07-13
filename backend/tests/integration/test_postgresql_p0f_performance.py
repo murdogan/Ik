@@ -32,6 +32,7 @@ pytestmark = pytest.mark.postgres
 ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = ROOT / "alembic.ini"
 TENANT_ID = UUID("10000000-0000-4000-8000-000000000000")
+OTHER_TENANT_ID = UUID("10000000-0000-4000-8000-000000000001")
 USER_ID = UUID("20000000-0000-4000-8000-000000000000")
 EMPLOYEE_COUNT = 10_000
 
@@ -188,13 +189,18 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
             """
             insert into tenants (
                 id, slug, name, status, plan_code, data_region, locale, timezone
-            ) values (
+            ) values
+            (
                 :tenant_id, 'p0f-performance', 'P0F Performance', 'active', 'core',
+                'tr-1', 'tr-TR', 'Europe/Istanbul'
+            ),
+            (
+                :other_tenant_id, 'p0f-other', 'P0F Other', 'active', 'core',
                 'tr-1', 'tr-TR', 'Europe/Istanbul'
             )
             """
         ),
-        {"tenant_id": TENANT_ID},
+        {"tenant_id": TENANT_ID, "other_tenant_id": OTHER_TENANT_ID},
     )
     await connection.execute(
         text(
@@ -216,7 +222,7 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
                 employment_end_date, archived_at, created_at, updated_at
             )
             select
-                ('10000000-0000-4000-8000-' || lpad(gs::text, 12, '0'))::uuid,
+                ('10000000-0000-4000-8000-' || lpad((gs * 2 - 1)::text, 12, '0'))::uuid,
                 :tenant_id,
                 'WF-' || lpad(gs::text, 6, '0'),
                 'Employee' || gs,
@@ -243,6 +249,36 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
             """
         ),
         {"tenant_id": TENANT_ID, "employee_count": EMPLOYEE_COUNT},
+    )
+    await connection.execute(
+        text(
+            """
+            insert into employees (
+                id, tenant_id, employee_number, first_name, last_name, email,
+                department, position, status, employment_start_date,
+                employment_end_date, created_at, updated_at
+            )
+            select
+                ('10000000-0000-4000-8000-' || lpad((gs * 2)::text, 12, '0'))::uuid,
+                :other_tenant_id,
+                'OT-' || lpad(gs::text, 6, '0'),
+                'OtherEmployee' || gs,
+                'Performance',
+                'other' || lpad(gs::text, 6, '0') || '@performance.test',
+                'Other',
+                'Specialist',
+                'active',
+                date '2024-01-01' + (gs % 700),
+                null,
+                timestamptz '2026-07-01 00:00:00+00' + gs * interval '1 second',
+                timestamptz '2026-07-01 00:00:00+00' + gs * interval '1 second'
+            from generate_series(1, :employee_count) as gs
+            """
+        ),
+        {
+            "other_tenant_id": OTHER_TENANT_ID,
+            "employee_count": EMPLOYEE_COUNT,
+        },
     )
     await connection.execute(
         text(
