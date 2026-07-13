@@ -34,6 +34,8 @@ LEAF_A_ID = UUID("e2000000-0000-4000-8000-000000000003")
 ROOT_B_ID = UUID("e2000000-0000-4000-8000-000000000004")
 RACE_A_ID = UUID("e2000000-0000-4000-8000-000000000005")
 RACE_B_ID = UUID("e2000000-0000-4000-8000-000000000006")
+REPEATABLE_RACE_A_ID = UUID("e2000000-0000-4000-8000-000000000007")
+REPEATABLE_RACE_B_ID = UUID("e2000000-0000-4000-8000-000000000008")
 
 DEPARTMENT_UPDATE_COLUMNS = frozenset({"name", "parent_id", "status", "archived_at", "updated_at"})
 ALL_DEPARTMENT_COLUMNS = frozenset(
@@ -85,6 +87,14 @@ async def _assert_p3g_postgresql_contract(database_url: URL) -> None:
         await _assert_hierarchy_and_archive_guards(engine)
         await _assert_multirow_opposing_moves_cannot_cycle(engine)
         await _assert_concurrent_opposing_moves_cannot_cycle(engine)
+        await _assert_snapshot_isolation_opposing_moves_cannot_cycle(
+            engine,
+            isolation_level="REPEATABLE READ",
+        )
+        await _assert_snapshot_isolation_opposing_moves_cannot_cycle(
+            engine,
+            isolation_level="SERIALIZABLE",
+        )
     finally:
         await engine.dispose()
 
@@ -104,6 +114,20 @@ async def _assert_security_catalog(engine: AsyncEngine) -> None:
         ).one()
         assert row_security == (True, True)
 
+        fence_row_security = (
+            await connection.execute(
+                text(
+                    "select class.relrowsecurity, class.relforcerowsecurity "
+                    "from pg_catalog.pg_class as class "
+                    "join pg_catalog.pg_namespace as namespace "
+                    "on namespace.oid = class.relnamespace "
+                    "where namespace.nspname = 'public' "
+                    "and class.relname = 'department_hierarchy_write_fences'"
+                )
+            )
+        ).one()
+        assert fence_row_security == (True, True)
+
         policy = (
             (
                 await connection.execute(
@@ -122,6 +146,26 @@ async def _assert_security_catalog(engine: AsyncEngine) -> None:
         assert policy["cmd"] == "ALL"
         assert "app.tenant_id" in policy["qual"]
         assert policy["with_check"] == policy["qual"]
+
+        fence_policy = (
+            (
+                await connection.execute(
+                    text(
+                        "select policyname, roles, cmd, qual, with_check "
+                        "from pg_catalog.pg_policies "
+                        "where schemaname = 'public' "
+                        "and tablename = 'department_hierarchy_write_fences'"
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert fence_policy["policyname"] == "tenant_isolation_app"
+        assert tuple(fence_policy["roles"]) == (TENANT_APPLICATION_ROLE,)
+        assert fence_policy["cmd"] == "ALL"
+        assert "app.tenant_id" in fence_policy["qual"]
+        assert fence_policy["with_check"] == fence_policy["qual"]
 
         triggers = set(
             await connection.execute(
@@ -164,15 +208,56 @@ async def _assert_security_catalog(engine: AsyncEngine) -> None:
             ),
         }
 
-        assert await _table_privileges(connection, role_name=TENANT_APPLICATION_ROLE) == {
+        assert await _table_privileges(
+            connection,
+            table_name="departments",
+            role_name=TENANT_APPLICATION_ROLE,
+        ) == {
             "SELECT",
             "INSERT",
         }
+        assert await _table_privileges(
+            connection,
+            table_name="department_hierarchy_write_fences",
+            role_name=TENANT_APPLICATION_ROLE,
+        ) == {
+            "SELECT",
+            "INSERT",
+        }
+        assert bool(
+            await connection.scalar(
+                text(
+                    "select has_column_privilege("
+                    ":role_name, 'public.department_hierarchy_write_fences', "
+                    "'version', 'UPDATE')"
+                ),
+                {"role_name": TENANT_APPLICATION_ROLE},
+            )
+        )
+        assert not bool(
+            await connection.scalar(
+                text(
+                    "select has_column_privilege("
+                    ":role_name, 'public.department_hierarchy_write_fences', "
+                    "'tenant_id', 'UPDATE')"
+                ),
+                {"role_name": TENANT_APPLICATION_ROLE},
+            )
+        )
         for role_name in (
             PLATFORM_APPLICATION_ROLE,
             AUTHENTICATION_APPLICATION_ROLE,
         ):
-            assert await _table_privileges(connection, role_name=role_name) == set()
+            assert await _table_privileges(
+                connection,
+                table_name="departments",
+                role_name=role_name,
+            ) == set()
+            assert await _table_privileges(
+                connection,
+                table_name="department_hierarchy_write_fences",
+                role_name=role_name,
+            ) == set()
 
         for column_name in ALL_DEPARTMENT_COLUMNS:
             has_update = bool(
@@ -233,6 +318,20 @@ async def _seed_departments(engine: AsyncEngine) -> None:
         (TENANT_A_ID, LEAF_A_ID, CHILD_A_ID, "A-LEAF", "Tenant A Leaf"),
         (TENANT_A_ID, RACE_A_ID, None, "A-RACE-1", "Tenant A Race One"),
         (TENANT_A_ID, RACE_B_ID, None, "A-RACE-2", "Tenant A Race Two"),
+        (
+            TENANT_A_ID,
+            REPEATABLE_RACE_A_ID,
+            None,
+            "A-RR-RACE-1",
+            "Tenant A Repeatable Race One",
+        ),
+        (
+            TENANT_A_ID,
+            REPEATABLE_RACE_B_ID,
+            None,
+            "A-RR-RACE-2",
+            "Tenant A Repeatable Race Two",
+        ),
         (TENANT_B_ID, ROOT_B_ID, None, "B-ROOT", "Tenant B Root"),
     ):
         async with engine.begin() as connection:
@@ -257,6 +356,8 @@ async def _assert_tenant_isolation_and_acl(engine: AsyncEngine) -> None:
             LEAF_A_ID,
             RACE_A_ID,
             RACE_B_ID,
+            REPEATABLE_RACE_A_ID,
+            REPEATABLE_RACE_B_ID,
         }
         hidden_update = await connection.execute(
             text("update departments set name = 'must-not-change' where id = :id"),
@@ -525,6 +626,94 @@ async def _assert_multirow_opposing_moves_cannot_cycle(engine: AsyncEngine) -> N
     assert parents == {RACE_A_ID: None, RACE_B_ID: None}
 
 
+async def _assert_snapshot_isolation_opposing_moves_cannot_cycle(
+    engine: AsyncEngine,
+    *,
+    isolation_level: str,
+) -> None:
+    async with engine.begin() as reset_connection:
+        await _set_local_tenant_role(reset_connection, TENANT_A_ID)
+        await reset_connection.execute(
+            text(
+                "update departments set parent_id = null "
+                "where id in (:first_id, :second_id)"
+            ),
+            {
+                "first_id": REPEATABLE_RACE_A_ID,
+                "second_id": REPEATABLE_RACE_B_ID,
+            },
+        )
+
+    first_connection = await engine.connect()
+    second_connection = await engine.connect()
+    await first_connection.execution_options(isolation_level=isolation_level)
+    await second_connection.execution_options(isolation_level=isolation_level)
+    first_transaction = await first_connection.begin()
+    second_transaction = await second_connection.begin()
+    second_move: asyncio.Task[object] | None = None
+    try:
+        await _set_local_tenant_role(first_connection, TENANT_A_ID)
+        await _set_local_tenant_role(second_connection, TENANT_A_ID)
+
+        # Establish both snapshots before either edge changes. Under REPEATABLE READ, a lock-only
+        # sentinel would let the second transaction retain this stale graph after waiting.
+        await first_connection.scalar(text("select count(*) from departments"))
+        await second_connection.scalar(text("select count(*) from departments"))
+
+        await first_connection.execute(
+            text("update departments set parent_id = :parent_id where id = :id"),
+            {"id": REPEATABLE_RACE_A_ID, "parent_id": REPEATABLE_RACE_B_ID},
+        )
+        second_move = asyncio.create_task(
+            second_connection.execute(
+                text("update departments set parent_id = :parent_id where id = :id"),
+                {"id": REPEATABLE_RACE_B_ID, "parent_id": REPEATABLE_RACE_A_ID},
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(second_move), timeout=0.25)
+
+        await first_transaction.commit()
+        with pytest.raises(DBAPIError) as serialization_error:
+            await second_move
+        assert sqlstate_from_error(serialization_error.value) == "40001"
+        await second_transaction.rollback()
+    finally:
+        if first_transaction.is_active:
+            await first_transaction.rollback()
+        if second_transaction.is_active:
+            await second_transaction.rollback()
+        if second_move is not None and not second_move.done():
+            second_move.cancel()
+            await asyncio.gather(second_move, return_exceptions=True)
+        await first_connection.close()
+        await second_connection.close()
+
+    async with engine.begin() as connection:
+        await _set_local_tenant_role(connection, TENANT_A_ID)
+        parent_rows = (
+            (
+                await connection.execute(
+                    text(
+                        "select id, parent_id from departments "
+                        "where id in (:first_id, :second_id)"
+                    ),
+                    {
+                        "first_id": REPEATABLE_RACE_A_ID,
+                        "second_id": REPEATABLE_RACE_B_ID,
+                    },
+                )
+            )
+            .tuples()
+            .all()
+        )
+        parents = {department_id: parent_id for department_id, parent_id in parent_rows}
+    assert parents == {
+        REPEATABLE_RACE_A_ID: REPEATABLE_RACE_B_ID,
+        REPEATABLE_RACE_B_ID: None,
+    }
+
+
 async def _insert_department(
     connection: AsyncConnection,
     *,
@@ -552,6 +741,7 @@ async def _insert_department(
 async def _table_privileges(
     connection: AsyncConnection,
     *,
+    table_name: str,
     role_name: str,
 ) -> set[str]:
     privileges: set[str] = set()
@@ -565,8 +755,15 @@ async def _table_privileges(
         "TRIGGER",
     ):
         if await connection.scalar(
-            text("select has_table_privilege(:role_name, 'public.departments', :privilege)"),
-            {"role_name": role_name, "privilege": privilege},
+            text(
+                "select has_table_privilege("
+                ":role_name, :qualified_table_name, :privilege)"
+            ),
+            {
+                "role_name": role_name,
+                "qualified_table_name": f"public.{table_name}",
+                "privilege": privilege,
+            },
         ):
             privileges.add(privilege)
     return privileges

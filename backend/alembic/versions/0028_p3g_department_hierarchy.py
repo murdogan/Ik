@@ -34,6 +34,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _DEPARTMENTS_TABLE = "departments"
+_HIERARCHY_FENCES_TABLE = "department_hierarchy_write_fences"
 _TENANT_POLICY = "tenant_isolation_app"
 _HIERARCHY_TRIGGER = "trg_departments_hierarchy_integrity"
 _HIERARCHY_FUNCTION = "enforce_department_hierarchy_integrity"
@@ -60,9 +61,14 @@ _DEPARTMENT_UPDATE_COLUMNS = (
     "archived_at",
     "updated_at",
 )
+_HIERARCHY_FENCE_COLUMNS = (
+    "tenant_id",
+    "version",
+)
 
 
 def upgrade() -> None:
+    _create_hierarchy_fences_table()
     _create_departments_table()
     if op.get_bind().dialect.name == "postgresql":
         _reset_postgresql_acl()
@@ -83,6 +89,31 @@ def downgrade() -> None:
         _drop_hierarchy_trigger()
         _remove_postgresql_security()
     op.drop_table(_DEPARTMENTS_TABLE)
+    op.drop_table(_HIERARCHY_FENCES_TABLE)
+
+
+def _create_hierarchy_fences_table() -> None:
+    """Create the write-version row that makes serialization snapshot-safe."""
+
+    op.create_table(
+        _HIERARCHY_FENCES_TABLE,
+        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("version", sa.BigInteger(), server_default="0", nullable=False),
+        sa.CheckConstraint(
+            "version >= 0",
+            name="ck_department_hierarchy_write_fences_version",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"],
+            ["tenants.id"],
+            name="fk_department_hierarchy_write_fences_tenant_id_tenants",
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint(
+            "tenant_id",
+            name="pk_department_hierarchy_write_fences",
+        ),
+    )
 
 
 def _create_departments_table() -> None:
@@ -174,6 +205,26 @@ def _create_departments_table() -> None:
 
 
 def _configure_postgresql_security() -> None:
+    enable_forced_row_security(op, table_name=_HIERARCHY_FENCES_TABLE)
+    create_tenant_isolation_policy(
+        op,
+        table_name=_HIERARCHY_FENCES_TABLE,
+        policy_name=_TENANT_POLICY,
+        role_name=TENANT_APPLICATION_ROLE,
+    )
+    grant_table_privileges(
+        op,
+        table_name=_HIERARCHY_FENCES_TABLE,
+        role_name=TENANT_APPLICATION_ROLE,
+        privileges=("SELECT", "INSERT"),
+    )
+    grant_column_privilege(
+        op,
+        table_name=_HIERARCHY_FENCES_TABLE,
+        role_name=TENANT_APPLICATION_ROLE,
+        privilege="UPDATE",
+        column_names=("version",),
+    )
     enable_forced_row_security(op, table_name=_DEPARTMENTS_TABLE)
     create_tenant_isolation_policy(
         op,
@@ -215,6 +266,24 @@ def _remove_postgresql_security() -> None:
         table_name=_DEPARTMENTS_TABLE,
         policy_name=_TENANT_POLICY,
     )
+    revoke_column_privilege(
+        op,
+        table_name=_HIERARCHY_FENCES_TABLE,
+        role_name=TENANT_APPLICATION_ROLE,
+        privilege="UPDATE",
+        column_names=("version",),
+    )
+    revoke_table_privileges(
+        op,
+        table_name=_HIERARCHY_FENCES_TABLE,
+        role_name=TENANT_APPLICATION_ROLE,
+        privileges=("SELECT", "INSERT"),
+    )
+    drop_policy(
+        op,
+        table_name=_HIERARCHY_FENCES_TABLE,
+        policy_name=_TENANT_POLICY,
+    )
 
 
 def _reset_postgresql_acl() -> None:
@@ -241,6 +310,37 @@ def _reset_postgresql_acl() -> None:
             table_name=_DEPARTMENTS_TABLE,
             role_name=role_name,
             column_names=_DEPARTMENT_COLUMNS,
+        )
+
+    quoted_fence_columns = ", ".join(
+        f'"{column_name}"' for column_name in _HIERARCHY_FENCE_COLUMNS
+    )
+    op.execute(
+        sa.text(
+            f'REVOKE ALL PRIVILEGES ON TABLE "{_HIERARCHY_FENCES_TABLE}" FROM PUBLIC'
+        )
+    )
+    op.execute(
+        sa.text(
+            f'REVOKE ALL PRIVILEGES ({quoted_fence_columns}) '
+            f'ON TABLE "{_HIERARCHY_FENCES_TABLE}" FROM PUBLIC'
+        )
+    )
+    for role_name in (
+        TENANT_APPLICATION_ROLE,
+        PLATFORM_APPLICATION_ROLE,
+        AUTHENTICATION_APPLICATION_ROLE,
+    ):
+        revoke_all_table_privileges(
+            op,
+            table_name=_HIERARCHY_FENCES_TABLE,
+            role_name=role_name,
+        )
+        revoke_all_column_privileges(
+            op,
+            table_name=_HIERARCHY_FENCES_TABLE,
+            role_name=role_name,
+            column_names=_HIERARCHY_FENCE_COLUMNS,
         )
 
 
@@ -273,6 +373,21 @@ def _create_hierarchy_trigger() -> None:
                               TABLE = 'departments',
                               CONSTRAINT = 'fk_departments_tenant_id_tenants';
                 END IF;
+
+                -- A lock-only sentinel is insufficient when a caller already owns a
+                -- REPEATABLE READ snapshot: after waiting it could still validate against the
+                -- pre-wait graph. Advancing this tenant-owned row makes a stale concurrent
+                -- writer fail with a serialization error before any ancestry read. Under READ
+                -- COMMITTED it also remains the single serialized write fence for the tenant.
+                INSERT INTO public.department_hierarchy_write_fences AS fence (
+                    tenant_id,
+                    version
+                ) VALUES (
+                    NEW.tenant_id,
+                    1
+                )
+                ON CONFLICT (tenant_id)
+                DO UPDATE SET version = fence.version + 1;
 
                 IF TG_OP = 'UPDATE'
                    AND (

@@ -895,6 +895,24 @@ def test_alembic_offline_p3g_renders_department_integrity_rls_and_acl() -> None:
     result = _run_alembic_p3g_upgrade_offline_subprocess()
 
     assert result.returncode == 0, result.stderr or result.stdout
+    assert "CREATE TABLE department_hierarchy_write_fences" in result.stdout
+    assert "ck_department_hierarchy_write_fences_version" in result.stdout
+    assert (
+        'ALTER TABLE "department_hierarchy_write_fences" ENABLE ROW LEVEL SECURITY'
+        in result.stdout
+    )
+    assert (
+        'ALTER TABLE "department_hierarchy_write_fences" FORCE ROW LEVEL SECURITY'
+        in result.stdout
+    )
+    assert (
+        'GRANT SELECT, INSERT ON TABLE "department_hierarchy_write_fences" '
+        'TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert (
+        'GRANT UPDATE ("version") ON TABLE "department_hierarchy_write_fences" '
+        'TO "wealthy_falcon_app"'
+    ) in result.stdout
     assert "CREATE TABLE departments" in result.stdout
     for constraint_name in (
         "ck_departments_status",
@@ -922,6 +940,8 @@ def test_alembic_offline_p3g_renders_department_integrity_rls_and_acl() -> None:
         result.stdout
     )
     assert "SELECT tenants.id INTO locked_tenant_id" in result.stdout
+    assert "INSERT INTO public.department_hierarchy_write_fences AS fence" in result.stdout
+    assert "DO UPDATE SET version = fence.version + 1" in result.stdout
     assert "WITH RECURSIVE ancestors(id, parent_id)" in result.stdout
     assert "CONSTRAINT = 'ck_departments_acyclic'" in result.stdout
     assert "CREATE FUNCTION public.validate_department_hierarchy_acyclic()" in (
@@ -947,6 +967,7 @@ def test_alembic_offline_p3g_downgrade_guards_retained_history() -> None:
         result.stdout
     )
     assert "DROP TABLE departments" in result.stdout
+    assert "DROP TABLE department_hierarchy_write_fences" in result.stdout
 
 
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:

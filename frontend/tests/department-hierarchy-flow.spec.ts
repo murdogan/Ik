@@ -308,18 +308,28 @@ test("HR lazily expands, creates, renames, moves, archives, and reads department
   await expect(page.getByText("Platform", { exact: true })).toBeVisible();
   expect(treeQueries.at(-1)?.get("parent_id")).toBe(engineeringId);
 
+  await expect(
+    page.getByRole("button", {
+      name: "İnsan ve Kültür alt departmanlarını göster",
+    }),
+  ).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Mühendislik altında departman oluştur" })
+    .getByRole("button", { name: "İnsan ve Kültür altında departman oluştur" })
     .click();
   const createDialog = page.getByRole("dialog", {
-    name: "Mühendislik altında yeni departman",
+    name: "İnsan ve Kültür altında yeni departman",
   });
   await createDialog.getByLabel("Sabit kod").fill("TALENT");
   await createDialog.getByLabel("Departman adı").fill("Yetenek Kazanımı");
   await createDialog.getByRole("button", { name: "Departman oluştur" }).click();
   await expect(page.getByText("Yetenek Kazanımı", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "İnsan ve Kültür alt departmanlarını gizle",
+    }),
+  ).toBeVisible();
   expect(creates).toEqual([
-    { code: "TALENT", name: "Yetenek Kazanımı", parent_id: engineeringId },
+    { code: "TALENT", name: "Yetenek Kazanımı", parent_id: peopleId },
   ]);
   expect(JSON.stringify(creates)).not.toContain("tenant_id");
 
@@ -351,7 +361,7 @@ test("HR lazily expands, creates, renames, moves, archives, and reads department
   expect(patches[1]).toEqual({ parent_id: peopleId });
 
   await page
-    .getByRole("button", { name: "Mühendislik alt departmanlarını göster" })
+    .getByRole("button", { name: "İnsan ve Kültür alt departmanlarını göster" })
     .click();
   await expect(page.getByText("Yetenek Kazanımı", { exact: true })).toBeVisible();
   await page

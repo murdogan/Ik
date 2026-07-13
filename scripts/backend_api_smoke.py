@@ -143,6 +143,18 @@ BRANCH_FIELDS = {
     "created_at",
     "updated_at",
 }
+DEPARTMENT_FIELDS = {
+    "id",
+    "parent_id",
+    "code",
+    "name",
+    "status",
+    "archived_at",
+    "has_children",
+    "accepts_new_assignments",
+    "created_at",
+    "updated_at",
+}
 AUDIT_EVENT_FIELDS = {
     "id",
     "occurred_at",
@@ -267,6 +279,12 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/branches/{branch_id}"),
     ("patch", "/api/v1/branches/{branch_id}"),
     ("delete", "/api/v1/branches/{branch_id}"),
+    ("get", "/api/v1/departments"),
+    ("post", "/api/v1/departments"),
+    ("get", "/api/v1/departments/tree"),
+    ("get", "/api/v1/departments/{department_id}"),
+    ("patch", "/api/v1/departments/{department_id}"),
+    ("delete", "/api/v1/departments/{department_id}"),
 }
 DOCUMENTED_RUNTIME_ENDPOINTS = {
     ("get", "/openapi.json"),
@@ -378,7 +396,8 @@ async def main(database_url: str | None = None) -> None:
         "correlation_middleware,phase1_envelopes,platform_cursor_pagination,platform_tenants,"
         "tenant_audit,platform_audit,audit_redaction,"
         "tenant_settings,tenant_features,platform_limits,feature_rollout,tenant_headers,"
-        "legal_entities,branches,branch_archive_history,"
+        "legal_entities,branches,branch_archive_history,departments,department_lazy_tree,"
+        "department_move_cycle_archive_history,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
         "leave_balances,leave_filters,leave_requests,workflow_transitions,auth"
@@ -1365,6 +1384,202 @@ async def _smoke_organization_endpoints(
         BRANCH_FIELDS,
     )
     _assert_equal(historical_branch, archived_branch, "archived branch history")
+
+    engineering = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/departments",
+            headers=admin_headers,
+            json={"code": "eng", "name": "Engineering", "parent_id": None},
+        ),
+        201,
+        "POST /api/v1/departments root",
+        DEPARTMENT_FIELDS,
+    )
+    operations = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/departments",
+            headers=admin_headers,
+            json={"code": "ops", "name": "Operations", "parent_id": None},
+        ),
+        201,
+        "POST /api/v1/departments second root",
+        DEPARTMENT_FIELDS,
+    )
+    platform = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "post",
+            "/api/v1/departments",
+            headers=admin_headers,
+            json={
+                "code": "platform",
+                "name": "Platform Engineering",
+                "parent_id": engineering["id"],
+            },
+        ),
+        201,
+        "POST /api/v1/departments child",
+        DEPARTMENT_FIELDS,
+    )
+    _assert_equal(engineering["code"], "ENG", "department stable normalized code")
+    _assert_equal(platform["parent_id"], engineering["id"], "department parent link")
+
+    active_departments, active_next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/departments",
+            headers=admin_headers,
+            params={"status": "active", "limit": 2},
+        ),
+        200,
+        "GET /api/v1/departments",
+        expected_limit=2,
+    )
+    _assert_equal(
+        [department["code"] for department in active_departments],
+        ["ENG", "OPS"],
+        "bounded stable-code department list",
+    )
+    if not active_next_cursor:
+        raise AssertionError("bounded department list must expose its continuation cursor")
+    for department in active_departments:
+        _assert_exact_fields(
+            department,
+            DEPARTMENT_FIELDS,
+            "GET /api/v1/departments item",
+        )
+
+    root_departments, root_next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/departments/tree",
+            headers=admin_headers,
+            params={"limit": 1},
+        ),
+        200,
+        "GET /api/v1/departments/tree roots",
+        expected_limit=1,
+    )
+    _assert_equal(len(root_departments), 1, "bounded department root level")
+    _assert_equal(root_departments[0]["id"], engineering["id"], "first department root")
+    _assert_equal(root_departments[0]["has_children"], True, "root active-child marker")
+    if not root_next_cursor:
+        raise AssertionError("bounded department root level must expose its continuation cursor")
+
+    engineering_children, children_next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/departments/tree",
+            headers=admin_headers,
+            params={"parent_id": engineering["id"], "limit": 25},
+        ),
+        200,
+        "GET /api/v1/departments/tree children",
+        expected_limit=25,
+    )
+    _assert_equal(
+        [department["id"] for department in engineering_children],
+        [platform["id"]],
+        "lazy direct department children",
+    )
+    _assert_equal(children_next_cursor, None, "department child terminal cursor")
+
+    moved_platform = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/departments/{platform['id']}",
+            documented_path="/api/v1/departments/{department_id}",
+            headers=admin_headers,
+            json={"name": "Cloud Platform", "parent_id": operations["id"]},
+        ),
+        200,
+        "PATCH /api/v1/departments/{department_id}",
+        DEPARTMENT_FIELDS,
+    )
+    _assert_equal(moved_platform["name"], "Cloud Platform", "renamed department")
+    _assert_equal(moved_platform["parent_id"], operations["id"], "moved department")
+    _assert_equal(moved_platform["code"], "PLATFORM", "moved department stable code")
+
+    _expect_phase1_error_code(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/departments/{operations['id']}",
+            documented_path="/api/v1/departments/{department_id}",
+            headers=admin_headers,
+            json={"parent_id": platform["id"]},
+        ),
+        409,
+        "department_cycle_conflict",
+        "PATCH /api/v1/departments/{department_id} cycle denial",
+    )
+
+    archived_platform = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "delete",
+            f"/api/v1/departments/{platform['id']}",
+            documented_path="/api/v1/departments/{department_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "DELETE /api/v1/departments/{department_id}",
+        DEPARTMENT_FIELDS,
+    )
+    _assert_equal(archived_platform["status"], "archived", "archived department status")
+    _assert_equal(
+        archived_platform["parent_id"],
+        operations["id"],
+        "archived department parent history",
+    )
+    _assert_equal(
+        archived_platform["accepts_new_assignments"],
+        False,
+        "archived department assignment availability",
+    )
+    if not archived_platform["archived_at"]:
+        raise AssertionError("archived department must expose its archive timestamp")
+
+    historical_department = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/departments/{platform['id']}",
+            documented_path="/api/v1/departments/{department_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/departments/{department_id}",
+        DEPARTMENT_FIELDS,
+    )
+    _assert_equal(historical_department, archived_platform, "archived department history")
+
+    archived_departments, archived_next_cursor = _expect_phase1_list(
+        await _request_documented(
+            client,
+            "get",
+            "/api/v1/departments",
+            headers=admin_headers,
+            params={"status": "archived", "limit": 25},
+        ),
+        200,
+        "GET /api/v1/departments archived history",
+        expected_limit=25,
+    )
+    _assert_equal(
+        [department["id"] for department in archived_departments],
+        [platform["id"]],
+        "archived department bounded history",
+    )
+    _assert_equal(archived_next_cursor, None, "archived department terminal cursor")
 
 
 async def _smoke_tenant_audit_endpoints(

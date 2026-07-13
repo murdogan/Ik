@@ -7,6 +7,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Computed,
     DateTime,
@@ -25,6 +26,34 @@ from app.db.base import Base, TimestampMixin
 class DepartmentStatus(StrEnum):
     ACTIVE = "active"
     ARCHIVED = "archived"
+
+
+class DepartmentHierarchyWriteFence(Base):
+    """Internal tenant version row used to serialize hierarchy graph decisions."""
+
+    __tablename__ = "department_hierarchy_write_fences"
+    __table_args__ = (
+        CheckConstraint(
+            "version >= 0",
+            name="ck_department_hierarchy_write_fences_version",
+        ),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "tenants.id",
+            name="fk_department_hierarchy_write_fences_tenant_id_tenants",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    version: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
 
 
 class Department(Base, TimestampMixin):
@@ -112,4 +141,4 @@ class Department(Base, TimestampMixin):
     )
 
 
-__all__ = ["Department", "DepartmentStatus"]
+__all__ = ["Department", "DepartmentHierarchyWriteFence", "DepartmentStatus"]

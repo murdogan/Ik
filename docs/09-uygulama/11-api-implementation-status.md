@@ -2,14 +2,43 @@
 
 Date: 2026-07-13
 Branch: `codex/mvp-phase3-identity-org-until-20260714-0900`
-Task: `P3F legal entities and branch/location vertical slice`
-Review checkpoint: `P3A–P3E identity checkpoint was green and pushed before P3F began`
-Review decision: `P3F implementation and local verification are recorded below`
-Push state: `P3F commit is intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P3G department hierarchy vertical slice`
+Review checkpoint: `P3F was green, committed and pushed before P3G began`
+Review decision: `P3G implementation and local verification are recorded below`
+Push state: `P3G commits are intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### P3F legal entities and branch/location
+### P3G department hierarchy
+
+- HR can create root/child departments, lazily expand one bounded level, rename active nodes,
+  safely move them, archive leaves and read archived parent/code history from `/organization`.
+- Stable codes are tenant-unique and reserved after archive. Active children can only use active
+  parents; archived nodes are terminal, cannot accept new assignments and retain their final
+  parent link for historical reads.
+- Application ancestry checks provide immediate conflict responses. PostgreSQL row and statement
+  triggers enforce the final graph, while a tenant-scoped version fence prevents stale
+  `REPEATABLE READ`/`SERIALIZABLE` writers from committing opposing moves concurrently.
+- Department and internal fence tables use tenant FORCE RLS and narrow runtime ACLs. Read/update
+  RBAC is enforced at API and service boundaries, and create/update/archive audit writes share the
+  domain transaction.
+- Flat and tree APIs use filter-bound opaque cursors with a hard page cap of 100; no endpoint
+  returns an unbounded recursive tenant tree.
+
+### P3G verification gates
+
+| Gate | Command | Result |
+|---|---|---|
+| Backend Ruff | `uv run ruff check backend` plus focused script Ruff | Passed: `All checks passed!` |
+| Focused backend slice | `uv run pytest -q backend/tests/test_organization_api.py backend/tests/test_openapi_contract.py backend/tests/test_migrations.py` | Passed: 66 tests |
+| Alembic head | `uv run alembic heads` | Passed: sole head `0028_p3g_department_hierarchy` |
+| Backend executable smoke | `uv run python scripts/backend_api_smoke.py` | Passed: `BACKEND_SMOKE_OK`; all 63 documented endpoints executed, including department lazy tree/move/cycle/archive/history |
+| PostgreSQL P3G proof | `IK_TEST_DATABASE_URL=... uv run pytest -q -m postgres backend/tests/integration/test_postgresql_p3g_departments.py` | Passed on a disposable PostgreSQL 17 database: RLS/ACL, immutable code/history, multi-row cycle, concurrent `READ COMMITTED`, pre-established `REPEATABLE READ` and `SERIALIZABLE` snapshots |
+| Frontend static gates | `npm run lint`, `npm run typecheck`, `npm run build` in `frontend/` | Passed; production build includes `/organization` |
+| Focused browser E2E | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=... npm run test:e2e -- tests/department-hierarchy-flow.spec.ts` in `frontend/` | Passed: one Chromium flow covering lazy expansion, first-child rendering, create, rename, move, archive and history |
+| Git hygiene | `git diff --check` plus independent backend/frontend task-scope review | Passed; no deployment, cron, secret or post-P3G module change |
+
+### Historical P3F legal entities and branch/location
 
 - Every existing and newly provisioned tenant has one deterministic active default legal entity.
   Authorized tenant admin/HR users can read and edit legal settings while stable codes and the
@@ -23,7 +52,7 @@ Push state: `P3F commit is intentionally left unpushed for the supervisor; no me
 - The `/organization` screen exposes legal-entity editing plus branch create, edit, filtering,
   pagination and archive/history workflows to authorized tenant admin/HR roles.
 
-### P3F verification gates
+### Historical P3F verification gates
 
 | Gate | Command | Result |
 |---|---|---|
@@ -751,6 +780,12 @@ the expected local commits ahead of the review-branch remote after the final com
 | GET | `/api/v1/branches/{branch_id}` | Implemented for P3F | Active or archived current-tenant branch detail |
 | PATCH | `/api/v1/branches/{branch_id}` | Implemented for P3F | Active-only allowlisted location update; code and legal-entity binding immutable |
 | DELETE | `/api/v1/branches/{branch_id}` | Implemented for P3F | Terminal archive keeps history/code and closes new assignments |
+| GET | `/api/v1/departments` | Implemented for P3G | Current-tenant active/archive list with stable-code cursor and bounded pages |
+| POST | `/api/v1/departments` | Implemented for P3G | Active root/child create with immutable tenant-unique code, parent guard and atomic audit |
+| GET | `/api/v1/departments/tree` | Implemented for P3G | One bounded root or direct-child level per request; cursor bound to parent/archive filters |
+| GET | `/api/v1/departments/{department_id}` | Implemented for P3G | Active or archived current-tenant detail with retained parent history |
+| PATCH | `/api/v1/departments/{department_id}` | Implemented for P3G | Active-only rename/safe move; application and PostgreSQL cycle prevention |
+| DELETE | `/api/v1/departments/{department_id}` | Implemented for P3G | Terminal archive rejects active children and retains stable code/parent history |
 | GET | `/api/v1/dashboard/summary` | Implemented | Tenant-scoped dashboard metrics, OpenAPI operation, and docs-table registry |
 | GET | `/api/v1/employees` | Implemented | Tenant filters, deterministic cursor/header, deprecated offset compatibility, OpenAPI |
 | POST | `/api/v1/employees` | Implemented | Tenant create, duplicate protection, optional idempotent replay, OpenAPI, and smoke |
@@ -766,8 +801,9 @@ the expected local commits ahead of the review-branch remote after the final com
 
 F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
 list/detail and the separate platform audit list. P3C adds two organization-selection operations,
-P3D adds four platform-auth operations, P3E adds two password-recovery operations and P3F adds
-nine organization operations, bringing the current surface to 56 generated operations and 57
+P3D adds four platform-auth operations, P3E adds two password-recovery operations, P3F adds
+nine legal-entity/branch operations and P3G adds six department operations, bringing the current
+surface to 62 generated operations and 63
 documented runtime endpoints
 including `/openapi.json`. The executable smoke
 covers activation/login/session lifecycle, tenant-admin user/role/audit behavior and contract-table

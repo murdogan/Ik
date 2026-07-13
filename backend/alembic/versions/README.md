@@ -308,20 +308,26 @@ adjacency tree'sini ekler:
 - Root/child ve bounded flat liste sorguları için tenant/parent/status/code/id sırasını taşıyan
   iki B-tree index vardır. Migration veya API sınırsız recursive tree payload'ı üretmez.
 - PostgreSQL `BEFORE ROW` integrity trigger'ı ilk işlem olarak tenant sentinel satırını
-  `FOR UPDATE` kilitler. Aynı tenant'taki structural yazılar bundan sonra active-parent, ancestor
-  ve active-child archive kararlarını serialize ederek kontrol eder. Identity/tenant/code
-  değişmez; archived satırın name/parent/status/timestamp tarihi terminaldir ve archive işlemi
-  parent link'ini aynı statement'ta yeniden yazamaz.
+  `FOR UPDATE` kilitler ve tenant'a ait `department_hierarchy_write_fences.version` değerini
+  artırır. Fence satırının gerçekten güncellenmesi, önceden snapshot almış bir `REPEATABLE READ`
+  veya `SERIALIZABLE` yazıcısının bekledikten sonra eski graph ile devam etmesine izin vermez;
+  işlem `40001` ile yeniden denenmek üzere kapanır. Aynı tenant'taki structural yazılar
+  active-parent, ancestor ve active-child archive kararlarını serialize ederek kontrol eder.
+  Identity/tenant/code değişmez; archived satırın name/parent/status/timestamp tarihi terminaldir
+  ve archive işlemi parent link'ini aynı statement'ta yeniden yazamaz.
 - Tek row kontrolüne ek olarak ayrı `AFTER INSERT` ve `AFTER UPDATE` transition-table trigger'ları,
   statement'ın bitmiş graph'ında değişen her node'dan parent zincirini dolaşır. Böylece tek
   multi-row statement'taki karşılıklı move ve iki bağımsız transaction'ın karşılıklı move yarışı
   `ck_departments_acyclic` ile atomik olarak reddedilir.
-- PostgreSQL'de tablo `ENABLE + FORCE RLS` ve tenant policy altındadır. Tenant capability yalnız
-  `SELECT/INSERT` ile `name,parent_id,status,archived_at,updated_at` column-level `UPDATE` alır;
-  `DELETE`, stable code/identity update ve platform/authentication capability erişimi yoktur.
+- PostgreSQL'de department ve internal fence tabloları `ENABLE + FORCE RLS` ve tenant policy
+  altındadır. Tenant capability department için yalnız `SELECT/INSERT` ile
+  `name,parent_id,status,archived_at,updated_at`, fence için yalnız `version` column-level
+  `UPDATE` alır; `DELETE`, stable code/identity update ve platform/authentication capability
+  erişimi yoktur.
 - Downgrade retained department/history varsa export/remediation istemeden tabloyu düşürmez.
-  Catalog, RLS/ACL, cross-tenant parent, terminal archive, multi-row cycle ve concurrent cycle
-  kanıtı disposable PostgreSQL üzerinde
+  Catalog, RLS/ACL, cross-tenant parent, terminal archive, multi-row cycle, `READ COMMITTED` ve
+  önceden kurulmuş `REPEATABLE READ`/`SERIALIZABLE` snapshot'larında concurrent cycle kanıtı
+  disposable PostgreSQL üzerinde
   `backend/tests/integration/test_postgresql_p3g_departments.py` ile çalışır; SQLite hattı yalnız
   schema/migration compatibility kanıtıdır.
 

@@ -477,7 +477,10 @@ export function DepartmentHierarchy({ canUpdate }: { canUpdate: boolean }) {
     void loadChildren(null);
   }
 
-  function updateCachedDepartment(updatedDepartment: Department) {
+  function updateCachedDepartment(
+    updatedDepartment: Department,
+    hasChildrenOverride?: boolean,
+  ) {
     setPages((current) =>
       Object.fromEntries(
         Object.entries(current).map(([key, page]) => [
@@ -490,7 +493,8 @@ export function DepartmentHierarchy({ canUpdate }: { canUpdate: boolean }) {
                     ...updatedDepartment,
                     // Tree pages scope this flag to active children. A resource response may
                     // also count archived historical children, which must not block archival.
-                    has_children: department.has_children,
+                    // Callers may override it when they know the active-child state changed.
+                    has_children: hasChildrenOverride ?? department.has_children,
                   }
                 : department,
             ),
@@ -536,7 +540,7 @@ export function DepartmentHierarchy({ canUpdate }: { canUpdate: boolean }) {
         : `${savedDepartment.name} kök departman olarak oluşturuldu.`,
     );
     if (parent) {
-      updateCachedDepartment({ ...parent, has_children: true });
+      updateCachedDepartment(parent, true);
       setExpandedIds((current) => new Set(current).add(parent.id));
       void loadChildren(parent.id);
     } else {
