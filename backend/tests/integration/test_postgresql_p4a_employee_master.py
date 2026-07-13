@@ -198,9 +198,9 @@ async def _assert_catalog(engine: AsyncEngine) -> None:
         constraints = set(
             await connection.scalars(
                 text(
-                    "select constraint.conname from pg_catalog.pg_constraint as constraint "
-                    "join pg_catalog.pg_class as class on class.oid = constraint.conrelid "
-                    "where class.relname = 'employees'"
+                    "select con.conname from pg_catalog.pg_constraint as con "
+                    "join pg_catalog.pg_class as cls on cls.oid = con.conrelid "
+                    "where cls.relname = 'employees'"
                 )
             )
         )
