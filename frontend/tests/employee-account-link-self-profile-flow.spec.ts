@@ -373,6 +373,7 @@ test("HR links a canonical membership and only that linked session can populate 
           contentType: "application/json",
           body: envelope({
             availability: "available",
+            membership_id: requestMembershipId,
             employee_id: EMPLOYEE_ID,
             profile: ownProfile,
           }),
@@ -384,6 +385,7 @@ test("HR links a canonical membership and only that linked session can populate 
         contentType: "application/json",
         body: envelope({
           availability: "unavailable",
+          membership_id: null,
           employee_id: null,
           profile: null,
         }),

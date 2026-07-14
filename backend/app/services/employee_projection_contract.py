@@ -12,7 +12,11 @@ from app.models.employee_assignment import EmployeeAssignment
 from app.models.employee_profile import EmployeeEmploymentProfile, EmployeePersonalProfile
 from app.schemas.employee import EmployeeRead
 from app.schemas.employee_account_link import OwnEmployeeProfileStateRead
-from app.schemas.employee_assignment import ManagerTeamMemberProfileRead, TeamMemberRead
+from app.schemas.employee_assignment import (
+    ManagerTeamMemberProfileRead,
+    ManagerTeamMemberRead,
+    TeamMemberRead,
+)
 from app.schemas.employee_profile import (
     EmployeeEmploymentProfileMutationRead,
     EmployeePersonalProfileMutationRead,
@@ -98,6 +102,9 @@ _MANAGER_EMPLOYEE_FIELDS = {
     "email": "employee.email",
     "status": "employee.status",
 }
+_LEGACY_ASSIGNMENT_EMPLOYEE_FIELDS = {
+    key: value for key, value in _MANAGER_EMPLOYEE_FIELDS.items() if key != "preferred_name"
+}
 _MANAGER_ASSIGNMENT_FIELDS = {
     "legal_entity.code": "organization.legal_entity.code",
     "legal_entity.name": "organization.legal_entity.name",
@@ -158,6 +165,16 @@ _RESPONSE_CONTRACTS: dict[type[BaseModel], tuple[EmployeeProjectionScope, dict[s
         },
     ),
     TeamMemberRead: (
+        EmployeeProjectionScope.HR_TENANT,
+        {
+            **{
+                f"employee.{key}": value
+                for key, value in _LEGACY_ASSIGNMENT_EMPLOYEE_FIELDS.items()
+            },
+            **_hr_assignment_fields("assignment"),
+        },
+    ),
+    ManagerTeamMemberRead: (
         EmployeeProjectionScope.MANAGER_TEAM,
         {
             **{f"employee.{key}": value for key, value in _MANAGER_EMPLOYEE_FIELDS.items()},
@@ -182,6 +199,7 @@ _RESPONSE_CONTRACTS: dict[type[BaseModel], tuple[EmployeeProjectionScope, dict[s
         EmployeeProjectionScope.EMPLOYEE_OWN,
         {
             "availability": "projection.availability",
+            "membership_id": "projection.own_session_membership_id",
             "employee_id": "employee.id",
             "profile.core.id": "employee.id",
             "profile.core.employee_number": "employee.employee_number",

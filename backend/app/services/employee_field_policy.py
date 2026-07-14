@@ -20,6 +20,7 @@ class EmployeeFieldClass(StrEnum):
     WORK_SAFE = "work_safe"
     PERSONAL_CONTACT = "personal_contact"
     OPERATIONAL_INTERNAL = "operational_internal"
+    AUTHENTICATED_SESSION_BOUNDARY = "authenticated_session_boundary"
     RESTRICTED_FUTURE = "restricted_future"
 
 
@@ -64,6 +65,7 @@ EXCLUDED = EmployeeFieldVisibility.EXCLUDED
 WORK_SAFE = EmployeeFieldClass.WORK_SAFE
 PERSONAL_CONTACT = EmployeeFieldClass.PERSONAL_CONTACT
 OPERATIONAL_INTERNAL = EmployeeFieldClass.OPERATIONAL_INTERNAL
+AUTHENTICATED_SESSION_BOUNDARY = EmployeeFieldClass.AUTHENTICATED_SESSION_BOUNDARY
 RESTRICTED_FUTURE = EmployeeFieldClass.RESTRICTED_FUTURE
 
 
@@ -183,6 +185,13 @@ _FIELD_POLICIES: dict[str, EmployeeFieldPolicy] = {
     "organization.history_truncated": _policy(OPERATIONAL_INTERNAL, hr=FULL),
     # Projection-shape metadata contains no employee value.
     "projection.availability": _policy(OPERATIONAL_INTERNAL, own=FULL),
+    # Exact P4C compatibility exception: authenticated own-session metadata at the outer
+    # response boundary only. This is deliberately one named leaf, never a wildcard and never
+    # an employee/profile field.
+    "projection.own_session_membership_id": _policy(
+        AUTHENTICATED_SESSION_BOUNDARY,
+        own=FULL,
+    ),
     "projection.mask_visibility": _policy(OPERATIONAL_INTERNAL, own=FULL),
     "projection.mask_display": _policy(PERSONAL_CONTACT, own=MASKED),
 }

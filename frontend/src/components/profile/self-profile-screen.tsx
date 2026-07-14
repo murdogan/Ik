@@ -156,7 +156,7 @@ export function SelfProfileScreen() {
     const requestId = ++requestGeneration.current;
     const requestBoundary = boundary;
 
-    void readOwnEmployeeProfile().then(
+    void readOwnEmployeeProfile(requestBoundary.membershipId).then(
       (result) => {
         if (
           requestId !== requestGeneration.current ||

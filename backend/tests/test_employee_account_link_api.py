@@ -72,6 +72,7 @@ async def test_hr_link_flow_and_own_endpoint_ignore_guessed_employee_id() -> Non
     assert linked.json()["data"]["link"]["membership"]["membership_id"] == str(MEMBERSHIP_ID)
     assert own.status_code == 200
     assert own.json()["data"]["availability"] == "available"
+    assert own.json()["data"]["membership_id"] == str(MEMBERSHIP_ID)
     assert own.json()["data"]["employee_id"] == str(EMPLOYEE_ID)
     assert own.json()["data"]["profile"]["core"]["id"] == str(EMPLOYEE_ID)
     assert own.json()["data"]["profile"]["personal"] == {
@@ -80,11 +81,11 @@ async def test_hr_link_flow_and_own_endpoint_ignore_guessed_employee_id() -> Non
         "phone": {"visibility": "masked", "display_value": "••••••••00"},
     }
     own_serialized = repr(own.json()["data"]).lower()
+    assert "membership_id" not in repr(own.json()["data"]["profile"]).lower()
     for forbidden in (
         "history",
         "version",
         "identity_id",
-        "membership_id",
         "manager_user_id",
         "+90 555 000 0000",
         "1992-05-14",
@@ -105,6 +106,7 @@ async def test_unlinked_own_profile_is_one_identifier_free_unavailable_state() -
     assert own.status_code == 200
     assert own.json()["data"] == {
         "availability": "unavailable",
+        "membership_id": None,
         "employee_id": None,
         "profile": None,
     }
@@ -229,6 +231,7 @@ async def test_archived_linked_employee_is_not_manageable_and_own_profile_is_una
     assert own.status_code == 200
     assert own.json()["data"] == {
         "availability": "unavailable",
+        "membership_id": None,
         "employee_id": None,
         "profile": None,
     }

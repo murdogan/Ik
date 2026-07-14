@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 MEMBERSHIP_ID = UUID("11111111-1111-4111-8111-111111111111")
 EMPLOYEE_ID = UUID("22222222-2222-4222-8222-222222222222")
+OTHER_EMPLOYEE_ID = UUID("33333333-3333-4333-8333-333333333333")
 
 
 def test_account_link_patch_is_strict_and_requires_both_nullable_command_fields() -> None:
@@ -43,11 +44,13 @@ def test_account_link_patch_is_strict_and_requires_both_nullable_command_fields(
 def test_own_profile_contract_is_allowlisted_and_unavailable_state_leaks_no_ids() -> None:
     unavailable = OwnEmployeeProfileStateRead(
         availability="unavailable",
+        membership_id=None,
         employee_id=None,
         profile=None,
     )
     assert unavailable.model_dump() == {
         "availability": "unavailable",
+        "membership_id": None,
         "employee_id": None,
         "profile": None,
     }
@@ -88,9 +91,37 @@ def test_own_profile_contract_is_allowlisted_and_unavailable_state_leaks_no_ids(
     ):
         assert forbidden not in serialized
 
-    with pytest.raises(ValidationError):
-        OwnEmployeeProfileStateRead(
-            availability="unavailable",
-            employee_id=EMPLOYEE_ID,
-            profile=None,
-        )
+    available = OwnEmployeeProfileStateRead(
+        availability="available",
+        membership_id=MEMBERSHIP_ID,
+        employee_id=EMPLOYEE_ID,
+        profile=profile,
+    )
+    available_data = available.model_dump(mode="json")
+    assert available_data["membership_id"] == str(MEMBERSHIP_ID)
+    assert available_data["employee_id"] == str(EMPLOYEE_ID)
+    assert available_data["profile"]["core"]["id"] == str(EMPLOYEE_ID)
+    assert "membership_id" not in repr(available_data["profile"]).lower()
+
+    for invalid in (
+        {
+            "availability": "unavailable",
+            "membership_id": MEMBERSHIP_ID,
+            "employee_id": None,
+            "profile": None,
+        },
+        {
+            "availability": "unavailable",
+            "membership_id": None,
+            "employee_id": EMPLOYEE_ID,
+            "profile": None,
+        },
+        {
+            "availability": "available",
+            "membership_id": MEMBERSHIP_ID,
+            "employee_id": OTHER_EMPLOYEE_ID,
+            "profile": profile,
+        },
+    ):
+        with pytest.raises(ValidationError):
+            OwnEmployeeProfileStateRead.model_validate(invalid)

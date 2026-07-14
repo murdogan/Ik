@@ -205,9 +205,7 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
     async with _organization_api() as harness:
         await _seed_assignment_fixture(harness)
         hr_headers = _authorization(await _login(harness.client, email=HR_A_EMAIL))
-        manager_headers = _authorization(
-            await _login(harness.client, email=MANAGER_EMAIL)
-        )
+        manager_headers = _authorization(await _login(harness.client, email=MANAGER_EMAIL))
         other_manager_headers = _authorization(
             await _login(harness.client, email=OTHER_MANAGER_EMAIL)
         )
@@ -230,12 +228,13 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
             headers=hr_headers,
             params={"search": "Ada Team"},
         )
-        assert [
-            item["id"] for item in searched_options.json()["data"]["employees"]
-        ] == [str(TEAM_EMPLOYEE_ID)]
-        assert {
-            item["id"] for item in searched_options.json()["data"]["managers"]
-        } == {str(MANAGER_ID), str(OTHER_MANAGER_ID)}
+        assert [item["id"] for item in searched_options.json()["data"]["employees"]] == [
+            str(TEAM_EMPLOYEE_ID)
+        ]
+        assert {item["id"] for item in searched_options.json()["data"]["managers"]} == {
+            str(MANAGER_ID),
+            str(OTHER_MANAGER_ID),
+        }
 
         created = await harness.client.post(
             "/api/v1/employee-assignments",
@@ -264,14 +263,12 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
         assert other_created.status_code == 201
 
         # Free-text similarity does not grant scope; only current assignment.manager_user_id does.
-        team = await harness.client.get("/api/v1/teams/me", headers=manager_headers)
+        team = await harness.client.get("/api/v1/teams/me/members", headers=manager_headers)
         assert team.status_code == 200
-        assert [item["employee"]["id"] for item in team.json()["data"]] == [
-            str(TEAM_EMPLOYEE_ID)
-        ]
+        assert [item["employee"]["id"] for item in team.json()["data"]] == [str(TEAM_EMPLOYEE_ID)]
         assert str(FREE_TEXT_EMPLOYEE_ID) not in str(team.json())
         other_team = await harness.client.get(
-            "/api/v1/teams/me", headers=other_manager_headers
+            "/api/v1/teams/me/members", headers=other_manager_headers
         )
         assert [item["employee"]["id"] for item in other_team.json()["data"]] == [
             str(OTHER_EMPLOYEE_ID)
@@ -317,15 +314,16 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
         assert history.json()["data"][1]["effective_to"] == "2026-07-13"
 
         manager_team_after = await harness.client.get(
-            "/api/v1/teams/me", headers=manager_headers
+            "/api/v1/teams/me/members", headers=manager_headers
         )
         assert manager_team_after.json()["data"] == []
         other_team_after = await harness.client.get(
-            "/api/v1/teams/me", headers=other_manager_headers
+            "/api/v1/teams/me/members", headers=other_manager_headers
         )
-        assert {
-            item["employee"]["id"] for item in other_team_after.json()["data"]
-        } == {str(TEAM_EMPLOYEE_ID), str(OTHER_EMPLOYEE_ID)}
+        assert {item["employee"]["id"] for item in other_team_after.json()["data"]} == {
+            str(TEAM_EMPLOYEE_ID),
+            str(OTHER_EMPLOYEE_ID),
+        }
 
         # Structured current names win while the legacy text fields remain available.
         async with harness.session_factory.begin() as session:
@@ -355,10 +353,7 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
         assert legacy.json()["department"] == "Platform"
         assert legacy.json()["position"] == "Senior Backend Engineer"
         assert legacy.json()["current_assignment"]["department"]["name"] == "Platform"
-        assert (
-            legacy.json()["current_assignment"]["position"]["title"]
-            == "Senior Backend Engineer"
-        )
+        assert legacy.json()["current_assignment"]["position"]["title"] == "Senior Backend Engineer"
 
         legacy_patch = await harness.client.patch(
             f"/api/v1/employees/{TEAM_EMPLOYEE_ID}",
@@ -394,9 +389,7 @@ async def test_hr_assigns_changes_and_reads_history_while_team_scope_is_derived(
             },
         )
         assert archived_rejected.status_code == 409
-        assert archived_rejected.json()["error"]["code"] == (
-            "employee_assignment_conflict"
-        )
+        assert archived_rejected.json()["error"]["code"] == ("employee_assignment_conflict")
 
         async with harness.session_factory() as session:
             events = tuple(

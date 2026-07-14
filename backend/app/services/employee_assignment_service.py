@@ -57,6 +57,7 @@ from app.schemas.employee_assignment import (
     EmployeeAssignmentOptionsRead,
     EmployeeAssignmentRead,
     ManagerTeamMemberProfileRead,
+    ManagerTeamMemberRead,
     TeamListPagination,
     TeamMemberRead,
 )
@@ -530,13 +531,80 @@ class EmployeeAssignmentService:
 
             return await unit_of_work.execute(operation)
 
-    async def my_team(
+    async def legacy_my_team(
         self,
         *,
         request_context: RequestContext,
         pagination: TeamListPagination,
         granted_permissions: tuple[str, ...],
     ) -> CursorPage[TeamMemberRead]:
+        """Return the deprecated Phase 3 shape inside a strict HR-and-team boundary."""
+
+        tenant_id, actor_id = organization_scope_from_context(request_context)
+        _require_assignment_permission(
+            granted_permissions,
+            EMPLOYEE_ASSIGNMENT_READ_PERMISSION,
+        )
+        _require_assignment_permission(
+            granted_permissions,
+            EMPLOYEE_TEAM_READ_PERMISSION,
+        )
+        today = self._today_factory()
+        async with self._session_factory() as session:
+            configure_tenant_database_access(session, tenant_id)
+            async with session.begin():
+                await require_organization_tenant_access(session, tenant_id, write=False)
+                statement = _assignment_view_statement(tenant_id=tenant_id).where(
+                    EmployeeAssignment.manager_user_id == actor_id,
+                    _effective_on(today),
+                    Employee.archived_at.is_(None),
+                    Employee.status.in_(
+                        (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
+                    ),
+                )
+                if pagination.cursor is not None:
+                    statement = statement.where(
+                        or_(
+                            Employee.employee_number > pagination.cursor.employee_number,
+                            and_(
+                                Employee.employee_number == pagination.cursor.employee_number,
+                                Employee.id > pagination.cursor.id,
+                            ),
+                        )
+                    )
+                rows = list(
+                    (
+                        await session.execute(
+                            statement.order_by(
+                                Employee.employee_number.asc(), Employee.id.asc()
+                            ).limit(pagination.limit + 1)
+                        )
+                    ).all()
+                )
+        assignments = [_assignment_read(row, today=today) for row in rows[: pagination.limit]]
+        items = []
+        for assignment in assignments:
+            item = TeamMemberRead(employee=assignment.employee, assignment=assignment)
+            enforce_response_contract(item)
+            items.append(item)
+        next_cursor = None
+        if len(rows) > pagination.limit:
+            last = items[-1].employee
+            from app.schemas.employee_assignment import TeamListCursor
+
+            next_cursor = TeamListCursor(
+                employee_number=last.employee_number,
+                id=last.id,
+            ).to_token()
+        return CursorPage(items=items, next_cursor=next_cursor)
+
+    async def my_team(
+        self,
+        *,
+        request_context: RequestContext,
+        pagination: TeamListPagination,
+        granted_permissions: tuple[str, ...],
+    ) -> CursorPage[ManagerTeamMemberRead]:
         tenant_id, actor_id = organization_scope_from_context(request_context)
         _require_assignment_permission(
             granted_permissions,
@@ -577,7 +645,7 @@ class EmployeeAssignmentService:
         items = []
         for row in rows[: pagination.limit]:
             employee, organization, _employment = _manager_team_projection_values(row)
-            item = TeamMemberRead(
+            item = ManagerTeamMemberRead(
                 employee=employee,
                 assignment=project_manager_assignment(organization),
             )

@@ -323,7 +323,7 @@ export async function listMyTeam(
   const envelope = await requestAuthenticatedApiEnvelope<
     unknown[],
     AssignmentListMeta
-  >(`/api/v1/teams/me?${query.toString()}`);
+  >(`/api/v1/teams/me/members?${query.toString()}`);
   assertListEnvelope(envelope);
   if (
     !envelope.data.every(isTeamMember) ||

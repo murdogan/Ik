@@ -155,18 +155,35 @@ class OwnEmployeeProfileRead(BaseModel):
 
 
 class OwnEmployeeProfileStateRead(BaseModel):
+    """Own-profile state plus authenticated session-boundary identifiers.
+
+    ``membership_id`` preserves the P4C response contract and identifies only the
+    authenticated selected-tenant membership. It is not part of the employee profile.
+    ``employee_id`` is the additive employee-record identifier for the returned profile.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     availability: Literal["available", "unavailable"]
+    membership_id: UUID | None
     employee_id: UUID | None
     profile: OwnEmployeeProfileRead | None
 
     @model_validator(mode="after")
     def require_consistent_availability(self) -> Self:
         available = self.availability == "available"
-        if available != (self.employee_id is not None and self.profile is not None):
+        complete = (
+            self.membership_id is not None
+            and self.employee_id is not None
+            and self.profile is not None
+        )
+        if available != complete:
             raise ValueError("Own-profile availability fields are inconsistent")
-        if not available and (self.employee_id is not None or self.profile is not None):
+        if not available and (
+            self.membership_id is not None
+            or self.employee_id is not None
+            or self.profile is not None
+        ):
             raise ValueError("Unavailable own profile cannot disclose identifiers")
         if available and self.profile is not None and self.employee_id != self.profile.core.id:
             raise ValueError("Own-profile employee identifiers are inconsistent")

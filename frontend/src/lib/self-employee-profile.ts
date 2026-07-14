@@ -72,11 +72,13 @@ export interface SelfEmployeeProfile {
 export type SelfEmployeeProfileResult =
   | {
       availability: "available";
+      membership_id: string;
       employee_id: string;
       profile: SelfEmployeeProfile;
     }
   | {
       availability: "unavailable";
+      membership_id: null;
       employee_id: null;
       profile: null;
     };
@@ -215,18 +217,31 @@ function isProfile(value: unknown): value is SelfEmployeeProfile {
   );
 }
 
-function isResult(value: unknown): value is SelfEmployeeProfileResult {
+function isResult(
+  value: unknown,
+  expectedMembershipId: string,
+): value is SelfEmployeeProfileResult {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["availability", "employee_id", "profile"])
+    !hasExactKeys(value, [
+      "availability",
+      "membership_id",
+      "employee_id",
+      "profile",
+    ])
   ) {
     return false;
   }
   if (value.availability === "unavailable") {
-    return value.employee_id === null && value.profile === null;
+    return (
+      value.membership_id === null &&
+      value.employee_id === null &&
+      value.profile === null
+    );
   }
   return (
     value.availability === "available" &&
+    value.membership_id === expectedMembershipId &&
     isString(value.employee_id) &&
     isProfile(value.profile) &&
     value.profile.core.id === value.employee_id
@@ -237,8 +252,12 @@ export function invalidSelfEmployeeProfileResponse(): ApiClientError {
   return new ApiClientError({ status: 200, code: "invalid_response" });
 }
 
-export async function readOwnEmployeeProfile(): Promise<SelfEmployeeProfileResult> {
+export async function readOwnEmployeeProfile(
+  expectedMembershipId: string,
+): Promise<SelfEmployeeProfileResult> {
   const data = await requestAuthenticatedApi<unknown>("/api/v1/me/employee-profile");
-  if (!isResult(data)) throw invalidSelfEmployeeProfileResponse();
+  if (!isResult(data, expectedMembershipId)) {
+    throw invalidSelfEmployeeProfileResponse();
+  }
   return data;
 }

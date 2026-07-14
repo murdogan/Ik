@@ -28,6 +28,7 @@ from app.schemas.employee_assignment import (
     ManagerTeamEmployeeRead,
     ManagerTeamEmploymentRead,
     ManagerTeamMemberProfileRead,
+    ManagerTeamMemberRead,
     ManagerTeamOrganizationRead,
     ManagerTeamOrganizationReferenceRead,
     ManagerTeamPositionReferenceRead,
@@ -105,6 +106,25 @@ def test_policy_classifies_current_domain_and_future_sensitive_fields_explicitly
     assert field_policy("assignment.manager_user_id").classification is (
         EmployeeFieldClass.OPERATIONAL_INTERNAL
     )
+    own_membership_policy = field_policy("projection.own_session_membership_id")
+    assert own_membership_policy.classification is (
+        EmployeeFieldClass.AUTHENTICATED_SESSION_BOUNDARY
+    )
+    assert own_membership_policy.visibility(EmployeeProjectionScope.EMPLOYEE_OWN) is (
+        EmployeeFieldVisibility.FULL
+    )
+    assert all(
+        own_membership_policy.visibility(scope) is EmployeeFieldVisibility.EXCLUDED
+        for scope in (
+            EmployeeProjectionScope.HR_TENANT,
+            EmployeeProjectionScope.MANAGER_TEAM,
+        )
+    )
+    assert {
+        field_name
+        for field_name in EMPLOYEE_FIELD_POLICIES
+        if "membership" in field_name or "*" in field_name
+    } == {"projection.own_session_membership_id"}
     assert all(
         field_policy(field_name).classification is EmployeeFieldClass.RESTRICTED_FUTURE
         for field_name in RESTRICTED_FUTURE_FIELD_NAMES
@@ -329,6 +349,7 @@ def test_response_contract_registries_are_exact_and_cannot_grow_silently() -> No
             "effective_from",
         },
         TeamMemberRead: {"employee", "assignment"},
+        ManagerTeamMemberRead: {"employee", "assignment"},
         ManagerTeamCurrentAssignmentRead: {
             "legal_entity",
             "branch",
@@ -364,7 +385,12 @@ def test_response_contract_registries_are_exact_and_cannot_grow_silently() -> No
         },
         OwnEmployeeOrganizationRead: {"current_assignment"},
         OwnEmployeeProfileRead: {"core", "personal", "employment", "organization"},
-        OwnEmployeeProfileStateRead: {"availability", "employee_id", "profile"},
+        OwnEmployeeProfileStateRead: {
+            "availability",
+            "membership_id",
+            "employee_id",
+            "profile",
+        },
     }
 
     for model, fields in expected_fields.items():
@@ -376,6 +402,7 @@ def test_response_contract_registries_are_exact_and_cannot_grow_silently() -> No
         EmployeePersonalProfileMutationRead,
         EmployeeEmploymentProfileMutationRead,
         TeamMemberRead,
+        ManagerTeamMemberRead,
         ManagerTeamMemberProfileRead,
         OwnEmployeeProfileStateRead,
     }
@@ -384,3 +411,12 @@ def test_response_contract_registries_are_exact_and_cannot_grow_silently() -> No
         assert response_model_leaf_paths(model) == frozenset(
             EMPLOYEE_RESPONSE_FIELD_REGISTRY[model.__name__]
         )
+
+    own_registry = EMPLOYEE_RESPONSE_FIELD_REGISTRY[OwnEmployeeProfileStateRead.__name__]
+    assert own_registry["membership_id"] == "projection.own_session_membership_id"
+    assert [
+        (model_name, response_path)
+        for model_name, fields in EMPLOYEE_RESPONSE_FIELD_REGISTRY.items()
+        for response_path, policy_name in fields.items()
+        if policy_name == "projection.own_session_membership_id"
+    ] == [(OwnEmployeeProfileStateRead.__name__, "membership_id")]

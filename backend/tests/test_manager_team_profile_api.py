@@ -103,7 +103,7 @@ async def test_hr_manager_and_linked_employee_receive_distinct_server_projection
             permissions=("employee:read:team",),
         ) as manager_client:
             team_response = await manager_client.get(
-                "/api/v1/teams/me",
+                "/api/v1/teams/me/members",
                 headers=request_headers("p4d-matrix-team"),
             )
             manager_response = await manager_client.get(
@@ -175,8 +175,9 @@ async def test_hr_manager_and_linked_employee_receive_distinct_server_projection
 
     assert own_response.status_code == 200
     own = own_response.json()["data"]
-    assert set(own) == {"availability", "employee_id", "profile"}
+    assert set(own) == {"availability", "membership_id", "employee_id", "profile"}
     assert own["availability"] == "available"
+    assert own["membership_id"] == str(MEMBERSHIP_ID)
     assert own["employee_id"] == str(EMPLOYEE_ID)
     assert own["profile"]["core"]["id"] == str(EMPLOYEE_ID)
     assert own["profile"]["personal"] == {
@@ -184,7 +185,7 @@ async def test_hr_manager_and_linked_employee_receive_distinct_server_projection
         "birth_date": {"visibility": "masked", "display_value": "••••-05-14"},
         "phone": {"visibility": "masked", "display_value": "••••••••00"},
     }
-    assert "membership_id" not in own_response.text
+    assert "membership_id" not in str(own["profile"])
     assert RAW_PHONE not in own_response.text
     assert RAW_BIRTH_DATE not in own_response.text
     for forbidden in ("version", "history", "manager_user_id", "identity_id"):

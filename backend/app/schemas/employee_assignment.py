@@ -164,6 +164,13 @@ class EmployeeAssignmentOptionsRead(BaseModel):
     managers: list[AssignmentManagerOptionRead]
 
 
+class TeamMemberRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee: AssignmentEmployeeRead
+    assignment: EmployeeAssignmentRead
+
+
 class ManagerTeamEmployeeRead(BaseModel):
     """Minimal work identity exposed inside the derived manager boundary."""
 
@@ -204,7 +211,9 @@ class ManagerTeamAssignmentRead(BaseModel):
     effective_from: DateOnly
 
 
-class TeamMemberRead(BaseModel):
+class ManagerTeamMemberRead(BaseModel):
+    """Work-safe direct-team list item for manager-facing consumers."""
+
     model_config = ConfigDict(extra="forbid")
 
     employee: ManagerTeamEmployeeRead
@@ -357,6 +366,7 @@ __all__ = [
     "ManagerTeamEmployeeRead",
     "ManagerTeamEmploymentRead",
     "ManagerTeamManagerRead",
+    "ManagerTeamMemberRead",
     "ManagerTeamMemberProfileRead",
     "ManagerTeamOrganizationRead",
     "ManagerTeamOrganizationReferenceRead",

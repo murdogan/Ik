@@ -207,7 +207,7 @@ class EmployeeAccountLinkService:
     async def get_own_profile(
         self,
         tenant_id: UUID,
-        membership_id: UUID,
+        authenticated_membership_id: UUID,
         actor_user_id: UUID,
     ) -> OwnEmployeeProfileStateRead:
         statement = (
@@ -254,7 +254,7 @@ class EmployeeAccountLinkService:
             .where(
                 Employee.tenant_id == tenant_id,
                 Employee.archived_at.is_(None),
-                EmployeeAccountLink.membership_id == membership_id,
+                EmployeeAccountLink.membership_id == authenticated_membership_id,
                 TenantMembership.legacy_user_id == actor_user_id,
                 User.id == actor_user_id,
                 *self._membership_eligibility_predicates(),
@@ -272,6 +272,7 @@ class EmployeeAccountLinkService:
         employee, personal, employment = row
         current_assignment = await self._own_current_assignment(tenant_id, employee.id)
         return project_own_profile(
+            authenticated_membership_id=authenticated_membership_id,
             employee=employee,
             personal=personal,
             employment=employment,

@@ -253,6 +253,7 @@ test("HR, manager and employee stay inside their backend field projections", asy
   let refreshCount = 0;
   let hrProfileRequests = 0;
   let teamListRequests = 0;
+  let legacyTeamListRequests = 0;
   let teamListRequestsWithoutPermission = 0;
   let managerProfileRequests = 0;
   let employeeManagerProfileRequests = 0;
@@ -262,6 +263,15 @@ test("HR, manager and employee stay inside their backend field projections", asy
   let deferNextTeamProfile = false;
   let staleTeamProfileRequests = 0;
   let staleTeamProfileToken = "";
+  let ownProfileResponseMode:
+    | "membership_mismatch"
+    | "employee_mismatch"
+    | "valid" = "membership_mismatch";
+  const ownProfileResponses = {
+    membership_mismatch: 0,
+    employee_mismatch: 0,
+    valid: 0,
+  };
   const ownRequestUrls: string[] = [];
 
   await context.addCookies([
@@ -341,6 +351,16 @@ test("HR, manager and employee stay inside their backend field projections", asy
     }
 
     if (path === "/api/v1/teams/me") {
+      legacyTeamListRequests += 1;
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: errorEnvelope("authorization_denied"),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/teams/me/members") {
       if (!activeUser.permissions.includes("employee:read:team")) {
         teamListRequestsWithoutPermission += 1;
         await route.fulfill({
@@ -447,12 +467,21 @@ test("HR, manager and employee stay inside their backend field projections", asy
         });
         return;
       }
+      const responseMode = ownProfileResponseMode;
+      ownProfileResponses[responseMode] += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: envelope({
           availability: "available",
-          employee_id: DIRECT_EMPLOYEE_ID,
+          membership_id:
+            responseMode === "membership_mismatch"
+              ? managerUser.membership_id
+              : employeeUser.membership_id,
+          employee_id:
+            responseMode === "employee_mismatch"
+              ? WRONG_RESPONSE_EMPLOYEE_ID
+              : DIRECT_EMPLOYEE_ID,
           profile: ownProfile,
         }),
       });
@@ -587,10 +616,37 @@ test("HR, manager and employee stay inside their backend field projections", asy
   expect(employeeManagerProfileRequests).toBe(0);
   expect(teamListRequestsWithoutPermission).toBe(0);
 
+  const ownRequestsBeforeProfile = ownProfileRequests;
   await page.goto(`/profile?employee_id=${UNRELATED_EMPLOYEE_ID}`);
   await expect(page).toHaveURL(
     new RegExp(`/profile\\?employee_id=${UNRELATED_EMPLOYEE_ID}$`),
   );
+  await expect
+    .poll(() => ownProfileResponses.membership_mismatch)
+    .toBeGreaterThan(0);
+  await expect(
+    page.getByRole("heading", { name: "Profiliniz yüklenemedi" }),
+  ).toBeVisible();
+  await expect(page.getByText("Ece Çalışkan", { exact: true })).toHaveCount(0);
+
+  const ownRequestsBeforeEmployeeMismatch = ownProfileRequests;
+  ownProfileResponseMode = "employee_mismatch";
+  await page.getByRole("button", { name: "Yeniden dene" }).click();
+  await expect
+    .poll(() => ownProfileRequests)
+    .toBeGreaterThan(ownRequestsBeforeEmployeeMismatch);
+  await expect.poll(() => ownProfileResponses.employee_mismatch).toBeGreaterThan(0);
+  await flushClient(page);
+  await expect(
+    page.getByRole("heading", { name: "Profiliniz yüklenemedi" }),
+  ).toBeVisible();
+  await expect(page.getByText("Ece Çalışkan", { exact: true })).toHaveCount(0);
+
+  const ownRequestsBeforeValid = ownProfileRequests;
+  ownProfileResponseMode = "valid";
+  await page.getByRole("button", { name: "Yeniden dene" }).click();
+  await expect.poll(() => ownProfileRequests).toBeGreaterThan(ownRequestsBeforeValid);
+  await expect.poll(() => ownProfileResponses.valid).toBeGreaterThan(0);
   await expect(page.getByRole("heading", { level: 1, name: "Profilim" })).toBeVisible();
   await expect(page.getByText("••••-04-10", { exact: true })).toBeVisible();
   await expect(page.getByText("Maskeli", { exact: true })).toBeVisible();
@@ -612,6 +668,8 @@ test("HR, manager and employee stay inside their backend field projections", asy
   expect(nonHrEmployeeProfileRequests).toBe(0);
   expect(managerOwnProfileRequests).toBe(0);
   expect(managerProfileRequests).toBe(managerRequestsBeforeEmployeeDirect);
+  expect(legacyTeamListRequests).toBe(0);
+  expect(ownProfileRequests).toBeGreaterThan(ownRequestsBeforeProfile);
   expect(
     ownRequestUrls.every((requestUrl) => {
       const ownUrl = new URL(requestUrl);

@@ -43,6 +43,7 @@ from app.schemas.employee_assignment import (
     EmployeeAssignmentOptionsRead,
     EmployeeAssignmentRead,
     ManagerTeamMemberProfileRead,
+    ManagerTeamMemberRead,
     TeamListCursor,
     TeamListPagination,
     TeamMemberRead,
@@ -379,14 +380,64 @@ async def change_employee_assignment(
 @teams_router.get(
     "/me",
     response_model=ListEnvelope[TeamMemberRead],
-    summary="List the authenticated manager's derived direct team",
+    summary="List the authenticated manager's legacy derived direct team",
     description=(
-        "Returns only active employees whose currently effective structured assignment names the "
-        "authenticated user as reporting manager. Legacy department or position text never "
-        "expands this scope."
+        "Deprecated Phase 3 compatibility route for HR-level callers that retain tenant-wide "
+        "employee read and team-read permissions. It preserves the original TeamMemberRead "
+        "response while deriving direct-report scope only from the authenticated user and each "
+        "active employee's currently effective structured assignment; client-supplied manager or "
+        "scope values are never accepted. Migrate to GET /api/v1/teams/me/members for the P4D "
+        "manager-safe projection. This legacy route will be removed in a future API version."
     ),
+    deprecated=True,
 )
 async def get_my_team(
+    response: Response,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_request_context),
+    ],
+    service: Annotated[
+        EmployeeAssignmentService,
+        Depends(get_employee_assignment_service),
+    ],
+    authorized: Annotated[
+        AuthenticatedSession,
+        Depends(
+            require_permission(
+                EMPLOYEE_ASSIGNMENT_READ_PERMISSION,
+                denied_error=EmployeeAssignmentAccessDeniedError,
+            )
+        ),
+    ],
+    pagination: Annotated[TeamListPagination, Depends(get_team_list_pagination)],
+) -> ListEnvelope[TeamMemberRead]:
+    _prevent_storage(response)
+    page = await service.legacy_my_team(
+        request_context=request_context,
+        pagination=pagination,
+        granted_permissions=authorized.user.permissions,
+    )
+    return list_envelope(
+        page.items,
+        request_context,
+        limit=pagination.limit,
+        next_cursor=page.next_cursor,
+    )
+
+
+@teams_router.get(
+    "/me/members",
+    response_model=ListEnvelope[ManagerTeamMemberRead],
+    summary="List the authenticated manager's work-safe direct team",
+    description=(
+        "Returns the P4D manager-safe projection only for active employees whose currently "
+        "effective structured assignment names the authenticated user as reporting manager. "
+        "Scope is derived from the authenticated session, is direct only, and cannot be expanded "
+        "with client-supplied manager or scope input."
+    ),
+)
+async def get_my_team_members(
     response: Response,
     request_context: Annotated[
         RequestContext,
@@ -406,7 +457,7 @@ async def get_my_team(
         ),
     ],
     pagination: Annotated[TeamListPagination, Depends(get_team_list_pagination)],
-) -> ListEnvelope[TeamMemberRead]:
+) -> ListEnvelope[ManagerTeamMemberRead]:
     _prevent_storage(response)
     page = await service.my_team(
         request_context=request_context,

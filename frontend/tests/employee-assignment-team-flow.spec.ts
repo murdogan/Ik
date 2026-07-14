@@ -606,7 +606,7 @@ test("manager dashboard renders only the team derived by teams me", async ({
       });
       return;
     }
-    if (path === "/api/v1/teams/me") {
+    if (path === "/api/v1/teams/me/members") {
       const cursor = url.searchParams.get("cursor");
       teamRequestCursors.push(cursor);
       await route.fulfill({

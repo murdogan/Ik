@@ -185,6 +185,7 @@ def project_manager_profile(
 
 def project_own_profile(
     *,
+    authenticated_membership_id: UUID,
     employee: Employee,
     personal: EmployeePersonalProfile,
     employment: EmployeeEmploymentProfile,
@@ -234,6 +235,11 @@ def project_own_profile(
         )
     result = OwnEmployeeProfileStateRead(
         availability="available",
+        membership_id=project_field(
+            scope,
+            "projection.own_session_membership_id",
+            authenticated_membership_id,
+        ),
         employee_id=project_field(scope, "employee.id", employee.id),
         profile=OwnEmployeeProfileRead(
             core=OwnEmployeeProfileCoreRead(
@@ -280,6 +286,7 @@ def project_own_profile(
 def unavailable_own_profile() -> OwnEmployeeProfileStateRead:
     result = OwnEmployeeProfileStateRead(
         availability="unavailable",
+        membership_id=None,
         employee_id=None,
         profile=None,
     )
