@@ -9,6 +9,9 @@ const SENTINEL_REQUEST_ID = "e5100000-0000-4000-8000-000000000004";
 const EMPLOYEE_MEMBERSHIP_ID = "e5200000-0000-4000-8000-000000000001";
 const HR_MEMBERSHIP_ID = "e5200000-0000-4000-8000-000000000002";
 const ROTATED_HR_MEMBERSHIP_ID = "e5200000-0000-4000-8000-000000000003";
+const MANAGER_MEMBERSHIP_ID = "e5200000-0000-4000-8000-000000000004";
+const RAW_PHONE_BASE = ["+90", "555", "111", "0000"].join("");
+const RAW_PHONE_PROPOSED = ["+90", "555", "111", "2233"].join("");
 
 type RequestStatus = "submitted" | "approved" | "rejected" | "cancelled";
 
@@ -119,6 +122,24 @@ const rotatedHrUser = {
   permission_version: 10,
 };
 
+const managerUser = {
+  ...employeeUser,
+  id: "e5300000-0000-4000-8000-000000000004",
+  membership_id: MANAGER_MEMBERSHIP_ID,
+  email: "manager@wealthyfalcon.demo",
+  full_name: "Mert Yönetici",
+  roles: [
+    {
+      id: "e5500000-0000-4000-8000-000000000004",
+      code: "manager",
+      name: "Yönetici",
+      scope_type: "tenant",
+    },
+  ],
+  permissions: ["dashboard:read:own", "employee:read:own", "employee:read:team"],
+  permission_version: 11,
+};
+
 const primaryEmployee = {
   id: EMPLOYEE_ID,
   employee_number: "WF-001",
@@ -183,6 +204,7 @@ test("employee request and HR decision remain tenant-safe across session rotatio
   let deferNextOwnPage = false;
   let staleOwnPageReads = 0;
   let hrQueueRequests = 0;
+  let p4eClientRequests = 0;
   let unauthorizedHrRequests = 0;
   let employee360Reads = 0;
   let deferNextApproval = false;
@@ -194,7 +216,7 @@ test("employee request and HR decision remain tenant-safe across session rotatio
   let createBody: unknown = null;
   let rejectBody: unknown = null;
   let approvedPreferredName = "Ada";
-  let approvedPhone = "+905551110000";
+  let approvedPhone = RAW_PHONE_BASE;
   let approvedBirthDate = "1992-04-10";
 
   function ownCancelledRequest() {
@@ -287,9 +309,9 @@ test("employee request and HR decision remain tenant-safe across session rotatio
           current_matches_base: !approved,
         },
         phone: {
-          base_value: "+905551110000",
-          current_value: approved ? "+905551112233" : "+905551110000",
-          proposed_value: "+905551112233",
+          base_value: RAW_PHONE_BASE,
+          current_value: approved ? RAW_PHONE_PROPOSED : RAW_PHONE_BASE,
+          proposed_value: RAW_PHONE_PROPOSED,
           current_matches_base: !approved,
         },
         birth_date: {
@@ -427,6 +449,10 @@ test("employee request and HR decision remain tenant-safe across session rotatio
       return;
     }
 
+    if (path.includes("profile-change-requests")) {
+      p4eClientRequests += 1;
+    }
+
     expect(request.headers().authorization).toMatch(/^Bearer p4e-access-\d+$/);
     const requestMembershipId = activeUser.membership_id;
 
@@ -547,12 +573,9 @@ test("employee request and HR decision remain tenant-safe across session rotatio
                 ...ownRequest,
                 changes: {
                   ...ownRequest.changes,
-                  phone: {
-                    ...ownApprovalRequest().changes.phone,
-                    previous_value: {
-                      visibility: "masked",
-                      display_value: "+905551110000",
-                    },
+                  preferred_name: {
+                    previous_value: "Ada",
+                    proposed_value: "••••",
                   },
                 },
               };
@@ -672,7 +695,7 @@ test("employee request and HR decision remain tenant-safe across session rotatio
       }
       approvalRequestStatus = "approved";
       approvedPreferredName = "Ada Deniz";
-      approvedPhone = "+905551112233";
+      approvedPhone = RAW_PHONE_PROPOSED;
       approvedBirthDate = "1993-05-11";
       await route.fulfill({
         status: 200,
@@ -710,11 +733,27 @@ test("employee request and HR decision remain tenant-safe across session rotatio
   ).toBeVisible();
   expect(hrQueueRequests).toBe(0);
 
+  const p4eRequestsBeforeManager = p4eClientRequests;
+  nextUser = managerUser;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("heading", { name: "Merhaba, Mert Yönetici" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Değişiklik talepleri", exact: true }),
+  ).toHaveCount(0);
+  await page.goto("/profile-change-requests");
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole("heading", { name: "Merhaba, Mert Yönetici" })).toBeVisible();
+  expect(p4eClientRequests).toBe(p4eRequestsBeforeManager);
+
+  nextUser = employeeUser;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("heading", { name: "Merhaba, Ada Çalışan" })).toBeVisible();
+
   await page.getByRole("link", { name: "Profilim", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Profilim" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Profil değişiklik taleplerim" })).toBeVisible();
   await expect(page.getByText("••••••••00", { exact: true })).toBeVisible();
-  await expect(page.getByText("+905551110000", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(RAW_PHONE_BASE, { exact: true })).toHaveCount(0);
   await expect(page.getByText("1992-04-10", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Talebi iptal et", exact: true }).click();
@@ -772,8 +811,10 @@ test("employee request and HR decision remain tenant-safe across session rotatio
   await expect(queueNavigation).toBeVisible();
   await queueNavigation.click();
   await expect(page.getByRole("heading", { level: 1, name: "Değişiklik talepleri" })).toBeVisible();
+  await expect(page.getByText("+905551112233", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Ada Yılmaz", { exact: true })).toBeVisible();
   await expect(page.getByText("Ece Çalışkan", { exact: true })).toBeVisible();
+  await expect(page.getByText(RAW_PHONE_PROPOSED, { exact: true })).toHaveCount(0);
   await expect(page.getByText("+905551112233", { exact: true })).toHaveCount(0);
 
   const staleResponse = page.waitForResponse(

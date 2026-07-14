@@ -368,14 +368,23 @@ function isProtectedValue(
     : OWN_MASKED_BIRTH_DATE_PATTERN.test(value.display_value);
 }
 
+function isOwnPreferredValue(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (isString(value) &&
+      value.length >= 1 &&
+      value.length <= 200 &&
+      !CONTROL_CHARACTER_PATTERN.test(value) &&
+      !MASK_CHARACTER_PATTERN.test(value))
+  );
+}
+
 function isOwnPreferredChange(value: unknown): value is OwnPreferredNameChange {
   return (
     isRecord(value) &&
     hasExactKeys(value, ["previous_value", "proposed_value"]) &&
-    isNullableString(value.previous_value) &&
-    isNullableString(value.proposed_value) &&
-    (value.previous_value === null || value.previous_value.length <= 200) &&
-    (value.proposed_value === null || value.proposed_value.length <= 200)
+    isOwnPreferredValue(value.previous_value) &&
+    isOwnPreferredValue(value.proposed_value)
   );
 }
 
