@@ -223,10 +223,20 @@ async def _assert_catalog_and_acl(engine: AsyncEngine) -> None:
             for row in (
                 await connection.execute(
                     text(
-                        "select constraint_name, constraint_type "
-                        "from information_schema.table_constraints "
-                        "where table_schema = 'public' "
-                        "and table_name = 'employee_account_links'"
+                        "select constraint_row.conname as constraint_name, "
+                        "case constraint_row.contype "
+                        "when 'p' then 'PRIMARY KEY' "
+                        "when 'c' then 'CHECK' "
+                        "when 'f' then 'FOREIGN KEY' "
+                        "when 'u' then 'UNIQUE' end as constraint_type "
+                        "from pg_catalog.pg_constraint as constraint_row "
+                        "join pg_catalog.pg_class as table_row "
+                        "on table_row.oid = constraint_row.conrelid "
+                        "join pg_catalog.pg_namespace as namespace_row "
+                        "on namespace_row.oid = table_row.relnamespace "
+                        "where namespace_row.nspname = 'public' "
+                        "and table_row.relname = 'employee_account_links' "
+                        "and constraint_row.contype in ('p', 'c', 'f', 'u')"
                     )
                 )
             )
@@ -328,7 +338,8 @@ async def _assert_catalog_and_acl(engine: AsyncEngine) -> None:
         function = (
             await connection.execute(
                 text(
-                    "select procedure.prosecdef, procedure.provolatile, procedure.proconfig, "
+                    "select procedure.prosecdef, procedure.provolatile::text as provolatile, "
+                    "procedure.proconfig, "
                     "owner.rolname as owner_name, pg_get_functiondef(procedure.oid) as definition "
                     "from pg_catalog.pg_proc as procedure "
                     "join pg_catalog.pg_roles as owner on owner.oid = procedure.proowner "
