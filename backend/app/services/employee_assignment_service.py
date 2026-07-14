@@ -15,6 +15,10 @@ from app.models.authorization import Permission, RolePermission, UserRole
 from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.organization import (
     Branch,
     BranchStatus,
@@ -52,10 +56,18 @@ from app.schemas.employee_assignment import (
     EmployeeAssignmentListPagination,
     EmployeeAssignmentOptionsRead,
     EmployeeAssignmentRead,
+    ManagerTeamMemberProfileRead,
     TeamListPagination,
     TeamMemberRead,
 )
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
+from app.services.employee_field_projection import (
+    WorkOrganizationSource,
+    project_manager_assignment,
+    project_manager_employee,
+    project_manager_profile,
+)
+from app.services.employee_projection_contract import enforce_response_contract
 from app.services.organization_access import (
     organization_scope_from_context,
     require_organization_permission,
@@ -100,9 +112,7 @@ class EmployeeAssignmentService:
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
-        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = (
-            SqlAlchemyAuditRecorder
-        ),
+        audit_recorder_factory: Callable[[AsyncSession], AuditRecorder] = (SqlAlchemyAuditRecorder),
         today_factory: Callable[[], date] = date.today,
     ) -> None:
         self._session_factory = session_factory
@@ -134,9 +144,7 @@ class EmployeeAssignmentService:
                 if not pagination.include_history:
                     statement = statement.where(_effective_on(today))
                 if pagination.cursor is not None:
-                    statement = statement.where(
-                        _assignment_after_cursor(pagination.cursor)
-                    )
+                    statement = statement.where(_assignment_after_cursor(pagination.cursor))
                 rows = list(
                     (
                         await session.execute(
@@ -232,9 +240,9 @@ class EmployeeAssignmentService:
                             Employee.employee_number.ilike(pattern, escape="\\"),
                             Employee.first_name.ilike(pattern, escape="\\"),
                             Employee.last_name.ilike(pattern, escape="\\"),
-                            (
-                                Employee.first_name + " " + Employee.last_name
-                            ).ilike(pattern, escape="\\"),
+                            (Employee.first_name + " " + Employee.last_name).ilike(
+                                pattern, escape="\\"
+                            ),
                             Employee.email.ilike(pattern, escape="\\"),
                         )
                     )
@@ -255,9 +263,7 @@ class EmployeeAssignmentService:
                 )
                 managers = list(
                     await session.scalars(
-                        manager_statement.order_by(
-                            User.full_name.asc(), User.id.asc()
-                        ).limit(limit)
+                        manager_statement.order_by(User.full_name.asc(), User.id.asc()).limit(limit)
                     )
                 )
 
@@ -302,17 +308,22 @@ class EmployeeAssignmentService:
 
             async def operation() -> EmployeeAssignmentRead:
                 await require_organization_tenant_access(session, tenant_id, write=True)
-                employee, legal_entity, branch, department, position, manager = (
-                    await _require_assignable_targets(
-                        session,
-                        tenant_id=tenant_id,
-                        employee_id=payload.employee_id,
-                        legal_entity_id=payload.legal_entity_id,
-                        branch_id=payload.branch_id,
-                        department_id=payload.department_id,
-                        position_id=payload.position_id,
-                        manager_user_id=payload.manager_id,
-                    )
+                (
+                    employee,
+                    legal_entity,
+                    branch,
+                    department,
+                    position,
+                    manager,
+                ) = await _require_assignable_targets(
+                    session,
+                    tenant_id=tenant_id,
+                    employee_id=payload.employee_id,
+                    legal_entity_id=payload.legal_entity_id,
+                    branch_id=payload.branch_id,
+                    department_id=payload.department_id,
+                    position_id=payload.position_id,
+                    manager_user_id=payload.manager_id,
                 )
                 if await session.scalar(
                     select(EmployeeAssignment.id).where(
@@ -448,17 +459,22 @@ class EmployeeAssignmentService:
                         "The assignment change must alter organization or manager scope"
                     )
 
-                employee, legal_entity, branch, department, position, manager = (
-                    await _require_assignable_targets(
-                        session,
-                        tenant_id=tenant_id,
-                        employee_id=previous.employee_id,
-                        legal_entity_id=next_values["legal_entity_id"],
-                        branch_id=next_values["branch_id"],
-                        department_id=next_values["department_id"],
-                        position_id=next_values["position_id"],
-                        manager_user_id=next_values["manager_user_id"],
-                    )
+                (
+                    employee,
+                    legal_entity,
+                    branch,
+                    department,
+                    position,
+                    manager,
+                ) = await _require_assignable_targets(
+                    session,
+                    tenant_id=tenant_id,
+                    employee_id=previous.employee_id,
+                    legal_entity_id=next_values["legal_entity_id"],
+                    branch_id=next_values["branch_id"],
+                    department_id=next_values["department_id"],
+                    position_id=next_values["position_id"],
+                    manager_user_id=next_values["manager_user_id"],
                 )
 
                 now = datetime.now(UTC)
@@ -531,7 +547,7 @@ class EmployeeAssignmentService:
             configure_tenant_database_access(session, tenant_id)
             async with session.begin():
                 await require_organization_tenant_access(session, tenant_id, write=False)
-                statement = _assignment_view_statement(tenant_id=tenant_id).where(
+                statement = _manager_team_view_statement(tenant_id=tenant_id).where(
                     EmployeeAssignment.manager_user_id == actor_id,
                     _effective_on(today),
                     Employee.archived_at.is_(None),
@@ -542,11 +558,9 @@ class EmployeeAssignmentService:
                 if pagination.cursor is not None:
                     statement = statement.where(
                         or_(
-                            Employee.employee_number
-                            > pagination.cursor.employee_number,
+                            Employee.employee_number > pagination.cursor.employee_number,
                             and_(
-                                Employee.employee_number
-                                == pagination.cursor.employee_number,
+                                Employee.employee_number == pagination.cursor.employee_number,
                                 Employee.id > pagination.cursor.id,
                             ),
                         )
@@ -560,11 +574,15 @@ class EmployeeAssignmentService:
                         )
                     ).all()
                 )
-        assignments = [_assignment_read(row, today=today) for row in rows[: pagination.limit]]
-        items = [
-            TeamMemberRead(employee=assignment.employee, assignment=assignment)
-            for assignment in assignments
-        ]
+        items = []
+        for row in rows[: pagination.limit]:
+            employee, organization, _employment = _manager_team_projection_values(row)
+            item = TeamMemberRead(
+                employee=employee,
+                assignment=project_manager_assignment(organization),
+            )
+            enforce_response_contract(item)
+            items.append(item)
         next_cursor = None
         if len(rows) > pagination.limit:
             last = items[-1].employee
@@ -575,6 +593,55 @@ class EmployeeAssignmentService:
                 id=last.id,
             ).to_token()
         return CursorPage(items=items, next_cursor=next_cursor)
+
+    async def manager_team_member_profile(
+        self,
+        *,
+        request_context: RequestContext,
+        employee_id: UUID,
+        granted_permissions: tuple[str, ...],
+    ) -> ManagerTeamMemberProfileRead:
+        """Read one current direct report; indirect and historical scope is intentionally absent."""
+
+        tenant_id, actor_id = organization_scope_from_context(request_context)
+        _require_assignment_permission(
+            granted_permissions,
+            EMPLOYEE_TEAM_READ_PERMISSION,
+        )
+        today = self._today_factory()
+        async with self._session_factory() as session:
+            configure_tenant_database_access(session, tenant_id)
+            async with session.begin():
+                await require_organization_tenant_access(session, tenant_id, write=False)
+                row = (
+                    await session.execute(
+                        _manager_team_view_statement(tenant_id=tenant_id)
+                        .where(
+                            Employee.id == employee_id,
+                            EmployeeAssignment.manager_user_id == actor_id,
+                            _effective_on(today),
+                            Employee.archived_at.is_(None),
+                            Employee.status.in_(
+                                (
+                                    EmployeeStatus.ACTIVE.value,
+                                    EmployeeStatus.ON_LEAVE.value,
+                                )
+                            ),
+                        )
+                        .limit(1)
+                    )
+                ).one_or_none()
+        if row is None:
+            raise EmployeeAssignmentNotFoundError
+        employee, organization, employment = _manager_team_projection_values(row)
+        employment_start_date, contract_type, work_type = employment
+        return project_manager_profile(
+            core=employee,
+            employment_start_date=employment_start_date,
+            contract_type=contract_type,
+            work_type=work_type,
+            organization=organization,
+        )
 
     async def _record_change_events(
         self,
@@ -597,8 +664,7 @@ class EmployeeAssignmentService:
             "category": AuditCategory.HR_OPERATIONS,
             "resource_type": "employee_assignment",
             "resource_id": assignment_id,
-            "context": audit_context
-            or AuditContext.from_request_context(request_context),
+            "context": audit_context or AuditContext.from_request_context(request_context),
             "session_id": request_context.session_id,
             "data_classification": AuditDataClassification.HR_METADATA,
             "visibility_class": AuditVisibilityClass.HR_OPERATIONS,
@@ -663,9 +729,7 @@ async def _require_assignable_targets(
         )
     )
     if legal_entity is None or legal_entity.status != LegalEntityStatus.ACTIVE.value:
-        raise EmployeeAssignmentReferenceError(
-            "Assignments require an active legal entity"
-        )
+        raise EmployeeAssignmentReferenceError("Assignments require an active legal entity")
 
     branch = await session.scalar(
         select(Branch).where(
@@ -694,9 +758,7 @@ async def _require_assignable_targets(
         or department.status != DepartmentStatus.ACTIVE.value
         or department.archived_at is not None
     ):
-        raise EmployeeAssignmentReferenceError(
-            "Assignments require an active department"
-        )
+        raise EmployeeAssignmentReferenceError("Assignments require an active department")
 
     position = await session.scalar(
         select(Position).where(
@@ -709,9 +771,7 @@ async def _require_assignable_targets(
         or position.status != PositionStatus.ACTIVE.value
         or position.archived_at is not None
     ):
-        raise EmployeeAssignmentReferenceError(
-            "Assignments require an active position"
-        )
+        raise EmployeeAssignmentReferenceError("Assignments require an active position")
 
     manager = None
     if manager_user_id is not None:
@@ -801,6 +861,141 @@ def _user_has_permission(permission_code: str):
             Permission.code == permission_code,
         )
     )
+
+
+def _manager_team_view_statement(*, tenant_id: UUID):
+    """Select only fields classified work-safe for a current direct-team projection."""
+
+    manager = aliased(User, name="team_profile_manager")
+    return (
+        select(
+            Employee.id,
+            Employee.employee_number,
+            Employee.first_name,
+            Employee.last_name,
+            EmployeePersonalProfile.preferred_name,
+            Employee.email,
+            Employee.status,
+            Employee.employment_start_date,
+            EmployeeEmploymentProfile.contract_type,
+            EmployeeEmploymentProfile.work_type,
+            LegalEntity.code,
+            LegalEntity.name,
+            Branch.code,
+            Branch.name,
+            Department.code,
+            Department.name,
+            Position.code,
+            Position.title,
+            manager.full_name,
+            EmployeeAssignment.effective_from,
+        )
+        .select_from(EmployeeAssignment)
+        .join(
+            Employee,
+            and_(
+                Employee.tenant_id == EmployeeAssignment.tenant_id,
+                Employee.id == EmployeeAssignment.employee_id,
+            ),
+        )
+        .outerjoin(
+            EmployeePersonalProfile,
+            and_(
+                EmployeePersonalProfile.tenant_id == Employee.tenant_id,
+                EmployeePersonalProfile.employee_id == Employee.id,
+            ),
+        )
+        .outerjoin(
+            EmployeeEmploymentProfile,
+            and_(
+                EmployeeEmploymentProfile.tenant_id == Employee.tenant_id,
+                EmployeeEmploymentProfile.employee_id == Employee.id,
+            ),
+        )
+        .join(
+            LegalEntity,
+            and_(
+                LegalEntity.tenant_id == EmployeeAssignment.tenant_id,
+                LegalEntity.id == EmployeeAssignment.legal_entity_id,
+            ),
+        )
+        .join(
+            Branch,
+            and_(
+                Branch.tenant_id == EmployeeAssignment.tenant_id,
+                Branch.id == EmployeeAssignment.branch_id,
+            ),
+        )
+        .join(
+            Department,
+            and_(
+                Department.tenant_id == EmployeeAssignment.tenant_id,
+                Department.id == EmployeeAssignment.department_id,
+            ),
+        )
+        .join(
+            Position,
+            and_(
+                Position.tenant_id == EmployeeAssignment.tenant_id,
+                Position.id == EmployeeAssignment.position_id,
+            ),
+        )
+        .join(
+            manager,
+            and_(
+                manager.tenant_id == EmployeeAssignment.tenant_id,
+                manager.id == EmployeeAssignment.manager_user_id,
+            ),
+        )
+        .where(EmployeeAssignment.tenant_id == tenant_id)
+    )
+
+
+def _manager_team_projection_values(row):
+    (
+        employee_id,
+        employee_number,
+        first_name,
+        last_name,
+        preferred_name,
+        email,
+        status,
+        employment_start_date,
+        contract_type,
+        work_type,
+        legal_entity_code,
+        legal_entity_name,
+        branch_code,
+        branch_name,
+        department_code,
+        department_name,
+        position_code,
+        position_title,
+        manager_full_name,
+        effective_from,
+    ) = row
+    employee = project_manager_employee(
+        employee_id=employee_id,
+        employee_number=employee_number,
+        first_name=first_name,
+        last_name=last_name,
+        preferred_name=preferred_name,
+        email=email,
+        status=status,
+    )
+    organization = WorkOrganizationSource(
+        legal_entity_code=legal_entity_code,
+        legal_entity_name=legal_entity_name,
+        branch_code=branch_code,
+        branch_name=branch_name,
+        department_code=department_code,
+        department_name=department_name,
+        position_code=position_code,
+        position_title=position_title,
+        manager_full_name=manager_full_name,
+        effective_from=effective_from,
+    )
+    return employee, organization, (employment_start_date, contract_type, work_type)
 
 
 def _assignment_view_statement(*, tenant_id: UUID):

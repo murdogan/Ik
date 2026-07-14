@@ -99,11 +99,11 @@ async def test_same_identity_resolves_a_distinct_link_for_each_selected_tenant_m
     assert own_second.profile.core.id == OTHER_EMPLOYEE_ID
     assert wrong_selected_tenant.model_dump() == {
         "availability": "unavailable",
-        "membership_id": None,
+        "employee_id": None,
         "profile": None,
     }
     assert mismatched_legacy_actor.availability == "unavailable"
-    assert mismatched_legacy_actor.membership_id is None
+    assert mismatched_legacy_actor.employee_id is None
 
 
 @pytest.mark.parametrize(
@@ -171,7 +171,7 @@ async def test_disabled_locked_invited_and_stale_compatibility_states_are_unavai
                 )
 
     assert own.availability == "unavailable"
-    assert own.membership_id is None
+    assert own.employee_id is None
     assert own.profile is None
     assert current.link.membership.eligible is False
 

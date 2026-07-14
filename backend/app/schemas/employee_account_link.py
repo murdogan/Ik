@@ -78,12 +78,27 @@ class OwnEmployeeProfileCoreRead(BaseModel):
     status: EmployeeStatus
 
 
+class OwnMaskedFieldRead(BaseModel):
+    """A backend-produced masked display with no reveal/unmask contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visibility: Literal["masked", "unavailable"]
+    display_value: str | None
+
+    @model_validator(mode="after")
+    def require_consistent_visibility(self) -> Self:
+        if (self.visibility == "masked") != (self.display_value is not None):
+            raise ValueError("Masked-field visibility and display are inconsistent")
+        return self
+
+
 class OwnEmployeePersonalProfileRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     preferred_name: str | None
-    birth_date: DateOnly | None
-    phone: str | None
+    birth_date: OwnMaskedFieldRead
+    phone: OwnMaskedFieldRead
 
 
 class OwnEmployeeEmploymentProfileRead(BaseModel):
@@ -143,16 +158,18 @@ class OwnEmployeeProfileStateRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     availability: Literal["available", "unavailable"]
-    membership_id: UUID | None
+    employee_id: UUID | None
     profile: OwnEmployeeProfileRead | None
 
     @model_validator(mode="after")
     def require_consistent_availability(self) -> Self:
         available = self.availability == "available"
-        if available != (self.membership_id is not None and self.profile is not None):
+        if available != (self.employee_id is not None and self.profile is not None):
             raise ValueError("Own-profile availability fields are inconsistent")
-        if not available and (self.membership_id is not None or self.profile is not None):
+        if not available and (self.employee_id is not None or self.profile is not None):
             raise ValueError("Unavailable own profile cannot disclose identifiers")
+        if available and self.profile is not None and self.employee_id != self.profile.core.id:
+            raise ValueError("Own-profile employee identifiers are inconsistent")
         return self
 
 
@@ -171,6 +188,7 @@ __all__ = [
     "OwnEmployeeProfileRead",
     "OwnEmployeeProfileStateRead",
     "OwnManagerReferenceRead",
+    "OwnMaskedFieldRead",
     "OwnOrganizationReferenceRead",
     "OwnPositionReferenceRead",
 ]

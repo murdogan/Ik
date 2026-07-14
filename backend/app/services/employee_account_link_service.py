@@ -25,16 +25,12 @@ from app.schemas.employee_account_link import (
     EmployeeAccountLinkStateRead,
     EmployeeAccountLinkUpdate,
     EmployeeAccountMembershipRead,
-    OwnCurrentAssignmentRead,
-    OwnEmployeeEmploymentProfileRead,
-    OwnEmployeeOrganizationRead,
-    OwnEmployeePersonalProfileRead,
-    OwnEmployeeProfileCoreRead,
-    OwnEmployeeProfileRead,
     OwnEmployeeProfileStateRead,
-    OwnManagerReferenceRead,
-    OwnOrganizationReferenceRead,
-    OwnPositionReferenceRead,
+)
+from app.services.employee_field_projection import (
+    WorkOrganizationSource,
+    project_own_profile,
+    unavailable_own_profile,
 )
 from app.services.employee_service import EmployeeNotFoundError, EmployeeVersionConflictError
 
@@ -275,32 +271,11 @@ class EmployeeAccountLinkService:
             return _unavailable_own_profile()
         employee, personal, employment = row
         current_assignment = await self._own_current_assignment(tenant_id, employee.id)
-        return OwnEmployeeProfileStateRead(
-            availability="available",
-            membership_id=membership_id,
-            profile=OwnEmployeeProfileRead(
-                core=OwnEmployeeProfileCoreRead(
-                    id=employee.id,
-                    employee_number=employee.employee_number,
-                    first_name=employee.first_name,
-                    last_name=employee.last_name,
-                    email=employee.email,
-                    status=employee.status,
-                ),
-                personal=OwnEmployeePersonalProfileRead(
-                    preferred_name=personal.preferred_name,
-                    birth_date=personal.birth_date,
-                    phone=personal.phone,
-                ),
-                employment=OwnEmployeeEmploymentProfileRead(
-                    employment_start_date=employee.employment_start_date,
-                    contract_type=employment.contract_type,
-                    work_type=employment.work_type,
-                ),
-                organization=OwnEmployeeOrganizationRead(
-                    current_assignment=current_assignment,
-                ),
-            ),
+        return project_own_profile(
+            employee=employee,
+            personal=personal,
+            employment=employment,
+            organization=current_assignment,
         )
 
     async def _require_current_employee(
@@ -486,7 +461,7 @@ class EmployeeAccountLinkService:
         self,
         tenant_id: UUID,
         employee_id: UUID,
-    ) -> OwnCurrentAssignmentRead | None:
+    ) -> WorkOrganizationSource | None:
         statement = (
             select(
                 LegalEntity,
@@ -494,6 +469,7 @@ class EmployeeAccountLinkService:
                 Department,
                 Position,
                 User.full_name,
+                EmployeeAssignment.effective_from,
             )
             .select_from(EmployeeAssignment)
             .join(
@@ -549,23 +525,25 @@ class EmployeeAccountLinkService:
         row = (await self.session.execute(statement)).one_or_none()
         if row is None:
             return None
-        legal_entity, branch, department, position, manager_full_name = row
-        return OwnCurrentAssignmentRead(
-            legal_entity=OwnOrganizationReferenceRead(
-                code=legal_entity.code,
-                name=legal_entity.name,
-            ),
-            branch=OwnOrganizationReferenceRead(code=branch.code, name=branch.name),
-            department=OwnOrganizationReferenceRead(
-                code=department.code,
-                name=department.name,
-            ),
-            position=OwnPositionReferenceRead(code=position.code, title=position.title),
-            manager=(
-                OwnManagerReferenceRead(full_name=manager_full_name)
-                if manager_full_name is not None
-                else None
-            ),
+        (
+            legal_entity,
+            branch,
+            department,
+            position,
+            manager_full_name,
+            effective_from,
+        ) = row
+        return WorkOrganizationSource(
+            legal_entity_code=legal_entity.code,
+            legal_entity_name=legal_entity.name,
+            branch_code=branch.code,
+            branch_name=branch.name,
+            department_code=department.code,
+            department_name=department.name,
+            position_code=position.code,
+            position_title=position.title,
+            manager_full_name=manager_full_name,
+            effective_from=effective_from,
         )
 
     @property
@@ -590,11 +568,7 @@ def _membership_read(
 
 
 def _unavailable_own_profile() -> OwnEmployeeProfileStateRead:
-    return OwnEmployeeProfileStateRead(
-        availability="unavailable",
-        membership_id=None,
-        profile=None,
-    )
+    return unavailable_own_profile()
 
 
 __all__ = [

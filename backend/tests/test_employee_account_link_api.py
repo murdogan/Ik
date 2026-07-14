@@ -72,9 +72,23 @@ async def test_hr_link_flow_and_own_endpoint_ignore_guessed_employee_id() -> Non
     assert linked.json()["data"]["link"]["membership"]["membership_id"] == str(MEMBERSHIP_ID)
     assert own.status_code == 200
     assert own.json()["data"]["availability"] == "available"
+    assert own.json()["data"]["employee_id"] == str(EMPLOYEE_ID)
     assert own.json()["data"]["profile"]["core"]["id"] == str(EMPLOYEE_ID)
+    assert own.json()["data"]["profile"]["personal"] == {
+        "preferred_name": "Ada",
+        "birth_date": {"visibility": "masked", "display_value": "••••-05-14"},
+        "phone": {"visibility": "masked", "display_value": "••••••••00"},
+    }
     own_serialized = repr(own.json()["data"]).lower()
-    for forbidden in ("history", "version", "identity_id", "manager_user_id"):
+    for forbidden in (
+        "history",
+        "version",
+        "identity_id",
+        "membership_id",
+        "manager_user_id",
+        "+90 555 000 0000",
+        "1992-05-14",
+    ):
         assert forbidden not in own_serialized
     assert p4b.status_code == 200
     assert p4b.json()["data"]["core"]["id"] == str(EMPLOYEE_ID)
@@ -91,7 +105,7 @@ async def test_unlinked_own_profile_is_one_identifier_free_unavailable_state() -
     assert own.status_code == 200
     assert own.json()["data"] == {
         "availability": "unavailable",
-        "membership_id": None,
+        "employee_id": None,
         "profile": None,
     }
     assert str(EMPLOYEE_ID) not in own.text
@@ -215,7 +229,7 @@ async def test_archived_linked_employee_is_not_manageable_and_own_profile_is_una
     assert own.status_code == 200
     assert own.json()["data"] == {
         "availability": "unavailable",
-        "membership_id": None,
+        "employee_id": None,
         "profile": None,
     }
 
@@ -282,10 +296,7 @@ async def test_link_audit_is_id_only_allowlisted_and_failure_rolls_back_atomical
         "previous_membership_id": str(SECOND_MEMBERSHIP_ID),
     }
     persisted = repr(
-        [
-            (event.before_data, event.after_data, event.metadata_)
-            for event in events
-        ]
+        [(event.before_data, event.after_data, event.metadata_) for event in events]
     ).lower()
     for forbidden in ("ada@", "profile", "password", "token", "secret"):
         assert forbidden not in persisted

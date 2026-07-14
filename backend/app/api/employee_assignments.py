@@ -42,6 +42,7 @@ from app.schemas.employee_assignment import (
     EmployeeAssignmentListPagination,
     EmployeeAssignmentOptionsRead,
     EmployeeAssignmentRead,
+    ManagerTeamMemberProfileRead,
     TeamListCursor,
     TeamListPagination,
     TeamMemberRead,
@@ -103,11 +104,7 @@ def get_assignment_list_pagination(
     ):
         raise employee_assignment_validation_error()
     try:
-        decoded = (
-            EmployeeAssignmentListCursor.from_token(cursor)
-            if cursor is not None
-            else None
-        )
+        decoded = EmployeeAssignmentListCursor.from_token(cursor) if cursor is not None else None
         pagination = EmployeeAssignmentListPagination(
             limit=limit,
             cursor=decoded,
@@ -422,6 +419,47 @@ async def get_my_team(
         limit=pagination.limit,
         next_cursor=page.next_cursor,
     )
+
+
+@teams_router.get(
+    "/me/members/{employee_id}/profile",
+    response_model=DataEnvelope[ManagerTeamMemberProfileRead],
+    summary="Read a current direct team member's work-safe profile",
+    description=(
+        "Returns only centrally classified work-safe fields after proving that the candidate "
+        "employee is an active, non-archived current direct report of the authenticated actor. "
+        "Scope is direct only, not transitive; unrelated, historical, future, cross-tenant, and "
+        "unknown identifiers share the same not-found response."
+    ),
+)
+async def get_my_team_member_profile(
+    employee_id: UUID,
+    response: Response,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_request_context),
+    ],
+    service: Annotated[
+        EmployeeAssignmentService,
+        Depends(get_employee_assignment_service),
+    ],
+    authorized: Annotated[
+        AuthenticatedSession,
+        Depends(
+            require_permission(
+                EMPLOYEE_TEAM_READ_PERMISSION,
+                denied_error=EmployeeAssignmentAccessDeniedError,
+            )
+        ),
+    ],
+) -> DataEnvelope[ManagerTeamMemberProfileRead]:
+    _prevent_storage(response)
+    profile = await service.manager_team_member_profile(
+        request_context=request_context,
+        employee_id=employee_id,
+        granted_permissions=authorized.user.permissions,
+    )
+    return data_envelope(profile, request_context)
 
 
 def _prevent_storage(response: Response) -> None:

@@ -519,7 +519,7 @@
 
 .teamTable {
   width: 100%;
-  min-width: 820px;
+  min-width: 940px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -561,6 +561,32 @@
   margin-top: 4px;
   color: var(--wf-muted);
   font-size: 10px;
+}
+
+.teamProfileLink {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid #c9ddd3;
+  border-radius: 10px;
+  color: var(--wf-green-strong);
+  background: #f3faf6;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.teamProfileLink:hover {
+  border-color: #a9cbbb;
+  background: var(--wf-mint);
+}
+
+.teamProfileLink:focus-visible {
+  outline: 3px solid rgba(49, 107, 255, 0.27);
+  outline-offset: 2px;
 }
 
 .teamPageError,

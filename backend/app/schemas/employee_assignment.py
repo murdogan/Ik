@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -57,9 +57,7 @@ class EmployeeAssignmentChange(_AssignmentPayload):
         }
         if not (self.model_fields_set & structural_fields):
             raise ValueError("At least one assignment field must be provided")
-        for field_name in self.model_fields_set & (
-            structural_fields - {"manager_id"}
-        ):
+        for field_name in self.model_fields_set & (structural_fields - {"manager_id"}):
             if getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")
         return self
@@ -166,11 +164,85 @@ class EmployeeAssignmentOptionsRead(BaseModel):
     managers: list[AssignmentManagerOptionRead]
 
 
+class ManagerTeamEmployeeRead(BaseModel):
+    """Minimal work identity exposed inside the derived manager boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    employee_number: str
+    first_name: str
+    last_name: str
+    preferred_name: str | None
+    email: str | None
+    status: EmployeeStatus
+
+
+class ManagerTeamOrganizationReferenceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    name: str
+
+
+class ManagerTeamPositionReferenceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    title: str
+
+
+class ManagerTeamAssignmentRead(BaseModel):
+    """Current work-safe assignment without operational or identity identifiers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    legal_entity: ManagerTeamOrganizationReferenceRead
+    branch: ManagerTeamOrganizationReferenceRead
+    department: ManagerTeamOrganizationReferenceRead
+    position: ManagerTeamPositionReferenceRead
+    effective_from: DateOnly
+
+
 class TeamMemberRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    employee: AssignmentEmployeeRead
-    assignment: EmployeeAssignmentRead
+    employee: ManagerTeamEmployeeRead
+    assignment: ManagerTeamAssignmentRead
+
+
+class ManagerTeamManagerRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str
+
+
+class ManagerTeamCurrentAssignmentRead(ManagerTeamAssignmentRead):
+    manager: ManagerTeamManagerRead | None
+
+
+class ManagerTeamEmploymentRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employment_start_date: DateOnly
+    contract_type: Literal["indefinite", "fixed_term"] | None
+    work_type: Literal["full_time", "part_time"] | None
+
+
+class ManagerTeamOrganizationRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_assignment: ManagerTeamCurrentAssignmentRead | None
+
+
+class ManagerTeamMemberProfileRead(BaseModel):
+    """Dedicated direct-report projection; personal contact is structurally absent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    core: ManagerTeamEmployeeRead
+    employment: ManagerTeamEmploymentRead
+    organization: ManagerTeamOrganizationRead
 
 
 class EmployeeAssignmentListCursor(BaseModel):
@@ -280,6 +352,15 @@ __all__ = [
     "EmployeeAssignmentListPagination",
     "EmployeeAssignmentOptionsRead",
     "EmployeeAssignmentRead",
+    "ManagerTeamAssignmentRead",
+    "ManagerTeamCurrentAssignmentRead",
+    "ManagerTeamEmployeeRead",
+    "ManagerTeamEmploymentRead",
+    "ManagerTeamManagerRead",
+    "ManagerTeamMemberProfileRead",
+    "ManagerTeamOrganizationRead",
+    "ManagerTeamOrganizationReferenceRead",
+    "ManagerTeamPositionReferenceRead",
     "TeamListCursor",
     "TeamListPagination",
     "TeamMemberRead",

@@ -43,12 +43,12 @@ def test_account_link_patch_is_strict_and_requires_both_nullable_command_fields(
 def test_own_profile_contract_is_allowlisted_and_unavailable_state_leaks_no_ids() -> None:
     unavailable = OwnEmployeeProfileStateRead(
         availability="unavailable",
-        membership_id=None,
+        employee_id=None,
         profile=None,
     )
     assert unavailable.model_dump() == {
         "availability": "unavailable",
-        "membership_id": None,
+        "employee_id": None,
         "profile": None,
     }
 
@@ -63,8 +63,8 @@ def test_own_profile_contract_is_allowlisted_and_unavailable_state_leaks_no_ids(
         ),
         personal=OwnEmployeePersonalProfileRead(
             preferred_name="Ada",
-            birth_date=date(1992, 5, 14),
-            phone="+90 555 000 0000",
+            birth_date={"visibility": "masked", "display_value": "••••-05-14"},
+            phone={"visibility": "masked", "display_value": "••••••••00"},
         ),
         employment=OwnEmployeeEmploymentProfileRead(
             employment_start_date=date(2026, 7, 1),
@@ -75,6 +75,8 @@ def test_own_profile_contract_is_allowlisted_and_unavailable_state_leaks_no_ids(
     )
     dumped = profile.model_dump(mode="json")
     serialized = repr(dumped).lower()
+    assert "1992-05-14" not in serialized
+    assert "+90 555 000 0000" not in serialized
     for forbidden in (
         "version",
         "history",
@@ -89,6 +91,6 @@ def test_own_profile_contract_is_allowlisted_and_unavailable_state_leaks_no_ids(
     with pytest.raises(ValidationError):
         OwnEmployeeProfileStateRead(
             availability="unavailable",
-            membership_id=MEMBERSHIP_ID,
+            employee_id=EMPLOYEE_ID,
             profile=None,
         )

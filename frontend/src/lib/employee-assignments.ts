@@ -8,6 +8,12 @@ export type EmployeeLifecycleStatus = "active" | "on_leave" | "terminated";
 export type AssignmentRecordStatus = "active" | "inactive" | "archived";
 export type AssignmentManagerStatus = "invited" | "active" | "locked" | "disabled";
 
+const EMPLOYEE_LIFECYCLE_STATUSES: readonly EmployeeLifecycleStatus[] = [
+  "active",
+  "on_leave",
+  "terminated",
+];
+
 export interface AssignmentEmployeeOption {
   id: string;
   employee_number: string;
@@ -75,9 +81,37 @@ export interface EmployeeAssignment {
   updated_at: string;
 }
 
+export interface TeamMemberEmployee {
+  id: string;
+  employee_number: string;
+  first_name: string;
+  last_name: string;
+  preferred_name: string | null;
+  email: string | null;
+  status: EmployeeLifecycleStatus;
+}
+
+export interface TeamMemberOrganizationReference {
+  code: string;
+  name: string;
+}
+
+export interface TeamMemberPositionReference {
+  code: string;
+  title: string;
+}
+
+export interface TeamMemberAssignment {
+  legal_entity: TeamMemberOrganizationReference;
+  branch: TeamMemberOrganizationReference;
+  department: TeamMemberOrganizationReference;
+  position: TeamMemberPositionReference;
+  effective_from: string;
+}
+
 export interface TeamMember {
-  employee: AssignmentEmployeeSummary;
-  assignment: EmployeeAssignment;
+  employee: TeamMemberEmployee;
+  assignment: TeamMemberAssignment;
 }
 
 export interface EmployeeAssignmentCreateRequest {
@@ -124,6 +158,108 @@ function assertListEnvelope<T>(
   ) {
     throw new ApiClientError({ status: 200, code: "invalid_response" });
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || isString(value);
+}
+
+function isDateOnly(value: unknown): value is string {
+  return isString(value) && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function isTeamOrganizationReference(
+  value: unknown,
+): value is TeamMemberOrganizationReference {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["code", "name"]) &&
+    isString(value.code) &&
+    isString(value.name)
+  );
+}
+
+function isTeamPositionReference(
+  value: unknown,
+): value is TeamMemberPositionReference {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["code", "title"]) &&
+    isString(value.code) &&
+    isString(value.title)
+  );
+}
+
+function isTeamMemberEmployee(value: unknown): value is TeamMemberEmployee {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "id",
+      "employee_number",
+      "first_name",
+      "last_name",
+      "preferred_name",
+      "email",
+      "status",
+    ]) &&
+    isString(value.id) &&
+    isString(value.employee_number) &&
+    isString(value.first_name) &&
+    isString(value.last_name) &&
+    isNullableString(value.preferred_name) &&
+    isNullableString(value.email) &&
+    isString(value.status) &&
+    EMPLOYEE_LIFECYCLE_STATUSES.includes(value.status as EmployeeLifecycleStatus)
+  );
+}
+
+function isTeamMemberAssignment(
+  value: unknown,
+): value is TeamMemberAssignment {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "legal_entity",
+      "branch",
+      "department",
+      "position",
+      "effective_from",
+    ]) &&
+    isTeamOrganizationReference(value.legal_entity) &&
+    isTeamOrganizationReference(value.branch) &&
+    isTeamOrganizationReference(value.department) &&
+    isTeamPositionReference(value.position) &&
+    isDateOnly(value.effective_from)
+  );
+}
+
+function isTeamMember(value: unknown): value is TeamMember {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["employee", "assignment"]) &&
+    isTeamMemberEmployee(value.employee) &&
+    isTeamMemberAssignment(value.assignment)
+  );
 }
 
 export async function listEmployeeAssignmentOptions(
@@ -185,9 +321,16 @@ export async function listMyTeam(
   const query = new URLSearchParams({ limit: "50" });
   if (cursor) query.set("cursor", cursor);
   const envelope = await requestAuthenticatedApiEnvelope<
-    TeamMember[],
+    unknown[],
     AssignmentListMeta
   >(`/api/v1/teams/me?${query.toString()}`);
   assertListEnvelope(envelope);
-  return envelope;
+  if (
+    !envelope.data.every(isTeamMember) ||
+    new Set(envelope.data.map((item) => item.employee.id)).size !==
+      envelope.data.length
+  ) {
+    throw new ApiClientError({ status: 200, code: "invalid_response" });
+  }
+  return envelope as ApiSuccessEnvelope<TeamMember[], AssignmentListMeta>;
 }

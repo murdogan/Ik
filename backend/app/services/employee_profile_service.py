@@ -30,6 +30,15 @@ from app.schemas.employee_profile import (
 from app.services.employee_assignment_service import (
     employee_assignment_profile_projection,
 )
+from app.services.employee_field_projection import (
+    project_hr_core,
+    project_hr_employment,
+    project_hr_personal,
+)
+from app.services.employee_projection_contract import (
+    enforce_hr_profile_contract,
+    enforce_response_contract,
+)
 from app.services.employee_service import (
     EmployeeNotFoundError,
     EmployeeService,
@@ -87,16 +96,18 @@ class EmployeeProfileService:
             effective_on=self.today,
             history_limit=EMPLOYEE_PROFILE_HISTORY_LIMIT,
         )
-        return EmployeeProfileRead(
-            core=_core_read(employee),
-            personal=_personal_read(personal),
-            employment=_employment_read(employee, employment),
-            organization=EmployeeProfileOrganizationRead(
-                current_assignment=organization.current_assignment,
-                history=organization.history,
-                history_limit=organization.history_limit,
-                history_truncated=organization.history_truncated,
-            ),
+        return enforce_hr_profile_contract(
+            EmployeeProfileRead(
+                core=_core_read(employee),
+                personal=_personal_read(personal),
+                employment=_employment_read(employee, employment),
+                organization=EmployeeProfileOrganizationRead(
+                    current_assignment=organization.current_assignment,
+                    history=organization.history,
+                    history_limit=organization.history_limit,
+                    history_truncated=organization.history_truncated,
+                ),
+            )
         )
 
     async def update_personal_profile(
@@ -145,8 +156,7 @@ class EmployeeProfileService:
             if field_name in payload.model_fields_set:
                 setattr(personal, field_name, getattr(payload, field_name))
         if any(
-            before_values[field_name]
-            != _personal_field_value(employee, personal, field_name)
+            before_values[field_name] != _personal_field_value(employee, personal, field_name)
             for field_name in candidate_fields
         ):
             # The section token guards the whole personal command, including compatibility-owned
@@ -167,11 +177,13 @@ class EmployeeProfileService:
                 if before_values[field_name] != after_values[field_name]
             )
         )
+        response = EmployeePersonalProfileMutationRead(
+            core=_core_read(employee),
+            personal=_personal_read(personal),
+        )
+        enforce_response_contract(response)
         return PersonalProfileMutation(
-            response=EmployeePersonalProfileMutationRead(
-                core=_core_read(employee),
-                personal=_personal_read(personal),
-            ),
+            response=response,
             changed_fields=changed_fields,
             before_values={field_name: before_values[field_name] for field_name in changed_fields},
             after_values={field_name: after_values[field_name] for field_name in changed_fields},
@@ -223,8 +235,7 @@ class EmployeeProfileService:
                     value.value if value is not None else None,
                 )
         if any(
-            before_values[field_name]
-            != _employment_field_value(employee, employment, field_name)
+            before_values[field_name] != _employment_field_value(employee, employment, field_name)
             for field_name in candidate_fields
         ):
             # Employment start date remains core-owned, but a successful start-date-only command
@@ -244,11 +255,13 @@ class EmployeeProfileService:
                 if before_values[field_name] != after_values[field_name]
             )
         )
+        response = EmployeeEmploymentProfileMutationRead(
+            core=_core_read(employee),
+            employment=_employment_read(employee, employment),
+        )
+        enforce_response_contract(response)
         return EmploymentProfileMutation(
-            response=EmployeeEmploymentProfileMutationRead(
-                core=_core_read(employee),
-                employment=_employment_read(employee, employment),
-            ),
+            response=response,
             changed_fields=changed_fields,
             before_values={field_name: before_values[field_name] for field_name in changed_fields},
             after_values={field_name: after_values[field_name] for field_name in changed_fields},
@@ -293,31 +306,18 @@ class EmployeeProfileService:
 
 
 def _core_read(employee: Employee) -> EmployeeProfileCoreRead:
-    return EmployeeProfileCoreRead(
-        id=employee.id,
-        employee_number=employee.employee_number,
-        first_name=employee.first_name,
-        last_name=employee.last_name,
-        email=employee.email,
-        status=employee.status,
-        employee_version=employee.version,
-    )
+    return project_hr_core(employee)
 
 
 def _personal_read(profile: EmployeePersonalProfile) -> EmployeePersonalProfileRead:
-    return EmployeePersonalProfileRead.model_validate(profile)
+    return project_hr_personal(profile)
 
 
 def _employment_read(
     employee: Employee,
     profile: EmployeeEmploymentProfile,
 ) -> EmployeeEmploymentProfileRead:
-    return EmployeeEmploymentProfileRead(
-        employment_start_date=employee.employment_start_date,
-        contract_type=profile.contract_type,
-        work_type=profile.work_type,
-        version=profile.version,
-    )
+    return project_hr_employment(employee, profile)
 
 
 def _personal_field_value(

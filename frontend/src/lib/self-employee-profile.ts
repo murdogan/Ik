@@ -22,9 +22,19 @@ export interface SelfEmployeeProfileCore {
 
 export interface SelfEmployeePersonalProfile {
   preferred_name: string | null;
-  birth_date: string | null;
-  phone: string | null;
+  birth_date: SelfEmployeeProtectedValue;
+  phone: SelfEmployeeProtectedValue;
 }
+
+export type SelfEmployeeProtectedValue =
+  | {
+      visibility: "masked";
+      display_value: string;
+    }
+  | {
+      visibility: "unavailable";
+      display_value: null;
+    };
 
 export interface SelfEmployeeEmploymentProfile {
   employment_start_date: string;
@@ -62,12 +72,12 @@ export interface SelfEmployeeProfile {
 export type SelfEmployeeProfileResult =
   | {
       availability: "available";
-      membership_id: string;
+      employee_id: string;
       profile: SelfEmployeeProfile;
     }
   | {
       availability: "unavailable";
-      membership_id: null;
+      employee_id: null;
       profile: null;
     };
 
@@ -115,9 +125,21 @@ function isPersonal(value: unknown): value is SelfEmployeePersonalProfile {
     isRecord(value) &&
     hasExactKeys(value, ["preferred_name", "birth_date", "phone"]) &&
     isNullableString(value.preferred_name) &&
-    isNullableString(value.birth_date) &&
-    isNullableString(value.phone)
+    isProtectedValue(value.birth_date) &&
+    isProtectedValue(value.phone)
   );
+}
+
+function isProtectedValue(value: unknown): value is SelfEmployeeProtectedValue {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["visibility", "display_value"])
+  ) {
+    return false;
+  }
+  return value.visibility === "masked"
+    ? isString(value.display_value)
+    : value.visibility === "unavailable" && value.display_value === null;
 }
 
 function isEmployment(value: unknown): value is SelfEmployeeEmploymentProfile {
@@ -194,16 +216,20 @@ function isProfile(value: unknown): value is SelfEmployeeProfile {
 }
 
 function isResult(value: unknown): value is SelfEmployeeProfileResult {
-  if (!isRecord(value) || !hasExactKeys(value, ["availability", "membership_id", "profile"])) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["availability", "employee_id", "profile"])
+  ) {
     return false;
   }
   if (value.availability === "unavailable") {
-    return value.membership_id === null && value.profile === null;
+    return value.employee_id === null && value.profile === null;
   }
   return (
     value.availability === "available" &&
-    isString(value.membership_id) &&
-    isProfile(value.profile)
+    isString(value.employee_id) &&
+    isProfile(value.profile) &&
+    value.profile.core.id === value.employee_id
   );
 }
 

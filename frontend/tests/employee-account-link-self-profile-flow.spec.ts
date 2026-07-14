@@ -191,8 +191,14 @@ const ownProfile = {
   },
   personal: {
     preferred_name: "Ada",
-    birth_date: "1992-04-10",
-    phone: "+905551110000",
+    birth_date: {
+      visibility: "masked",
+      display_value: "••••-04-10",
+    },
+    phone: {
+      visibility: "masked",
+      display_value: "••••••••00",
+    },
   },
   employment: {
     employment_start_date: "2025-02-03",
@@ -367,7 +373,7 @@ test("HR links a canonical membership and only that linked session can populate 
           contentType: "application/json",
           body: envelope({
             availability: "available",
-            membership_id: LINKED_MEMBERSHIP_ID,
+            employee_id: EMPLOYEE_ID,
             profile: ownProfile,
           }),
         });
@@ -378,7 +384,7 @@ test("HR links a canonical membership and only that linked session can populate 
         contentType: "application/json",
         body: envelope({
           availability: "unavailable",
-          membership_id: null,
+          employee_id: null,
           profile: null,
         }),
       });
@@ -438,6 +444,16 @@ test("HR links a canonical membership and only that linked session can populate 
   await expect(page.getByText("Ada Yılmaz", { exact: true })).toBeVisible();
   await expect(page.getByText("İnsan ve Kültür", { exact: true })).toBeVisible();
   await expect(page.getByText("Mert Yönetici", { exact: true })).toBeVisible();
+  await expect(page.getByText("••••-04-10", { exact: true })).toBeVisible();
+  await expect(page.getByText("••••••••00", { exact: true })).toBeVisible();
+  await expect(page.getByText("Maskeli", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("1992-04-10", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("+905551110000", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: /ayrıntıları (göster|aç)|maskeyi kaldır|reveal|unmask/i,
+    }),
+  ).toHaveCount(0);
 
   deferNextLinkedRead = true;
   await page.getByRole("link", { name: "Genel bakış", exact: true }).click();

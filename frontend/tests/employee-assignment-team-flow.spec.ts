@@ -32,6 +32,7 @@ const hrUser = {
 
 const managerUser = {
   id: "f2000000-0000-4000-8000-000000000032",
+  membership_id: "f2100000-0000-4000-8000-000000000032",
   tenant_id: hrUser.tenant_id,
   email: "manager@wealthyfalcon.demo",
   full_name: "Mert Yönetici",
@@ -543,10 +544,17 @@ test("manager dashboard renders only the team derived by teams me", async ({
   let accessToken = "";
   const teamRequestCursors: Array<string | null> = [];
   let employeeRequests = 0;
-  const teamAssignment = assignment(
-    "ef000000-0000-4000-8000-000000000010",
-    { effectiveFrom: "2026-07-01" },
-  );
+  const teamAssignment = {
+    legal_entity: { code: legalEntity.code, name: legalEntity.name },
+    branch: { code: activeBranch.code, name: activeBranch.name },
+    department: { code: activeDepartment.code, name: activeDepartment.name },
+    position: { code: softwarePosition.code, title: softwarePosition.title },
+    effective_from: "2026-07-01",
+  };
+  const firstTeamMember = {
+    employee: { ...targetEmployee, preferred_name: "Ece" },
+    assignment: teamAssignment,
+  };
   const secondEmployee = {
     ...targetEmployee,
     id: "ee000000-0000-4000-8000-000000000002",
@@ -555,10 +563,9 @@ test("manager dashboard renders only the team derived by teams me", async ({
     last_name: "Takım",
     email: "bora@wealthyfalcon.demo",
   };
-  const secondTeamAssignment = {
-    ...teamAssignment,
-    id: "ef000000-0000-4000-8000-000000000011",
-    employee: secondEmployee,
+  const secondTeamMember = {
+    employee: { ...secondEmployee, preferred_name: null },
+    assignment: teamAssignment,
   };
 
   await context.addCookies([
@@ -606,9 +613,7 @@ test("manager dashboard renders only the team derived by teams me", async ({
         status: 200,
         contentType: "application/json",
         body: envelope(
-          cursor
-            ? [{ employee: secondEmployee, assignment: secondTeamAssignment }]
-            : [{ employee: targetEmployee, assignment: teamAssignment }],
+          cursor ? [secondTeamMember] : [firstTeamMember],
           { limit: 50, next_cursor: cursor ? null : "team-next" },
         ),
       });
