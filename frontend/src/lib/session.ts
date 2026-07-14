@@ -37,6 +37,14 @@ export type SessionChange =
   | { type: "user_updated"; user: AuthUser }
   | { type: "invalidated" };
 
+export function getSessionGeneration(): number {
+  return sessionGeneration;
+}
+
+export function isSessionGenerationCurrent(generation: number): boolean {
+  return generation === sessionGeneration;
+}
+
 class SessionSupersededError extends Error {
   constructor() {
     super("Session changed while the request was in flight");

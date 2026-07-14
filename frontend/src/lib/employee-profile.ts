@@ -98,7 +98,10 @@ function isPositiveInteger(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 1;
 }
 
-function isProfileCore(value: unknown): value is EmployeeProfileCore {
+function isProfileCore(
+  value: unknown,
+  expectedEmployeeId: string,
+): value is EmployeeProfileCore {
   return (
     isRecord(value) &&
     hasExactKeys(value, [
@@ -110,7 +113,7 @@ function isProfileCore(value: unknown): value is EmployeeProfileCore {
       "status",
       "employee_version",
     ]) &&
-    isString(value.id) &&
+    value.id === expectedEmployeeId &&
     isString(value.employee_number) &&
     isString(value.first_name) &&
     isString(value.last_name) &&
@@ -269,43 +272,49 @@ function isOrganization(value: unknown): value is EmployeeProfileOrganization {
   );
 }
 
-function isEmployeeProfile(value: unknown): value is EmployeeProfile {
+function isEmployeeProfile(
+  value: unknown,
+  expectedEmployeeId: string,
+): value is EmployeeProfile {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, ["core", "personal", "employment", "organization"]) ||
-    !isProfileCore(value.core) ||
+    !isProfileCore(value.core, expectedEmployeeId) ||
     !isPersonalProfile(value.personal) ||
     !isEmploymentProfile(value.employment) ||
     !isOrganization(value.organization)
   ) {
     return false;
   }
-  const employeeId = value.core.id;
   return (
     (value.organization.current_assignment === null ||
-      value.organization.current_assignment.employee.id === employeeId) &&
+      value.organization.current_assignment.employee.id === expectedEmployeeId) &&
     value.organization.history.every(
-      (assignment) => assignment.employee.id === employeeId,
+      (assignment) => assignment.employee.id === expectedEmployeeId,
     )
   );
 }
 
-function isPersonalUpdateResult(value: unknown): value is EmployeePersonalProfileUpdateResult {
+function isPersonalUpdateResult(
+  value: unknown,
+  expectedEmployeeId: string,
+): value is EmployeePersonalProfileUpdateResult {
   return (
     isRecord(value) &&
     hasExactKeys(value, ["core", "personal"]) &&
-    isProfileCore(value.core) &&
+    isProfileCore(value.core, expectedEmployeeId) &&
     isPersonalProfile(value.personal)
   );
 }
 
 function isEmploymentUpdateResult(
   value: unknown,
+  expectedEmployeeId: string,
 ): value is EmployeeEmploymentProfileUpdateResult {
   return (
     isRecord(value) &&
     hasExactKeys(value, ["core", "employment"]) &&
-    isProfileCore(value.core) &&
+    isProfileCore(value.core, expectedEmployeeId) &&
     isEmploymentProfile(value.employment)
   );
 }
@@ -318,7 +327,7 @@ export async function readEmployeeProfile(employeeId: string): Promise<EmployeeP
   const data = await requestAuthenticatedApi<unknown>(
     `/api/v1/employees/${encodeURIComponent(employeeId)}/profile`,
   );
-  if (!isEmployeeProfile(data)) throw invalidResponse();
+  if (!isEmployeeProfile(data, employeeId)) throw invalidResponse();
   return data;
 }
 
@@ -330,7 +339,7 @@ export async function updateEmployeePersonalProfile(
     `/api/v1/employees/${encodeURIComponent(employeeId)}/profile/personal`,
     { method: "PATCH", body: payload },
   );
-  if (!isPersonalUpdateResult(data)) throw invalidResponse();
+  if (!isPersonalUpdateResult(data, employeeId)) throw invalidResponse();
   return data;
 }
 
@@ -342,6 +351,6 @@ export async function updateEmployeeEmploymentProfile(
     `/api/v1/employees/${encodeURIComponent(employeeId)}/profile/employment`,
     { method: "PATCH", body: payload },
   );
-  if (!isEmploymentUpdateResult(data)) throw invalidResponse();
+  if (!isEmploymentUpdateResult(data, employeeId)) throw invalidResponse();
   return data;
 }

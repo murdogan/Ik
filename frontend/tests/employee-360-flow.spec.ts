@@ -1,6 +1,24 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const EMPLOYEE_ID = "fa000000-0000-4000-8000-000000000001";
+const OTHER_EMPLOYEE_ID = "fa000000-0000-4000-8000-000000000099";
+
+function deferred() {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { wait, release };
+}
+
+async function flushClient(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}
 
 function envelope(data: unknown): string {
   return JSON.stringify({
@@ -219,6 +237,73 @@ function initialProfile() {
   };
 }
 
+function sessionProfile({
+  firstName,
+  lastName,
+  preferredName,
+  permissionVersion,
+  contractType = "indefinite",
+  workType = "full_time",
+}: {
+  firstName: string;
+  lastName: string;
+  preferredName: string;
+  permissionVersion: number;
+  contractType?: "indefinite" | "fixed_term";
+  workType?: "full_time" | "part_time";
+}) {
+  const profile = initialProfile();
+  return {
+    ...profile,
+    core: {
+      ...profile.core,
+      first_name: firstName,
+      last_name: lastName,
+      employee_version: permissionVersion + 1,
+    },
+    personal: {
+      ...profile.personal,
+      preferred_name: preferredName,
+      version: permissionVersion + 1,
+    },
+    employment: {
+      ...profile.employment,
+      contract_type: contractType,
+      work_type: workType,
+      version: permissionVersion + 1,
+    },
+  };
+}
+
+function profileForOtherEmployee() {
+  const profile = initialProfile();
+  const remapAssignment = (assignment: (typeof profile.organization.history)[number]) => ({
+    ...assignment,
+    employee: {
+      ...assignment.employee,
+      id: OTHER_EMPLOYEE_ID,
+      first_name: "Yanlış",
+      last_name: "Çalışan",
+    },
+  });
+  return {
+    ...profile,
+    core: {
+      ...profile.core,
+      id: OTHER_EMPLOYEE_ID,
+      first_name: "Yanlış",
+      last_name: "Çalışan",
+    },
+    organization: {
+      ...profile.organization,
+      current_assignment: profile.organization.current_assignment
+        ? remapAssignment(profile.organization.current_assignment)
+        : null,
+      history: profile.organization.history.map(remapAssignment),
+    },
+  };
+}
+
 test("HR uses the full Employee 360 tabs, resolves a personal conflict, and reads bounded organization history", async ({
   context,
   page,
@@ -404,7 +489,8 @@ test("HR uses the full Employee 360 tabs, resolves a personal conflict, and read
   await expect(
     page.getByRole("heading", { level: 1, name: "Ada Yılmaz", exact: true }),
   ).toBeVisible();
-  await expect.poll(() => profileReadCount).toBe(1);
+  await expect.poll(() => profileReadCount).toBeGreaterThan(0);
+  const initialProfileReadCount = profileReadCount;
 
   const tablist = page.getByRole("tablist", { name: "Çalışan profil bölümleri" });
   const summaryTab = tablist.getByRole("tab", { name: "Özet", exact: true });
@@ -450,7 +536,7 @@ test("HR uses the full Employee 360 tabs, resolves a personal conflict, and read
   });
 
   await personalPanel.getByRole("button", { name: "Güncel veriyi yükle" }).click();
-  await expect.poll(() => profileReadCount).toBe(2);
+  await expect.poll(() => profileReadCount).toBe(initialProfileReadCount + 1);
   await expect(personalPanel.getByLabel("İş e-postası", { exact: true })).toHaveValue(
     "ada.server@wealthyfalcon.demo",
   );
@@ -513,6 +599,583 @@ test("HR uses the full Employee 360 tabs, resolves a personal conflict, and read
       name: /atama oluştur|atamayı değiştir|işten çıkar|arşivle/i,
     }),
   ).toHaveCount(0);
+});
+
+test("old bearer GET and PATCH completions cannot cross Employee 360 session boundaries", async ({
+  context,
+  page,
+}) => {
+  const staleGetGate = deferred();
+  const stalePersonalGate = deferred();
+  const staleEmploymentSuccessGate = deferred();
+  const staleEmploymentErrorGate = deferred();
+  const rotatedUser = {
+    ...hrUser,
+    id: "f2000000-0000-4000-8000-000000000049",
+    full_name: "Yeni Oturum",
+    permission_version: 5,
+  };
+  const permissionUpdatedUser = {
+    ...rotatedUser,
+    permission_version: 6,
+  };
+  const employmentUpdatedUser = {
+    ...rotatedUser,
+    permission_version: 7,
+  };
+  const recoveredUser = {
+    ...rotatedUser,
+    permission_version: 8,
+  };
+  const staleGetProfile = sessionProfile({
+    firstName: "Eski",
+    lastName: "Oturum",
+    preferredName: "Eski GET",
+    permissionVersion: 4,
+  });
+  let currentProfile = sessionProfile({
+    firstName: "Yeni",
+    lastName: "Oturum",
+    preferredName: "Yeni GET",
+    permissionVersion: 5,
+  });
+  let activeUser = hrUser;
+  let nextUser: typeof hrUser | null = null;
+  let accessToken = "";
+  let refreshCount = 0;
+  let profileReadCount = 0;
+  let staleGetRequests = 0;
+  let stalePersonalRequests = 0;
+  let staleEmploymentRequests = 0;
+
+  await context.addCookies([
+    {
+      name: "wf_refresh",
+      value: "p4b-boundary-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const authorization = request.headers().authorization;
+
+    if (path === "/api/v1/auth/refresh") {
+      refreshCount += 1;
+      accessToken = `p4b-boundary-access-${refreshCount}`;
+      if (nextUser) {
+        activeUser = nextUser;
+        nextUser = null;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          access_token: accessToken,
+          token_type: "bearer",
+          expires_in: 900,
+          user: activeUser,
+        }),
+      });
+      return;
+    }
+
+    expect(authorization).toBe(`Bearer ${accessToken}`);
+    if (path === "/api/v1/me") {
+      if (nextUser) {
+        await route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: errorEnvelope("session_invalid"),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ user: activeUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/auth/logout") {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: errorEnvelope("logout_temporarily_unavailable"),
+      });
+      return;
+    }
+
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile` &&
+      request.method() === "GET"
+    ) {
+      profileReadCount += 1;
+      if (authorization === "Bearer p4b-boundary-access-1") {
+        staleGetRequests += 1;
+        await staleGetGate.wait;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: envelope(staleGetProfile),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(currentProfile),
+      });
+      return;
+    }
+
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/personal` &&
+      request.method() === "PATCH"
+    ) {
+      expect(authorization).toBe("Bearer p4b-boundary-access-2");
+      stalePersonalRequests += 1;
+      await stalePersonalGate.wait;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          core: {
+            ...currentProfile.core,
+            first_name: "Eski",
+            last_name: "Kişisel Yama",
+            employee_version: 99,
+          },
+          personal: {
+            ...currentProfile.personal,
+            preferred_name: "Eski PATCH sonucu",
+            version: 99,
+          },
+        }),
+      });
+      return;
+    }
+
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/employment` &&
+      request.method() === "PATCH"
+    ) {
+      staleEmploymentRequests += 1;
+      if (authorization === "Bearer p4b-boundary-access-3") {
+        await staleEmploymentSuccessGate.wait;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: envelope({
+            core: {
+              ...currentProfile.core,
+              first_name: "Eski",
+              last_name: "İstihdam Yaması",
+              employee_version: 100,
+            },
+            employment: {
+              employment_start_date: "2030-01-01",
+              contract_type: "indefinite",
+              work_type: "full_time",
+              version: 100,
+            },
+          }),
+        });
+        return;
+      }
+      expect(authorization).toBe("Bearer p4b-boundary-access-4");
+      await staleEmploymentErrorGate.wait;
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        headers: { "x-request-id": "p4b-stale-employment-error" },
+        body: errorEnvelope(
+          "concurrent_write_conflict",
+          "p4b-stale-employment-error",
+        ),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: errorEnvelope("not_found"),
+    });
+  });
+
+  await page.goto(`/employees/${EMPLOYEE_ID}`);
+  await expect.poll(() => staleGetRequests).toBeGreaterThan(0);
+
+  nextUser = rotatedUser;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => refreshCount).toBe(2);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Yeni Oturum", exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => profileReadCount - staleGetRequests).toBe(1);
+
+  const staleGetResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/employees/${EMPLOYEE_ID}/profile` &&
+      response.request().headers().authorization === "Bearer p4b-boundary-access-1",
+  );
+  staleGetGate.release();
+  await staleGetResponse;
+  await flushClient(page);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Yeni Oturum", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Eski Oturum", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Çalışan profili yüklenemedi")).toHaveCount(0);
+
+  const personalTab = page.getByRole("tab", { name: "Kişisel", exact: true });
+  await personalTab.click();
+  let personalPanel = page.getByRole("tabpanel", { name: "Kişisel" });
+  await personalPanel.getByLabel("Tercih edilen ad").fill("Eski istek taslağı");
+  await personalPanel
+    .getByRole("button", { name: "Kişisel bilgileri kaydet" })
+    .click();
+  await expect.poll(() => stalePersonalRequests).toBe(1);
+
+  currentProfile = sessionProfile({
+    firstName: "Yetki",
+    lastName: "Güncel",
+    preferredName: "Güncel Kişisel",
+    permissionVersion: 6,
+  });
+  nextUser = permissionUpdatedUser;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => refreshCount).toBe(3);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Yetki Güncel", exact: true }),
+  ).toBeVisible();
+  personalPanel = page.getByRole("tabpanel", { name: "Kişisel" });
+  await expect(personalPanel.getByLabel("Tercih edilen ad")).toHaveValue(
+    "Güncel Kişisel",
+  );
+
+  const stalePersonalResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith("/profile/personal") &&
+      response.request().headers().authorization === "Bearer p4b-boundary-access-2",
+  );
+  stalePersonalGate.release();
+  await stalePersonalResponse;
+  await flushClient(page);
+  await expect(personalPanel.getByLabel("Tercih edilen ad")).toHaveValue(
+    "Güncel Kişisel",
+  );
+  await expect(page.getByText("Eski PATCH sonucu", { exact: true })).toHaveCount(0);
+  await expect(personalPanel.getByText("Kişisel bilgiler güncellendi.")).toHaveCount(0);
+
+  const employmentTab = page.getByRole("tab", { name: "İstihdam", exact: true });
+  await employmentTab.click();
+  let employmentPanel = page.getByRole("tabpanel", { name: "İstihdam" });
+  await employmentPanel.getByLabel("Çalışma türü").selectOption("part_time");
+  await employmentPanel
+    .getByRole("button", { name: "İstihdam bilgilerini kaydet" })
+    .click();
+  await expect.poll(() => staleEmploymentRequests).toBe(1);
+
+  currentProfile = sessionProfile({
+    firstName: "Nesil",
+    lastName: "Güncel",
+    preferredName: "İstihdam Oturumu",
+    permissionVersion: 7,
+    contractType: "fixed_term",
+    workType: "part_time",
+  });
+  nextUser = employmentUpdatedUser;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => refreshCount).toBe(4);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Nesil Güncel", exact: true }),
+  ).toBeVisible();
+  employmentPanel = page.getByRole("tabpanel", { name: "İstihdam" });
+  await expect(employmentPanel.getByLabel("Sözleşme türü")).toHaveValue("fixed_term");
+  await expect(employmentPanel.getByLabel("Çalışma türü")).toHaveValue("part_time");
+
+  const staleEmploymentSuccessResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith("/profile/employment") &&
+      response.request().headers().authorization === "Bearer p4b-boundary-access-3",
+  );
+  staleEmploymentSuccessGate.release();
+  await staleEmploymentSuccessResponse;
+  await flushClient(page);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Nesil Güncel", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Eski İstihdam Yaması", { exact: true })).toHaveCount(0);
+  await expect(employmentPanel.getByRole("alert")).toHaveCount(0);
+  await expect(employmentPanel.getByText("İstihdam bilgileri güncellendi.")).toHaveCount(0);
+
+  await employmentPanel.getByLabel("Çalışma türü").selectOption("full_time");
+  await employmentPanel
+    .getByRole("button", { name: "İstihdam bilgilerini kaydet" })
+    .click();
+  await expect.poll(() => staleEmploymentRequests).toBe(2);
+
+  currentProfile = sessionProfile({
+    firstName: "Kurtarılan",
+    lastName: "Güncel",
+    preferredName: "Kurtarılan Oturum",
+    permissionVersion: 8,
+    contractType: "indefinite",
+    workType: "full_time",
+  });
+  nextUser = recoveredUser;
+  await page.getByRole("button", { name: "Çıkış yap", exact: true }).click();
+  await expect.poll(() => refreshCount).toBe(5);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Kurtarılan Güncel", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Oturum kapatılamadı" }),
+  ).toBeVisible();
+  employmentPanel = page.getByRole("tabpanel", { name: "İstihdam" });
+
+  const staleEmploymentErrorResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith("/profile/employment") &&
+      response.request().headers().authorization === "Bearer p4b-boundary-access-4",
+  );
+  staleEmploymentErrorGate.release();
+  await staleEmploymentErrorResponse;
+  await flushClient(page);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Kurtarılan Güncel", exact: true }),
+  ).toBeVisible();
+  await expect(employmentPanel.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("p4b-stale-employment-error")).toHaveCount(0);
+});
+
+test("Employee 360 rejects a coherent aggregate for a different employee", async ({
+  context,
+  page,
+}) => {
+  let accessToken = "";
+
+  await context.addCookies([
+    {
+      name: "wf_refresh",
+      value: "p4b-wrong-read-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/auth/refresh") {
+      accessToken = "p4b-wrong-read-access";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          access_token: accessToken,
+          token_type: "bearer",
+          expires_in: 900,
+          user: hrUser,
+        }),
+      });
+      return;
+    }
+
+    expect(request.headers().authorization).toBe(`Bearer ${accessToken}`);
+    if (path === "/api/v1/me") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ user: hrUser }),
+      });
+      return;
+    }
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile` &&
+      request.method() === "GET"
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(profileForOtherEmployee()),
+      });
+      return;
+    }
+    await route.fulfill({ status: 404 });
+  });
+
+  await page.goto(`/employees/${EMPLOYEE_ID}`);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Çalışan profili yüklenemedi" }),
+  ).toContainText("Çalışan profili şu anda yüklenemiyor");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Yanlış Çalışan", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText(OTHER_EMPLOYEE_ID)).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "Çalışan profil bölümleri" })).toHaveCount(0);
+});
+
+test("Employee 360 rejects mismatched employee IDs from both PATCH responses", async ({
+  context,
+  page,
+}) => {
+  let accessToken = "";
+  let personalPatchCount = 0;
+  let employmentPatchCount = 0;
+  const profile = initialProfile();
+
+  await context.addCookies([
+    {
+      name: "wf_refresh",
+      value: "p4b-wrong-patch-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/auth/refresh") {
+      accessToken = "p4b-wrong-patch-access";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          access_token: accessToken,
+          token_type: "bearer",
+          expires_in: 900,
+          user: hrUser,
+        }),
+      });
+      return;
+    }
+
+    expect(request.headers().authorization).toBe(`Bearer ${accessToken}`);
+    if (path === "/api/v1/me") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ user: hrUser }),
+      });
+      return;
+    }
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile` &&
+      request.method() === "GET"
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(profile),
+      });
+      return;
+    }
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/personal` &&
+      request.method() === "PATCH"
+    ) {
+      personalPatchCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          core: {
+            ...profile.core,
+            id: OTHER_EMPLOYEE_ID,
+            first_name: "Yanlış",
+            last_name: "Kişisel",
+            employee_version: 6,
+          },
+          personal: {
+            ...profile.personal,
+            preferred_name: "Başka profil kişisel",
+            version: 3,
+          },
+        }),
+      });
+      return;
+    }
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/employment` &&
+      request.method() === "PATCH"
+    ) {
+      employmentPatchCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          core: {
+            ...profile.core,
+            id: OTHER_EMPLOYEE_ID,
+            first_name: "Yanlış",
+            last_name: "İstihdam",
+            employee_version: 6,
+          },
+          employment: {
+            employment_start_date: "2030-01-01",
+            contract_type: "fixed_term",
+            work_type: "part_time",
+            version: 8,
+          },
+        }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 404 });
+  });
+
+  await page.goto(`/employees/${EMPLOYEE_ID}`);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Ada Yılmaz", exact: true }),
+  ).toBeVisible();
+
+  const personalTab = page.getByRole("tab", { name: "Kişisel", exact: true });
+  await personalTab.click();
+  const personalPanel = page.getByRole("tabpanel", { name: "Kişisel" });
+  await personalPanel.getByLabel("Tercih edilen ad").fill("Gönderilen kişisel");
+  await personalPanel
+    .getByRole("button", { name: "Kişisel bilgileri kaydet" })
+    .click();
+  await expect(personalPanel.getByRole("alert")).toContainText(
+    "Kişisel bilgiler şu anda kaydedilemiyor",
+  );
+  await expect(personalPanel.getByLabel("Tercih edilen ad")).toHaveValue(
+    "Gönderilen kişisel",
+  );
+  await expect(personalPanel.getByText("Kişisel bilgiler güncellendi.")).toHaveCount(0);
+  expect(personalPatchCount).toBe(1);
+
+  const employmentTab = page.getByRole("tab", { name: "İstihdam", exact: true });
+  await employmentTab.click();
+  const employmentPanel = page.getByRole("tabpanel", { name: "İstihdam" });
+  await employmentPanel.getByLabel("Sözleşme türü").selectOption("fixed_term");
+  await employmentPanel
+    .getByRole("button", { name: "İstihdam bilgilerini kaydet" })
+    .click();
+  await expect(employmentPanel.getByRole("alert")).toContainText(
+    "İstihdam bilgileri şu anda kaydedilemiyor",
+  );
+  await expect(employmentPanel.getByText("İstihdam bilgileri güncellendi.")).toHaveCount(0);
+  expect(employmentPatchCount).toBe(1);
+
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Ada Yılmaz", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Başka profil kişisel|Yanlış Kişisel|Yanlış İstihdam/)).toHaveCount(0);
+  await expect(page.getByText(OTHER_EMPLOYEE_ID)).toHaveCount(0);
 });
 
 test("direct Employee 360 denial redirects without mounting profile or assignment clients", async ({

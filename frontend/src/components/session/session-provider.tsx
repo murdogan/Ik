@@ -16,6 +16,7 @@ import { useOrganizationSelection } from "@/components/auth/organization-selecti
 import { ApiClientError } from "@/lib/api-client";
 import {
   logoutSession,
+  getSessionGeneration,
   requestOrganizationSelection,
   restoreSession,
   subscribeToSessionChanges,
@@ -25,6 +26,7 @@ import styles from "./session.module.css";
 
 interface SessionContextValue {
   user: AuthUser;
+  sessionGeneration: number;
   isLoggingOut: boolean;
   isSwitchingOrganization: boolean;
   logoutError: string | null;
@@ -39,6 +41,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { beginSelection } = useOrganizationSelection();
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [sessionGeneration, setSessionGeneration] = useState(getSessionGeneration);
   const [isChecking, setIsChecking] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
@@ -50,6 +53,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       subscribeToSessionChanges((change) => {
+        setSessionGeneration(getSessionGeneration());
         if (change.type === "user_updated") {
           setUser(change.user);
           return;
@@ -69,6 +73,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!isActive) {
           return;
         }
+        setSessionGeneration(getSessionGeneration());
         setUser(restoredUser);
         setIsChecking(false);
       },
@@ -96,6 +101,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       void restoreSession().then(
         (restoredUser) => {
           if (isActive) {
+            setSessionGeneration(getSessionGeneration());
             setUser(restoredUser);
           }
         },
@@ -129,6 +135,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } catch {
       try {
         const restoredUser = await restoreSession();
+        setSessionGeneration(getSessionGeneration());
         setUser(restoredUser);
         setLogoutError(
           "Oturum kapatılamadı. Bağlantınızı kontrol edip yeniden deneyin.",
@@ -152,6 +159,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setIsSwitchingOrganization(true);
     try {
       const data = await requestOrganizationSelection();
+      setSessionGeneration(getSessionGeneration());
       beginSelection(data, "switch");
       router.replace("/select-organization");
     } catch (cause) {
@@ -176,6 +184,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       user
         ? {
             user,
+            sessionGeneration,
             isLoggingOut,
             isSwitchingOrganization,
             logoutError,
@@ -189,6 +198,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isSwitchingOrganization,
       logoutError,
       organizationSwitchError,
+      sessionGeneration,
       signOut,
       switchOrganization,
       user,

@@ -5,6 +5,8 @@ import {
   type FormEvent,
   type KeyboardEvent,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -31,6 +33,7 @@ import {
   AUTHORIZATION_PERMISSIONS,
   hasPermission,
 } from "@/lib/authorization";
+import { isSessionGenerationCurrent } from "@/lib/session";
 
 import { formatEmployeeDate } from "./employee-presentation";
 import { EmployeeStatusBadge } from "./employee-status-badge";
@@ -43,6 +46,22 @@ interface ProfileErrorPresentation {
   message: string;
   reference: string | null;
   conflict: boolean;
+}
+
+interface ProfileRequestBoundary {
+  sessionGeneration: number;
+  userId: string;
+  tenantId: string;
+  permissionVersion: number;
+  permissionGranted: boolean;
+  employeeId: string;
+}
+
+interface ProfileLoadState {
+  boundary: ProfileRequestBoundary;
+  profile: EmployeeProfile | null;
+  error: ProfileErrorPresentation | null;
+  isLoading: boolean;
 }
 
 const PROFILE_TABS: ReadonlyArray<{ id: ProfileTab; label: string }> = [
@@ -61,6 +80,25 @@ const WORK_TYPE_LABELS = {
   full_time: "Tam zamanlı",
   part_time: "Yarı zamanlı",
 } as const;
+
+function isCurrentProfileRequest(
+  expected: ProfileRequestBoundary,
+  current: ProfileRequestBoundary,
+): boolean {
+  return (
+    isSessionGenerationCurrent(expected.sessionGeneration) &&
+    expected.sessionGeneration === current.sessionGeneration &&
+    expected.userId === current.userId &&
+    expected.tenantId === current.tenantId &&
+    expected.permissionVersion === current.permissionVersion &&
+    expected.permissionGranted === current.permissionGranted &&
+    expected.employeeId === current.employeeId
+  );
+}
+
+function profileRequestBoundaryKey(boundary: ProfileRequestBoundary): string {
+  return JSON.stringify(boundary);
+}
 
 function fullName(core: EmployeeProfileCore): string {
   return `${core.first_name} ${core.last_name}`.trim();
@@ -232,21 +270,22 @@ function ReadOnlyPersonal({
 }
 
 function PersonalPanel({
-  employeeId,
   core,
   personal,
   editable,
+  requestBoundary,
   onSaved,
   onReload,
 }: {
-  employeeId: string;
   core: EmployeeProfileCore;
   personal: EmployeePersonalProfile;
   editable: boolean;
+  requestBoundary: ProfileRequestBoundary;
   onSaved: (result: EmployeePersonalProfileUpdateResult) => void;
   onReload: () => void;
 }) {
   const requestGeneration = useRef(0);
+  const latestRequestBoundary = useRef(requestBoundary);
   const savingLock = useRef(false);
   const [firstName, setFirstName] = useState(core.first_name);
   const [lastName, setLastName] = useState(core.last_name);
@@ -258,16 +297,18 @@ function PersonalPanel({
   const [error, setError] = useState<ProfileErrorPresentation | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    latestRequestBoundary.current = requestBoundary;
+    return () => {
       requestGeneration.current += 1;
-    },
-    [],
-  );
+      savingLock.current = false;
+    };
+  }, [requestBoundary]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (savingLock.current) return;
+    const boundary = requestBoundary;
+    if (!boundary.permissionGranted || savingLock.current) return;
     const payload: EmployeePersonalProfileUpdate = {
       expected_version: personal.version,
     };
@@ -315,8 +356,13 @@ function PersonalPanel({
     setError(null);
     setNotice(null);
     try {
-      const result = await updateEmployeePersonalProfile(employeeId, payload);
-      if (generation !== requestGeneration.current) return;
+      const result = await updateEmployeePersonalProfile(boundary.employeeId, payload);
+      if (
+        generation !== requestGeneration.current ||
+        !isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
+        return;
+      }
       setFirstName(result.core.first_name);
       setLastName(result.core.last_name);
       setEmail(result.core.email ?? "");
@@ -326,11 +372,17 @@ function PersonalPanel({
       onSaved(result);
       setNotice("Kişisel bilgiler güncellendi.");
     } catch (cause) {
-      if (generation === requestGeneration.current) {
+      if (
+        generation === requestGeneration.current &&
+        isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
         setError(profileErrorPresentation(cause, "personal"));
       }
     } finally {
-      if (generation === requestGeneration.current) {
+      if (
+        generation === requestGeneration.current &&
+        isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
         savingLock.current = false;
         setIsSaving(false);
       }
@@ -415,21 +467,22 @@ function ReadOnlyEmployment({ employment }: { employment: EmployeeEmploymentProf
 }
 
 function EmploymentPanel({
-  employeeId,
   core,
   employment,
   editable,
+  requestBoundary,
   onSaved,
   onReload,
 }: {
-  employeeId: string;
   core: EmployeeProfileCore;
   employment: EmployeeEmploymentProfile;
   editable: boolean;
+  requestBoundary: ProfileRequestBoundary;
   onSaved: (result: EmployeeEmploymentProfileUpdateResult) => void;
   onReload: () => void;
 }) {
   const requestGeneration = useRef(0);
+  const latestRequestBoundary = useRef(requestBoundary);
   const savingLock = useRef(false);
   const [startDate, setStartDate] = useState(employment.employment_start_date);
   const [contractType, setContractType] = useState<EmployeeContractType | "">(
@@ -442,16 +495,18 @@ function EmploymentPanel({
   const [error, setError] = useState<ProfileErrorPresentation | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    latestRequestBoundary.current = requestBoundary;
+    return () => {
       requestGeneration.current += 1;
-    },
-    [],
-  );
+      savingLock.current = false;
+    };
+  }, [requestBoundary]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (savingLock.current) return;
+    const boundary = requestBoundary;
+    if (!boundary.permissionGranted || savingLock.current) return;
     const payload: EmployeeEmploymentProfileUpdate = {
       expected_version: employment.version,
     };
@@ -483,19 +538,30 @@ function EmploymentPanel({
     setError(null);
     setNotice(null);
     try {
-      const result = await updateEmployeeEmploymentProfile(employeeId, payload);
-      if (generation !== requestGeneration.current) return;
+      const result = await updateEmployeeEmploymentProfile(boundary.employeeId, payload);
+      if (
+        generation !== requestGeneration.current ||
+        !isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
+        return;
+      }
       setStartDate(result.employment.employment_start_date);
       setContractType(result.employment.contract_type ?? "");
       setWorkType(result.employment.work_type ?? "");
       onSaved(result);
       setNotice("İstihdam bilgileri güncellendi.");
     } catch (cause) {
-      if (generation === requestGeneration.current) {
+      if (
+        generation === requestGeneration.current &&
+        isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
         setError(profileErrorPresentation(cause, "employment"));
       }
     } finally {
-      if (generation === requestGeneration.current) {
+      if (
+        generation === requestGeneration.current &&
+        isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
         savingLock.current = false;
         setIsSaving(false);
       }
@@ -644,41 +710,167 @@ function OrganizationPanel({ profile }: { profile: EmployeeProfile }) {
 }
 
 export function Employee360Screen({ employeeId }: { employeeId: string }) {
-  const { user } = useSession();
+  const { user, sessionGeneration } = useSession();
+  const canRead = hasPermission(
+    user,
+    AUTHORIZATION_PERMISSIONS.readTenantEmployees,
+  );
   const canUpdate = hasPermission(user, AUTHORIZATION_PERMISSIONS.updateEmployees);
-  const [profile, setProfile] = useState<EmployeeProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<ProfileErrorPresentation | null>(null);
+  const readBoundary = useMemo<ProfileRequestBoundary>(
+    () => ({
+      sessionGeneration,
+      userId: user.id,
+      tenantId: user.tenant_id,
+      permissionVersion: user.permission_version,
+      permissionGranted: canRead,
+      employeeId,
+    }),
+    [
+      canRead,
+      employeeId,
+      sessionGeneration,
+      user.id,
+      user.permission_version,
+      user.tenant_id,
+    ],
+  );
+  const updateBoundary = useMemo<ProfileRequestBoundary>(
+    () => ({
+      sessionGeneration,
+      userId: user.id,
+      tenantId: user.tenant_id,
+      permissionVersion: user.permission_version,
+      permissionGranted: canUpdate,
+      employeeId,
+    }),
+    [
+      canUpdate,
+      employeeId,
+      sessionGeneration,
+      user.id,
+      user.permission_version,
+      user.tenant_id,
+    ],
+  );
+  const latestReadBoundary = useRef(readBoundary);
+  const readRequestGeneration = useRef(0);
+  const [profileState, setProfileState] = useState<ProfileLoadState>(() => ({
+    boundary: readBoundary,
+    profile: null,
+    error: null,
+    isLoading: true,
+  }));
   const [reloadKey, setReloadKey] = useState(0);
   const [activeTab, setActiveTab] = useState<ProfileTab>("summary");
   const tabRefs = useRef<Partial<Record<ProfileTab, HTMLButtonElement>>>({});
 
+  useLayoutEffect(() => {
+    latestReadBoundary.current = readBoundary;
+    return () => {
+      readRequestGeneration.current += 1;
+    };
+  }, [readBoundary]);
+
   useEffect(() => {
-    let isActive = true;
-    void readEmployeeProfile(employeeId).then(
+    const generation = ++readRequestGeneration.current;
+    const boundary = readBoundary;
+    if (!boundary.permissionGranted) {
+      return () => {
+        readRequestGeneration.current += 1;
+      };
+    }
+
+    void readEmployeeProfile(boundary.employeeId).then(
       (loadedProfile) => {
-        if (!isActive) return;
-        setProfile(loadedProfile);
-        setError(null);
-        setIsLoading(false);
+        if (
+          generation !== readRequestGeneration.current ||
+          !isCurrentProfileRequest(boundary, latestReadBoundary.current)
+        ) {
+          return;
+        }
+        setProfileState({
+          boundary,
+          profile: loadedProfile,
+          error: null,
+          isLoading: false,
+        });
       },
       (cause) => {
-        if (!isActive) return;
-        setProfile(null);
-        setError(profileErrorPresentation(cause, "read"));
-        setIsLoading(false);
+        if (
+          generation !== readRequestGeneration.current ||
+          !isCurrentProfileRequest(boundary, latestReadBoundary.current)
+        ) {
+          return;
+        }
+        setProfileState({
+          boundary,
+          profile: null,
+          error: profileErrorPresentation(cause, "read"),
+          isLoading: false,
+        });
       },
     );
     return () => {
-      isActive = false;
+      readRequestGeneration.current += 1;
     };
-  }, [employeeId, reloadKey]);
+  }, [readBoundary, reloadKey]);
+
+  const profileStateIsCurrent = isCurrentProfileRequest(
+    profileState.boundary,
+    readBoundary,
+  );
+  const profile = profileStateIsCurrent ? profileState.profile : null;
+  const error = profileStateIsCurrent ? profileState.error : null;
+  const isLoading = !profileStateIsCurrent || profileState.isLoading;
 
   function reload() {
-    setProfile(null);
-    setError(null);
-    setIsLoading(true);
+    setProfileState({
+      boundary: readBoundary,
+      profile: null,
+      error: null,
+      isLoading: true,
+    });
     setReloadKey((key) => key + 1);
+  }
+
+  function mergePersonalProfile(result: EmployeePersonalProfileUpdateResult) {
+    setProfileState((current) => {
+      if (
+        !current.profile ||
+        result.core.id !== readBoundary.employeeId ||
+        !isCurrentProfileRequest(current.boundary, readBoundary)
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        profile: {
+          ...current.profile,
+          core: result.core,
+          personal: result.personal,
+        },
+      };
+    });
+  }
+
+  function mergeEmploymentProfile(result: EmployeeEmploymentProfileUpdateResult) {
+    setProfileState((current) => {
+      if (
+        !current.profile ||
+        result.core.id !== readBoundary.employeeId ||
+        !isCurrentProfileRequest(current.boundary, readBoundary)
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        profile: {
+          ...current.profile,
+          core: result.core,
+          employment: result.employment,
+        },
+      };
+    });
   }
 
   function activateTab(tab: ProfileTab, focus = false) {
@@ -768,22 +960,24 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
           {activeTab === "summary" ? <SummaryPanel profile={profile} /> : null}
           {activeTab === "personal" ? (
             <PersonalPanel
-              employeeId={employeeId}
+              key={profileRequestBoundaryKey(updateBoundary)}
               core={profile.core}
               personal={profile.personal}
               editable={canUpdate}
+              requestBoundary={updateBoundary}
               onReload={reload}
-              onSaved={(result) => setProfile((current) => current ? { ...current, core: result.core, personal: result.personal } : current)}
+              onSaved={mergePersonalProfile}
             />
           ) : null}
           {activeTab === "employment" ? (
             <EmploymentPanel
-              employeeId={employeeId}
+              key={profileRequestBoundaryKey(updateBoundary)}
               core={profile.core}
               employment={profile.employment}
               editable={canUpdate}
+              requestBoundary={updateBoundary}
               onReload={reload}
-              onSaved={(result) => setProfile((current) => current ? { ...current, core: result.core, employment: result.employment } : current)}
+              onSaved={mergeEmploymentProfile}
             />
           ) : null}
           {activeTab === "organization" ? <OrganizationPanel profile={profile} /> : null}
