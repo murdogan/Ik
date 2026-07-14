@@ -692,14 +692,25 @@ async def _table_privileges(
         "REFERENCES",
         "TRIGGER",
     ):
-        if await connection.scalar(
-            text("select has_table_privilege(:role_name, :table_name, :privilege)"),
-            {
-                "role_name": role_name,
-                "table_name": f"public.{table_name}",
-                "privilege": privilege,
-            },
-        ):
+        if role_name == "PUBLIC":
+            has_privilege = await connection.scalar(
+                text(
+                    "select exists (select 1 from information_schema.table_privileges "
+                    "where table_schema = 'public' and table_name = :table_name "
+                    "and grantee = 'PUBLIC' and privilege_type = :privilege)"
+                ),
+                {"table_name": table_name, "privilege": privilege},
+            )
+        else:
+            has_privilege = await connection.scalar(
+                text("select has_table_privilege(:role_name, :table_name, :privilege)"),
+                {
+                    "role_name": role_name,
+                    "table_name": f"public.{table_name}",
+                    "privilege": privilege,
+                },
+            )
+        if has_privilege:
             privileges.add(privilege)
     return privileges
 
