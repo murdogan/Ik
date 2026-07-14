@@ -207,6 +207,7 @@ def require_access_principal(
                 slug=principal.tenant_slug,
             ),
             actor_id=principal.user_id,
+            membership_id=principal.membership_id,
             session_id=principal.session_family_id,
             authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
         )
@@ -328,6 +329,7 @@ def get_authenticated_request_context(
         or context.tenant is None
         or context.tenant.tenant_id != principal.tenant_id
         or context.actor_id != principal.user_id
+        or context.membership_id != principal.membership_id
         or context.session_id != principal.session_family_id
     ):
         raise authentication_required_error()

@@ -349,6 +349,7 @@ async def test_invite_activate_and_login_end_to_end_with_hashed_single_use_crede
         employee_role = ROLES_BY_CODE["employee"]
         assert login_response.json()["data"]["user"] == {
             "id": str(invited_user_id),
+            "membership_id": str(invited_user_id),
             "tenant_id": str(TENANT_ID),
             "email": "new.user@wealthyfalcon.test",
             "full_name": "New User",

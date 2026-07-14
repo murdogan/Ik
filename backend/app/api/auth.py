@@ -483,6 +483,7 @@ async def confirm_password_reset(
 def _auth_user_read(user: AuthenticatedUser) -> AuthUserRead:
     return AuthUserRead(
         id=user.id,
+        membership_id=user.membership_id,
         tenant_id=user.tenant_id,
         email=user.email,
         full_name=user.full_name,

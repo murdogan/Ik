@@ -157,6 +157,7 @@ def _freeze_json(value: JsonValue) -> FrozenJsonValue:
 _WORKER_CONTEXT_KEYS = frozenset(WorkerRequestContext.__required_keys__)
 _OPTIONAL_WORKER_UUID_FIELDS = (
     "actor_id",
+    "membership_id",
     "session_id",
     "support_session_id",
     "support_operator_actor_id",

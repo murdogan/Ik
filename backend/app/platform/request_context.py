@@ -60,6 +60,7 @@ class WorkerRequestContext(TypedDict):
     trace_id: str
     tenant_id: str
     actor_id: str | None
+    membership_id: str | None
     session_id: str | None
     authentication_strength: str
     support_session_id: str | None
@@ -78,14 +79,15 @@ class RequestContext:
     """Deeply immutable request-scoped operational context.
 
     Correlation identifiers are fixed for the lifetime of the object graph.  ``derive`` only
-    enriches tenant, actor/session, authentication-strength, and support-session placeholders and
-    always returns a new validated instance.
+    enriches tenant, actor/membership/session, authentication-strength, and support-session
+    placeholders and always returns a new validated instance.
     """
 
     request_id: str
     trace_id: str
     tenant: TenantContext | None = None
     actor_id: UUID | None = None
+    membership_id: UUID | None = None
     session_id: UUID | None = None
     authentication_strength: AuthenticationStrength = AuthenticationStrength.UNAUTHENTICATED
     support_session: SupportSessionMetadata | None = None
@@ -101,6 +103,8 @@ class RequestContext:
             _require_non_zero_uuid("tenant.tenant_id", self.tenant.tenant_id)
         if self.actor_id is not None:
             _require_non_zero_uuid("actor_id", self.actor_id)
+        if self.membership_id is not None:
+            _require_non_zero_uuid("membership_id", self.membership_id)
         if self.session_id is not None:
             _require_non_zero_uuid("session_id", self.session_id)
         if not isinstance(self.authentication_strength, AuthenticationStrength):
@@ -115,6 +119,7 @@ class RequestContext:
         *,
         tenant: TenantContext | None | _Unchanged = _UNCHANGED,
         actor_id: UUID | None | _Unchanged = _UNCHANGED,
+        membership_id: UUID | None | _Unchanged = _UNCHANGED,
         session_id: UUID | None | _Unchanged = _UNCHANGED,
         authentication_strength: AuthenticationStrength | _Unchanged = _UNCHANGED,
         support_session: SupportSessionMetadata | None | _Unchanged = _UNCHANGED,
@@ -126,6 +131,8 @@ class RequestContext:
             changes["tenant"] = tenant
         if actor_id is not _UNCHANGED:
             changes["actor_id"] = actor_id
+        if membership_id is not _UNCHANGED:
+            changes["membership_id"] = membership_id
         if session_id is not _UNCHANGED:
             changes["session_id"] = session_id
         if authentication_strength is not _UNCHANGED:
@@ -167,6 +174,13 @@ class RequestContext:
             raise RuntimeError("A tenant-scoped RequestContext is required")
         return self.tenant
 
+    def require_membership(self) -> UUID:
+        """Return the authenticated tenant membership or fail closed."""
+
+        if self.membership_id is None:
+            raise RuntimeError("An authenticated membership is required")
+        return self.membership_id
+
     def serialize_for_worker(self) -> WorkerRequestContext:
         """Serialize the safe propagation allowlist; tenantless work fails closed."""
 
@@ -184,6 +198,9 @@ class RequestContext:
             trace_id=self.trace_id,
             tenant_id=str(tenant.tenant_id),
             actor_id=str(self.actor_id) if self.actor_id is not None else None,
+            membership_id=(
+                str(self.membership_id) if self.membership_id is not None else None
+            ),
             session_id=str(self.session_id) if self.session_id is not None else None,
             authentication_strength=self.authentication_strength.value,
             support_session_id=support_session_id,

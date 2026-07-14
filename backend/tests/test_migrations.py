@@ -601,6 +601,40 @@ def _run_alembic_p4b_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p4c_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0033_p4b_employee_profiles:0034_p4c_employee_account_links",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p4c_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0034_p4c_employee_account_links:0033_p4b_employee_profiles",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -676,8 +710,11 @@ def test_core_migration_chain_is_linear() -> None:
     p4b_employee_profiles_revision = script.get_revision(
         "0033_p4b_employee_profiles"
     )
+    p4c_employee_account_links_revision = script.get_revision(
+        "0034_p4c_employee_account_links"
+    )
 
-    assert script.get_heads() == ["0033_p4b_employee_profiles"]
+    assert script.get_heads() == ["0034_p4c_employee_account_links"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -765,6 +802,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p4b_employee_profiles_revision is not None
     assert p4b_employee_profiles_revision.down_revision == (
         "0032_p4a_employee_directory"
+    )
+    assert p4c_employee_account_links_revision is not None
+    assert p4c_employee_account_links_revision.down_revision == (
+        "0033_p4b_employee_profiles"
     )
 
 
@@ -949,7 +990,7 @@ def test_sqlite_p4a_upgrade_enforces_normalized_keys_and_round_trips(
         alembic_command.upgrade(config, "head")
         with engine.connect() as connection:
             assert connection.scalar(text("select version_num from alembic_version")) == (
-                "0033_p4b_employee_profiles"
+                "0034_p4c_employee_account_links"
             )
     finally:
         engine.dispose()
@@ -2161,6 +2202,79 @@ def test_alembic_offline_p4b_downgrade_guards_changed_profiles_before_drops() ->
         assert no_force_position < preflight_position
 
 
+def test_alembic_offline_p4c_renders_account_links_rls_acl_and_eligibility() -> None:
+    result = _run_alembic_p4c_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "CREATE TABLE employee_account_links" in result.stdout
+    for constraint_name in (
+        "ck_employee_account_links_version_positive",
+        "fk_employee_account_links_tenant_id_tenants",
+        "fk_employee_account_links_tenant_employee_id_employees",
+        "fk_employee_account_links_tenant_membership_id_memberships",
+        "uq_employee_account_links_tenant_id_id",
+        "uq_employee_account_links_tenant_employee_id",
+        "uq_employee_account_links_tenant_membership_id",
+    ):
+        assert constraint_name in result.stdout
+    assert "INSERT INTO employee_account_links" not in result.stdout
+    assert "email" not in result.stdout.lower()
+    assert 'ALTER TABLE "employee_account_links" ENABLE ROW LEVEL SECURITY' in (
+        result.stdout
+    )
+    assert 'ALTER TABLE "employee_account_links" FORCE ROW LEVEL SECURITY' in (
+        result.stdout
+    )
+    assert (
+        'CREATE POLICY "tenant_isolation_app" ON "employee_account_links"'
+        in result.stdout
+    )
+    assert (
+        'GRANT SELECT, INSERT, DELETE ON TABLE "employee_account_links" '
+        'TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert (
+        'GRANT UPDATE ("membership_id", "version", "updated_at") '
+        'ON TABLE "employee_account_links" TO "wealthy_falcon_app"'
+    ) in result.stdout
+    assert "DO $p4c_employee_link_owner_preflight$" in result.stdout
+    assert "CREATE FUNCTION public.is_current_tenant_membership_link_eligible" in (
+        result.stdout
+    )
+    assert "SECURITY DEFINER" in result.stdout
+    assert "SET search_path = pg_catalog, public" in result.stdout
+    assert "membership.tenant_id = nullif(" in result.stdout
+    assert "membership.id = requested_membership_id" in result.stdout
+    assert "canonical_identity.status = 'active'" in result.stdout
+    assert (
+        "membership.permission_version = legacy_user.permission_version"
+        in result.stdout
+    )
+    assert (
+        "GRANT EXECUTE ON FUNCTION "
+        "public.is_current_tenant_membership_link_eligible(uuid) "
+        'TO "wealthy_falcon_app"'
+    ) in result.stdout
+
+
+def test_alembic_offline_p4c_downgrade_guards_links_before_drops() -> None:
+    result = _run_alembic_p4c_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p4c_employee_account_link_downgrade_preflight$" in result.stdout
+    assert "P4C employee account link downgrade refused: current_links=%" in (
+        result.stdout
+    )
+    preflight_position = result.stdout.index(
+        "DO $p4c_employee_account_link_downgrade_preflight$"
+    )
+    function_drop_position = result.stdout.index(
+        "DROP FUNCTION IF EXISTS public.is_current_tenant_membership_link_eligible(uuid)"
+    )
+    table_drop_position = result.stdout.index("DROP TABLE employee_account_links")
+    assert preflight_position < function_drop_position < table_drop_position
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -2812,7 +2926,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0033_p4b_employee_profiles"
+        assert revision == "0034_p4c_employee_account_links"
     finally:
         engine.dispose()
 

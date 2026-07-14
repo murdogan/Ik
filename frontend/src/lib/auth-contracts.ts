@@ -16,6 +16,7 @@ export interface RoleSummary {
 
 export interface AuthUser {
   id: string;
+  membership_id: string;
   tenant_id: string;
   email: string;
   full_name: string | null;

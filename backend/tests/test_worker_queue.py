@@ -120,6 +120,7 @@ async def test_recording_job_queue_receives_immutable_serialized_safe_context() 
         "trace_id": TRACE_ID,
         "tenant_id": str(TENANT_ID),
         "actor_id": None,
+        "membership_id": None,
         "session_id": None,
         "authentication_strength": "single_factor",
         "support_session_id": None,

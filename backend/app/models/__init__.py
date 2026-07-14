@@ -20,6 +20,7 @@ from app.models.department import (
     DepartmentStatus,
 )
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_account_link import EmployeeAccountLink
 from app.models.employee_assignment import EmployeeAssignment
 from app.models.employee_profile import (
     EmployeeEmploymentProfile,
@@ -50,6 +51,7 @@ __all__ = [
     "DepartmentHierarchyWriteFence",
     "DepartmentStatus",
     "Employee",
+    "EmployeeAccountLink",
     "EmployeeAssignment",
     "EmployeeEmploymentProfile",
     "EmployeePersonalProfile",

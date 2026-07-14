@@ -58,6 +58,7 @@ from app.services.department_service import (
     DepartmentNotFoundError,
     DuplicateDepartmentCodeError,
 )
+from app.services.employee_account_link_service import EmployeeAccountLinkUnavailableError
 from app.services.employee_assignment_service import (
     EmployeeAssignmentAccessDeniedError,
     EmployeeAssignmentConflictError,
@@ -158,6 +159,8 @@ EMPLOYEE_NUMBER_CONFLICT_ERROR_CODE = "employee_number_conflict"
 EMPLOYEE_NUMBER_CONFLICT_ERROR_MESSAGE = EMPLOYEE_NUMBER_CONFLICT_MESSAGE
 EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE = "employee_work_email_conflict"
 EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_MESSAGE = EMPLOYEE_WORK_EMAIL_CONFLICT_MESSAGE
+EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_CODE = "employee_account_link_conflict"
+EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_MESSAGE = "The requested account link is unavailable"
 EMPLOYEE_INVALID_DATE_RANGE_ERROR_CODE = "employee_invalid_date_range"
 EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE = "employee_invalid_lifecycle"
 LEAVE_REQUEST_NOT_FOUND_ERROR_CODE = "leave_request_not_found"
@@ -890,6 +893,23 @@ EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
         ),
     },
 )
+EMPLOYEE_ACCOUNT_LINK_CONFLICT_RESPONSES = _conflict_response(
+    description="Employee account-link conflict envelope.",
+    examples={
+        EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_CODE: _error_example(
+            EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_CODE,
+            EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_MESSAGE,
+        ),
+        CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
+            CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
+            CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+        DATA_INTEGRITY_CONFLICT_ERROR_CODE: _error_example(
+            DATA_INTEGRITY_CONFLICT_ERROR_CODE,
+            DATA_INTEGRITY_CONFLICT_MESSAGE,
+        ),
+    },
+)
 IDEMPOTENT_EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
     description="Idempotent employee command conflict envelope.",
     examples={
@@ -1013,6 +1033,8 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return employee_assignment_not_found_error()
     if isinstance(exc, EmployeeAssignmentConflictError):
         return employee_assignment_conflict_error(str(exc))
+    if isinstance(exc, EmployeeAccountLinkUnavailableError):
+        return employee_account_link_conflict_error()
     if isinstance(exc, OrganizationAccessDeniedError):
         return organization_access_denied_error()
     if isinstance(exc, OrganizationFeatureUnavailableError):
@@ -1520,6 +1542,14 @@ def employee_work_email_conflict_error() -> ApiError:
         status_code=status.HTTP_409_CONFLICT,
         code=EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE,
         message=EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def employee_account_link_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_CODE,
+        message=EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_MESSAGE,
     )
 
 

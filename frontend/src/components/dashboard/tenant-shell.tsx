@@ -35,6 +35,13 @@ const navigationItems = [
     feature: null,
   },
   {
+    href: "/profile",
+    label: "Profilim",
+    icon: "P",
+    permission: AUTHORIZATION_PERMISSIONS.readOwnEmployee,
+    feature: null,
+  },
+  {
     href: "/employees",
     label: "Çalışanlar",
     icon: "Ç",

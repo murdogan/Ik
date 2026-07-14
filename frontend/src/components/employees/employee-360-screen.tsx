@@ -36,6 +36,7 @@ import {
 import { isSessionGenerationCurrent } from "@/lib/session";
 
 import { formatEmployeeDate } from "./employee-presentation";
+import { EmployeeAccountLinkCard } from "./employee-account-link-card";
 import { EmployeeStatusBadge } from "./employee-status-badge";
 import styles from "./employees.module.css";
 
@@ -51,6 +52,7 @@ interface ProfileErrorPresentation {
 interface ProfileRequestBoundary {
   sessionGeneration: number;
   userId: string;
+  membershipId: string;
   tenantId: string;
   permissionVersion: number;
   permissionGranted: boolean;
@@ -89,6 +91,7 @@ function isCurrentProfileRequest(
     isSessionGenerationCurrent(expected.sessionGeneration) &&
     expected.sessionGeneration === current.sessionGeneration &&
     expected.userId === current.userId &&
+    expected.membershipId === current.membershipId &&
     expected.tenantId === current.tenantId &&
     expected.permissionVersion === current.permissionVersion &&
     expected.permissionGranted === current.permissionGranted &&
@@ -720,6 +723,7 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
     () => ({
       sessionGeneration,
       userId: user.id,
+      membershipId: user.membership_id,
       tenantId: user.tenant_id,
       permissionVersion: user.permission_version,
       permissionGranted: canRead,
@@ -730,6 +734,7 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
       employeeId,
       sessionGeneration,
       user.id,
+      user.membership_id,
       user.permission_version,
       user.tenant_id,
     ],
@@ -738,6 +743,7 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
     () => ({
       sessionGeneration,
       userId: user.id,
+      membershipId: user.membership_id,
       tenantId: user.tenant_id,
       permissionVersion: user.permission_version,
       permissionGranted: canUpdate,
@@ -748,6 +754,7 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
       employeeId,
       sessionGeneration,
       user.id,
+      user.membership_id,
       user.permission_version,
       user.tenant_id,
     ],
@@ -928,6 +935,13 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
         </div>
         <EmployeeStatusBadge status={profile.core.status} />
       </header>
+
+      {canUpdate ? (
+        <EmployeeAccountLinkCard
+          key={`account-link-${profileRequestBoundaryKey(updateBoundary)}`}
+          employeeId={employeeId}
+        />
+      ) : null}
 
       <div className={styles.profileWorkspace}>
         <div className={styles.profileTabs} role="tablist" aria-label="Çalışan profil bölümleri">

@@ -297,7 +297,7 @@ P3F–P3J legal entity/branch, department hierarchy, position catalog, effective
 assignment, derived team ve lazy organization chart ürün yüzeylerini tamamlar. P3K final hardening
 gate'i legacy dashboard/employee/leave route'larını caller-controlled tenant header'larından
 ayırır: tenant yalnız doğrulanmış canlı `BearerAuth` session'ından gelir. Güncel tek Alembic head
-P4B'nin additive `0033_p4b_employee_profiles` revision'ıdır. P3K'nin katalog-only
+P4C'nin additive `0034_p4c_employee_account_links` revision'ıdır. P3K'nin katalog-only
 `0031_p3k_legacy_tenant_auth_boundary` revision'ı `leave:manage:tenant` yetkisini yalnız HR
 director/specialist rollerine verir. P4A mevcut employee/assignment sözleşmesini daraltmadan
 normalized numara/iş-e-postası benzersizliği, optimistic version ve indexed directory desteği
@@ -312,6 +312,12 @@ istihdam bölümü yalnız sözleşme/çalışma türünü tutar. İşe başlang
 `employees` compatibility kaynağında, organizasyon ise Phase 3 `employee_assignments` kaynağında
 kalır. İki profil bölümünün bağımsız pozitif optimistic version'ı vardır; TCKN/pasaport, IBAN,
 ücret, sağlık, adres/acil kişi, belge ve yaşam döngüsü aksiyonları eklenmez.
+
+P4C `employee_account_links` ile employee kaydını aynı tenant'ın canonical
+`tenant_memberships.id` kaydına bağlar; e-posta eşleştirmesi veya otomatik backfill yapmaz.
+Composite tenant FK'leri ile employee/membership başına unique current link DB seviyesinde
+korunur. Tablo FORCE RLS altındadır; tenant-sınırlı eligibility fonksiyonu membership, legacy user
+ve identity active durumunu global identity satırlarını tenant rolüne açmadan doğrular.
 
 Veritabanı migration komutları:
 
@@ -389,6 +395,10 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
   Phase 3 kaynağından salt-okunur güncel atama ve en fazla 50 assignment history kaydı;
   `/profile/personal` ve `/profile/employment` PATCH'lerinde zorunlu bölüm version'ı, gerektiğinde
   core employee version'ı, atomik audit ve deterministic stale-write `409`
+- `/api/v1/employees/{employee_id}/account-link` HR-only canonical tenant membership bağlantısı
+  GET/PATCH; `/account-link/eligible-memberships` en fazla 20 uygun tenant hesabını döndürür.
+  `GET /api/v1/me/employee-profile` ise path/query/header'dan employee ID kabul etmeden canlı
+  session'ın tenant + membership bağlamından yalnız allowlisted own-profile projection'ını çözer
 - `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
   `period_year` filtresi, tenant-scoped çalışan kontrolü ve mevcut leave requestlerden otomatik
   bakiye üretmeme davranışı
@@ -401,7 +411,7 @@ ve runtime'da gerçekten çağrılan endpoint setini kendi coverage registry'siy
 dokümanlanan endpoint smoke kapsamı dışında kalırsa veya smoke senaryosunda hiç çağrılmazsa komut
 fail olur.
 
-P4B güncel registry'si 77 generated operation ve runtime `/openapi.json` dahil 78 documented
+P4B checkpoint registry'si 77 generated operation ve runtime `/openapi.json` dahil 78 documented
 endpoint'tir. Üç additive profil operation'ı mevcut P4A endpointlerini değiştirmez.
 
 F1A smoke/contract gate'i lifecycle, default-deny principals, typed extra-key rejection,
@@ -1003,7 +1013,7 @@ membership'i `tenant_admin + hr_specialist` rollerini birlikte taşır; **Çalı
 yetki `tenant_admin` değil, explicit HR `employee:read:tenant` grant'idir.
 
 1. `uv run alembic heads` çıktısında tek head olarak
-   `0033_p4b_employee_profiles` bulunduğunu doğrulayın; ardından API ve frontend'i ayrı
+   `0034_p4c_employee_account_links` bulunduğunu doğrulayın; ardından API ve frontend'i ayrı
    terminallerde başlatın.
 2. `http://localhost:3000/login` üzerinden Wealthy Falcon tenant'ına girin ve **Çalışanlar**
    menüsünü açın. İlk yükleme, boş/filtered-empty, error-retry ve responsive tablo/kart durumları
@@ -1056,6 +1066,22 @@ provider belleğindedir ve refresh credential aynı-origin HttpOnly cookie olara
 TCKN/pasaport, IBAN/banka, ücret/bordro, sağlık/özel nitelikli veri, adres/acil kişi, belge, leave
 policy, custom field, mail, assignment write veya P4C+ ürün yüzeyi eklemez.
 
+## P4C hesap bağlantısı ve Profilim manuel demo
+
+1. `employee:update:tenant` yetkili HR oturumuyla Employee 360 kaydını açın, **Hesap bağlantısını
+   yönet** kontrolünü genişletin ve ad/e-posta ile uygun tenant hesabını arayın. Seçim canonical
+   membership ID üzerinden yapılır; ID arayüzde gösterilmez.
+2. Link/relink veya unlink aksiyonunun açık onay diyaloğu istediğini doğrulayın. Eşzamanlı değişiklik
+   `409` döndürürse kart güncel bağlantıyı yeniden yükleme aksiyonu sunar; unlink employee veya
+   hesap kaydını silmez.
+3. Bağlanan employee hesabıyla yeniden oturum açın ve role-aware navigasyondaki **Profilim**
+   bağlantısını izleyin. `/profile` yalnız `/api/v1/me/employee-profile` çağırır; HR
+   `/employees/{id}` uçlarını kullanmaz ve salt-okunur allowlisted kişisel/istihdam/güncel
+   organizasyon görünümünü gösterir.
+4. Bağlantısız employee hesabında kimlik veya employee ID göstermeyen hazırlık durumunu; own
+   yetkisi olmayan personada ise doğrudan `/profile` navigasyonunun own-profile data client'ını
+   mount etmeden yetkili ana sayfaya döndüğünü doğrulayın.
+
 ## Branch iş akışı
 
 `main` korumalıdır; değişiklikler kısa ömürlü branch üzerinde yapılır.
@@ -1093,11 +1119,13 @@ henüz yoktur:
 ## Durum
 
 P0A–P0G Faz 0, F1A–F1E Faz 1, F2A–F2F Faz 2 ve P3A–P3K Phase 3 identity/organization ürün
-dilimleri tamamlanmıştır. Phase 4'te P4A çalışan dizini/minimal create ve P4B focused Employee 360
-profil düzenleme blokları uygulanmıştır. Belge, import/export, lifecycle workflow, notification,
-raporlama ve diğer P4C+ blokları başlatılmamıştır. Güncel uygulama yüzeyi ve kanıtlar
+dilimleri tamamlanmıştır. Phase 4'te P4A çalışan dizini/minimal create, P4B focused Employee 360
+profil düzenleme ve P4C canonical hesap bağlantısı/own-profile blokları uygulanmıştır. Belge,
+import/export, lifecycle workflow, notification, raporlama ve P4D+ blokları başlatılmamıştır.
+Güncel uygulama yüzeyi ve kanıtlar
 [API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md), güncel P4B
-migration/backfill/RLS sözleşmesi [Alembic versions](backend/alembic/versions/README.md), tarihsel
+migration/backfill ile P4C link/RLS sözleşmesi
+[Alembic versions](backend/alembic/versions/README.md), tarihsel
 Phase 3 populated backfill sonucu ise
 [Phase 3 Migration and Backfill Report](docs/09-uygulama/13-phase-3-migration-backfill-report.md)
 içinde kayıtlıdır.

@@ -133,6 +133,7 @@ class AuthUserRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
+    membership_id: UUID
     tenant_id: UUID
     email: str
     full_name: str

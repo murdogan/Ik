@@ -100,6 +100,7 @@ class AuditEventType(StrEnum):
     EMPLOYEE_ARCHIVED = "employee.archived"
     EMPLOYEE_PERSONAL_PROFILE_UPDATED = "employee.personal_profile.updated"
     EMPLOYEE_EMPLOYMENT_PROFILE_UPDATED = "employee.employment_profile.updated"
+    EMPLOYEE_ACCOUNT_LINK_CHANGED = "employee.account_link.changed"
     EMPLOYEE_ASSIGNMENT_CHANGED = "employee.assignment.changed"
     REPORTING_LINE_CHANGED = "reporting_line.changed"
 

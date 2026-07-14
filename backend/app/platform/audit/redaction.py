@@ -78,6 +78,7 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "status": frozenset({"provisioning", "trial", "active", "suspended", "offboarding", "closed"}),
     "plan_code": frozenset({"core", "professional", "enterprise"}),
     "data_region": frozenset({"tr-1", "eu-1"}),
+    "link_status": frozenset({"linked", "relinked", "unlinked"}),
 }
 
 _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
@@ -272,6 +273,16 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     AuditEventType.EMPLOYEE_EMPLOYMENT_PROFILE_UPDATED: AuditMetadataPolicy(
         changed_fields=frozenset({"employment_start_date", "contract_type", "work_type"}),
         value_fields=frozenset({"employment_start_date", "contract_type", "work_type"}),
+    ),
+    AuditEventType.EMPLOYEE_ACCOUNT_LINK_CHANGED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "previous_membership_id",
+                "new_membership_id",
+                "link_status",
+            }
+        ),
+        changed_fields=frozenset({"membership_id", "link_status"}),
     ),
     AuditEventType.EMPLOYEE_ARCHIVED: AuditMetadataPolicy(
         changed_fields=frozenset({"archived_at"})

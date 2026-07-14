@@ -7,6 +7,7 @@ export const AUTHORIZATION_PERMISSIONS = {
   assignRoles: "role:assign:tenant",
   readOrganization: "organization:read:tenant",
   updateOrganization: "organization:update:tenant",
+  readOwnEmployee: "employee:read:own",
   readTeamEmployees: "employee:read:team",
   readTenantEmployees: "employee:read:tenant",
   updateEmployees: "employee:update:tenant",

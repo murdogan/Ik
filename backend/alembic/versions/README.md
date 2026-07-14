@@ -455,9 +455,28 @@ iki tenant-owned, çalışan başına bire-bir profil kaydı ekler:
   tablo kaldırılır; `employees`, P4A compatibility alanları ve Phase 3 assignment/history korunur.
   Başarısız downgrade transaction rollback'i profil ve employee FORCE RLS durumunu geri getirir.
 
-Güncel tek head `0033_p4b_employee_profiles`'dır. SQLite/offline testleri doğrusal zincir, schema,
-backfill ve rendered ordering için hızlı kanıttır. RLS/ACL, gerçek constraint SQLSTATE'leri ve
-cross-tenant role davranışı için opt-in PostgreSQL testi
-`backend/tests/integration/test_postgresql_p4b_employee_profiles.py` içindedir; P4B geliştirme
-ortamında `IK_TEST_DATABASE_URL` bulunmadığından bu gerçek PostgreSQL yolu çalıştırılmış olarak
-iddia edilmez.
+P4B checkpoint'indeki tek head `0033_p4b_employee_profiles` idi. SQLite/offline testleri doğrusal
+zincir, schema, backfill ve rendered ordering için hızlı kanıttır. RLS/ACL, gerçek constraint
+SQLSTATE'leri ve cross-tenant role davranışı için opt-in PostgreSQL testi
+`backend/tests/integration/test_postgresql_p4b_employee_profiles.py` içindedir.
+
+## P4C canonical employee account links
+
+`0034_p4c_employee_account_links`, bir tenant employee kaydını yalnız aynı tenant'ın canonical
+`tenant_memberships.id` kaydına bağlayan `employee_account_links` tablosunu ekler. Migration e-posta
+veya legacy user ID ile link çıkarmaz ve mevcut veriye link backfill etmez.
+
+- Composite tenant FK'leri cross-tenant employee/membership eşleşmesini reddeder; employee ve
+  membership başına tenant içinde birer unique current link ile pozitif optimistic `version`
+  korunur. Employee ve üyelik FK'leri `ON DELETE RESTRICT` kullanır.
+- Tablo `ENABLE + FORCE RLS`, hostile-default ACL reset'i ve tenant app için yalnız
+  `SELECT,INSERT,DELETE` ile `membership_id,version,updated_at` column-update grant'i taşır.
+  Tenant-GUC ile sınırlandırılmış private-owner `SECURITY DEFINER` fonksiyonu canonical membership,
+  legacy compatibility user ve global identity'nin active/permission-version uyumunu boolean
+  olarak doğrular; identity satırlarını tenant rolüne açmaz.
+- Downgrade herhangi bir current link varsa veri kaybını reddeder; revision transaction'ı başarısız
+  preflight sonrasında FORCE RLS durumunu geri yükler.
+
+Güncel tek head `0034_p4c_employee_account_links`'tır. Focused PostgreSQL katalog/RLS/direct-attack
+ve concurrency kanıtı `backend/tests/integration/test_postgresql_p4c_employee_account_links.py`
+içindedir ve yalnız opt-in `IK_TEST_DATABASE_URL` ile çalıştırılır.

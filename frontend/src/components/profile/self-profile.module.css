@@ -1,0 +1,375 @@
+.page {
+  min-width: 0;
+}
+
+.pageIntro > span,
+.heroIdentity > span,
+.profileSection > header > span {
+  color: var(--wf-green);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.pageIntro h1 {
+  margin: 7px 0 0;
+  font-size: clamp(34px, 5vw, 48px);
+  letter-spacing: -0.045em;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: clamp(22px, 4vw, 34px);
+  border: 1px solid #cfe2d8;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(53, 164, 119, 0.16), transparent 39%),
+    #ffffff;
+  box-shadow: 0 18px 48px rgba(28, 64, 49, 0.075);
+}
+
+.avatar,
+.stateIcon,
+.organizationEmpty > span {
+  display: grid;
+  place-items: center;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-weight: 900;
+}
+
+.avatar {
+  width: 68px;
+  height: 68px;
+  border: 1px solid #b9ddcb;
+  border-radius: 20px;
+  font-size: 24px;
+}
+
+.heroIdentity {
+  min-width: 0;
+}
+
+.heroIdentity h1 {
+  margin: 4px 0 3px;
+  font-size: clamp(30px, 4vw, 43px);
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+}
+
+.heroIdentity strong,
+.heroIdentity p {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heroIdentity strong {
+  font-size: 16px;
+}
+
+.heroIdentity p {
+  margin: 5px 0 0;
+  color: var(--wf-muted);
+  font-size: 12px;
+}
+
+.sectionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.profileSection {
+  overflow: hidden;
+  border: 1px solid var(--wf-line);
+  border-radius: 17px;
+  background: #ffffff;
+  box-shadow: 0 13px 34px rgba(28, 64, 49, 0.05);
+}
+
+.organizationSection {
+  grid-column: 1 / -1;
+}
+
+.profileSection > header {
+  padding: 17px 19px;
+  border-bottom: 1px solid #e5ede9;
+  background: #fbfdfc;
+}
+
+.profileSection h2 {
+  margin: 5px 0 0;
+  font-size: 19px;
+  letter-spacing: -0.025em;
+}
+
+.metadataGrid,
+.organizationGrid {
+  display: grid;
+  margin: 0;
+  gap: 9px;
+  padding: 17px;
+}
+
+.metadataGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.organizationGrid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.metadataGrid > div,
+.organizationGrid > div {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #e1ebe6;
+  border-radius: 11px;
+  background: #fbfdfc;
+}
+
+.metadataGrid dt,
+.organizationGrid dt {
+  margin-bottom: 5px;
+  color: var(--wf-muted);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.metadataGrid dd,
+.organizationGrid dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--wf-ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.organizationGrid small {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--wf-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.organizationEmpty {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin: 17px;
+  padding: 17px;
+  border: 1px dashed #cddbd4;
+  border-radius: 12px;
+  background: #fbfdfc;
+}
+
+.organizationEmpty > span {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 13px;
+}
+
+.organizationEmpty p {
+  margin: 4px 0 0;
+  color: var(--wf-muted);
+  font-size: 11px;
+}
+
+.readOnlyNote {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #dce7e1;
+  border-radius: 11px;
+  color: var(--wf-muted);
+  background: #f8fbf9;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.loadingState,
+.errorState,
+.unavailableState {
+  min-height: 360px;
+  margin-top: 14px;
+  padding: 30px;
+  border: 1px solid var(--wf-line);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.loadingState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.loadingState > div {
+  display: grid;
+  gap: 4px;
+}
+
+.loadingState span,
+.errorState p,
+.errorState small,
+.unavailableState p {
+  color: var(--wf-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.spinner {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border: 3px solid #d6e5de;
+  border-top-color: var(--wf-green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.errorState,
+.unavailableState {
+  display: grid;
+  grid-template-columns: auto minmax(0, 560px) auto;
+  place-content: center;
+  align-items: center;
+  gap: 17px;
+}
+
+.errorState {
+  color: #793936;
+  background: #fff9f8;
+}
+
+.stateIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  font-size: 18px;
+}
+
+.errorState h1,
+.unavailableState h2 {
+  margin: 0;
+  font-size: 21px;
+  letter-spacing: -0.025em;
+}
+
+.errorState p,
+.unavailableState p {
+  margin: 6px 0 0;
+}
+
+.secondaryButton {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid #cbd9d2;
+  border-radius: 11px;
+  color: var(--wf-ink);
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondaryButton:hover {
+  background: #f5f9f7;
+}
+
+.secondaryButton:focus-visible {
+  outline: 3px solid rgba(49, 107, 255, 0.25);
+  outline-offset: 2px;
+}
+
+@media (max-width: 980px) {
+  .organizationGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .hero > :last-child {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .sectionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .organizationSection {
+    grid-column: 1;
+  }
+
+  .organizationGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .errorState,
+  .unavailableState {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .errorState .secondaryButton {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero {
+    padding: 18px;
+  }
+
+  .avatar {
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    font-size: 18px;
+  }
+
+  .heroIdentity h1 {
+    font-size: 29px;
+  }
+
+  .metadataGrid,
+  .organizationGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .errorState,
+  .unavailableState {
+    display: grid;
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .stateIcon {
+    justify-self: center;
+  }
+}
