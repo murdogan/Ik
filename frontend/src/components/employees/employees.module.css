@@ -1159,6 +1159,338 @@
   line-height: 1.55;
 }
 
+.insightsSection {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #d5e6dd;
+  border-radius: 17px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(55, 156, 113, 0.09), transparent 34%),
+    #f9fcfa;
+}
+
+.insightsHeader,
+.activityHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.insightsHeader > div > span,
+.activityHeader > div > span {
+  color: var(--wf-green);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.insightsHeader h3,
+.activityHeader h3 {
+  margin: 4px 0 4px;
+  color: var(--wf-ink);
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.insightsHeader p,
+.activityHeader p {
+  margin: 0;
+  color: var(--wf-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.insightsLoading {
+  display: flex;
+  min-height: 170px;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  border: 1px dashed #cbdcd3;
+  border-radius: 13px;
+  color: var(--wf-ink);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.insightsLoading .spinner {
+  margin: 0;
+}
+
+.insightsLoading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.insightsLoading strong {
+  font-size: 13px;
+}
+
+.insightsLoading > div > span {
+  color: var(--wf-muted);
+  font-size: 11px;
+}
+
+.insightCards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.insightCard {
+  display: flex;
+  min-width: 0;
+  min-height: 230px;
+  flex-direction: column;
+  padding: 16px;
+  border: 1px solid #dbe8e1;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 9px 24px rgba(28, 64, 49, 0.045);
+}
+
+.insightCardUnavailable {
+  border-color: #dee3e0;
+  background: #f7f9f8;
+}
+
+.insightCard > header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.insightCardIcon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #bee0cf;
+  border-radius: 10px;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.insightCardUnavailable .insightCardIcon {
+  border-color: #d7dedb;
+  color: #64726b;
+  background: #edf1ef;
+}
+
+.insightCard h4 {
+  overflow: hidden;
+  margin: 0 0 2px;
+  color: var(--wf-ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.insightCard header p {
+  margin: 0;
+  color: var(--wf-muted);
+  font-size: 10px;
+}
+
+.insightMetric,
+.insightUnavailableMetric {
+  display: block;
+  margin-top: 23px;
+  color: var(--wf-green-strong);
+  font-size: clamp(27px, 3vw, 34px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.insightMetric small {
+  color: #597068;
+  font-size: 12px;
+  letter-spacing: normal;
+}
+
+.insightUnavailableMetric {
+  color: #66736d;
+  font-size: 26px;
+}
+
+.insightCardDescription {
+  margin: 7px 0 18px;
+  color: var(--wf-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.insightCardDetail {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid #edf2ef;
+}
+
+.insightCardDetail span {
+  min-width: 0;
+  color: var(--wf-muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.insightCardDetail b {
+  flex: 0 0 auto;
+  color: var(--wf-ink);
+  font-size: 10px;
+  text-align: right;
+}
+
+.insightCardDetail .insightEmptyDetail {
+  color: #68756f;
+  font-weight: 700;
+}
+
+.activitySection {
+  overflow: hidden;
+  border: 1px solid #dce8e2;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.activityHeader {
+  padding: 15px 17px;
+  border-bottom: 1px solid #e8efeb;
+  background: #fbfdfc;
+}
+
+.activityList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activityList li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  padding: 13px 17px;
+  border-top: 1px solid #edf2ef;
+}
+
+.activityList li:first-child {
+  border-top: 0;
+}
+
+.activityMarker {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: var(--wf-green);
+  box-shadow: 0 0 0 2px #cce4d8;
+}
+
+.activityList li > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.activityList strong {
+  color: var(--wf-ink);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.activityList time {
+  flex: 0 0 auto;
+  color: var(--wf-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.activityEmpty {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 22px 17px;
+}
+
+.activityEmpty > span {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.activityEmpty strong {
+  color: var(--wf-ink);
+  font-size: 12px;
+}
+
+.activityEmpty p {
+  margin: 4px 0 0;
+  color: var(--wf-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.activityFooter {
+  display: flex;
+  justify-content: center;
+  padding: 13px 17px;
+  border-top: 1px solid #edf2ef;
+  background: #fbfdfc;
+}
+
+.activityFooter:empty {
+  display: none;
+}
+
+.activityFooter > span {
+  color: var(--wf-muted);
+  font-size: 10px;
+}
+
+.activityLoadError {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  color: #793936;
+}
+
+.activityLoadError > div {
+  display: grid;
+  gap: 3px;
+}
+
+.activityLoadError strong {
+  font-size: 11px;
+}
+
+.activityLoadError span,
+.activityLoadError small {
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .readOnlyBadge,
 .currentBadge,
 .historyBadge {
@@ -1803,5 +2135,42 @@
 
   .profilePanelContent {
     padding: 17px;
+  }
+}
+
+@media (max-width: 900px) {
+  .insightCards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .insightCard:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .insightsSection {
+    padding: 14px;
+  }
+
+  .insightCards {
+    grid-template-columns: 1fr;
+  }
+
+  .insightCard:last-child {
+    grid-column: auto;
+  }
+
+  .activityList li > div,
+  .activityLoadError {
+    display: grid;
+  }
+
+  .activityList time {
+    white-space: normal;
+  }
+
+  .activityLoadError .secondaryButton {
+    width: 100%;
   }
 }

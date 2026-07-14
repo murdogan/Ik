@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth_dependencies import AuthenticatedSession, require_permission
@@ -16,11 +16,13 @@ from app.api.errors import (
     AUTHORIZATION_RESPONSES,
     EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
     EMPLOYEE_VALIDATION_RESPONSES,
+    employee_pagination_validation_error,
 )
 from app.api.openapi import EMPLOYEES_TAG, with_correlation_response_headers
 from app.db.session import get_session
 from app.platform.db import SqlAlchemyUnitOfWork
 from app.platform.errors import ApiErrorResponse
+from app.platform.pagination import MAX_CURSOR_LENGTH, InvalidCursorError
 from app.platform.request_context import RequestContext
 from app.platform.responses import DataEnvelope, data_envelope
 from app.schemas.employee_profile import (
@@ -30,8 +32,16 @@ from app.schemas.employee_profile import (
     EmployeePersonalProfileUpdate,
     EmployeeProfileRead,
 )
+from app.schemas.employee_profile_insights import (
+    EMPLOYEE_PROFILE_ACTIVITY_DEFAULT_LIMIT,
+    EMPLOYEE_PROFILE_ACTIVITY_MAX_LIMIT,
+    EmployeeProfileInsightsRead,
+)
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.employee_profile_commands import EmployeeProfileCommandHandler
+from app.services.employee_profile_insights_service import (
+    EmployeeProfileInsightsService,
+)
 from app.services.employee_profile_service import EmployeeProfileService
 
 router = APIRouter(
@@ -58,6 +68,12 @@ def get_employee_profile_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EmployeeProfileService:
     return EmployeeProfileService(session)
+
+
+def get_employee_profile_insights_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EmployeeProfileInsightsService:
+    return EmployeeProfileInsightsService(session)
 
 
 def get_employee_profile_command_handler(
@@ -113,6 +129,67 @@ async def get_employee_profile(
         employee_id,
     )
     return data_envelope(profile, request_context)
+
+
+@router.get(
+    "/{employee_id}/profile/insights",
+    response_model=DataEnvelope[EmployeeProfileInsightsRead],
+    summary="Read Employee 360 summaries and activity",
+    description=(
+        "Returns HR-only tenant- and employee-scoped current summary cards plus a strictly "
+        "allowlisted product activity page. Retained archived employees remain readable. "
+        "Activity is newest-first with opaque keyset continuation and never exposes raw audit "
+        "metadata or actor context."
+    ),
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_200_OK: {},
+            **_PROFILE_NOT_FOUND_RESPONSES,
+        }
+    ),
+)
+async def get_employee_profile_insights(
+    employee_id: UUID,
+    response: Response,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:read:tenant")),
+    ],
+    service: Annotated[
+        EmployeeProfileInsightsService,
+        Depends(get_employee_profile_insights_service),
+    ],
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=EMPLOYEE_PROFILE_ACTIVITY_MAX_LIMIT,
+            description="Maximum number of product activity entries to return.",
+        ),
+    ] = EMPLOYEE_PROFILE_ACTIVITY_DEFAULT_LIMIT,
+    cursor: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_CURSOR_LENGTH,
+            description="Opaque continuation token bound to this employee activity resource.",
+        ),
+    ] = None,
+) -> DataEnvelope[EmployeeProfileInsightsRead]:
+    _prevent_storage(response)
+    try:
+        insights = await service.get_employee_profile_insights(
+            tenant_id=request_context.require_tenant().tenant_id,
+            employee_id=employee_id,
+            limit=limit,
+            cursor=cursor,
+        )
+    except InvalidCursorError as exc:
+        raise employee_pagination_validation_error() from exc
+    return data_envelope(insights, request_context)
 
 
 @router.patch(

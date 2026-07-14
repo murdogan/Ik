@@ -15,6 +15,12 @@ import { useSession } from "@/components/session/session-provider";
 import { ApiClientError } from "@/lib/api-client";
 import type { EmployeeAssignment } from "@/lib/employee-assignments";
 import {
+  type EmployeeActivityKind,
+  type EmployeeProfileChangeStatus,
+  type EmployeeProfileInsights,
+  readEmployeeProfileInsights,
+} from "@/lib/employee-profile-insights";
+import {
   archiveEmployee,
   EMPLOYEE_TERMINATION_REASONS,
   transitionEmployeeLifecycle,
@@ -74,6 +80,20 @@ interface ProfileLoadState {
   isLoading: boolean;
 }
 
+interface InsightsErrorPresentation {
+  message: string;
+  reference: string | null;
+}
+
+interface InsightsLoadState {
+  boundary: ProfileRequestBoundary;
+  insights: EmployeeProfileInsights | null;
+  error: InsightsErrorPresentation | null;
+  loadMoreError: InsightsErrorPresentation | null;
+  isLoading: boolean;
+  isLoadingMore: boolean;
+}
+
 const PROFILE_TABS: ReadonlyArray<{ id: ProfileTab; label: string }> = [
   { id: "summary", label: "Özet" },
   { id: "personal", label: "Kişisel" },
@@ -98,6 +118,47 @@ const TERMINATION_REASON_LABELS: Record<EmployeeTerminationReason, string> = {
   contract_end: "Sözleşme sonu",
   other: "Diğer",
 };
+
+const INSIGHTS_PAGE_LIMIT = 20;
+
+const PROFILE_CHANGE_STATUS_LABELS: Record<
+  EmployeeProfileChangeStatus,
+  string
+> = {
+  submitted: "Gönderildi",
+  approved: "Onaylandı",
+  rejected: "Reddedildi",
+  cancelled: "İptal edildi",
+};
+
+const ACTIVITY_KIND_LABELS: Record<EmployeeActivityKind, string> = {
+  "employee.created": "Çalışan kaydı oluşturuldu",
+  "employee.updated": "Çalışan ana bilgileri güncellendi",
+  "employee.lifecycle.changed": "Çalışma durumu değiştirildi",
+  "employee.archived": "Çalışan kaydı arşivlendi",
+  "employee.personal_profile.updated": "Kişisel bilgiler güncellendi",
+  "employee.employment_profile.updated": "İstihdam bilgileri güncellendi",
+  "employee.account_link.changed": "Çalışan hesabı bağlantısı değiştirildi",
+  "employee.profile_change_request.submitted":
+    "Profil değişikliği talebi gönderildi",
+  "employee.profile_change_request.approved":
+    "Profil değişikliği talebi onaylandı",
+  "employee.profile_change_request.rejected":
+    "Profil değişikliği talebi reddedildi",
+  "employee.profile_change_request.cancelled":
+    "Profil değişikliği talebi iptal edildi",
+  "employee.assignment.changed": "Yapısal atama değiştirildi",
+  "reporting_line.changed": "Yönetici ilişkisi değiştirildi",
+};
+
+const INSIGHT_NUMBER_FORMAT = new Intl.NumberFormat("tr-TR", {
+  maximumFractionDigits: 2,
+});
+
+const ACTIVITY_DATE_TIME_FORMAT = new Intl.DateTimeFormat("tr-TR", {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 function isCurrentProfileRequest(
   expected: ProfileRequestBoundary,
@@ -178,6 +239,44 @@ function profileErrorPresentation(
     message = "Çok sayıda istek gönderildi. Kısa bir süre bekleyip yeniden deneyin.";
   }
   return { message, reference, conflict };
+}
+
+function insightsErrorPresentation(
+  cause: unknown,
+  action: "initial" | "load_more",
+): InsightsErrorPresentation {
+  let message =
+    action === "initial"
+      ? "Güncel özet ve etkinlikler şu anda yüklenemiyor. Lütfen yeniden deneyin."
+      : "Daha eski etkinlikler şu anda yüklenemiyor. Lütfen yeniden deneyin.";
+  let reference: string | null = null;
+
+  if (!(cause instanceof ApiClientError)) return { message, reference };
+  reference = cause.correlationId;
+  if (cause.code === "invalid_response") {
+    message = "Sunucudan beklenmeyen bir yanıt alındı. Lütfen yeniden deneyin.";
+  } else if (cause.status === null || cause.code === "network_error") {
+    message = "Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.";
+  } else if (cause.status === 401) {
+    message = "Oturumunuz doğrulanamadı. Lütfen yeniden giriş yapın.";
+  } else if (cause.status === 403) {
+    message = "Bu çalışan özetini görüntüleme yetkiniz bulunmuyor.";
+  } else if (cause.status === 404) {
+    message = "Çalışan bulunamadı veya artık bu çalışma alanında değil.";
+  } else if (cause.status === 422 && action === "load_more") {
+    message = "Etkinlik devam bağlantısı artık geçerli değil. Lütfen yeniden deneyin.";
+  } else if (cause.status === 429) {
+    message = "Çok sayıda istek gönderildi. Kısa bir süre bekleyip yeniden deneyin.";
+  }
+  return { message, reference };
+}
+
+function formatInsightNumber(value: number): string {
+  return INSIGHT_NUMBER_FORMAT.format(Object.is(value, -0) ? 0 : value);
+}
+
+function formatActivityDateTime(value: string): string {
+  return ACTIVITY_DATE_TIME_FORMAT.format(new Date(value));
 }
 
 function lifecycleErrorPresentation(cause: unknown): ProfileErrorPresentation {
@@ -450,7 +549,414 @@ function LifecycleCard({
   );
 }
 
-function SummaryPanel({ profile }: { profile: EmployeeProfile }) {
+function EmployeeInsightsOverview({
+  requestBoundary,
+}: {
+  requestBoundary: ProfileRequestBoundary;
+}) {
+  const latestRequestBoundary = useRef(requestBoundary);
+  const initialRequestGeneration = useRef(0);
+  const pageRequestGeneration = useRef(0);
+  const loadMoreLock = useRef(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [state, setState] = useState<InsightsLoadState>(() => ({
+    boundary: requestBoundary,
+    insights: null,
+    error: null,
+    loadMoreError: null,
+    isLoading: true,
+    isLoadingMore: false,
+  }));
+
+  useLayoutEffect(() => {
+    latestRequestBoundary.current = requestBoundary;
+    return () => {
+      initialRequestGeneration.current += 1;
+      pageRequestGeneration.current += 1;
+      loadMoreLock.current = false;
+    };
+  }, [requestBoundary]);
+
+  useEffect(() => {
+    const generation = ++initialRequestGeneration.current;
+    pageRequestGeneration.current += 1;
+    loadMoreLock.current = false;
+    const boundary = requestBoundary;
+    if (!boundary.permissionGranted) {
+      return () => {
+        initialRequestGeneration.current += 1;
+        pageRequestGeneration.current += 1;
+      };
+    }
+
+    void readEmployeeProfileInsights(boundary.employeeId, {
+      limit: INSIGHTS_PAGE_LIMIT,
+    }).then(
+      (insights) => {
+        if (
+          generation !== initialRequestGeneration.current ||
+          !isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+        ) {
+          return;
+        }
+        setState({
+          boundary,
+          insights,
+          error: null,
+          loadMoreError: null,
+          isLoading: false,
+          isLoadingMore: false,
+        });
+      },
+      (cause) => {
+        if (
+          generation !== initialRequestGeneration.current ||
+          !isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+        ) {
+          return;
+        }
+        setState({
+          boundary,
+          insights: null,
+          error: insightsErrorPresentation(cause, "initial"),
+          loadMoreError: null,
+          isLoading: false,
+          isLoadingMore: false,
+        });
+      },
+    );
+
+    return () => {
+      initialRequestGeneration.current += 1;
+      pageRequestGeneration.current += 1;
+      loadMoreLock.current = false;
+    };
+  }, [reloadKey, requestBoundary]);
+
+  const stateIsCurrent = isCurrentProfileRequest(
+    state.boundary,
+    requestBoundary,
+  );
+  const insights = stateIsCurrent ? state.insights : null;
+  const error = stateIsCurrent ? state.error : null;
+  const loadMoreError = stateIsCurrent ? state.loadMoreError : null;
+  const isLoading = !stateIsCurrent || state.isLoading;
+  const isLoadingMore = stateIsCurrent && state.isLoadingMore;
+
+  function retryInitialLoad() {
+    initialRequestGeneration.current += 1;
+    pageRequestGeneration.current += 1;
+    loadMoreLock.current = false;
+    setState({
+      boundary: requestBoundary,
+      insights: null,
+      error: null,
+      loadMoreError: null,
+      isLoading: true,
+      isLoadingMore: false,
+    });
+    setReloadKey((key) => key + 1);
+  }
+
+  function loadMore() {
+    const cursor = insights?.activity.next_cursor ?? null;
+    if (!insights || cursor === null || loadMoreLock.current) return;
+
+    const generation = ++pageRequestGeneration.current;
+    const parentGeneration = initialRequestGeneration.current;
+    const boundary = requestBoundary;
+    const existingItems = insights.activity.items;
+    loadMoreLock.current = true;
+    setState((current) => {
+      if (!isCurrentProfileRequest(current.boundary, boundary)) return current;
+      return {
+        ...current,
+        loadMoreError: null,
+        isLoadingMore: true,
+      };
+    });
+
+    void readEmployeeProfileInsights(boundary.employeeId, {
+      limit: INSIGHTS_PAGE_LIMIT,
+      cursor,
+    }).then(
+      (nextPage) => {
+        if (
+          generation !== pageRequestGeneration.current ||
+          parentGeneration !== initialRequestGeneration.current ||
+          !isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+        ) {
+          return;
+        }
+
+        const existingIds = new Set(existingItems.map((item) => item.id));
+        const repeatedItem = nextPage.activity.items.some((item) =>
+          existingIds.has(item.id),
+        );
+        const repeatedCursor = nextPage.activity.next_cursor === cursor;
+        loadMoreLock.current = false;
+        if (repeatedItem || repeatedCursor) {
+          setState((current) => {
+            if (
+              !isCurrentProfileRequest(current.boundary, boundary) ||
+              current.insights?.activity.next_cursor !== cursor
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              loadMoreError: insightsErrorPresentation(
+                new ApiClientError({ status: 200, code: "invalid_response" }),
+                "load_more",
+              ),
+              isLoadingMore: false,
+            };
+          });
+          return;
+        }
+
+        setState((current) => {
+          if (
+            !isCurrentProfileRequest(current.boundary, boundary) ||
+            current.insights?.activity.next_cursor !== cursor
+          ) {
+            return current;
+          }
+          return {
+            boundary,
+            insights: {
+              ...nextPage,
+              activity: {
+                ...nextPage.activity,
+                items: [...existingItems, ...nextPage.activity.items],
+              },
+            },
+            error: null,
+            loadMoreError: null,
+            isLoading: false,
+            isLoadingMore: false,
+          };
+        });
+      },
+      (cause) => {
+        if (
+          generation !== pageRequestGeneration.current ||
+          parentGeneration !== initialRequestGeneration.current ||
+          !isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+        ) {
+          return;
+        }
+        loadMoreLock.current = false;
+        setState((current) => {
+          if (
+            !isCurrentProfileRequest(current.boundary, boundary) ||
+            current.insights?.activity.next_cursor !== cursor
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            loadMoreError: insightsErrorPresentation(cause, "load_more"),
+            isLoadingMore: false,
+          };
+        });
+      },
+    );
+  }
+
+  return (
+    <section
+      className={styles.insightsSection}
+      aria-labelledby="employee-insights-title"
+      aria-busy={isLoading || isLoadingMore}
+    >
+      <header className={styles.insightsHeader}>
+        <div>
+          <span>Güncel İK özeti</span>
+          <h3 id="employee-insights-title">Durum ve etkinlikler</h3>
+          <p>Mevcut bakiyeler, talepler ve güvenli çalışan etkinliği görünümü.</p>
+        </div>
+      </header>
+
+      {isLoading ? (
+        <div className={styles.insightsLoading} role="status" aria-live="polite">
+          <span className={styles.spinner} aria-hidden="true" />
+          <div>
+            <strong>Güncel özet hazırlanıyor</strong>
+            <span>Özet kartları ve son etkinlikler yükleniyor…</span>
+          </div>
+        </div>
+      ) : error || !insights ? (
+        <div className={styles.profileErrorAlert} role="alert">
+          <div>
+            <strong>Güncel özet yüklenemedi</strong>
+            <span>{error?.message}</span>
+            {error?.reference ? <small>Referans: {error.reference}</small> : null}
+          </div>
+          <button
+            className={styles.secondaryButton}
+            type="button"
+            onClick={retryInitialLoad}
+          >
+            Yeniden dene
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className={styles.insightCards} aria-label="Çalışan güncel özetleri">
+            <article
+              className={`${styles.insightCard} ${styles.insightCardUnavailable}`}
+            >
+              <header>
+                <span className={styles.insightCardIcon} aria-hidden="true">B</span>
+                <div><h4>Belgeler</h4><p>Çalışan belgeleri</p></div>
+              </header>
+              <strong className={styles.insightUnavailableMetric}>Faz 5</strong>
+              <p className={styles.insightCardDescription}>
+                Belge özeti henüz kullanılamıyor.
+              </p>
+              <div className={styles.insightCardDetail}>
+                <span>Durum</span><b>Kullanılamıyor</b>
+              </div>
+            </article>
+
+            <article className={styles.insightCard}>
+              <header>
+                <span className={styles.insightCardIcon} aria-hidden="true">İ</span>
+                <div><h4>İzin</h4><p>{insights.leave.period_year} yılı</p></div>
+              </header>
+              <strong className={styles.insightMetric}>
+                {formatInsightNumber(insights.leave.remaining_balance_days)}
+                <small> gün</small>
+              </strong>
+              <p className={styles.insightCardDescription}>Toplam kalan bakiye</p>
+              <div className={styles.insightCardDetail}>
+                <span>Bekleyen izin talebi</span>
+                <b>{INSIGHT_NUMBER_FORMAT.format(insights.leave.pending_request_count)}</b>
+              </div>
+            </article>
+
+            <article className={styles.insightCard}>
+              <header>
+                <span className={styles.insightCardIcon} aria-hidden="true">P</span>
+                <div><h4>Profil değişiklikleri</h4><p>Çalışan talepleri</p></div>
+              </header>
+              <strong className={styles.insightMetric}>
+                {INSIGHT_NUMBER_FORMAT.format(
+                  insights.profile_changes.submitted_request_count,
+                )}
+                <small> talep</small>
+              </strong>
+              <p className={styles.insightCardDescription}>Gönderilen toplam talep</p>
+              <div className={styles.insightCardDetail}>
+                {insights.profile_changes.latest_status &&
+                insights.profile_changes.latest_submitted_at ? (
+                  <>
+                    <span>
+                      Son talep · {formatActivityDateTime(
+                        insights.profile_changes.latest_submitted_at,
+                      )}
+                    </span>
+                    <b>
+                      {PROFILE_CHANGE_STATUS_LABELS[
+                        insights.profile_changes.latest_status
+                      ]}
+                    </b>
+                  </>
+                ) : (
+                  <span className={styles.insightEmptyDetail}>
+                    Henüz profil değişikliği talebi yok
+                  </span>
+                )}
+              </div>
+            </article>
+          </div>
+
+          <section
+            className={styles.activitySection}
+            aria-labelledby="employee-activity-title"
+          >
+            <header className={styles.activityHeader}>
+              <div>
+                <span>Güvenli etkinlik</span>
+                <h3 id="employee-activity-title">Son etkinlikler</h3>
+                <p>İzin verilen çalışan olayları en yeniden eskiye gösterilir.</p>
+              </div>
+            </header>
+
+            {insights.activity.items.length === 0 ? (
+              <div className={styles.activityEmpty} role="status">
+                <span aria-hidden="true">E</span>
+                <div>
+                  <strong>Henüz etkinlik yok</strong>
+                  <p>Bu çalışan için gösterilebilecek bir etkinlik bulunmuyor.</p>
+                </div>
+              </div>
+            ) : (
+              <ol
+                className={styles.activityList}
+                id="employee-insights-activity-list"
+              >
+                {insights.activity.items.map((item) => (
+                  <li key={item.id}>
+                    <span className={styles.activityMarker} aria-hidden="true" />
+                    <div>
+                      <strong>{ACTIVITY_KIND_LABELS[item.kind]}</strong>
+                      <time dateTime={item.occurred_at}>
+                        {formatActivityDateTime(item.occurred_at)}
+                      </time>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+
+            <footer className={styles.activityFooter}>
+              {loadMoreError ? (
+                <div className={styles.activityLoadError} role="alert">
+                  <div>
+                    <strong>Daha eski etkinlikler yüklenemedi</strong>
+                    <span>{loadMoreError.message}</span>
+                    {loadMoreError.reference ? (
+                      <small>Referans: {loadMoreError.reference}</small>
+                    ) : null}
+                  </div>
+                  <button
+                    className={styles.secondaryButton}
+                    type="button"
+                    onClick={loadMore}
+                  >
+                    Yeniden dene
+                  </button>
+                </div>
+              ) : insights.activity.next_cursor ? (
+                <button
+                  className={styles.secondaryButton}
+                  type="button"
+                  aria-controls="employee-insights-activity-list"
+                  disabled={isLoadingMore}
+                  onClick={loadMore}
+                >
+                  {isLoadingMore ? "Daha eski etkinlikler yükleniyor…" : "Daha fazla yükle"}
+                </button>
+              ) : insights.activity.items.length > 0 ? (
+                <span role="status">Gösterilebilecek tüm etkinlikler yüklendi.</span>
+              ) : null}
+            </footer>
+          </section>
+        </>
+      )}
+    </section>
+  );
+}
+
+function SummaryPanel({
+  profile,
+  requestBoundary,
+}: {
+  profile: EmployeeProfile;
+  requestBoundary: ProfileRequestBoundary;
+}) {
   const assignment = profile.organization.current_assignment;
   return (
     <div className={styles.profilePanelContent}>
@@ -458,9 +964,11 @@ function SummaryPanel({ profile }: { profile: EmployeeProfile }) {
         <div>
           <span>Çalışan ana verisi</span>
           <h2>Genel bakış</h2>
-          <p>Temel kimlik, çalışma durumu ve güncel organizasyon özeti.</p>
+          <p>Güncel İK özetleri, güvenli etkinlikler ve çalışan ana bilgileri.</p>
         </div>
       </header>
+
+      <EmployeeInsightsOverview requestBoundary={requestBoundary} />
 
       <dl className={styles.profileMetadataGrid}>
         <div>
@@ -1288,7 +1796,13 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
           aria-labelledby={`employee-profile-tab-${activeTab}`}
           tabIndex={0}
         >
-          {activeTab === "summary" ? <SummaryPanel profile={profile} /> : null}
+          {activeTab === "summary" ? (
+            <SummaryPanel
+              key={profileRequestBoundaryKey(readBoundary)}
+              profile={profile}
+              requestBoundary={readBoundary}
+            />
+          ) : null}
           {activeTab === "personal" ? (
             <PersonalPanel
               key={profileRequestBoundaryKey(updateBoundary)}
