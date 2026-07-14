@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee
@@ -152,13 +152,45 @@ class EmployeeProfileService:
                 ),
             )
 
-        for field_name in _PERSONAL_SECTION_FIELDS:
-            if field_name in payload.model_fields_set:
-                setattr(personal, field_name, getattr(payload, field_name))
-        if any(
+        section_changes = {
+            field_name: (
+                field_name in payload.model_fields_set
+                and getattr(personal, field_name) != getattr(payload, field_name)
+            )
+            for field_name in _PERSONAL_SECTION_FIELDS
+        }
+        command_changed = any(
             before_values[field_name] != _personal_field_value(employee, personal, field_name)
             for field_name in candidate_fields
-        ):
+            if field_name in _PERSONAL_CORE_FIELDS
+        ) or any(section_changes.values())
+        if self._is_postgresql and command_changed:
+            outcome = await self.session.scalar(
+                select(
+                    func.public.update_employee_personal_profile_values(
+                        employee_id,
+                        payload.expected_version,
+                        section_changes["preferred_name"],
+                        (payload.preferred_name if section_changes["preferred_name"] else None),
+                        section_changes["phone"],
+                        payload.phone if section_changes["phone"] else None,
+                        section_changes["birth_date"],
+                        payload.birth_date if section_changes["birth_date"] else None,
+                    )
+                )
+            )
+            if outcome in {"not_found", "access_denied", "context_invalid"}:
+                raise EmployeeProfileNotFoundError
+            if outcome == "version_conflict":
+                raise EmployeeProfileVersionConflictError
+            if outcome != "updated":
+                raise RuntimeError("Personal-profile command returned an unknown safe outcome")
+            await self.session.refresh(personal)
+        else:
+            for field_name in _PERSONAL_SECTION_FIELDS:
+                if section_changes[field_name]:
+                    setattr(personal, field_name, getattr(payload, field_name))
+        if command_changed and not self._is_postgresql:
             # The section token guards the whole personal command, including compatibility-owned
             # name/email changes. Setting it explicitly also makes a core-only command issue the
             # version-predicated profile UPDATE required by SQLAlchemy's optimistic lock.
@@ -303,6 +335,10 @@ class EmployeeProfileService:
             raise EmployeeProfileNotFoundError
         employee, personal, employment = row
         return employee, personal, employment
+
+    @property
+    def _is_postgresql(self) -> bool:
+        return self.session.get_bind().dialect.name == "postgresql"
 
 
 def _core_read(employee: Employee) -> EmployeeProfileCoreRead:

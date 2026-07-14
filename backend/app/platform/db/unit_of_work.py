@@ -8,7 +8,10 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.platform.db.tenant_access import require_transaction_database_access
+from app.platform.db.tenant_access import (
+    clear_database_command_context,
+    require_transaction_database_access,
+)
 from app.platform.errors.application import ApplicationError
 
 _ResultT = TypeVar("_ResultT")
@@ -44,18 +47,20 @@ class SqlAlchemyUnitOfWork:
     session: AsyncSession
 
     async def execute(self, operation: Callable[[], Awaitable[_ResultT]]) -> _ResultT:
-        if self.session.in_transaction():
-            raise RuntimeError("Unit of Work requires an idle session")
-
         try:
-            async with self.session.begin():
-                await require_transaction_database_access(self.session)
-                return await operation()
-        except Exception as exc:
-            translated = translate_persistence_error(exc)
-            if translated is None:
-                raise
-            raise translated from exc
+            if self.session.in_transaction():
+                raise RuntimeError("Unit of Work requires an idle session")
+            try:
+                async with self.session.begin():
+                    await require_transaction_database_access(self.session)
+                    return await operation()
+            except Exception as exc:
+                translated = translate_persistence_error(exc)
+                if translated is None:
+                    raise
+                raise translated from exc
+        finally:
+            clear_database_command_context(self.session)
 
 
 def translate_persistence_error(exc: Exception) -> PersistenceError | None:

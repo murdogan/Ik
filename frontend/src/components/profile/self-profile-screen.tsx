@@ -23,6 +23,7 @@ import {
 } from "@/lib/self-employee-profile";
 import { isSessionGenerationCurrent } from "@/lib/session";
 
+import { OwnProfileChangeRequests } from "./own-profile-change-requests";
 import styles from "./self-profile.module.css";
 
 interface SelfProfileBoundary {
@@ -368,9 +369,17 @@ export function SelfProfileScreen() {
         </section>
       </div>
 
+      <OwnProfileChangeRequests
+        key={`${boundary.sessionGeneration}:${boundary.userId}:${boundary.membershipId}:${boundary.tenantId}:${boundary.permissionVersion}:${result.employee_id}`}
+        employeeId={result.employee_id}
+        currentPreferredName={profile.personal.preferred_name}
+        currentPhone={profile.personal.phone}
+        currentBirthDate={profile.personal.birth_date}
+      />
+
       <p className={styles.readOnlyNote}>
-        Bu görünüm salt okunurdur. Bilgilerinizde bir düzeltme gerekiyorsa İK ekibinizle iletişime
-        geçin.
+        Profil özeti salt okunurdur. İzin verilen kişisel alanlar için yukarıdan İK onaylı bir
+        değişiklik talebi oluşturabilirsiniz.
       </p>
     </section>
   );

@@ -24,42 +24,52 @@ const navigationItems = [
     href: "/dashboard",
     label: "Genel bakış",
     icon: "⌂",
-    permission: null,
+    permissions: [],
     feature: null,
   },
   {
     href: "/users",
     label: "Kullanıcılar",
     icon: "K",
-    permission: AUTHORIZATION_PERMISSIONS.readUsers,
+    permissions: [AUTHORIZATION_PERMISSIONS.readUsers],
     feature: null,
   },
   {
     href: "/profile",
     label: "Profilim",
     icon: "P",
-    permission: AUTHORIZATION_PERMISSIONS.readOwnEmployee,
+    permissions: [AUTHORIZATION_PERMISSIONS.readOwnEmployee],
     feature: null,
   },
   {
     href: "/employees",
     label: "Çalışanlar",
     icon: "Ç",
-    permission: AUTHORIZATION_PERMISSIONS.readTenantEmployees,
+    permissions: [AUTHORIZATION_PERMISSIONS.readTenantEmployees],
+    feature: null,
+  },
+  {
+    href: "/profile-change-requests",
+    label: "Değişiklik talepleri",
+    icon: "D",
+    permissions: [
+      AUTHORIZATION_PERMISSIONS.readTenantEmployees,
+      AUTHORIZATION_PERMISSIONS.updateEmployees,
+    ],
     feature: null,
   },
   {
     href: "/organization",
     label: "Organizasyon",
     icon: "O",
-    permission: AUTHORIZATION_PERMISSIONS.readOrganization,
+    permissions: [AUTHORIZATION_PERMISSIONS.readOrganization],
     feature: TENANT_FEATURES.organization,
   },
   {
     href: "/audit",
     label: "Denetim kayıtları",
     icon: "D",
-    permission: AUTHORIZATION_PERMISSIONS.readTenantAudit,
+    permissions: [AUTHORIZATION_PERMISSIONS.readTenantAudit],
     feature: null,
   },
 ] as const;
@@ -69,7 +79,7 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
   const { status: featureStatus, isEnabled } = useTenantFeatures();
   const visibleItems = navigationItems.filter(
     (item) =>
-      (item.permission === null || hasPermission(user, item.permission)) &&
+      item.permissions.every((permission) => hasPermission(user, permission)) &&
       (item.feature === null ||
         (featureStatus === "ready" && isEnabled(item.feature))),
   );

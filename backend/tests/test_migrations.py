@@ -635,6 +635,40 @@ def _run_alembic_p4c_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p4e_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0034_p4c_employee_account_links:0035_p4e_employee_change_requests",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p4e_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0035_p4e_employee_change_requests:0034_p4c_employee_account_links",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -713,8 +747,11 @@ def test_core_migration_chain_is_linear() -> None:
     p4c_employee_account_links_revision = script.get_revision(
         "0034_p4c_employee_account_links"
     )
+    p4e_employee_change_requests_revision = script.get_revision(
+        "0035_p4e_employee_change_requests"
+    )
 
-    assert script.get_heads() == ["0034_p4c_employee_account_links"]
+    assert script.get_heads() == ["0035_p4e_employee_change_requests"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -806,6 +843,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p4c_employee_account_links_revision is not None
     assert p4c_employee_account_links_revision.down_revision == (
         "0033_p4b_employee_profiles"
+    )
+    assert p4e_employee_change_requests_revision is not None
+    assert p4e_employee_change_requests_revision.down_revision == (
+        "0034_p4c_employee_account_links"
     )
 
 
@@ -990,7 +1031,7 @@ def test_sqlite_p4a_upgrade_enforces_normalized_keys_and_round_trips(
         alembic_command.upgrade(config, "head")
         with engine.connect() as connection:
             assert connection.scalar(text("select version_num from alembic_version")) == (
-                "0034_p4c_employee_account_links"
+                "0035_p4e_employee_change_requests"
             )
     finally:
         engine.dispose()
@@ -2275,6 +2316,89 @@ def test_alembic_offline_p4c_downgrade_guards_links_before_drops() -> None:
     assert preflight_position < function_drop_position < table_drop_position
 
 
+def test_alembic_offline_p4e_renders_typed_requests_rls_acl_and_commands() -> None:
+    result = _run_alembic_p4e_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "CREATE TABLE employee_profile_change_requests" in result.stdout
+    for name in (
+        "ck_employee_profile_change_requests_status",
+        "ck_employee_profile_change_requests_has_change",
+        "ck_employee_profile_change_requests_preferred_snapshot",
+        "ck_employee_profile_change_requests_phone_snapshot",
+        "ck_employee_profile_change_requests_birth_snapshot",
+        "ck_employee_profile_change_requests_timestamp_order",
+        "ck_employee_profile_change_requests_state",
+        "fk_epcr_tenant_employee_employees",
+        "fk_epcr_requester_membership_memberships",
+        "fk_epcr_requester_user_users",
+        "fk_epcr_decider_membership_memberships",
+        "fk_epcr_decider_user_users",
+        "uq_employee_profile_change_requests_active_employee",
+        "ix_employee_profile_change_requests_tenant_queue_cursor",
+        "ix_employee_profile_change_requests_own_cursor",
+    ):
+        assert name in result.stdout
+    assert "WHERE status = 'submitted'" in result.stdout
+    assert 'ALTER TABLE "employee_profile_change_requests" FORCE ROW LEVEL SECURITY' in (
+        result.stdout
+    )
+    assert (
+        'GRANT SELECT ("id", "tenant_id", "employee_id", '
+        '"requester_membership_id", "requester_user_id"'
+    ) in result.stdout
+    assert (
+        'GRANT INSERT ON TABLE "employee_profile_change_requests" TO "wealthy_falcon_app"'
+    ) not in result.stdout
+    assert (
+        'GRANT UPDATE ON TABLE "employee_profile_change_requests" TO "wealthy_falcon_app"'
+    ) not in result.stdout
+    for function_name in (
+        "submit_own_employee_profile_change_request",
+        "transition_employee_profile_change_request",
+        "update_employee_personal_profile_values",
+    ):
+        assert f"CREATE FUNCTION public.{function_name}" in result.stdout
+    for function_name in (
+        "bind_database_command",
+        "claim_database_command",
+        "write_employee_profile_change_request_audit",
+    ):
+        assert f"CREATE FUNCTION p4e_command.{function_name}" in result.stdout
+    assert result.stdout.count("SECURITY DEFINER") == 6
+    assert result.stdout.count("SET search_path = pg_catalog, p4e_command, public") == 6
+    assert "pg_current_xact_id()" in result.stdout
+    assert "claimed.bound_actor_user_id" in result.stdout
+    assert "claimed.bound_membership_id" in result.stdout
+    assert "current_setting('app.actor_id', true)" not in result.stdout
+    assert "current_setting('app.membership_id', true)" not in result.stdout
+    assert "permissions.code IN (" in result.stdout
+    assert "FOR UPDATE OF requests" in result.stdout
+    assert "FOR UPDATE OF profiles" in result.stdout
+    assert "RETURN 'profile_conflict'" in result.stdout
+    assert (
+        'REVOKE UPDATE ("preferred_name", "birth_date", "phone", "version", '
+        '"updated_at") ON TABLE "employee_profiles" FROM "wealthy_falcon_app"'
+    ) in result.stdout
+
+
+def test_alembic_offline_p4e_downgrade_guards_history_and_restores_p4b_acl() -> None:
+    result = _run_alembic_p4e_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    preflight = result.stdout.index("DO $p4e_employee_change_request_downgrade_preflight$")
+    function_drop = result.stdout.index(
+        "DROP FUNCTION IF EXISTS public.update_employee_personal_profile_values"
+    )
+    table_drop = result.stdout.index("DROP TABLE employee_profile_change_requests")
+    assert preflight < function_drop < table_drop
+    assert "P4E employee change request downgrade refused: requests=%" in result.stdout
+    assert (
+        'GRANT UPDATE ("preferred_name", "birth_date", "phone", "version", '
+        '"updated_at") ON TABLE "employee_profiles" TO "wealthy_falcon_app"'
+    ) in result.stdout
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -2926,7 +3050,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0034_p4c_employee_account_links"
+        assert revision == "0035_p4e_employee_change_requests"
     finally:
         engine.dispose()
 

@@ -13,6 +13,7 @@ from app.models import (  # noqa: F401
     EmployeeAccountLink,
     EmployeeEmploymentProfile,
     EmployeePersonalProfile,
+    EmployeeProfileChangeRequest,
     Identity,
     LeaveBalanceSummary,
     LeaveRequest,
@@ -53,6 +54,7 @@ class ApplicationPostgresqlImpl(PostgresqlImpl):
         )
         table.c.version_num.type = String(128)
         return table
+
 
 config = context.config
 

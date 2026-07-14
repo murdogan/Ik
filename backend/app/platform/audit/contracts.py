@@ -101,6 +101,10 @@ class AuditEventType(StrEnum):
     EMPLOYEE_PERSONAL_PROFILE_UPDATED = "employee.personal_profile.updated"
     EMPLOYEE_EMPLOYMENT_PROFILE_UPDATED = "employee.employment_profile.updated"
     EMPLOYEE_ACCOUNT_LINK_CHANGED = "employee.account_link.changed"
+    EMPLOYEE_PROFILE_CHANGE_REQUEST_SUBMITTED = "employee.profile_change_request.submitted"
+    EMPLOYEE_PROFILE_CHANGE_REQUEST_APPROVED = "employee.profile_change_request.approved"
+    EMPLOYEE_PROFILE_CHANGE_REQUEST_REJECTED = "employee.profile_change_request.rejected"
+    EMPLOYEE_PROFILE_CHANGE_REQUEST_CANCELLED = "employee.profile_change_request.cancelled"
     EMPLOYEE_ASSIGNMENT_CHANGED = "employee.assignment.changed"
     REPORTING_LINE_CHANGED = "reporting_line.changed"
 
@@ -151,9 +155,7 @@ class AuditEventDraft:
     before_values: Mapping[str, object] = field(default_factory=dict)
     after_values: Mapping[str, object] = field(default_factory=dict)
     metadata: Mapping[str, object] = field(default_factory=dict)
-    data_classification: AuditDataClassification = (
-        AuditDataClassification.SECURITY_METADATA
-    )
+    data_classification: AuditDataClassification = AuditDataClassification.SECURITY_METADATA
     visibility_class: AuditVisibilityClass = AuditVisibilityClass.TENANT_SECURITY
     id: UUID = field(default_factory=uuid4)
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))

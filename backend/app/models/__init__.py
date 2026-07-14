@@ -26,6 +26,10 @@ from app.models.employee_profile import (
     EmployeeEmploymentProfile,
     EmployeePersonalProfile,
 )
+from app.models.employee_profile_change_request import (
+    EmployeeProfileChangeRequest,
+    EmployeeProfileChangeRequestStatus,
+)
 from app.models.identity import (
     Identity,
     IdentityStatus,
@@ -55,6 +59,8 @@ __all__ = [
     "EmployeeAssignment",
     "EmployeeEmploymentProfile",
     "EmployeePersonalProfile",
+    "EmployeeProfileChangeRequest",
+    "EmployeeProfileChangeRequestStatus",
     "EmployeeStatus",
     "Identity",
     "IdentityStatus",

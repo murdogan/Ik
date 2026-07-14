@@ -50,6 +50,7 @@ class EmployeeFieldPolicy:
     hr_tenant: EmployeeFieldVisibility = EmployeeFieldVisibility.EXCLUDED
     manager_team: EmployeeFieldVisibility = EmployeeFieldVisibility.EXCLUDED
     employee_own: EmployeeFieldVisibility = EmployeeFieldVisibility.EXCLUDED
+    profile_change_requestable: bool = False
 
     def visibility(self, scope: EmployeeProjectionScope) -> EmployeeFieldVisibility:
         if scope is EmployeeProjectionScope.HR_TENANT:
@@ -75,12 +76,14 @@ def _policy(
     hr: EmployeeFieldVisibility = EXCLUDED,
     manager: EmployeeFieldVisibility = EXCLUDED,
     own: EmployeeFieldVisibility = EXCLUDED,
+    requestable: bool = False,
 ) -> EmployeeFieldPolicy:
     return EmployeeFieldPolicy(
         classification=classification,
         hr_tenant=hr,
         manager_team=manager,
         employee_own=own,
+        profile_change_requestable=requestable,
     )
 
 
@@ -129,9 +132,11 @@ _FIELD_POLICIES: dict[str, EmployeeFieldPolicy] = {
     "personal.id": _policy(OPERATIONAL_INTERNAL),
     "personal.tenant_id": _policy(OPERATIONAL_INTERNAL),
     "personal.employee_id": _policy(OPERATIONAL_INTERNAL),
-    "personal.preferred_name": _policy(WORK_SAFE, hr=FULL, manager=FULL, own=FULL),
-    "personal.birth_date": _policy(PERSONAL_CONTACT, hr=FULL, own=MASKED),
-    "personal.phone": _policy(PERSONAL_CONTACT, hr=FULL, own=MASKED),
+    "personal.preferred_name": _policy(
+        WORK_SAFE, hr=FULL, manager=FULL, own=FULL, requestable=True
+    ),
+    "personal.birth_date": _policy(PERSONAL_CONTACT, hr=FULL, own=MASKED, requestable=True),
+    "personal.phone": _policy(PERSONAL_CONTACT, hr=FULL, own=MASKED, requestable=True),
     "personal.version": _policy(OPERATIONAL_INTERNAL, hr=FULL),
     "personal.created_at": _policy(OPERATIONAL_INTERNAL),
     "personal.updated_at": _policy(OPERATIONAL_INTERNAL),
@@ -199,6 +204,11 @@ for _restricted_name in RESTRICTED_FUTURE_FIELD_NAMES:
     _FIELD_POLICIES[_restricted_name] = _policy(RESTRICTED_FUTURE)
 
 EMPLOYEE_FIELD_POLICIES = MappingProxyType(_FIELD_POLICIES)
+PROFILE_CHANGE_REQUESTABLE_FIELDS = frozenset(
+    field_name.removeprefix("personal.")
+    for field_name, policy in EMPLOYEE_FIELD_POLICIES.items()
+    if policy.profile_change_requestable
+)
 
 
 def field_policy(field_name: str) -> EmployeeFieldPolicy:
@@ -206,6 +216,12 @@ def field_policy(field_name: str) -> EmployeeFieldPolicy:
         return EMPLOYEE_FIELD_POLICIES[field_name]
     except KeyError as exc:
         raise UnclassifiedEmployeeFieldError(field_name) from exc
+
+
+def is_profile_change_requestable(field_name: str) -> bool:
+    """Return the explicit P4E decision for one fully qualified registered field."""
+
+    return field_policy(field_name).profile_change_requestable
 
 
 def project_field[T](
@@ -257,8 +273,10 @@ __all__ = [
     "EmployeeFieldPolicy",
     "EmployeeFieldVisibility",
     "EmployeeProjectionScope",
+    "PROFILE_CHANGE_REQUESTABLE_FIELDS",
     "RESTRICTED_FUTURE_FIELD_NAMES",
     "UnclassifiedEmployeeFieldError",
     "field_policy",
+    "is_profile_change_requestable",
     "project_field",
 ]

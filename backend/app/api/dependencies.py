@@ -228,9 +228,7 @@ def get_phase0_tenant_context(
         str,
         Header(
             alias=TENANT_ID_HEADER,
-            description=(
-                "Required current tenant id. Must be a single canonical hyphenated UUID."
-            ),
+            description=("Required current tenant id. Must be a single canonical hyphenated UUID."),
         ),
     ],
     x_tenant_slug: Annotated[
@@ -304,11 +302,16 @@ def get_authenticated_tenant_request_context(
     """
 
     tenant_id = context.require_tenant().tenant_id
+    actor_id = context.actor_id
+    if actor_id is None:
+        raise RuntimeError("Authenticated tenant database access requires an actor")
     _set_request_database_access(
         request,
         DatabaseAccessContext(
             path=DatabaseAccessPath.TENANT,
             tenant_id=tenant_id,
+            actor_id=actor_id,
+            membership_id=context.require_membership(),
         ),
     )
     return context

@@ -64,6 +64,12 @@ from app.services.employee_assignment_service import (
     EmployeeAssignmentConflictError,
     EmployeeAssignmentNotFoundError,
 )
+from app.services.employee_profile_change_request_service import (
+    EmployeeProfileChangeRequestConflictError,
+    EmployeeProfileChangeRequestInvalidError,
+    EmployeeProfileChangeRequestNotFoundError,
+    EmployeeProfileChangeRequestStaleProfileError,
+)
 from app.services.employee_service import (
     EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT,
     EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT,
@@ -131,6 +137,8 @@ TENANT_SLUG_HEADER_INVALID_MESSAGE = (
     f"{TENANT_SLUG_HEADER} header must be sent at most once and be non-empty when provided"
 )
 EMPLOYEE_API_PREFIX = "/api/v1/employees"
+OWN_PROFILE_CHANGE_REQUEST_API_PREFIX = "/api/v1/me/profile-change-requests"
+HR_PROFILE_CHANGE_REQUEST_API_PREFIX = "/api/v1/employee-profile-change-requests"
 LEAVE_BALANCE_API_SEGMENT = "/leave-balances"
 LEAVE_REQUEST_API_PREFIX = "/api/v1/leave-requests"
 PLATFORM_TENANT_API_PREFIX = "/api/v1/platform/tenants"
@@ -161,6 +169,26 @@ EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE = "employee_work_email_conflict"
 EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_MESSAGE = EMPLOYEE_WORK_EMAIL_CONFLICT_MESSAGE
 EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_CODE = "employee_account_link_conflict"
 EMPLOYEE_ACCOUNT_LINK_CONFLICT_ERROR_MESSAGE = "The requested account link is unavailable"
+EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_ERROR_CODE = (
+    "employee_profile_change_request_validation_error"
+)
+EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_ERROR_MESSAGE = (
+    "Employee profile change request validation failed"
+)
+EMPLOYEE_PROFILE_CHANGE_REQUEST_NOT_FOUND_ERROR_CODE = "employee_profile_change_request_not_found"
+EMPLOYEE_PROFILE_CHANGE_REQUEST_NOT_FOUND_ERROR_MESSAGE = (
+    "Employee profile change request was not found"
+)
+EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_ERROR_CODE = "employee_profile_change_request_conflict"
+EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_ERROR_MESSAGE = (
+    "The employee profile change request cannot be changed"
+)
+EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_CODE = (
+    "employee_profile_change_request_stale_profile"
+)
+EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_MESSAGE = (
+    "The employee profile changed after this request was submitted; reload before deciding"
+)
 EMPLOYEE_INVALID_DATE_RANGE_ERROR_CODE = "employee_invalid_date_range"
 EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE = "employee_invalid_lifecycle"
 LEAVE_REQUEST_NOT_FOUND_ERROR_CODE = "leave_request_not_found"
@@ -388,6 +416,49 @@ def _error_example(code: str, message: str) -> dict[str, Any]:
             }
         }
     }
+
+
+EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Profile-change request validation error envelope.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_ERROR_CODE,
+                    EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+EMPLOYEE_PROFILE_CHANGE_REQUEST_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": "The request is absent, unrelated, or outside the authenticated tenant.",
+        "content": {
+            "application/json": {
+                "example": _error_example(
+                    EMPLOYEE_PROFILE_CHANGE_REQUEST_NOT_FOUND_ERROR_CODE,
+                    EMPLOYEE_PROFILE_CHANGE_REQUEST_NOT_FOUND_ERROR_MESSAGE,
+                )["value"]
+            }
+        },
+    }
+}
+EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_RESPONSES = _conflict_response(
+    description="Active, optimistic-state, or stale-profile request conflict envelope.",
+    examples={
+        EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_ERROR_CODE: _error_example(
+            EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_ERROR_CODE,
+            EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_ERROR_MESSAGE,
+        ),
+        EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_CODE: _error_example(
+            EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_CODE,
+            EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_MESSAGE,
+        ),
+    },
+)
 
 
 UNEXPECTED_ERROR_RESPONSES = {
@@ -1033,6 +1104,14 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return employee_assignment_not_found_error()
     if isinstance(exc, EmployeeAssignmentConflictError):
         return employee_assignment_conflict_error(str(exc))
+    if isinstance(exc, EmployeeProfileChangeRequestInvalidError):
+        return employee_profile_change_request_validation_error()
+    if isinstance(exc, EmployeeProfileChangeRequestNotFoundError):
+        return employee_profile_change_request_not_found_error()
+    if isinstance(exc, EmployeeProfileChangeRequestStaleProfileError):
+        return employee_profile_change_request_stale_profile_error()
+    if isinstance(exc, EmployeeProfileChangeRequestConflictError):
+        return employee_profile_change_request_conflict_error()
     if isinstance(exc, EmployeeAccountLinkUnavailableError):
         return employee_account_link_conflict_error()
     if isinstance(exc, OrganizationAccessDeniedError):
@@ -1553,6 +1632,38 @@ def employee_account_link_conflict_error() -> ApiError:
     )
 
 
+def employee_profile_change_request_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_ERROR_CODE,
+        message=EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_ERROR_MESSAGE,
+    )
+
+
+def employee_profile_change_request_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=EMPLOYEE_PROFILE_CHANGE_REQUEST_NOT_FOUND_ERROR_CODE,
+        message=EMPLOYEE_PROFILE_CHANGE_REQUEST_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def employee_profile_change_request_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_ERROR_CODE,
+        message=EMPLOYEE_PROFILE_CHANGE_REQUEST_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def employee_profile_change_request_stale_profile_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_CODE,
+        message=EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_MESSAGE,
+    )
+
+
 def employee_date_range_error(message: str) -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1674,9 +1785,9 @@ def _domain_request_validation_error(
         or _matches_api_prefix(path, ORG_CHART_API_PREFIX)
     ):
         return organization_pagination_validation_error()
-    if _matches_api_prefix(
-        path, EMPLOYEE_ASSIGNMENT_API_PREFIX
-    ) or _matches_api_prefix(path, MANAGER_TEAM_API_PREFIX):
+    if _matches_api_prefix(path, EMPLOYEE_ASSIGNMENT_API_PREFIX) or _matches_api_prefix(
+        path, MANAGER_TEAM_API_PREFIX
+    ):
         return employee_assignment_validation_error()
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):
         return ApiError(
@@ -1692,6 +1803,10 @@ def _domain_request_validation_error(
         )
     if _is_leave_balance_api_path(path):
         return _leave_balance_request_validation_error()
+    if _matches_api_prefix(path, OWN_PROFILE_CHANGE_REQUEST_API_PREFIX) or _matches_api_prefix(
+        path, HR_PROFILE_CHANGE_REQUEST_API_PREFIX
+    ):
+        return employee_profile_change_request_validation_error()
     if _matches_api_prefix(path, EMPLOYEE_API_PREFIX):
         return _employee_request_validation_error(exc)
     if _matches_api_prefix(path, LEAVE_REQUEST_API_PREFIX):

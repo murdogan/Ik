@@ -79,6 +79,11 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "plan_code": frozenset({"core", "professional", "enterprise"}),
     "data_region": frozenset({"tr-1", "eu-1"}),
     "link_status": frozenset({"linked", "relinked", "unlinked"}),
+    "before_request_status": frozenset({"none", "submitted"}),
+    "after_request_status": frozenset({"submitted", "approved", "rejected", "cancelled"}),
+    "reason_code": frozenset(
+        {"employee_submitted", "hr_approved", "hr_rejected", "employee_cancelled"}
+    ),
 }
 
 _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
@@ -283,6 +288,54 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
             }
         ),
         changed_fields=frozenset({"membership_id", "link_status"}),
+    ),
+    AuditEventType.EMPLOYEE_PROFILE_CHANGE_REQUEST_SUBMITTED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "before_request_status",
+                "after_request_status",
+                "reason_code",
+            }
+        ),
+        changed_fields=frozenset({"preferred_name", "phone", "birth_date"}),
+    ),
+    AuditEventType.EMPLOYEE_PROFILE_CHANGE_REQUEST_APPROVED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "before_request_status",
+                "after_request_status",
+                "reason_code",
+            }
+        ),
+        changed_fields=frozenset({"preferred_name", "phone", "birth_date"}),
+    ),
+    AuditEventType.EMPLOYEE_PROFILE_CHANGE_REQUEST_REJECTED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "before_request_status",
+                "after_request_status",
+                "reason_code",
+            }
+        ),
+        changed_fields=frozenset({"preferred_name", "phone", "birth_date"}),
+    ),
+    AuditEventType.EMPLOYEE_PROFILE_CHANGE_REQUEST_CANCELLED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "before_request_status",
+                "after_request_status",
+                "reason_code",
+            }
+        ),
+        changed_fields=frozenset({"preferred_name", "phone", "birth_date"}),
     ),
     AuditEventType.EMPLOYEE_ARCHIVED: AuditMetadataPolicy(
         changed_fields=frozenset({"archived_at"})

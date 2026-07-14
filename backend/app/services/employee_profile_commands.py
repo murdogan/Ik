@@ -1,7 +1,7 @@
 """Atomic Employee 360 profile writes and allowlisted audit events."""
 
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.platform.audit import (
     AuditActorType,
@@ -14,7 +14,12 @@ from app.platform.audit import (
     AuditScopeType,
     AuditVisibilityClass,
 )
-from app.platform.db import UnitOfWork
+from app.platform.db import (
+    DatabaseCommandContext,
+    DatabaseCommandIntent,
+    UnitOfWork,
+    configure_database_command_context,
+)
 from app.platform.request_context import RequestContext
 from app.schemas.employee_profile import (
     EmployeeEmploymentProfileMutationRead,
@@ -39,6 +44,12 @@ class EmployeeProfileCommandHandler:
         *,
         request_context: RequestContext | None = None,
     ) -> EmployeePersonalProfileMutationRead:
+        self._configure_personal_database_command(
+            tenant_id=tenant_id,
+            employee_id=employee_id,
+            request_context=request_context,
+        )
+
         async def operation() -> EmployeePersonalProfileMutationRead:
             mutation = await self.service.update_personal_profile(
                 tenant_id,
@@ -57,6 +68,34 @@ class EmployeeProfileCommandHandler:
             return mutation.response
 
         return await self.unit_of_work.execute(operation)
+
+    def _configure_personal_database_command(
+        self,
+        *,
+        tenant_id: UUID,
+        employee_id: UUID,
+        request_context: RequestContext | None,
+    ) -> None:
+        if self.service.session.get_bind().dialect.name != "postgresql":
+            return
+        if request_context is None or request_context.actor_id is None:
+            raise RuntimeError("PostgreSQL personal-profile commands require request context")
+        if request_context.require_tenant().tenant_id != tenant_id:
+            raise RuntimeError("Personal-profile command tenant does not match request context")
+        configure_database_command_context(
+            self.service.session,
+            DatabaseCommandContext(
+                tenant_id=tenant_id,
+                actor_user_id=request_context.actor_id,
+                membership_id=request_context.require_membership(),
+                intent=DatabaseCommandIntent.P4B_PERSONAL_UPDATE,
+                target_id=employee_id,
+                audit_event_id=uuid4(),
+                correlation_request_id=request_context.request_id,
+                trace_id=request_context.trace_id,
+                session_id=request_context.session_id,
+            ),
+        )
 
     async def update_employment_profile(
         self,

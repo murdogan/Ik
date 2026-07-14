@@ -1,11 +1,17 @@
 from collections.abc import AsyncIterator
+from uuid import UUID
 
 import pytest
 from app.api.errors import application_error_to_api_error
 from app.platform.db import (
+    DatabaseCommandContext,
+    DatabaseCommandIntent,
     PersistenceConcurrencyError,
     PersistenceIntegrityError,
     SqlAlchemyUnitOfWork,
+    configure_database_command_context,
+    configure_tenant_database_access,
+    database_command_context,
     translate_persistence_error,
 )
 from sqlalchemy import Column, Integer, MetaData, String, Table, text
@@ -167,6 +173,44 @@ async def test_unit_of_work_rejects_implicit_nesting(
 
         with pytest.raises(RuntimeError, match="requires an idle session"):
             await SqlAlchemyUnitOfWork(session).execute(_completed_operation)
+
+
+async def test_unit_of_work_clears_database_command_after_success_and_failure(
+    probe_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    tenant_id = UUID("11111111-aaaa-4111-8111-111111111111")
+    actor_id = UUID("22222222-bbbb-4222-8222-222222222222")
+    membership_id = UUID("33333333-cccc-4333-8333-333333333333")
+    configure_values = {
+        "tenant_id": tenant_id,
+        "actor_user_id": actor_id,
+        "membership_id": membership_id,
+        "intent": DatabaseCommandIntent.P4E_CANCEL,
+        "target_id": UUID("44444444-dddd-4444-8444-444444444444"),
+        "audit_event_id": UUID("55555555-eeee-4555-8555-555555555555"),
+        "correlation_request_id": "req-uow-command",
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
+
+    async with probe_sessions() as session:
+        configure_tenant_database_access(
+            session,
+            tenant_id,
+            actor_id=actor_id,
+            membership_id=membership_id,
+        )
+        configure_database_command_context(session, DatabaseCommandContext(**configure_values))
+        await SqlAlchemyUnitOfWork(session).execute(_completed_operation)
+        assert database_command_context(session) is None
+
+        configure_database_command_context(session, DatabaseCommandContext(**configure_values))
+
+        async def fail() -> None:
+            raise RuntimeError("safe test failure")
+
+        with pytest.raises(RuntimeError, match="safe test failure"):
+            await SqlAlchemyUnitOfWork(session).execute(fail)
+        assert database_command_context(session) is None
 
 
 class _DatabaseSerializationFailure(Exception):

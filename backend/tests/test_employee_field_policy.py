@@ -50,6 +50,7 @@ from app.services import (
 )
 from app.services.employee_field_policy import (
     EMPLOYEE_FIELD_POLICIES,
+    PROFILE_CHANGE_REQUESTABLE_FIELDS,
     RESTRICTED_FUTURE_FIELD_NAMES,
     EmployeeFieldClass,
     EmployeeFieldExcludedError,
@@ -57,6 +58,7 @@ from app.services.employee_field_policy import (
     EmployeeProjectionScope,
     UnclassifiedEmployeeFieldError,
     field_policy,
+    is_profile_change_requestable,
     project_field,
 )
 from app.services.employee_projection_contract import (
@@ -220,6 +222,33 @@ def test_policy_projects_one_source_differently_for_hr_manager_and_own() -> None
     ):
         assert field_name not in manager
         assert field_name not in own
+
+
+def test_profile_change_requestability_is_closed_to_the_three_existing_personal_fields() -> None:
+    assert PROFILE_CHANGE_REQUESTABLE_FIELDS == {
+        "preferred_name",
+        "phone",
+        "birth_date",
+    }
+    assert {
+        field_name
+        for field_name, policy in EMPLOYEE_FIELD_POLICIES.items()
+        if policy.profile_change_requestable
+    } == {
+        "personal.preferred_name",
+        "personal.phone",
+        "personal.birth_date",
+    }
+    assert all(
+        not is_profile_change_requestable(field_name)
+        for field_name in EMPLOYEE_FIELD_POLICIES
+        if field_name
+        not in {
+            "personal.preferred_name",
+            "personal.phone",
+            "personal.birth_date",
+        }
+    )
 
 
 def test_own_masking_has_an_explicit_unavailable_state_and_no_reveal_contract() -> None:
