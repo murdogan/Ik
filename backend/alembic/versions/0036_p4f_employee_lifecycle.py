@@ -6,9 +6,8 @@ Revises: 0035_p4e_employee_change_requests
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision: str = "0036_p4f_employee_lifecycle"
 down_revision: str | None = "0035_p4e_employee_change_requests"
