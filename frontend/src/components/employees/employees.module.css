@@ -39,6 +39,7 @@
 
 .primaryButton,
 .secondaryButton,
+.dangerButton,
 .filterButton,
 .clearButton,
 .refreshButton,
@@ -82,8 +83,29 @@
   background: #f8fbf9;
 }
 
+.dangerButton {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid #b94d48;
+  border-radius: 11px;
+  color: #ffffff;
+  background: #a9413d;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dangerButton:hover:not(:disabled) {
+  border-color: #8f332f;
+  background: #8f332f;
+}
+
 .primaryButton:disabled,
 .secondaryButton:disabled,
+.dangerButton:disabled,
 .filterButton:disabled,
 .clearButton:disabled,
 .refreshButton:disabled,
@@ -94,6 +116,7 @@
 
 .primaryButton:focus-visible,
 .secondaryButton:focus-visible,
+.dangerButton:focus-visible,
 .filterButton:focus-visible,
 .clearButton:focus-visible,
 .refreshButton:focus-visible,
@@ -905,6 +928,154 @@
   white-space: nowrap;
 }
 
+.profileHeroBadges {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.archivedBadge {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 9px;
+  border: 1px solid #d0d8d4;
+  border-radius: 999px;
+  color: #5d6963;
+  background: #f2f5f3;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.archivedBanner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 13px 16px;
+  border: 1px solid #d3dcd7;
+  border-radius: 13px;
+  color: #4f5e56;
+  background: #f4f7f5;
+  font-size: 12px;
+}
+
+.archivedBanner span {
+  color: var(--wf-muted);
+}
+
+.lifecycleCard {
+  display: grid;
+  gap: 17px;
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #d7e4dd;
+  border-radius: 17px;
+  background: #ffffff;
+  box-shadow: 0 12px 34px rgba(28, 64, 49, 0.055);
+}
+
+.lifecycleCard > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.lifecycleCard > header > div > span {
+  color: var(--wf-green);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.lifecycleCard h2 {
+  margin: 5px 0 5px;
+  font-size: 20px;
+  letter-spacing: -0.025em;
+}
+
+.lifecycleCard p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--wf-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.lifecycleMetadata {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin: 0;
+}
+
+.lifecycleMetadata > div {
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid #e3ebe7;
+  border-radius: 11px;
+  background: #fafcfb;
+}
+
+.lifecycleMetadata dt {
+  margin-bottom: 5px;
+  color: var(--wf-muted);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.lifecycleMetadata dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--wf-ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.lifecycleActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+  border-top: 1px solid #edf2ef;
+}
+
+.lifecycleActions > button {
+  margin-top: 15px;
+}
+
+.lifecycleReadOnly {
+  padding: 11px 13px;
+  border: 1px solid #dfe6e2;
+  border-radius: 11px;
+  color: #637169;
+  background: #f5f7f6;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lifecycleDialog {
+  width: min(620px, 100%);
+}
+
+.lifecycleConfirmation {
+  display: grid;
+  gap: 18px;
+}
+
+.lifecycleConfirmation > p {
+  margin: 0;
+  color: #4e5c55;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
 .profileWorkspace {
   margin-top: 20px;
 }
@@ -1434,14 +1605,38 @@
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .profileHero .statusBadge {
+  .profileHeroBadges {
     grid-column: 1 / -1;
     justify-self: start;
+    justify-items: start;
+  }
+
+  .lifecycleMetadata {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .profileMetadataGrid,
   .profileOrganizationGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lifecycleMetadata {
+    grid-template-columns: 1fr;
+  }
+
+  .lifecycleCard > header,
+  .archivedBanner {
+    display: grid;
+  }
+
+  .lifecycleActions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .lifecycleActions > button,
+  .lifecycleConfirmation .dialogActions button {
+    width: 100%;
   }
 
   .profileTableScroller {

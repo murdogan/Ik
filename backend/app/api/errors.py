@@ -77,8 +77,10 @@ from app.services.employee_service import (
     DuplicateEmployeeNumberError,
     DuplicateWorkEmailError,
     EmployeeDateRangeError,
+    EmployeeLifecycleConflictError,
     EmployeeLifecycleError,
     EmployeeNotFoundError,
+    EmployeeOpenProcessConflictError,
     EmployeeVersionConflictError,
 )
 from app.services.leave_request_service import (
@@ -191,6 +193,12 @@ EMPLOYEE_PROFILE_CHANGE_REQUEST_STALE_PROFILE_ERROR_MESSAGE = (
 )
 EMPLOYEE_INVALID_DATE_RANGE_ERROR_CODE = "employee_invalid_date_range"
 EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE = "employee_invalid_lifecycle"
+EMPLOYEE_LIFECYCLE_CONFLICT_ERROR_CODE = "employee_lifecycle_conflict"
+EMPLOYEE_LIFECYCLE_CONFLICT_ERROR_MESSAGE = "The requested employee lifecycle action is not allowed"
+EMPLOYEE_OPEN_PROCESS_CONFLICT_ERROR_CODE = "employee_open_process_conflict"
+EMPLOYEE_OPEN_PROCESS_CONFLICT_ERROR_MESSAGE = (
+    "Resolve the submitted employee profile-change request before termination or archive"
+)
 LEAVE_REQUEST_NOT_FOUND_ERROR_CODE = "leave_request_not_found"
 LEAVE_REQUEST_NOT_FOUND_ERROR_MESSAGE = LEAVE_REQUEST_NOT_FOUND_MESSAGE
 LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE = "leave_request_invalid_date_range"
@@ -954,6 +962,14 @@ EMPLOYEE_COMMAND_CONFLICT_RESPONSES = _conflict_response(
             EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_CODE,
             EMPLOYEE_WORK_EMAIL_CONFLICT_ERROR_MESSAGE,
         ),
+        EMPLOYEE_LIFECYCLE_CONFLICT_ERROR_CODE: _error_example(
+            EMPLOYEE_LIFECYCLE_CONFLICT_ERROR_CODE,
+            EMPLOYEE_LIFECYCLE_CONFLICT_ERROR_MESSAGE,
+        ),
+        EMPLOYEE_OPEN_PROCESS_CONFLICT_ERROR_CODE: _error_example(
+            EMPLOYEE_OPEN_PROCESS_CONFLICT_ERROR_CODE,
+            EMPLOYEE_OPEN_PROCESS_CONFLICT_ERROR_MESSAGE,
+        ),
         DATA_INTEGRITY_CONFLICT_ERROR_CODE: _error_example(
             DATA_INTEGRITY_CONFLICT_ERROR_CODE,
             DATA_INTEGRITY_CONFLICT_MESSAGE,
@@ -1162,6 +1178,10 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return employee_work_email_conflict_error()
     if isinstance(exc, EmployeeDateRangeError):
         return employee_date_range_error(str(exc))
+    if isinstance(exc, EmployeeLifecycleConflictError):
+        return employee_lifecycle_conflict_error(str(exc))
+    if isinstance(exc, EmployeeOpenProcessConflictError):
+        return employee_open_process_conflict_error()
     if isinstance(exc, EmployeeLifecycleError):
         return employee_lifecycle_error(str(exc))
     if isinstance(exc, EmployeeVersionConflictError):
@@ -1677,6 +1697,22 @@ def employee_lifecycle_error(message: str) -> ApiError:
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=EMPLOYEE_INVALID_LIFECYCLE_ERROR_CODE,
         message=message,
+    )
+
+
+def employee_lifecycle_conflict_error(message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_LIFECYCLE_CONFLICT_ERROR_CODE,
+        message=message or EMPLOYEE_LIFECYCLE_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def employee_open_process_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=EMPLOYEE_OPEN_PROCESS_CONFLICT_ERROR_CODE,
+        message=EMPLOYEE_OPEN_PROCESS_CONFLICT_ERROR_MESSAGE,
     )
 
 

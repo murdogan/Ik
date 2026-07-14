@@ -15,6 +15,13 @@ import { useSession } from "@/components/session/session-provider";
 import { ApiClientError } from "@/lib/api-client";
 import type { EmployeeAssignment } from "@/lib/employee-assignments";
 import {
+  archiveEmployee,
+  EMPLOYEE_TERMINATION_REASONS,
+  transitionEmployeeLifecycle,
+  type EmployeeLifecycleTransitionRequest,
+  type EmployeeTerminationReason,
+} from "@/lib/employee-lifecycle";
+import {
   type EmployeeEmploymentProfile,
   type EmployeeEmploymentProfileUpdate,
   type EmployeeEmploymentProfileUpdateResult,
@@ -42,6 +49,7 @@ import styles from "./employees.module.css";
 
 type ProfileTab = "summary" | "personal" | "employment" | "organization";
 type ProfileAction = "read" | "personal" | "employment";
+type LifecycleDialogAction = "active" | "on_leave" | "terminated" | "archive";
 
 interface ProfileErrorPresentation {
   message: string;
@@ -82,6 +90,14 @@ const WORK_TYPE_LABELS = {
   full_time: "Tam zamanlı",
   part_time: "Yarı zamanlı",
 } as const;
+
+const TERMINATION_REASON_LABELS: Record<EmployeeTerminationReason, string> = {
+  resignation: "İstifa",
+  dismissal: "İşveren feshi",
+  retirement: "Emeklilik",
+  contract_end: "Sözleşme sonu",
+  other: "Diğer",
+};
 
 function isCurrentProfileRequest(
   expected: ProfileRequestBoundary,
@@ -164,6 +180,276 @@ function profileErrorPresentation(
   return { message, reference, conflict };
 }
 
+function lifecycleErrorPresentation(cause: unknown): ProfileErrorPresentation {
+  let message = "Yaşam döngüsü işlemi tamamlanamadı. Lütfen yeniden deneyin.";
+  let reference: string | null = null;
+  let conflict = false;
+  if (!(cause instanceof ApiClientError)) return { message, reference, conflict };
+  reference = cause.correlationId;
+  if (cause.status === null || cause.code === "network_error") {
+    message = "Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.";
+  } else if (cause.status === 401) {
+    message = "Oturumunuz doğrulanamadı. Lütfen yeniden giriş yapın.";
+  } else if (cause.status === 403) {
+    message = "Bu yaşam döngüsü işlemi için gerekli İK yetkiniz bulunmuyor.";
+  } else if (cause.status === 404) {
+    message = "Çalışan bulunamadı veya bu çalışma alanında değil.";
+  } else if (cause.code === "employee_open_process_conflict") {
+    message =
+      "Gönderilmiş profil değişikliği talebi sonuçlandırılmadan çalışan sonlandırılamaz veya arşivlenemez.";
+    conflict = true;
+  } else if (cause.code === "concurrent_write_conflict") {
+    message = "Çalışan kaydı değişti. Güncel veriyi yükleyip işlemi yeniden başlatın.";
+    conflict = true;
+  } else if (cause.status === 409) {
+    message = "Bu işlem çalışanın güncel yaşam döngüsü durumunda uygulanamaz.";
+    conflict = true;
+  } else if (cause.status === 422) {
+    message = "Yürürlük tarihi ve sonlandırma nedenini kontrol edin.";
+  } else if (cause.status === 429) {
+    message = "Çok sayıda istek gönderildi. Kısa bir süre bekleyip yeniden deneyin.";
+  }
+  return { message, reference, conflict };
+}
+
+function localToday(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function LifecycleCard({
+  profile,
+  editable,
+  requestBoundary,
+  onReload,
+}: {
+  profile: EmployeeProfile;
+  editable: boolean;
+  requestBoundary: ProfileRequestBoundary;
+  onReload: () => void;
+}) {
+  const requestGeneration = useRef(0);
+  const latestRequestBoundary = useRef(requestBoundary);
+  const savingLock = useRef(false);
+  const [action, setAction] = useState<LifecycleDialogAction | null>(null);
+  const [effectiveDate, setEffectiveDate] = useState(
+    profile.employment.employment_end_date ?? localToday(),
+  );
+  const [terminationReason, setTerminationReason] =
+    useState<EmployeeTerminationReason>("resignation");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<ProfileErrorPresentation | null>(null);
+
+  useLayoutEffect(() => {
+    latestRequestBoundary.current = requestBoundary;
+    return () => {
+      requestGeneration.current += 1;
+      savingLock.current = false;
+    };
+  }, [requestBoundary]);
+
+  useEffect(() => {
+    if (action === null) return;
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape" && !savingLock.current) setAction(null);
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [action]);
+
+  function openAction(nextAction: LifecycleDialogAction) {
+    if (!editable) return;
+    setError(null);
+    if (nextAction === "terminated") {
+      setEffectiveDate(profile.employment.employment_end_date ?? localToday());
+      setTerminationReason(profile.employment.termination_reason ?? "resignation");
+    }
+    setAction(nextAction);
+  }
+
+  function closeAction() {
+    if (!savingLock.current) {
+      setError(null);
+      setAction(null);
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const currentAction = action;
+    const boundary = requestBoundary;
+    if (
+      currentAction === null ||
+      !editable ||
+      !boundary.permissionGranted ||
+      savingLock.current
+    ) {
+      return;
+    }
+    if (
+      currentAction === "terminated" &&
+      effectiveDate < profile.employment.employment_start_date
+    ) {
+      setError({
+        message: "Son çalışma tarihi işe başlangıç tarihinden önce olamaz.",
+        reference: null,
+        conflict: false,
+      });
+      return;
+    }
+
+    savingLock.current = true;
+    const generation = ++requestGeneration.current;
+    setIsSaving(true);
+    setError(null);
+    try {
+      if (currentAction === "archive") {
+        await archiveEmployee(boundary.employeeId, profile.core.employee_version);
+      } else {
+        const payload: EmployeeLifecycleTransitionRequest =
+          currentAction === "terminated"
+            ? {
+                target_status: "terminated",
+                expected_version: profile.core.employee_version,
+                effective_date: effectiveDate,
+                termination_reason: terminationReason,
+              }
+            : {
+                target_status: currentAction,
+                expected_version: profile.core.employee_version,
+              };
+        await transitionEmployeeLifecycle(boundary.employeeId, payload);
+      }
+      if (
+        generation !== requestGeneration.current ||
+        !isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
+        return;
+      }
+      setAction(null);
+      onReload();
+    } catch (cause) {
+      if (
+        generation === requestGeneration.current &&
+        isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
+        setError(lifecycleErrorPresentation(cause));
+      }
+    } finally {
+      if (
+        generation === requestGeneration.current &&
+        isCurrentProfileRequest(boundary, latestRequestBoundary.current)
+      ) {
+        savingLock.current = false;
+        setIsSaving(false);
+      }
+    }
+  }
+
+  const archived = profile.core.archived_at !== null;
+  const terminated = profile.core.status === "terminated";
+  const dialogTitle =
+    action === "archive"
+      ? "Çalışanı arşivle"
+      : action === "terminated"
+        ? "Çalışmayı sonlandır"
+        : action === "on_leave"
+          ? "İzin durumuna geçir"
+          : "Aktif duruma döndür";
+
+  return (
+    <>
+      <section className={styles.lifecycleCard} aria-labelledby="employee-lifecycle-title">
+        <header>
+          <div>
+            <span>Yaşam döngüsü</span>
+            <h2 id="employee-lifecycle-title">Çalışma durumu</h2>
+            <p>Durum geçişleri, sonlandırma ve arşiv işlemleri bu kontrollü alandan yürütülür.</p>
+          </div>
+          <EmployeeStatusBadge status={profile.core.status} />
+        </header>
+        <dl className={styles.lifecycleMetadata}>
+          <div><dt>İşe başlangıç</dt><dd>{formatEmployeeDate(profile.employment.employment_start_date)}</dd></div>
+          <div><dt>Çalışma sonu</dt><dd>{formatEmployeeDate(profile.employment.employment_end_date)}</dd></div>
+          <div><dt>Sonlandırma nedeni</dt><dd>{profile.employment.termination_reason ? TERMINATION_REASON_LABELS[profile.employment.termination_reason] : "—"}</dd></div>
+          <div><dt>Kayıt durumu</dt><dd>{archived ? `Arşivlendi · ${formatEmployeeDate(profile.core.archived_at)}` : "Dizinde"}</dd></div>
+        </dl>
+        {editable ? (
+          <div className={styles.lifecycleActions}>
+            {profile.core.status === "active" ? (
+              <button className={styles.secondaryButton} type="button" onClick={() => openAction("on_leave")}>İzne ayır</button>
+            ) : null}
+            {profile.core.status === "on_leave" ? (
+              <button className={styles.secondaryButton} type="button" onClick={() => openAction("active")}>Aktife döndür</button>
+            ) : null}
+            {!terminated ? (
+              <button className={styles.dangerButton} type="button" onClick={() => openAction("terminated")}>Çalışmayı sonlandır</button>
+            ) : null}
+            {terminated && !archived ? (
+              <button className={styles.dangerButton} type="button" onClick={() => openAction("archive")}>Arşivle</button>
+            ) : null}
+          </div>
+        ) : (
+          <div className={styles.lifecycleReadOnly}>Bu kayıt yaşam döngüsü işlemleri için salt okunur.</div>
+        )}
+      </section>
+
+      {action !== null ? (
+        <div className={styles.dialogBackdrop} role="presentation">
+          <div className={`${styles.detailDialog} ${styles.lifecycleDialog}`} role="dialog" aria-modal="true" aria-labelledby="lifecycle-dialog-title">
+            <header className={styles.dialogHeader}>
+              <div><span>Onay gerekli</span><h2 id="lifecycle-dialog-title">{dialogTitle}</h2></div>
+              <button className={styles.iconButton} type="button" onClick={closeAction} disabled={isSaving} aria-label="Pencereyi kapat">×</button>
+            </header>
+            <form className={styles.dialogBody} onSubmit={submit}>
+              <div className={styles.lifecycleConfirmation}>
+                {action === "terminated" ? (
+                  <>
+                    <p>Bu işlem açık atamayı seçilen sınırda kapatır, bağlı tenant üyeliğini devre dışı bırakır ve aktif oturumlarını iptal eder.</p>
+                    <div className={styles.formGrid}>
+                      <div className={styles.formField}>
+                        <label htmlFor="termination_effective_date">Son çalışma tarihi</label>
+                        <input id="termination_effective_date" type="date" min={profile.employment.employment_start_date} value={effectiveDate} onChange={(event) => setEffectiveDate(event.target.value)} required disabled={isSaving} autoFocus />
+                      </div>
+                      <div className={styles.formField}>
+                        <label htmlFor="termination_reason">Sonlandırma nedeni</label>
+                        <select id="termination_reason" value={terminationReason} onChange={(event) => setTerminationReason(event.target.value as EmployeeTerminationReason)} required disabled={isSaving}>
+                          {EMPLOYEE_TERMINATION_REASONS.map((reason) => <option value={reason} key={reason}>{TERMINATION_REASON_LABELS[reason]}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </>
+                ) : action === "archive" ? (
+                  <p>Çalışan normal dizinden kaldırılır. Profil, hesap bağlantısı, atama ve denetim geçmişi korunur; doğrudan Employee 360 görünümü salt okunur kalır.</p>
+                ) : action === "on_leave" ? (
+                  <p>Çalışanın durumu izinli olarak değiştirilecek. Hesap bağlantısı ve atama geçmişi korunur.</p>
+                ) : (
+                  <p>Çalışan aktif duruma döndürülecek. Sonlandırma alanları bu geçişte boş tutulur.</p>
+                )}
+                {error ? (
+                  <div className={styles.profileErrorAlert} role="alert">
+                    <div><strong>İşlem tamamlanamadı</strong><span>{error.message}</span>{error.reference ? <small>Referans: {error.reference}</small> : null}</div>
+                    {error.conflict ? <button className={styles.secondaryButton} type="button" onClick={onReload}>Güncel veriyi yükle</button> : null}
+                  </div>
+                ) : null}
+                <div className={styles.dialogActions}>
+                  <button className={styles.secondaryButton} type="button" onClick={closeAction} disabled={isSaving}>Vazgeç</button>
+                  <button className={action === "active" || action === "on_leave" ? styles.primaryButton : styles.dangerButton} type="submit" disabled={isSaving} autoFocus={action !== "terminated"}>
+                    {isSaving ? "İşlem uygulanıyor…" : dialogTitle}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function SummaryPanel({ profile }: { profile: EmployeeProfile }) {
   const assignment = profile.organization.current_assignment;
   return (
@@ -208,6 +494,14 @@ function SummaryPanel({ profile }: { profile: EmployeeProfile }) {
               ? WORK_TYPE_LABELS[profile.employment.work_type]
               : "Belirtilmemiş"}
           </dd>
+        </div>
+        <div>
+          <dt>Çalışma sonu</dt>
+          <dd>{formatEmployeeDate(profile.employment.employment_end_date)}</dd>
+        </div>
+        <div>
+          <dt>Sonlandırma nedeni</dt>
+          <dd>{profile.employment.termination_reason ? TERMINATION_REASON_LABELS[profile.employment.termination_reason] : "—"}</dd>
         </div>
       </dl>
 
@@ -463,6 +757,8 @@ function ReadOnlyEmployment({ employment }: { employment: EmployeeEmploymentProf
   return (
     <dl className={styles.profileMetadataGrid}>
       <div><dt>İşe başlangıç tarihi</dt><dd>{formatEmployeeDate(employment.employment_start_date)}</dd></div>
+      <div><dt>Çalışma sonu</dt><dd>{formatEmployeeDate(employment.employment_end_date)}</dd></div>
+      <div><dt>Sonlandırma nedeni</dt><dd>{employment.termination_reason ? TERMINATION_REASON_LABELS[employment.termination_reason] : "—"}</dd></div>
       <div><dt>Sözleşme türü</dt><dd>{employment.contract_type ? CONTRACT_TYPE_LABELS[employment.contract_type] : "Belirtilmemiş"}</dd></div>
       <div><dt>Çalışma türü</dt><dd>{employment.work_type ? WORK_TYPE_LABELS[employment.work_type] : "Belirtilmemiş"}</dd></div>
     </dl>
@@ -923,6 +1219,9 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
     );
   }
 
+  const isArchived = profile.core.archived_at !== null;
+  const profileEditable = canUpdate && !isArchived;
+
   return (
     <section className={styles.profilePage} aria-labelledby="employee-profile-title">
       <Link className={styles.profileBackLink} href="/employees">← Çalışanlara dön</Link>
@@ -933,10 +1232,28 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
           <h1 id="employee-profile-title">{fullName(profile.core)}</h1>
           <p>{profile.personal.preferred_name && profile.personal.preferred_name !== profile.core.first_name ? `${profile.personal.preferred_name} · ` : ""}{profile.core.employee_number}{profile.core.email ? ` · ${profile.core.email}` : ""}</p>
         </div>
-        <EmployeeStatusBadge status={profile.core.status} />
+        <div className={styles.profileHeroBadges}>
+          <EmployeeStatusBadge status={profile.core.status} />
+          {isArchived ? <span className={styles.archivedBadge}>Arşivlendi</span> : null}
+        </div>
       </header>
 
-      {canUpdate ? (
+      {isArchived ? (
+        <div className={styles.archivedBanner} role="status">
+          <strong>Arşivlenmiş çalışan kaydı</strong>
+          <span>Korunan Employee 360 geçmişi salt okunur gösteriliyor.</span>
+        </div>
+      ) : null}
+
+      <LifecycleCard
+        key={`lifecycle-${profileRequestBoundaryKey(updateBoundary)}-${profile.core.employee_version}`}
+        profile={profile}
+        editable={profileEditable}
+        requestBoundary={updateBoundary}
+        onReload={reload}
+      />
+
+      {profileEditable && profile.core.status !== "terminated" ? (
         <EmployeeAccountLinkCard
           key={`account-link-${profileRequestBoundaryKey(updateBoundary)}`}
           employeeId={employeeId}
@@ -977,7 +1294,7 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
               key={profileRequestBoundaryKey(updateBoundary)}
               core={profile.core}
               personal={profile.personal}
-              editable={canUpdate}
+              editable={profileEditable}
               requestBoundary={updateBoundary}
               onReload={reload}
               onSaved={mergePersonalProfile}
@@ -988,7 +1305,7 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
               key={profileRequestBoundaryKey(updateBoundary)}
               core={profile.core}
               employment={profile.employment}
-              editable={canUpdate}
+              editable={profileEditable}
               requestBoundary={updateBoundary}
               onReload={reload}
               onSaved={mergeEmploymentProfile}

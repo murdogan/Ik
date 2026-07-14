@@ -31,7 +31,10 @@ from app.platform.request_context import RequestContext
 from app.schemas.employee import (
     EMPLOYEE_LIST_DEFAULT_LIMIT,
     EMPLOYEE_LIST_MAX_LIMIT,
+    EmployeeArchive,
     EmployeeCreate,
+    EmployeeLifecycleRead,
+    EmployeeLifecycleTransition,
     EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
@@ -325,15 +328,89 @@ async def update_employee(
     )
 
 
+@router.post(
+    "/{employee_id}/lifecycle-transitions",
+    response_model=EmployeeLifecycleRead,
+    summary="Transition employee lifecycle",
+    description=(
+        "Performs the explicit active, on-leave, or terminal transition for one tenant employee. "
+        "Termination requires an optimistic employee version, effective date, and allowlisted "
+        "reason code; it atomically closes the open assignment, disables only the linked tenant "
+        "membership, revokes that membership's active refresh families, and retains history."
+    ),
+    response_description="Current employee lifecycle state.",
+    responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
+)
+async def transition_employee_lifecycle(
+    employee_id: UUID,
+    payload: EmployeeLifecycleTransition,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:update:tenant")),
+    ],
+    command_handler: Annotated[
+        EmployeeCommandHandler,
+        Depends(get_employee_command_handler),
+    ],
+) -> EmployeeLifecycleRead:
+    return await command_handler.transition_employee_lifecycle(
+        request_context.require_tenant().tenant_id,
+        employee_id,
+        payload,
+        request_context=request_context,
+    )
+
+
+@router.post(
+    "/{employee_id}/archive",
+    response_model=EmployeeLifecycleRead,
+    summary="Archive a terminated employee",
+    description=(
+        "Soft-archives a terminated employee while retaining employee, profile, account-link, "
+        "assignment, and audit history. The action is idempotent after a successful archive and "
+        "the retained Employee 360 record remains available by direct URL to authorized HR users."
+    ),
+    response_description="Archived employee lifecycle state.",
+    responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,
+)
+async def archive_employee(
+    employee_id: UUID,
+    payload: EmployeeArchive,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee:update:tenant")),
+    ],
+    command_handler: Annotated[
+        EmployeeCommandHandler,
+        Depends(get_employee_command_handler),
+    ],
+) -> EmployeeLifecycleRead:
+    return await command_handler.archive_employee(
+        request_context.require_tenant().tenant_id,
+        employee_id,
+        payload,
+        request_context=request_context,
+    )
+
+
 @router.delete(
     "/{employee_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Archive tenant employee",
+    summary="Archive tenant employee (deprecated compatibility action)",
+    deprecated=True,
     description=(
-        "Archives an employee record by id only when it belongs to the current tenant. The "
-        "record and its leave/balance history remain retained; archived employees are hidden "
-        "from normal employee reads. Repeating the archive is a no-op. Employee IDs from other "
-        "tenants return the same not-found envelope as missing records."
+        "Compatibility alias for soft archive. Archive is allowed only after termination; the "
+        "record and all dependent history remain retained, normal directory projections hide it, "
+        "and authorized HR users can still read Employee 360 by direct URL. Prefer POST on the "
+        "explicit /archive action with an expected version."
     ),
     response_description="Employee archive completed.",
     responses=EMPLOYEE_COMMAND_CONFLICT_RESPONSES,

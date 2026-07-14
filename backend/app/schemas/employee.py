@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from re import Pattern, compile
 from typing import Self
 from uuid import UUID
@@ -12,7 +12,7 @@ from app.core.error_messages import (
     EMPLOYEE_STATUS_MUST_NOT_BE_NULL_MESSAGE,
     EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
 )
-from app.models.employee import EmployeeStatus
+from app.models.employee import EmployeeStatus, EmployeeTerminationReason
 from app.platform.pagination import decode_cursor, encode_cursor
 from app.schemas.date_fields import DateOnly
 
@@ -59,6 +59,10 @@ class EmployeeCreate(BaseModel):
             and self.employment_end_date < self.employment_start_date
         ):
             raise ValueError(EMPLOYEE_END_DATE_ON_OR_AFTER_START_DATE_MESSAGE)
+        if self.status == EmployeeStatus.TERMINATED:
+            raise ValueError(
+                "Terminated employees must be created through the explicit lifecycle transition"
+            )
         _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
         return self
 
@@ -98,6 +102,11 @@ class EmployeeUpdate(BaseModel):
     @model_validator(mode="after")
     def validate_date_order_when_complete(self) -> Self:
         fields_set = self.model_fields_set
+        if fields_set.intersection({"status", "employment_end_date"}):
+            raise ValueError(
+                "Lifecycle status and employment end date must be changed through the "
+                "explicit lifecycle transition"
+            )
         if "employment_start_date" in fields_set and self.employment_start_date is None:
             raise ValueError(EMPLOYEE_START_DATE_MUST_NOT_BE_NULL_MESSAGE)
         if (
@@ -212,6 +221,47 @@ class EmployeeRead(BaseModel):
     def validate_lifecycle_status_end_date(self) -> Self:
         _validate_lifecycle_status_end_date(self.status, self.employment_end_date)
         return self
+
+
+class EmployeeLifecycleTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_status: EmployeeStatus
+    expected_version: int = Field(ge=1)
+    effective_date: DateOnly | None = None
+    termination_reason: EmployeeTerminationReason | None = None
+
+    @model_validator(mode="after")
+    def validate_transition_data(self) -> Self:
+        if self.target_status == EmployeeStatus.TERMINATED:
+            if self.effective_date is None:
+                raise ValueError("Termination requires an effective date")
+            if self.termination_reason is None:
+                raise ValueError("Termination requires a safe reason code")
+            return self
+        if self.effective_date is not None or self.termination_reason is not None:
+            raise ValueError(
+                "Effective date and termination reason are only allowed for termination"
+            )
+        return self
+
+
+class EmployeeArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+
+
+class EmployeeLifecycleRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: UUID
+    status: EmployeeStatus
+    employment_start_date: DateOnly
+    employment_end_date: DateOnly | None
+    termination_reason: EmployeeTerminationReason | None
+    version: int = Field(ge=1)
+    archived_at: datetime | None
 
 
 def _validate_lifecycle_status_end_date(

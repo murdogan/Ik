@@ -125,7 +125,8 @@ _FIELD_POLICIES: dict[str, EmployeeFieldPolicy] = {
     "employee.version": _policy(OPERATIONAL_INTERNAL, hr=FULL),
     "employee.employment_start_date": _policy(WORK_SAFE, hr=FULL, manager=FULL, own=FULL),
     "employee.employment_end_date": _policy(WORK_SAFE, hr=FULL),
-    "employee.archived_at": _policy(OPERATIONAL_INTERNAL),
+    "employee.termination_reason": _policy(OPERATIONAL_INTERNAL, hr=FULL),
+    "employee.archived_at": _policy(OPERATIONAL_INTERNAL, hr=FULL),
     "employee.created_at": _policy(OPERATIONAL_INTERNAL),
     "employee.updated_at": _policy(OPERATIONAL_INTERNAL),
     # Focused personal profile.

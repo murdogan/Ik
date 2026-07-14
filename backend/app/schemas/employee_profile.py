@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.employee import EmployeeStatus
+from app.models.employee import EmployeeStatus, EmployeeTerminationReason
 from app.schemas.date_fields import DateOnly
 from app.schemas.employee import EMAIL_PATTERN
 from app.schemas.employee_assignment import EmployeeAssignmentRead
@@ -36,6 +37,7 @@ class EmployeeProfileCoreRead(BaseModel):
     email: str | None
     status: EmployeeStatus
     employee_version: int = Field(ge=1)
+    archived_at: datetime | None
 
 
 class EmployeePersonalProfileRead(BaseModel):
@@ -51,6 +53,8 @@ class EmployeeEmploymentProfileRead(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
     employment_start_date: DateOnly
+    employment_end_date: DateOnly | None
+    termination_reason: EmployeeTerminationReason | None
     contract_type: EmployeeContractType | None
     work_type: EmployeeWorkType | None
     version: int = Field(ge=1)

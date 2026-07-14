@@ -81,7 +81,8 @@ def get_employee_profile_command_handler(
     description=(
         "Returns tenant-scoped core identity, focused personal and employment sections, and "
         "read-only current organization plus bounded assignment history from Phase 3. Missing and "
-        "cross-tenant employee identifiers use the same not-found response."
+        "cross-tenant employee identifiers use the same not-found response. Authorized HR users "
+        "may read retained archived records by direct URL; archived profiles are immutable."
     ),
     responses=with_correlation_response_headers(
         {

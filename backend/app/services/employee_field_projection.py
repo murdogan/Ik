@@ -66,6 +66,7 @@ def project_hr_core(employee: Employee) -> EmployeeProfileCoreRead:
         email=project_field(scope, "employee.email", employee.email),
         status=project_field(scope, "employee.status", employee.status),
         employee_version=project_field(scope, "employee.version", employee.version),
+        archived_at=project_field(scope, "employee.archived_at", employee.archived_at),
     )
 
 
@@ -87,6 +88,12 @@ def project_hr_employment(
     return EmployeeEmploymentProfileRead(
         employment_start_date=project_field(
             scope, "employee.employment_start_date", employee.employment_start_date
+        ),
+        employment_end_date=project_field(
+            scope, "employee.employment_end_date", employee.employment_end_date
+        ),
+        termination_reason=project_field(
+            scope, "employee.termination_reason", employee.termination_reason
         ),
         contract_type=project_field(scope, "employment.contract_type", profile.contract_type),
         work_type=project_field(scope, "employment.work_type", profile.work_type),

@@ -58,7 +58,18 @@ _ROLE_CODES = frozenset(
         "employee",
     }
 )
-_STATUS_VALUES = frozenset({"invited", "active", "inactive", "archived", "locked", "disabled"})
+_STATUS_VALUES = frozenset(
+    {
+        "invited",
+        "active",
+        "on_leave",
+        "terminated",
+        "inactive",
+        "archived",
+        "locked",
+        "disabled",
+    }
+)
 _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "authentication_method": frozenset({"local", "organization_selection"}),
     "failure_reason": frozenset({"authentication_failed"}),
@@ -72,9 +83,12 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
             "account_disabled",
             "refresh_reuse",
             "organization_switch",
+            "employee_termination",
         }
     ),
-    "source": frozenset({"access_session", "account_status", "refresh_cookie"}),
+    "source": frozenset(
+        {"access_session", "account_status", "refresh_cookie", "employee_lifecycle"}
+    ),
     "status": frozenset({"provisioning", "trial", "active", "suspended", "offboarding", "closed"}),
     "plan_code": frozenset({"core", "professional", "enterprise"}),
     "data_region": frozenset({"tr-1", "eu-1"}),
@@ -82,7 +96,17 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "before_request_status": frozenset({"none", "submitted"}),
     "after_request_status": frozenset({"submitted", "approved", "rejected", "cancelled"}),
     "reason_code": frozenset(
-        {"employee_submitted", "hr_approved", "hr_rejected", "employee_cancelled"}
+        {
+            "employee_submitted",
+            "hr_approved",
+            "hr_rejected",
+            "employee_cancelled",
+            "resignation",
+            "dismissal",
+            "retirement",
+            "contract_end",
+            "other",
+        }
     ),
 }
 
@@ -252,6 +276,21 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
                 "employment_end_date",
             }
         )
+    ),
+    AuditEventType.EMPLOYEE_LIFECYCLE_CHANGED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "before_status",
+                "after_status",
+                "reason_code",
+                "assignment_closed",
+                "membership_deactivated",
+                "sessions_revoked",
+            }
+        ),
+        changed_fields=frozenset(
+            {"status", "employment_end_date", "termination_reason"}
+        ),
     ),
     AuditEventType.EMPLOYEE_PERSONAL_PROFILE_UPDATED: AuditMetadataPolicy(
         changed_fields=frozenset(

@@ -10,7 +10,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.department import Department
-from app.models.employee import Employee
+from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_account_link import EmployeeAccountLink
 from app.models.employee_assignment import EmployeeAssignment
 from app.models.employee_profile import EmployeeEmploymentProfile, EmployeePersonalProfile
@@ -78,7 +78,11 @@ class EmployeeAccountLinkService:
         query: str | None = None,
         limit: int = ELIGIBLE_MEMBERSHIP_LIMIT_MAX,
     ) -> list[EmployeeAccountMembershipRead]:
-        await self._require_current_employee(tenant_id, employee_id)
+        await self._require_current_employee(
+            tenant_id,
+            employee_id,
+            require_mutable=True,
+        )
         if limit < 1 or limit > ELIGIBLE_MEMBERSHIP_LIMIT_MAX:
             raise ValueError("Eligible membership limit is outside the bounded range")
 
@@ -129,7 +133,12 @@ class EmployeeAccountLinkService:
         employee_id: UUID,
         payload: EmployeeAccountLinkUpdate,
     ) -> EmployeeAccountLinkMutation:
-        await self._require_current_employee(tenant_id, employee_id, lock=True)
+        await self._require_current_employee(
+            tenant_id,
+            employee_id,
+            lock=True,
+            require_mutable=True,
+        )
         row = await self._account_link_row(tenant_id, employee_id, lock=True)
         current_link = row[0] if row is not None else None
 
@@ -285,6 +294,7 @@ class EmployeeAccountLinkService:
         employee_id: UUID,
         *,
         lock: bool = False,
+        require_mutable: bool = False,
     ) -> Employee:
         statement = select(Employee).where(
             Employee.tenant_id == tenant_id,
@@ -296,6 +306,10 @@ class EmployeeAccountLinkService:
         employee = await self.session.scalar(statement)
         if employee is None:
             raise EmployeeAccountLinkNotFoundError
+        if require_mutable and employee.status == EmployeeStatus.TERMINATED.value:
+            raise EmployeeAccountLinkUnavailableError(
+                "Terminated employee account links are retained and read-only"
+            )
         return employee
 
     async def _account_link_row(

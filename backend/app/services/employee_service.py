@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,25 +17,35 @@ from app.core.error_messages import (
     EMPLOYEE_STATUS_REQUIRED_MESSAGE,
     EMPLOYEE_TERMINATED_REQUIRES_END_DATE_MESSAGE,
 )
+from app.models.auth import RefreshSessionFamily, UserActivationToken
 from app.models.department import Department
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_account_link import EmployeeAccountLink
 from app.models.employee_assignment import EmployeeAssignment
 from app.models.employee_profile import (
     EmployeeEmploymentProfile,
     EmployeePersonalProfile,
 )
+from app.models.employee_profile_change_request import (
+    EmployeeProfileChangeRequest,
+    EmployeeProfileChangeRequestStatus,
+)
+from app.models.identity import MembershipStatus, TenantMembership
 from app.models.organization import Branch, LegalEntity
 from app.models.position import Position
+from app.models.user import User, UserStatus
 from app.platform.db import constraint_name_from_error
 from app.platform.errors.application import ApplicationError
 from app.platform.pagination import CursorPage
 from app.schemas.employee import (
     EmployeeCreate,
+    EmployeeLifecycleTransition,
     EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
     EmployeeUpdate,
 )
+from app.services.identity_projection_service import sync_existing_membership_projection
 
 EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT = "uq_employees_tenant_employee_number"
 EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT = (
@@ -75,6 +85,34 @@ class EmployeeLifecycleError(ApplicationError, ValueError):
 
 class EmployeeVersionConflictError(ApplicationError):
     pass
+
+
+class EmployeeLifecycleConflictError(ApplicationError):
+    pass
+
+
+class EmployeeOpenProcessConflictError(ApplicationError):
+    def __init__(self) -> None:
+        super().__init__(
+            "Resolve the submitted employee profile-change request before termination or archive"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeeLifecycleMutation:
+    employee: Employee
+    changed_fields: tuple[str, ...]
+    before_status: str
+    assignment_closed: bool = False
+    membership_deactivated: bool = False
+    sessions_revoked: int = 0
+    membership_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeeArchiveMutation:
+    employee: Employee
+    archived: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,19 +299,193 @@ class EmployeeService:
         await self.session.refresh(employee)
         return employee
 
-    async def delete_employee(self, tenant_id: UUID, employee_id: UUID) -> bool:
+    async def transition_employee_lifecycle(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+        payload: EmployeeLifecycleTransition,
+    ) -> EmployeeLifecycleMutation:
+        target_status = payload.target_status.value
+        initially_open_assignment = None
+        if payload.target_status == EmployeeStatus.TERMINATED:
+            # Assignment changes serialize on the open row before they lock the employee.
+            initially_open_assignment = await self._lock_open_assignment(
+                tenant_id,
+                employee_id,
+            )
+
+        # P4E submission serializes on the personal profile. Taking the same lock before the
+        # employee prevents a request from being submitted between the blocker check and commit.
+        await self._lock_profile_section(
+            EmployeePersonalProfile,
+            tenant_id,
+            employee_id,
+        )
         employee = await self._get_employee_or_none(
             tenant_id,
             employee_id,
             include_archived=True,
+            lock=True,
         )
         if employee is None:
             raise EmployeeNotFoundError
         if employee.archived_at is not None:
-            return False
+            raise EmployeeLifecycleConflictError(
+                "Archived employees are read-only"
+            )
+
+        before_status = employee.status
+        if before_status == target_status:
+            if target_status == EmployeeStatus.TERMINATED.value:
+                if await self._has_submitted_profile_change_request(tenant_id, employee_id):
+                    raise EmployeeOpenProcessConflictError
+                expected_reason = (
+                    payload.termination_reason.value
+                    if payload.termination_reason is not None
+                    else None
+                )
+                if (
+                    employee.employment_end_date != payload.effective_date
+                    or employee.termination_reason != expected_reason
+                    or initially_open_assignment is not None
+                ):
+                    raise EmployeeLifecycleConflictError(
+                        "The employee is already terminated with different effective data"
+                    )
+            return EmployeeLifecycleMutation(
+                employee=employee,
+                changed_fields=(),
+                before_status=before_status,
+            )
+
+        if employee.version != payload.expected_version:
+            raise EmployeeVersionConflictError
+        if before_status == EmployeeStatus.TERMINATED.value:
+            raise EmployeeLifecycleConflictError(
+                "Termination is terminal; reactivation is not available"
+            )
+        allowed_targets = {
+            EmployeeStatus.ACTIVE.value: {
+                EmployeeStatus.ON_LEAVE.value,
+                EmployeeStatus.TERMINATED.value,
+            },
+            EmployeeStatus.ON_LEAVE.value: {
+                EmployeeStatus.ACTIVE.value,
+                EmployeeStatus.TERMINATED.value,
+            },
+        }
+        if target_status not in allowed_targets.get(before_status, set()):
+            raise EmployeeLifecycleConflictError(
+                f"The lifecycle transition from {before_status} to {target_status} is not allowed"
+            )
+
+        before_values = {
+            "status": employee.status,
+            "employment_end_date": employee.employment_end_date,
+            "termination_reason": employee.termination_reason,
+        }
+        assignment_closed = False
+        membership_deactivated = False
+        sessions_revoked = 0
+        membership_id = None
+
+        if target_status == EmployeeStatus.TERMINATED.value:
+            assert payload.effective_date is not None
+            assert payload.termination_reason is not None
+            _validate_date_order(employee.employment_start_date, payload.effective_date)
+            if await self._has_submitted_profile_change_request(tenant_id, employee_id):
+                raise EmployeeOpenProcessConflictError
+
+            # A fresh query catches an assignment created while this command waited for the
+            # employee lock; the unique open-row index keeps the result bounded to one row.
+            open_assignment = await self._lock_open_assignment(tenant_id, employee_id)
+            if open_assignment is None:
+                open_assignment = initially_open_assignment
+            if open_assignment is not None:
+                if payload.effective_date < open_assignment.effective_from:
+                    raise EmployeeLifecycleConflictError(
+                        "Termination cannot precede the open assignment's effective date"
+                    )
+                open_assignment.effective_to = payload.effective_date
+                assignment_closed = True
+
+            employee.status = target_status
+            employee.employment_end_date = payload.effective_date
+            employee.termination_reason = payload.termination_reason.value
+            (
+                membership_id,
+                sessions_revoked,
+                membership_deactivated,
+            ) = await self._deactivate_linked_membership(tenant_id, employee_id)
+        else:
+            employee.status = target_status
+            employee.employment_end_date = None
+            employee.termination_reason = None
+
+        await self.session.flush()
+        await self.session.refresh(employee)
+        changed_fields = tuple(
+            sorted(
+                field_name
+                for field_name, before_value in before_values.items()
+                if getattr(employee, field_name) != before_value
+            )
+        )
+        return EmployeeLifecycleMutation(
+            employee=employee,
+            changed_fields=changed_fields,
+            before_status=before_status,
+            assignment_closed=assignment_closed,
+            membership_deactivated=membership_deactivated,
+            sessions_revoked=sessions_revoked,
+            membership_id=membership_id,
+        )
+
+    async def archive_employee(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+        *,
+        expected_version: int | None = None,
+    ) -> EmployeeArchiveMutation:
+        # Archive makes the entire Employee 360 record read-only, so it serializes with both
+        # profile section writers before locking the employee row.
+        await self._lock_profile_section(
+            EmployeePersonalProfile,
+            tenant_id,
+            employee_id,
+        )
+        await self._lock_profile_section(
+            EmployeeEmploymentProfile,
+            tenant_id,
+            employee_id,
+        )
+        employee = await self._get_employee_or_none(
+            tenant_id,
+            employee_id,
+            include_archived=True,
+            lock=True,
+        )
+        if employee is None:
+            raise EmployeeNotFoundError
+        if await self._has_submitted_profile_change_request(tenant_id, employee_id):
+            raise EmployeeOpenProcessConflictError
+        if employee.status != EmployeeStatus.TERMINATED.value:
+            raise EmployeeLifecycleConflictError(
+                "Only terminated employees can be archived"
+            )
+        if employee.archived_at is not None:
+            return EmployeeArchiveMutation(employee=employee, archived=False)
+        if expected_version is not None and employee.version != expected_version:
+            raise EmployeeVersionConflictError
         employee.archived_at = datetime.now(UTC)
         await self.session.flush()
-        return True
+        await self.session.refresh(employee)
+        return EmployeeArchiveMutation(employee=employee, archived=True)
+
+    async def delete_employee(self, tenant_id: UUID, employee_id: UUID) -> bool:
+        mutation = await self.archive_employee(tenant_id, employee_id)
+        return mutation.archived
 
     async def _flush_employee_write(self) -> None:
         try:
@@ -291,6 +503,7 @@ class EmployeeService:
         employee_id: UUID,
         *,
         include_archived: bool = False,
+        lock: bool = False,
     ) -> Employee | None:
         statement = (
             select(Employee)
@@ -299,7 +512,136 @@ class EmployeeService:
         )
         if not include_archived:
             statement = statement.where(Employee.archived_at.is_(None))
+        if lock:
+            statement = statement.with_for_update(of=Employee)
         return await self.session.scalar(statement)
+
+    async def _lock_profile_section(
+        self,
+        model: type[EmployeePersonalProfile] | type[EmployeeEmploymentProfile],
+        tenant_id: UUID,
+        employee_id: UUID,
+    ) -> None:
+        profile_id = await self.session.scalar(
+            select(model.id)
+            .where(
+                model.tenant_id == tenant_id,
+                model.employee_id == employee_id,
+            )
+            .with_for_update(of=model)
+        )
+        if profile_id is None:
+            employee_exists = await self.session.scalar(
+                select(Employee.id).where(
+                    Employee.tenant_id == tenant_id,
+                    Employee.id == employee_id,
+                )
+            )
+            if employee_exists is None:
+                raise EmployeeNotFoundError
+            raise RuntimeError("Employee profile persistence is incomplete")
+
+    async def _lock_open_assignment(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+    ) -> EmployeeAssignment | None:
+        return await self.session.scalar(
+            select(EmployeeAssignment)
+            .where(
+                EmployeeAssignment.tenant_id == tenant_id,
+                EmployeeAssignment.employee_id == employee_id,
+                EmployeeAssignment.effective_to.is_(None),
+            )
+            .with_for_update(of=EmployeeAssignment)
+        )
+
+    async def _has_submitted_profile_change_request(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+    ) -> bool:
+        return (
+            await self.session.scalar(
+                select(EmployeeProfileChangeRequest.id)
+                .where(
+                    EmployeeProfileChangeRequest.tenant_id == tenant_id,
+                    EmployeeProfileChangeRequest.employee_id == employee_id,
+                    EmployeeProfileChangeRequest.status
+                    == EmployeeProfileChangeRequestStatus.SUBMITTED.value,
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+    async def _deactivate_linked_membership(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+    ) -> tuple[UUID | None, int, bool]:
+        row = (
+            await self.session.execute(
+                select(EmployeeAccountLink, TenantMembership, User)
+                .join(
+                    TenantMembership,
+                    and_(
+                        TenantMembership.tenant_id == EmployeeAccountLink.tenant_id,
+                        TenantMembership.id == EmployeeAccountLink.membership_id,
+                    ),
+                )
+                .join(
+                    User,
+                    and_(
+                        User.tenant_id == TenantMembership.tenant_id,
+                        User.id == TenantMembership.legacy_user_id,
+                    ),
+                )
+                .where(
+                    EmployeeAccountLink.tenant_id == tenant_id,
+                    EmployeeAccountLink.employee_id == employee_id,
+                )
+                .with_for_update(of=(EmployeeAccountLink, User))
+            )
+        ).one_or_none()
+        if row is None:
+            return None, 0, False
+
+        _link, membership, user = row
+        now = datetime.now(UTC)
+        deactivated = (
+            membership.status != MembershipStatus.DISABLED.value
+            or user.status != UserStatus.DISABLED.value
+        )
+        if user.status != UserStatus.DISABLED.value:
+            user.status = UserStatus.DISABLED.value
+            user.updated_at = now
+        await self.session.flush()
+        # PostgreSQL uses the existing narrow tenant projection function; SQLite uses the same
+        # compatibility projection in-process. Neither path changes the global identity.
+        await sync_existing_membership_projection(self.session, user)
+
+        await self.session.execute(
+            update(UserActivationToken)
+            .where(
+                UserActivationToken.tenant_id == tenant_id,
+                UserActivationToken.user_id == user.id,
+                UserActivationToken.consumed_at.is_(None),
+                UserActivationToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        revoked = await self.session.execute(
+            update(RefreshSessionFamily)
+            .where(
+                RefreshSessionFamily.tenant_id == tenant_id,
+                RefreshSessionFamily.membership_id == membership.id,
+                RefreshSessionFamily.revoked_at.is_(None),
+                RefreshSessionFamily.expires_at > now,
+            )
+            .values(revoked_at=now)
+        )
+        return membership.id, max(revoked.rowcount or 0, 0), deactivated
 
     async def _ensure_employee_number_available(
         self,

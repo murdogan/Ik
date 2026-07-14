@@ -88,6 +88,7 @@ class EmployeeProfileService:
         employee, personal, employment = await self._get_profile_row(
             tenant_id,
             employee_id,
+            include_archived=True,
         )
         organization = await employee_assignment_profile_projection(
             self.session,
@@ -119,6 +120,7 @@ class EmployeeProfileService:
         employee, personal, _employment = await self._get_profile_row(
             tenant_id,
             employee_id,
+            lock=True,
         )
         if personal.version != payload.expected_version:
             raise EmployeeProfileVersionConflictError
@@ -230,6 +232,7 @@ class EmployeeProfileService:
         employee, _personal, employment = await self._get_profile_row(
             tenant_id,
             employee_id,
+            lock=True,
         )
         if employment.version != payload.expected_version:
             raise EmployeeProfileVersionConflictError
@@ -303,7 +306,22 @@ class EmployeeProfileService:
         self,
         tenant_id: UUID,
         employee_id: UUID,
+        *,
+        include_archived: bool = False,
+        lock: bool = False,
     ) -> tuple[Employee, EmployeePersonalProfile, EmployeeEmploymentProfile]:
+        if lock:
+            # Match lifecycle/archive lock order so an update that waited for archive rechecks
+            # the archived predicate before it can mutate retained profile data.
+            for model in (EmployeePersonalProfile, EmployeeEmploymentProfile):
+                await self.session.scalar(
+                    select(model.id)
+                    .where(
+                        model.tenant_id == tenant_id,
+                        model.employee_id == employee_id,
+                    )
+                    .with_for_update(of=model)
+                )
         statement = (
             select(
                 Employee,
@@ -327,9 +345,12 @@ class EmployeeProfileService:
             .where(
                 Employee.tenant_id == tenant_id,
                 Employee.id == employee_id,
-                Employee.archived_at.is_(None),
             )
         )
+        if not include_archived:
+            statement = statement.where(Employee.archived_at.is_(None))
+        if lock:
+            statement = statement.with_for_update(of=Employee)
         row = (await self.session.execute(statement)).one_or_none()
         if row is None:
             raise EmployeeProfileNotFoundError

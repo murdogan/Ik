@@ -1,5 +1,6 @@
 """Employee write orchestration during the modular-monolith migration."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -18,11 +19,19 @@ from app.platform.audit import (
 from app.platform.db import UnitOfWork
 from app.platform.idempotency import command_fingerprint
 from app.platform.request_context import RequestContext
-from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
+from app.schemas.employee import (
+    EmployeeArchive,
+    EmployeeCreate,
+    EmployeeLifecycleRead,
+    EmployeeLifecycleTransition,
+    EmployeeRead,
+    EmployeeUpdate,
+)
 from app.services.command_idempotency import (
     CommandIdempotencyService,
     IdempotentCommandExecutor,
 )
+from app.services.employee_projection_contract import enforce_response_contract
 from app.services.employee_service import EmployeeReadProjection, EmployeeService
 
 
@@ -104,6 +113,75 @@ class EmployeeCommandHandler:
 
         return await self.unit_of_work.execute(operation)
 
+    async def transition_employee_lifecycle(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+        payload: EmployeeLifecycleTransition,
+        request_context: RequestContext | None = None,
+    ) -> EmployeeLifecycleRead:
+        async def operation() -> EmployeeLifecycleRead:
+            mutation = await self.service.transition_employee_lifecycle(
+                tenant_id,
+                employee_id,
+                payload,
+            )
+            if mutation.changed_fields:
+                metadata: dict[str, object] = {
+                    "before_status": mutation.before_status,
+                    "after_status": mutation.employee.status,
+                    "assignment_closed": mutation.assignment_closed,
+                    "membership_deactivated": mutation.membership_deactivated,
+                    "sessions_revoked": mutation.sessions_revoked,
+                }
+                if mutation.employee.termination_reason is not None:
+                    metadata["reason_code"] = mutation.employee.termination_reason
+                await self._record_event(
+                    employee_id=employee_id,
+                    request_context=request_context,
+                    event_type=AuditEventType.EMPLOYEE_LIFECYCLE_CHANGED,
+                    action="transition_lifecycle",
+                    changed_fields=mutation.changed_fields,
+                    metadata=metadata,
+                )
+                if mutation.sessions_revoked and mutation.membership_id is not None:
+                    await self._record_session_revocation(
+                        membership_id=mutation.membership_id,
+                        request_context=request_context,
+                    )
+            response = EmployeeLifecycleRead.model_validate(mutation.employee)
+            enforce_response_contract(response)
+            return response
+
+        return await self.unit_of_work.execute(operation)
+
+    async def archive_employee(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+        payload: EmployeeArchive,
+        request_context: RequestContext | None = None,
+    ) -> EmployeeLifecycleRead:
+        async def operation() -> EmployeeLifecycleRead:
+            mutation = await self.service.archive_employee(
+                tenant_id,
+                employee_id,
+                expected_version=payload.expected_version,
+            )
+            if mutation.archived:
+                await self._record_event(
+                    employee_id=employee_id,
+                    request_context=request_context,
+                    event_type=AuditEventType.EMPLOYEE_ARCHIVED,
+                    action="archive",
+                    changed_fields=("archived_at",),
+                )
+            response = EmployeeLifecycleRead.model_validate(mutation.employee)
+            enforce_response_contract(response)
+            return response
+
+        return await self.unit_of_work.execute(operation)
+
     async def delete_employee(
         self,
         tenant_id: UUID,
@@ -111,8 +189,8 @@ class EmployeeCommandHandler:
         request_context: RequestContext | None = None,
     ) -> None:
         async def operation() -> None:
-            archived = await self.service.delete_employee(tenant_id, employee_id)
-            if archived:
+            mutation = await self.service.archive_employee(tenant_id, employee_id)
+            if mutation.archived:
                 await self._record_event(
                     employee_id=employee_id,
                     request_context=request_context,
@@ -139,6 +217,7 @@ class EmployeeCommandHandler:
         event_type: AuditEventType,
         action: str,
         changed_fields: tuple[str, ...],
+        metadata: Mapping[str, object] | None = None,
     ) -> None:
         if (
             self.audit_recorder is None
@@ -160,8 +239,43 @@ class EmployeeCommandHandler:
                 context=AuditContext.from_request_context(request_context),
                 session_id=request_context.session_id,
                 changed_fields=changed_fields,
+                metadata=metadata or {},
                 data_classification=AuditDataClassification.HR_METADATA,
                 visibility_class=AuditVisibilityClass.HR_OPERATIONS,
+            )
+        )
+
+    async def _record_session_revocation(
+        self,
+        *,
+        membership_id: UUID,
+        request_context: RequestContext | None,
+    ) -> None:
+        if (
+            self.audit_recorder is None
+            or request_context is None
+            or request_context.actor_id is None
+        ):
+            return
+        await self.audit_recorder.record(
+            AuditEventDraft(
+                scope_type=AuditScopeType.TENANT,
+                tenant_id=request_context.require_tenant().tenant_id,
+                actor_type=AuditActorType.USER,
+                actor_user_id=request_context.actor_id,
+                event_type=AuditEventType.SESSION_REVOKED,
+                category=AuditCategory.TENANT_SECURITY,
+                resource_type="tenant_membership",
+                resource_id=membership_id,
+                action="revoke",
+                context=AuditContext.from_request_context(request_context),
+                session_id=request_context.session_id,
+                metadata={
+                    "revocation_reason": "employee_termination",
+                    "source": "employee_lifecycle",
+                },
+                data_classification=AuditDataClassification.SECURITY_METADATA,
+                visibility_class=AuditVisibilityClass.TENANT_SECURITY,
             )
         )
 

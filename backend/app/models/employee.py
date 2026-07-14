@@ -39,6 +39,14 @@ class EmployeeStatus(StrEnum):
     TERMINATED = "terminated"
 
 
+class EmployeeTerminationReason(StrEnum):
+    RESIGNATION = "resignation"
+    DISMISSAL = "dismissal"
+    RETIREMENT = "retirement"
+    CONTRACT_END = "contract_end"
+    OTHER = "other"
+
+
 class Employee(Base, TimestampMixin):
     __tablename__ = "employees"
     __table_args__ = (
@@ -57,6 +65,13 @@ class Employee(Base, TimestampMixin):
             "status in ('active','on_leave') and employment_end_date is null"
             ")",
             name="ck_employees_lifecycle_status_dates",
+        ),
+        CheckConstraint(
+            "termination_reason is null or ("
+            "status = 'terminated' and termination_reason in "
+            "('resignation','dismissal','retirement','contract_end','other')"
+            ")",
+            name="ck_employees_termination_reason",
         ),
         CheckConstraint(
             "employee_number_normalized <> ''",
@@ -181,6 +196,7 @@ class Employee(Base, TimestampMixin):
     )
     employment_start_date: Mapped[date] = mapped_column(nullable=False)
     employment_end_date: Mapped[date | None] = mapped_column(nullable=True)
+    termination_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

@@ -1,5 +1,9 @@
 import { ApiClientError } from "./api-client";
 import type { EmployeeAssignment } from "./employee-assignments";
+import {
+  EMPLOYEE_TERMINATION_REASONS,
+  type EmployeeTerminationReason,
+} from "./employee-lifecycle";
 import { EMPLOYEE_STATUSES, type EmployeeStatus } from "./employees";
 import { requestAuthenticatedApi } from "./session";
 
@@ -17,6 +21,7 @@ export interface EmployeeProfileCore {
   email: string | null;
   status: EmployeeStatus;
   employee_version: number;
+  archived_at: string | null;
 }
 
 export interface EmployeePersonalProfile {
@@ -28,6 +33,8 @@ export interface EmployeePersonalProfile {
 
 export interface EmployeeEmploymentProfile {
   employment_start_date: string;
+  employment_end_date: string | null;
+  termination_reason: EmployeeTerminationReason | null;
   contract_type: EmployeeContractType | null;
   work_type: EmployeeWorkType | null;
   version: number;
@@ -112,6 +119,7 @@ function isProfileCore(
       "email",
       "status",
       "employee_version",
+      "archived_at",
     ]) &&
     value.id === expectedEmployeeId &&
     isString(value.employee_number) &&
@@ -120,7 +128,8 @@ function isProfileCore(
     isNullableString(value.email) &&
     isString(value.status) &&
     EMPLOYEE_STATUSES.includes(value.status as EmployeeStatus) &&
-    isPositiveInteger(value.employee_version)
+    isPositiveInteger(value.employee_version) &&
+    isNullableString(value.archived_at)
   );
 }
 
@@ -154,11 +163,19 @@ function isEmploymentProfile(value: unknown): value is EmployeeEmploymentProfile
     isRecord(value) &&
     hasExactKeys(value, [
       "employment_start_date",
+      "employment_end_date",
+      "termination_reason",
       "contract_type",
       "work_type",
       "version",
     ]) &&
     isString(value.employment_start_date) &&
+    isNullableString(value.employment_end_date) &&
+    (value.termination_reason === null ||
+      (isString(value.termination_reason) &&
+        EMPLOYEE_TERMINATION_REASONS.includes(
+          value.termination_reason as EmployeeTerminationReason,
+        ))) &&
     isContractType(value.contract_type) &&
     isWorkType(value.work_type) &&
     isPositiveInteger(value.version)

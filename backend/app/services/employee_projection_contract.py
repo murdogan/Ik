@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.models.employee import Employee
 from app.models.employee_assignment import EmployeeAssignment
 from app.models.employee_profile import EmployeeEmploymentProfile, EmployeePersonalProfile
-from app.schemas.employee import EmployeeRead
+from app.schemas.employee import EmployeeLifecycleRead, EmployeeRead
 from app.schemas.employee_account_link import OwnEmployeeProfileStateRead
 from app.schemas.employee_assignment import (
     ManagerTeamMemberProfileRead,
@@ -79,11 +79,14 @@ _HR_PROFILE_FIELDS = {
     "core.email": "employee.email",
     "core.status": "employee.status",
     "core.employee_version": "employee.version",
+    "core.archived_at": "employee.archived_at",
     "personal.preferred_name": "personal.preferred_name",
     "personal.birth_date": "personal.birth_date",
     "personal.phone": "personal.phone",
     "personal.version": "personal.version",
     "employment.employment_start_date": "employee.employment_start_date",
+    "employment.employment_end_date": "employee.employment_end_date",
+    "employment.termination_reason": "employee.termination_reason",
     "employment.contract_type": "employment.contract_type",
     "employment.work_type": "employment.work_type",
     "employment.version": "employment.version",
@@ -145,8 +148,22 @@ _LEGACY_EMPLOYEE_FIELDS = {
     "current_assignment.effective_from": "assignment.effective_from",
 }
 
+_EMPLOYEE_LIFECYCLE_FIELDS = {
+    "id": "employee.id",
+    "status": "employee.status",
+    "employment_start_date": "employee.employment_start_date",
+    "employment_end_date": "employee.employment_end_date",
+    "termination_reason": "employee.termination_reason",
+    "version": "employee.version",
+    "archived_at": "employee.archived_at",
+}
+
 _RESPONSE_CONTRACTS: dict[type[BaseModel], tuple[EmployeeProjectionScope, dict[str, str]]] = {
     EmployeeRead: (EmployeeProjectionScope.HR_TENANT, _LEGACY_EMPLOYEE_FIELDS),
+    EmployeeLifecycleRead: (
+        EmployeeProjectionScope.HR_TENANT,
+        _EMPLOYEE_LIFECYCLE_FIELDS,
+    ),
     EmployeeProfileRead: (EmployeeProjectionScope.HR_TENANT, _HR_PROFILE_FIELDS),
     EmployeePersonalProfileMutationRead: (
         EmployeeProjectionScope.HR_TENANT,

@@ -781,7 +781,7 @@ async def _require_assignable_targets(
         select(Employee).where(
             Employee.tenant_id == tenant_id,
             Employee.id == employee_id,
-        )
+        ).with_for_update(of=Employee)
     )
     if employee is None:
         raise EmployeeAssignmentReferenceError("Employee was not found")
