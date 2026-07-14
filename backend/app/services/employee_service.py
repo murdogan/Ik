@@ -20,6 +20,10 @@ from app.core.error_messages import (
 from app.models.department import Department
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.organization import Branch, LegalEntity
 from app.models.position import Position
 from app.platform.db import constraint_name_from_error
@@ -199,6 +203,20 @@ class EmployeeService:
             **_employee_create_values(payload),
         )
         self.session.add(employee)
+        self.session.add_all(
+            [
+                EmployeePersonalProfile(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    employee_id=employee.id,
+                ),
+                EmployeeEmploymentProfile(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    employee_id=employee.id,
+                ),
+            ]
+        )
         await self._flush_employee_write()
         await self.session.refresh(employee)
         return employee

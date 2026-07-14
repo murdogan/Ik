@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date, datetime
 from enum import StrEnum
 from ipaddress import ip_address
 from re import compile as compile_regex
@@ -43,6 +44,7 @@ _FORBIDDEN_KEY_PARTS = frozenset(
 class AuditMetadataPolicy:
     metadata_keys: frozenset[str] = frozenset()
     changed_fields: frozenset[str] = frozenset()
+    value_fields: frozenset[str] = frozenset()
 
 
 _ROLE_CODES = frozenset(
@@ -245,6 +247,32 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
             }
         )
     ),
+    AuditEventType.EMPLOYEE_PERSONAL_PROFILE_UPDATED: AuditMetadataPolicy(
+        changed_fields=frozenset(
+            {
+                "first_name",
+                "last_name",
+                "email",
+                "preferred_name",
+                "birth_date",
+                "phone",
+            }
+        ),
+        value_fields=frozenset(
+            {
+                "first_name",
+                "last_name",
+                "email",
+                "preferred_name",
+                "birth_date",
+                "phone",
+            }
+        ),
+    ),
+    AuditEventType.EMPLOYEE_EMPLOYMENT_PROFILE_UPDATED: AuditMetadataPolicy(
+        changed_fields=frozenset({"employment_start_date", "contract_type", "work_type"}),
+        value_fields=frozenset({"employment_start_date", "contract_type", "work_type"}),
+    ),
     AuditEventType.EMPLOYEE_ARCHIVED: AuditMetadataPolicy(
         changed_fields=frozenset({"archived_at"})
     ),
@@ -270,6 +298,8 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
 @dataclass(frozen=True, slots=True)
 class RedactedAuditValues:
     changed_fields: list[str]
+    before_data: dict[str, object]
+    after_data: dict[str, object]
     metadata: dict[str, object]
     ip_address: str | None
     user_agent: str | None
@@ -295,6 +325,16 @@ def redact_audit_values(event: AuditEventDraft) -> RedactedAuditValues:
         metadata[key] = value
     return RedactedAuditValues(
         changed_fields=changed_fields,
+        before_data=_redact_changed_values(
+            event.before_values,
+            policy=policy,
+            changed_fields=frozenset(changed_fields),
+        ),
+        after_data=_redact_changed_values(
+            event.after_values,
+            policy=policy,
+            changed_fields=frozenset(changed_fields),
+        ),
         metadata=metadata,
         ip_address=redact_ip_address(event.context.ip_address),
         user_agent=redact_user_agent(event.context.user_agent),
@@ -355,6 +395,41 @@ def _safe_metadata_value(key: str, value: object) -> object | None:
             return None
         return role_codes
     return None
+
+
+_UNSAFE_VALUE = object()
+
+
+def _redact_changed_values(
+    candidates: Mapping[str, object],
+    *,
+    policy: AuditMetadataPolicy,
+    changed_fields: frozenset[str],
+) -> dict[str, object]:
+    redacted: dict[str, object] = {}
+    for key in sorted(changed_fields):
+        if key not in policy.value_fields or key not in candidates or _is_forbidden_key(key):
+            continue
+        value = _safe_changed_value(candidates[key])
+        if value is not _UNSAFE_VALUE:
+            redacted[key] = value
+    return redacted
+
+
+def _safe_changed_value(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, StrEnum):
+        value = value.value
+    if isinstance(value, datetime):
+        return _UNSAFE_VALUE
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        if not value or len(value) > 320 or not value.isprintable():
+            return _UNSAFE_VALUE
+        return value
+    return _UNSAFE_VALUE
 
 
 def _is_forbidden_key(key: str) -> bool:

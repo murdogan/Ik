@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
@@ -64,6 +65,16 @@ from app.services.organization_access import (
 EMPLOYEE_ASSIGNMENT_READ_PERMISSION = "employee:read:tenant"
 EMPLOYEE_ASSIGNMENT_UPDATE_PERMISSION = "employee:update:tenant"
 EMPLOYEE_TEAM_READ_PERMISSION = "employee:read:team"
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeeAssignmentProfileProjection:
+    """Bounded Phase-3 assignment projection reused by Employee 360 reads."""
+
+    current_assignment: EmployeeAssignmentRead | None
+    history: list[EmployeeAssignmentRead]
+    history_limit: int
+    history_truncated: bool
 
 
 class EmployeeAssignmentAccessDeniedError(ApplicationError):
@@ -726,6 +737,58 @@ async def _require_assignable_targets(
     return employee, legal_entity, branch, department, position, manager
 
 
+async def employee_assignment_profile_projection(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    employee_id: UUID,
+    effective_on: date,
+    history_limit: int,
+) -> EmployeeAssignmentProfileProjection:
+    """Read current organization and bounded history from the Phase-3 source of truth.
+
+    Authorization stays at the Employee 360 API edge. This shared query deliberately does not
+    apply the organization feature gate because profile reads require employee-read permission
+    and must remain usable without granting organization-management access.
+    """
+
+    if not 1 <= history_limit <= 100:
+        raise ValueError("Assignment profile history limit must be between 1 and 100")
+
+    current_row = (
+        await session.execute(
+            _assignment_view_statement(tenant_id=tenant_id).where(
+                EmployeeAssignment.employee_id == employee_id,
+                _effective_on(effective_on),
+            )
+        )
+    ).one_or_none()
+    history_rows = list(
+        (
+            await session.execute(
+                _assignment_view_statement(tenant_id=tenant_id)
+                .where(
+                    EmployeeAssignment.employee_id == employee_id,
+                    EmployeeAssignment.effective_from <= effective_on,
+                )
+                .order_by(
+                    EmployeeAssignment.effective_from.desc(),
+                    EmployeeAssignment.id.asc(),
+                )
+                .limit(history_limit + 1)
+            )
+        ).all()
+    )
+    return EmployeeAssignmentProfileProjection(
+        current_assignment=(
+            _assignment_read(current_row, today=effective_on) if current_row is not None else None
+        ),
+        history=[_assignment_read(row, today=effective_on) for row in history_rows[:history_limit]],
+        history_limit=history_limit,
+        history_truncated=len(history_rows) > history_limit,
+    )
+
+
 def _user_has_permission(permission_code: str):
     return exists(
         select(UserRole.user_id)
@@ -931,5 +994,7 @@ __all__ = [
     "EmployeeAssignmentConflictError",
     "EmployeeAssignmentNotFoundError",
     "EmployeeAssignmentReferenceError",
+    "EmployeeAssignmentProfileProjection",
     "EmployeeAssignmentService",
+    "employee_assignment_profile_projection",
 ]

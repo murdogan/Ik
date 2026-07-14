@@ -4,7 +4,7 @@ Bu doküman, MVP'nin ilk dikey kesitinde uygulanacak API endpointlerini, request
 
 ## 0. Güncel uygulama yüzeyi
 
-Son güncelleme: 2026-07-13 / P4A employee directory and minimal HR create.
+Son güncelleme: 2026-07-14 / P4B focused Employee 360 profile editing.
 
 Bu bölüm repodaki mevcut FastAPI uygulamasını özetler. Aşağıdaki endpointler testli ve
 lokal backend smoke kapsamındadır. Smoke script bu tablonun endpoint setini
@@ -26,14 +26,16 @@ F2F mevcut Phase 2 sözleşmesini yeni bir full snapshot ile çoğaltmaz: execut
 F1E'nin 24 historical operation'ını aynen korur ve aşağıdaki 15 F2 operation'ının additive setini
 canlı OpenAPI'den doğrular. P3C iki organization-selection, P3D dört platform-auth, P3E iki
 password-recovery, P3F dokuz legal-entity/branch, P3G altı department, P3H beş position catalog ve
-P3I altı assignment/team operation'ı, P3J bir lazy org-chart operation'ı ekler; güncel registry
-74 generated operation ve runtime `/openapi.json` ile 75 documented endpoint'tir. P3K yeni
+P3I altı assignment/team operation'ı, P3J bir lazy org-chart operation'ı ekler; Phase 3 registry'si
+74 generated operation ve runtime `/openapi.json` ile 75 documented endpoint'ti. P3K yeni
 operation eklemez; historical dashboard/employee/leave yüzeyindeki 12 operation'ı
 caller-controlled tenant header sözleşmesinden canlı tenant `BearerAuth` + exact permission
 sözleşmesine geçirir. P4A yeni operation eklemez; employee read/update component'larını version ve
 current-assignment özetiyle additive genişletir, employee list/create operation metadata ve conflict
 örneklerini günceller. Historical snapshot'lar yeniden yazılmaz; intentional P4A component diff'i
-executable contract testinde allowlist ve hassas-alan reddiyle sabitlenir.
+executable contract testinde allowlist ve hassas-alan reddiyle sabitlenir. P4B aşağıdaki üç
+additive Employee 360 operation'ını ekler; güncel registry 77 generated operation ve runtime
+`/openapi.json` dahil 78 documented endpoint'tir.
 
 | Method | Path | Durum | Not |
 |---|---|---|---|
@@ -106,6 +108,9 @@ executable contract testinde allowlist ve hassas-alan reddiyle sabitlenir.
 | GET | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:read:tenant`; additive version/current-assignment özeti, cross-tenant/missing aynı `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:update:tenant`; compatible partial update, optional optimistic version ve audit |
 | DELETE | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:update:tenant`; idempotent archive, retained history ve ilk-transition audit |
+| GET | `/api/v1/employees/{employee_id}/profile` | P4B uygulandı | `BearerAuth` + `employee:read:tenant`; `{data,meta}` Employee 360 aggregate, independent section versions ve Phase 3 kaynaklı bounded read-only organization history |
+| PATCH | `/api/v1/employees/{employee_id}/profile/personal` | P4B uygulandı | `BearerAuth` + `employee:update:tenant`; expected personal version, core alanlarda expected employee version, atomik allowlisted update/audit |
+| PATCH | `/api/v1/employees/{employee_id}/profile/employment` | P4B uygulandı | `BearerAuth` + `employee:update:tenant`; expected employment version, start date değişiminde expected employee version; lifecycle/assignment write yok |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | P3K doğrulandı | `BearerAuth` + `leave:read:tenant`; read-only manuel özet ve `period_year` filtresi |
 | GET | `/api/v1/leave-requests` | P3K doğrulandı | `BearerAuth` + `leave:read:tenant`; mixed-order cursor ve deprecated offset uyumluluğu |
 | POST | `/api/v1/leave-requests` | P3K doğrulandı | `BearerAuth` + `leave:manage:tenant`; pending create ve tenant-global idempotency |
@@ -1172,6 +1177,123 @@ Employee purge HTTP endpointi yoktur. Fiziksel tenant graph temizliği ancak aç
 politikasına bağlı, kısıtlı tenant-root offboarding operasyonudur; normal employee API kapsamı
 değildir.
 
+### `GET /api/v1/employees/{employee_id}/profile`
+
+Yetki: `employee:read:tenant`.
+
+Bu P4B read contract'ı core identity, focused kişisel/istihdam bölümleri ve Phase 3 kaynaklı
+organizasyonu tek bounded aggregate içinde döndürür. Success response `{data,meta}` zarfındadır ve
+`Cache-Control: no-store` taşır:
+
+```json
+{
+  "data": {
+    "core": {
+      "id": "f3000000-0000-4000-8000-000000000002",
+      "employee_number": "WF-002",
+      "first_name": "Bora",
+      "last_name": "Demir",
+      "email": "bora.demir@wealthyfalcon.demo",
+      "status": "active",
+      "employee_version": 3
+    },
+    "personal": {
+      "preferred_name": "Bora",
+      "birth_date": "1992-05-14",
+      "phone": "+90 555 000 0000",
+      "version": 2
+    },
+    "employment": {
+      "employment_start_date": "2026-06-10",
+      "contract_type": "indefinite",
+      "work_type": "full_time",
+      "version": 4
+    },
+    "organization": {
+      "current_assignment": null,
+      "history": [],
+      "history_limit": 50,
+      "history_truncated": false
+    }
+  },
+  "meta": {
+    "request_id": "req_wf_demo_001",
+    "trace_id": "0123456789abcdef0123456789abcdef",
+    "correlation_id": "req_wf_demo_001"
+  }
+}
+```
+
+`current_assignment` ve her `history` elemanı mevcut Phase 3 `EmployeeAssignmentRead`
+contract'ıdır; organization history en fazla 50 satırdır ve `history_truncated` daha eski kayıt
+olup olmadığını bildirir. Okuma batched/fixed sorgular kullanır; sekme başına veya history satırı
+başına yeni sorgu çalıştırmaz. Profil API'si assignment tablosunun sahibi değildir ve organization
+write kabul etmez. Missing, archived ve başka tenant employee ID'leri aynı
+`404 employee_not_found` zarfını kullanır.
+
+### `PATCH /api/v1/employees/{employee_id}/profile/personal`
+
+Yetki: `employee:update:tenant`.
+
+`expected_version` son okunan `personal.version` değeridir ve her mutation'da zorunludur.
+`first_name`, `last_name` veya `email` core compatibility alanlarından biri gönderilirse ayrıca son
+okunan `core.employee_version`, `expected_employee_version` olarak zorunludur. Onaylı mutable
+alanlar yalnız `first_name`, `last_name`, nullable iş e-postası, `preferred_name`, `birth_date` ve
+`phone`'dur; extra alanlar `422 employee_validation_error` ile reddedilir.
+
+```json
+{
+  "expected_version": 2,
+  "expected_employee_version": 3,
+  "first_name": "Bora",
+  "last_name": "Demir",
+  "email": "bora.demir@wealthyfalcon.demo",
+  "preferred_name": "Bora",
+  "birth_date": "1992-05-14",
+  "phone": "+90 555 000 0000"
+}
+```
+
+Response `200`, `{data:{core,personal},meta}` zarfıdır. Gerçek bir personal komut değişikliği —
+değişiklik yalnız core compatibility alanında olsa bile — `personal.version` değerini tam bir kez;
+gerçek core değişikliği `employee_version` değerini kendi token'ında tam bir kez artırır. Bölüm veya
+gerekli core version stale ise
+`409 concurrent_write_conflict` döner; employee, personal ve audit aynı UoW transaction'ında
+olduğu için hiçbir partial write/event kalmaz.
+
+### `PATCH /api/v1/employees/{employee_id}/profile/employment`
+
+Yetki: `employee:update:tenant`.
+
+`expected_version` son okunan `employment.version` değeridir ve zorunludur.
+`employment_start_date` mevcut `employees` compatibility alanını değiştirdiği için bu alan
+gönderildiğinde `expected_employee_version` da zorunludur. Focused bölüm yalnız nullable
+`contract_type=indefinite|fixed_term` ve nullable `work_type=full_time|part_time` kabul eder:
+
+```json
+{
+  "expected_version": 4,
+  "expected_employee_version": 3,
+  "employment_start_date": "2026-06-10",
+  "contract_type": "fixed_term",
+  "work_type": "part_time"
+}
+```
+
+Response `200`, `{data:{core,employment},meta}` zarfıdır. Gerçek bir employment komut değişikliği —
+değişiklik yalnız compatibility-owned start date alanında olsa bile — bölüm version'ını tam bir kez;
+gerçek start-date değişikliği core employee version'ını da bağımsız olarak tam bir kez artırır. Stale
+token aynı deterministic `409 concurrent_write_conflict` zarfını ve tam transaction rollback'ini
+kullanır.
+
+İki PATCH endpointi yalnız gerçek değişiklikte `employee.personal_profile.updated` veya
+`employee.employment_profile.updated` audit eventi üretir. `changed_fields` ile before/after
+yalnız P4B allowlist alanlarından geçer; full request/employee snapshot'ı, unrelated alan veya
+yasaklı hassas değer audit'e yazılmaz. `401`, `403`, `404`, `409` ve `422` cevapları standart
+`{error:{code,message,details,correlation_id}}` zarfındadır. Status, end date, terminate/archive,
+assignment write, TCKN/pasaport, IBAN, ücret, sağlık, adres/acil kişi, belge, leave policy ve custom
+field bu üç P4B endpointinin contract'ında değildir.
+
 ## 8. Leave endpointleri
 
 | Method | Path | Permission | Not |
@@ -1534,10 +1656,10 @@ yeniden kullanılması ikinci karar write'ını çalıştırmadan aşağıdaki `
 }
 ```
 
-## 9. Phase 8 import/export taslağı — P3K'de uygulanmadı
+## 9. Phase 8 import/export taslağı — P4B'de uygulanmadı
 
-Aşağıdaki operasyonlar master plandaki ileri-faz taslağıdır; güncel 74 generated operation içinde
-değildir ve P3K bunları başlatmaz.
+Aşağıdaki operasyonlar master plandaki ileri-faz taslağıdır; güncel 77 generated operation içinde
+değildir ve P4B bunları başlatmaz.
 
 | Method | Path | Amaç |
 |---|---|---|
@@ -1548,15 +1670,17 @@ değildir ve P3K bunları başlatmaz.
 
 ## 10. Kabul kriterleri
 
-- Güncel 74 generated operation ve runtime `/openapi.json`, Bölüm 0 ile implementation-status
+- Güncel 77 generated operation ve runtime `/openapi.json` dahil 78 documented endpoint, Bölüm 0 ile implementation-status
   tablosunda exact method/path olarak aynı olmalıdır.
 - Exact on historical Faz 1 protected operation doğru `x-required-principal` metadata'sını;
   gerçek tenant-session operation'ları `BearerAuth`, platform-session operation'ları ayrı
   `PlatformBearerAuth` security metadata'sını taşır. Public exchange operation'larına bearer
   scheme eklenmez.
 - Email-only tenant login → organization selection, ayrı platform login, organization
-  administration, assignment/team/org-chart ve employee denial browser gate'leri geçmelidir.
-- Employee response hassas alan masking kararına uyar.
+  administration, assignment/team/org-chart ve Employee 360 dört sekme/edit/conflict/direct-denial
+  browser gate'leri geçmelidir.
+- P4B Employee response'u approved non-sensitive alanlarla sınırlıdır; gelecekteki hassas alan
+  masking kararı varmış gibi TCKN/IBAN/ücret/sağlık alanı yayınlamaz.
 - Import/export async operation'ları Phase 8'e kadar current OpenAPI surface'e eklenmez.
 
 ## 11. İlgili dokümanlar

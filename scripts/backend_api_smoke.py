@@ -182,6 +182,33 @@ EMPLOYEE_ASSIGNMENT_FIELDS = {
     "created_at",
     "updated_at",
 }
+EMPLOYEE_PROFILE_CORE_FIELDS = {
+    "id",
+    "employee_number",
+    "first_name",
+    "last_name",
+    "email",
+    "status",
+    "employee_version",
+}
+EMPLOYEE_PERSONAL_PROFILE_FIELDS = {
+    "preferred_name",
+    "birth_date",
+    "phone",
+    "version",
+}
+EMPLOYEE_EMPLOYMENT_PROFILE_FIELDS = {
+    "employment_start_date",
+    "contract_type",
+    "work_type",
+    "version",
+}
+EMPLOYEE_PROFILE_ORGANIZATION_FIELDS = {
+    "current_assignment",
+    "history",
+    "history_limit",
+    "history_truncated",
+}
 ORG_CHART_NODE_FIELDS = {
     "id",
     "node_type",
@@ -304,6 +331,9 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/employees/{employee_id}"),
     ("patch", "/api/v1/employees/{employee_id}"),
     ("delete", "/api/v1/employees/{employee_id}"),
+    ("get", "/api/v1/employees/{employee_id}/profile"),
+    ("patch", "/api/v1/employees/{employee_id}/profile/personal"),
+    ("patch", "/api/v1/employees/{employee_id}/profile/employment"),
     ("get", "/api/v1/employees/{employee_id}/leave-balances"),
     ("get", "/api/v1/leave-requests"),
     ("post", "/api/v1/leave-requests"),
@@ -388,6 +418,11 @@ P3K_AUTH_MIGRATED_OPERATIONS = {
     ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
     ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
 }
+P4B_BEARER_OPERATIONS = {
+    ("get", "/api/v1/employees/{employee_id}/profile"),
+    ("patch", "/api/v1/employees/{employee_id}/profile/personal"),
+    ("patch", "/api/v1/employees/{employee_id}/profile/employment"),
+}
 RESPONSE_META_FIELDS = {"request_id", "trace_id", "correlation_id"}
 PAGE_META_FIELDS = RESPONSE_META_FIELDS | {"limit", "next_cursor"}
 CORRELATION_RESPONSE_HEADERS = (
@@ -445,11 +480,18 @@ async def main(database_url: str | None = None) -> None:
             primary_employee_id, secondary_employee_id, other_employee_id = (
                 await _smoke_employee_endpoints(client, other_admin_headers)
             )
-            await _smoke_employee_assignment_endpoints(
+            assignment_history = await _smoke_employee_assignment_endpoints(
                 client,
                 tenant_admin_headers,
                 employee_id=primary_employee_id,
                 structure=assignment_structure,
+            )
+            await _smoke_employee_profile_endpoints(
+                client,
+                tenant_admin_headers,
+                employee_id=primary_employee_id,
+                other_employee_id=other_employee_id,
+                assignment_history=assignment_history,
             )
             leave_request_ids = await _smoke_leave_request_endpoints(
                 client,
@@ -485,6 +527,7 @@ async def main(database_url: str | None = None) -> None:
         "legal_entities,branches,branch_archive_history,departments,department_lazy_tree,"
         "department_move_cycle_archive_history,positions,position_search_archive_history,"
         "employee_assignments,assignment_history,derived_manager_team,lazy_org_chart,"
+        "employee_360_profile,personal_employment_versions,profile_tenant_isolation,"
         "phase0_contract_compatibility,"
         "documented_endpoint_runtime_coverage,dashboard_counts,employee_filters,employees,"
         "leave_balances,leave_filters,leave_requests,workflow_transitions,auth"
@@ -1918,7 +1961,7 @@ async def _smoke_employee_assignment_endpoints(
     *,
     employee_id: UUID,
     structure: dict[str, str],
-) -> None:
+) -> dict[str, Any]:
     options = _expect_phase1_data(
         await _request_documented(
             client,
@@ -2149,6 +2192,279 @@ async def _smoke_employee_assignment_endpoints(
         expected_limit=50,
     )
     _assert_equal(former_team, [], "former manager derived team after change")
+
+    return {
+        "current": successor,
+        "history": [successor, created],
+    }
+
+
+async def _smoke_employee_profile_endpoints(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    *,
+    employee_id: str,
+    other_employee_id: str,
+    assignment_history: dict[str, Any],
+) -> None:
+    profile = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "get",
+            f"/api/v1/employees/{employee_id}/profile",
+            documented_path="/api/v1/employees/{employee_id}/profile",
+            headers=admin_headers,
+        ),
+        200,
+        "GET /api/v1/employees/{employee_id}/profile",
+        {"core", "personal", "employment", "organization"},
+    )
+    _assert_exact_fields(
+        profile["core"],
+        EMPLOYEE_PROFILE_CORE_FIELDS,
+        "Employee 360 core",
+    )
+    _assert_exact_fields(
+        profile["personal"],
+        EMPLOYEE_PERSONAL_PROFILE_FIELDS,
+        "Employee 360 personal",
+    )
+    _assert_exact_fields(
+        profile["employment"],
+        EMPLOYEE_EMPLOYMENT_PROFILE_FIELDS,
+        "Employee 360 employment",
+    )
+    organization = profile["organization"]
+    _assert_exact_fields(
+        organization,
+        EMPLOYEE_PROFILE_ORGANIZATION_FIELDS,
+        "Employee 360 organization",
+    )
+    _assert_equal(profile["core"]["id"], employee_id, "Employee 360 employee ID")
+    _assert_equal(
+        profile["core"]["employee_version"],
+        3,
+        "Employee 360 initial core version",
+    )
+    _assert_equal(
+        profile["personal"]["version"],
+        1,
+        "Employee 360 initial personal version",
+    )
+    _assert_equal(
+        profile["employment"]["version"],
+        1,
+        "Employee 360 initial employment version",
+    )
+    _assert_equal(organization["history_limit"], 50, "profile history bound")
+    _assert_equal(
+        organization["history_truncated"],
+        False,
+        "profile bounded history completeness",
+    )
+    current_assignment = organization["current_assignment"]
+    if not isinstance(current_assignment, dict):
+        raise AssertionError("Employee 360 omitted the Phase 3 current assignment")
+    _assert_exact_fields(
+        current_assignment,
+        EMPLOYEE_ASSIGNMENT_FIELDS,
+        "Employee 360 current assignment",
+    )
+    _assert_equal(
+        current_assignment["id"],
+        assignment_history["current"]["id"],
+        "Employee 360 Phase 3 current assignment source",
+    )
+    profile_history = organization["history"]
+    if not isinstance(profile_history, list):
+        raise AssertionError("Employee 360 assignment history must be a list")
+    expected_history_ids = sorted(
+        (assignment["id"] for assignment in assignment_history["history"]),
+        key=UUID,
+    )
+    _assert_equal(
+        [assignment["id"] for assignment in profile_history],
+        expected_history_ids,
+        "Employee 360 Phase 3 assignment history source",
+    )
+    for assignment in profile_history:
+        _assert_exact_fields(
+            assignment,
+            EMPLOYEE_ASSIGNMENT_FIELDS,
+            "Employee 360 assignment history item",
+        )
+
+    personal = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/employees/{employee_id}/profile/personal",
+            documented_path="/api/v1/employees/{employee_id}/profile/personal",
+            headers=admin_headers,
+            json={
+                "expected_version": profile["personal"]["version"],
+                "expected_employee_version": profile["core"]["employee_version"],
+                "first_name": "Ada Profile",
+                "preferred_name": "Ada",
+                "birth_date": "1990-12-10",
+                "phone": "+90 555 000 0001",
+            },
+        ),
+        200,
+        "PATCH /api/v1/employees/{employee_id}/profile/personal",
+        {"core", "personal"},
+    )
+    _assert_exact_fields(
+        personal["core"],
+        EMPLOYEE_PROFILE_CORE_FIELDS,
+        "personal mutation core",
+    )
+    _assert_exact_fields(
+        personal["personal"],
+        EMPLOYEE_PERSONAL_PROFILE_FIELDS,
+        "personal mutation profile",
+    )
+    _assert_equal(personal["core"]["first_name"], "Ada Profile", "personal core edit")
+    _assert_equal(
+        personal["core"]["employee_version"],
+        profile["core"]["employee_version"] + 1,
+        "personal core version increment",
+    )
+    _assert_equal(
+        personal["personal"]["version"],
+        profile["personal"]["version"] + 1,
+        "personal section version increment",
+    )
+    _assert_equal(personal["personal"]["preferred_name"], "Ada", "preferred name")
+    _assert_equal(personal["personal"]["birth_date"], "1990-12-10", "birth date")
+    _assert_equal(
+        personal["personal"]["phone"],
+        "+90 555 000 0001",
+        "personal phone",
+    )
+
+    _expect_phase1_error_code(
+        await client.patch(
+            f"/api/v1/employees/{employee_id}/profile/personal",
+            headers={
+                **admin_headers,
+                "X-Correlation-Id": "p4b-smoke-stale-personal",
+            },
+            json={
+                "expected_version": profile["personal"]["version"],
+                "preferred_name": "Stale value must not persist",
+            },
+        ),
+        409,
+        "concurrent_write_conflict",
+        "PATCH personal stale section version",
+    )
+
+    changed_start_date = (date.today() - timedelta(days=1)).isoformat()
+    employment = _expect_phase1_data(
+        await _request_documented(
+            client,
+            "patch",
+            f"/api/v1/employees/{employee_id}/profile/employment",
+            documented_path="/api/v1/employees/{employee_id}/profile/employment",
+            headers=admin_headers,
+            json={
+                "expected_version": profile["employment"]["version"],
+                "expected_employee_version": personal["core"]["employee_version"],
+                "employment_start_date": changed_start_date,
+                "contract_type": "fixed_term",
+                "work_type": "part_time",
+            },
+        ),
+        200,
+        "PATCH /api/v1/employees/{employee_id}/profile/employment",
+        {"core", "employment"},
+    )
+    _assert_exact_fields(
+        employment["core"],
+        EMPLOYEE_PROFILE_CORE_FIELDS,
+        "employment mutation core",
+    )
+    _assert_exact_fields(
+        employment["employment"],
+        EMPLOYEE_EMPLOYMENT_PROFILE_FIELDS,
+        "employment mutation profile",
+    )
+    _assert_equal(
+        employment["core"]["employee_version"],
+        personal["core"]["employee_version"] + 1,
+        "employment core version increment",
+    )
+    _assert_equal(
+        employment["employment"]["version"],
+        profile["employment"]["version"] + 1,
+        "employment section version increment",
+    )
+    _assert_equal(
+        employment["employment"]["employment_start_date"],
+        changed_start_date,
+        "employment start date edit",
+    )
+    _assert_equal(
+        employment["employment"]["contract_type"],
+        "fixed_term",
+        "employment contract type",
+    )
+    _assert_equal(
+        employment["employment"]["work_type"],
+        "part_time",
+        "employment work type",
+    )
+
+    persisted = _expect_phase1_data(
+        await client.get(
+            f"/api/v1/employees/{employee_id}/profile",
+            headers=admin_headers,
+        ),
+        200,
+        "GET persisted Employee 360 profile",
+        {"core", "personal", "employment", "organization"},
+    )
+    _assert_equal(persisted["core"], employment["core"], "persisted profile core")
+    _assert_equal(
+        persisted["personal"],
+        personal["personal"],
+        "persisted personal profile",
+    )
+    _assert_equal(
+        persisted["employment"],
+        employment["employment"],
+        "persisted employment profile",
+    )
+    persisted_organization = persisted["organization"]
+    _assert_exact_fields(
+        persisted_organization,
+        EMPLOYEE_PROFILE_ORGANIZATION_FIELDS,
+        "persisted profile organization",
+    )
+    _assert_equal(
+        persisted_organization["current_assignment"]["id"],
+        assignment_history["current"]["id"],
+        "profile writes preserve the Phase 3 current assignment",
+    )
+    _assert_equal(
+        [assignment["id"] for assignment in persisted_organization["history"]],
+        expected_history_ids,
+        "profile writes preserve Phase 3 assignment history",
+    )
+
+    _expect_phase1_error_code(
+        await client.get(
+            f"/api/v1/employees/{other_employee_id}/profile",
+            headers={
+                **admin_headers,
+                "X-Correlation-Id": "p4b-smoke-cross-tenant",
+            },
+        ),
+        404,
+        "employee_not_found",
+        "GET cross-tenant Employee 360 profile",
+    )
 
 
 async def _smoke_tenant_audit_endpoints(
@@ -2780,7 +3096,7 @@ def _expect_f2a_openapi_contracts(openapi: dict[str, Any]) -> None:
         [{"BearerAuth": []}],
         "P3C organization switch bearer requirement",
     )
-    for method, path in P3K_AUTH_MIGRATED_OPERATIONS:
+    for method, path in P3K_AUTH_MIGRATED_OPERATIONS | P4B_BEARER_OPERATIONS:
         operation = paths[path][method]
         _assert_equal(
             operation.get("security"),

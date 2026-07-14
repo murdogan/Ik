@@ -30,10 +30,34 @@ Phase 4 P4A, bu dokümandaki geniş MVP vizyonunun yalnız ilk çalışan-ana-ve
 
 P4A belge yükleme/checklist, self-servis profil, profil değişiklik talebi, import/export,
 notification/mail, raporlama, dinamik alan, ücret/bordro/performans ve hassas kimlik/finans/sağlık
-alanlarını başlatmaz. Aşağıdaki geniş MVP/V1 maddeleri ürün yönü olarak korunur ve sonraki onaylı
-bloklara aittir; P4A teslim edilmiş yüzey iddiası değildir.
+alanlarını başlatmaz.
+
+### 1.2 P4B uygulanan ürün sınırı
+
+P4B, P4A directory/detail route'unu focused Employee 360 ürün dilimine dönüştürür:
+
+- `employee:read:tenant` sahibi HR, `/employees/{employee_id}` altında **Özet**, **Kişisel**,
+  **İstihdam** ve **Organizasyon** sekmelerini kullanır. Edit yalnız
+  `employee:update:tenant` ile açılır; direct read denial profil/assignment client'ını mount etmez.
+- Core compatibility kimlik `employees` üzerinde kalır. Personal bölüm yalnız tercih edilen ad,
+  doğum tarihi ve telefon; employment bölüm yalnız sözleşme/çalışma türü ile mevcut employee
+  başlangıç tarihinin presentation'ını taşır. Her bölümün bağımsız pozitif optimistic version'ı
+  vardır; core alan editinde ayrıca `employees.version` gerekir.
+- Stale token `409 concurrent_write_conflict` ile employee/profile/audit transaction'ını tamamen
+  geri alır. Başarı yalnız onaylı changed-field ve before/after değerlerini audit'e geçirir; full
+  payload veya unrelated employee snapshot'ı yazılmaz.
+- Organizasyon sekmesi mevcut Phase 3 current assignment ve en fazla 50 history satırını salt-
+  okunur kullanır. P4B assignment sahipliği veya write endpointi eklemez.
+
+P4B TCKN/ulusal kimlik, pasaport, IBAN/banka, ücret/bordro, sağlık/özel nitelikli veri, adres/acil
+kişi, documents, leave policy, custom fields, mail, status/end-date/lifecycle aksiyonu, self-servis
+ve import/export eklemez. Aşağıdaki geniş MVP/V1 maddeleri ürün yönü olarak korunur ve sonraki
+onaylı bloklara aittir; P4A/P4B teslim edilmiş yüzey iddiası değildir.
 
 ## 2. Kapsam içi / kapsam dışı
+
+Bu tablo modülün geniş ürün yol haritasıdır. Güncel repository kapsamı yalnız yukarıdaki P4A/P4B
+alanlarıdır; belge, self-servis, import ve hassas alan satırları P4C+ planıdır.
 
 | Kapsam içi | Kapsam dışı |
 |---|---|
@@ -63,6 +87,8 @@ bloklara aittir; P4A teslim edilmiş yüzey iddiası değildir.
 | `it_admin` | Hesap yaşam döngüsü entegrasyonunu izler | Security/integration | İK içerik verisine varsayılan erişmemeli |
 
 ## 4. MVP / V1 / V2 / Enterprise ayrımı
+
+Bu bölüm ürün hedefi sınıflandırmasıdır; P4B implementation status listesi değildir.
 
 ### MVP
 
@@ -107,6 +133,10 @@ bloklara aittir; P4A teslim edilmiş yüzey iddiası değildir.
 - Enterprise audit/export ve legal hold.
 
 ## 5. Ana kullanıcı akışları
+
+Bu bölümdeki belge/checklist, self-servis, import ve offboarding adımları P4C+ hedef akışlarıdır.
+P4A create, assignment'ı Organization workspace'e bırakır ve otomatik belge checklist'i üretmez;
+P4B yalnız HR profile read/edit akışını uygular.
 
 ### 5.1 Çalışan oluşturma
 
@@ -163,63 +193,71 @@ MVP'de sınırlı, V1'de detaylı ele alınır.
 
 ## 6. Ekranlar ve deneyim notları
 
-| Ekran | İçerik | MVP durumu |
+| Ekran | İçerik | Ürün hedefi / mevcut durum |
 |---|---|---|
-| Çalışan Listesi | Arama, filtre, durum, departman, hızlı aksiyon | MVP |
-| Çalışan Kartı / Employee 360 | Kişisel, iş, organizasyon, belge, izin özeti | MVP |
-| Belge Sekmesi | Belge listesi, yükleme, geçerlilik, görünürlük | MVP |
-| Özlük Checklist | Zorunlu/eksik/tamam belge durumu | MVP |
-| Profilim | Çalışan kendi bilgilerini görür | MVP |
-| Profil Değişiklik Talebi | Düzenlenebilir alanlar ve onay akışı | MVP sınırlı |
-| Toplu Import | Mapping, dry-run, hata raporu, commit | MVP |
+| Çalışan Listesi | Bounded arama/filtre, durum/organization özeti, minimal create | P4A uygulandı |
+| Çalışan Kartı / Employee 360 | Özet, focused kişisel/istihdam, read-only organization | P4B uygulandı |
+| Belge Sekmesi | Belge listesi, yükleme, geçerlilik, görünürlük | P4C+ planı; P4B'de yok |
+| Özlük Checklist | Zorunlu/eksik/tamam belge durumu | P4C+ planı; P4B'de yok |
+| Profilim | Çalışan kendi bilgilerini görür | Self-servis sonraki dilim; P4B HR-only |
+| Profil Değişiklik Talebi | Düzenlenebilir alanlar ve onay akışı | Sonraki dilim; P4B doğrudan yetkili HR editidir |
+| Toplu Import | Mapping, dry-run, hata raporu, commit | P4C+ planı; P4B'de yok |
 | Timeline | Çalışan yaşam döngüsü geçmişi | V1 |
 | Offboarding Sihirbazı | Çıkış görevleri, belge, erişim kapama | V1 |
 
 Deneyim notları:
 
 - İK paneli tablo/filtre/export açısından güçlü olmalı.
-- Çalışan ekranı sade olmalı; TCKN/IBAN gibi alanlar maskeli görünmeli.
+- P4B çalışan ekranı sade ve responsive olmalı; hassas TCKN/IBAN alanları henüz contract'a veya
+  DOM'a hiç girmemelidir. Gelecekte eklenirse masking ayrı güvenlik kararıdır.
 - Belge yükleme mobilde fotoğraf çekme/PDF yükleme senaryosunu desteklemeli.
 - Import hataları teknik değil, satır bazlı ve anlaşılır gösterilmeli.
 
 ## 7. Veri modeli etkisi
 
-| Varlık | Amaç | Kritik alanlar |
+| Durum | Varlık | Amaç ve güncel alan sınırı |
 |---|---|---|
-| `employees` | Çalışan ana kaydı | `tenant_id`, `employee_number`, `status`, `user_id`, `created_at` |
-| `employee_profiles` | Kişisel bilgiler | `first_name`, `last_name`, `birth_date`, `national_id_encrypted`, `phone`, `address` |
-| `employee_employments` | İş ilişkisi | `start_date`, `end_date`, `contract_type`, `work_type`, `status` |
-| `employee_assignments` | Departman/pozisyon/yönetici ilişkisi | `department_id`, `position_id`, `manager_id`, `valid_from`, `valid_to` |
-| `employee_documents` | Özlük belge kayıtları | `employee_id`, `document_type_id`, `storage_key`, `valid_until`, `sensitivity` |
-| `document_types` | Belge tipi kataloğu | `code`, `name`, `required_rules`, `has_expiry`, `sensitivity` |
-| `profile_change_requests` | Self-servis değişiklik talepleri | `employee_id`, `field_group`, `payload`, `status`, `decided_by` |
-| `employee_import_jobs` | Toplu import işlemleri | `status`, `file_key`, `summary`, `created_by` |
-| `employee_import_errors` | Import hata satırları | `row_number`, `field`, `message`, `severity` |
+| P4A uygulandı | `employees` | Core employee number, first/last name, work email, status/start/end, archive, normalized directory alanları ve optimistic version |
+| P4B uygulandı | `employee_profiles` | Tenant/employee bire-bir; yalnız `preferred_name`, `birth_date`, `phone`, bağımsız version/timestamps |
+| P4B uygulandı | `employee_employments` | Tenant/employee bire-bir; yalnız nullable `contract_type`, `work_type`, bağımsız version/timestamps; start/status/end burada çoğaltılmaz |
+| Phase 3 uygulandı | `employee_assignments` | Effective-dated legal entity/branch/department/position/manager source-of-truth; P4B yalnız okur |
+| P4C+ planı | `employee_documents` | Özlük belge metadata/storage bağı; P4B'de yok |
+| P4C+ planı | `document_types` | Belge tipi katalogu; P4B'de yok |
+| Sonraki plan | `profile_change_requests` | Self-servis değişiklik talebi; P4B'de yok |
+| Sonraki plan | `employee_import_jobs`, `employee_import_errors` | Dry-run/commit iş ve hata satırları; P4B'de yok |
 
 Veri modeli kararları:
 
-- `tenant_id` tüm tablolarda zorunludur.
-- TCKN, IBAN ve sağlık/özel nitelikli veri şifreli tutulmalıdır.
+- `tenant_id` tüm tenant-owned tablolarda zorunludur. P4B profil tabloları çalışan composite FK'si
+  ve çalışan başına tenant-scoped unique constraint taşır.
+- TCKN, IBAN ve sağlık/özel nitelikli veri P4B'de saklanmaz. Gelecekte onaylanırsa şifreleme,
+  masking, field permission ve key management birlikte kararlaştırılmalıdır.
 - Arama için hassas alanlarda plaintext index kullanılmamalıdır; gerekiyorsa blind index tasarlanmalıdır.
 - Hard delete yerine statü/arşiv/saklama yaklaşımı kullanılmalıdır.
 
 ## 8. API ve entegrasyon ihtiyaçları
 
-| Method | Endpoint | Açıklama | Faz |
+| Method | Endpoint | Açıklama | Durum |
 |---|---|---|---|
-| GET | `/api/v1/employees` | Filtreli çalışan listesi | MVP |
-| POST | `/api/v1/employees` | Çalışan oluşturma | MVP |
-| GET | `/api/v1/employees/{id}` | Employee 360 detay | MVP |
-| PATCH | `/api/v1/employees/{id}` | Çalışan güncelleme | MVP |
-| POST | `/api/v1/employees/imports` | Import dry-run başlatma | MVP |
-| GET | `/api/v1/employees/imports/{id}` | Import sonucu | MVP |
-| POST | `/api/v1/employees/{id}/documents` | Belge yükleme | MVP |
-| GET | `/api/v1/employees/{id}/documents` | Belge listesi | MVP |
-| GET | `/api/v1/document-types` | Belge tipi listesi | MVP |
-| POST | `/api/v1/profile-change-requests` | Profil değişiklik talebi | MVP |
-| POST | `/api/v1/profile-change-requests/{id}/approve` | Talep onayı | MVP/V1 |
-| POST | `/api/v1/employees/{id}/terminate` | İşten ayrılış başlatma | V1 |
-| GET | `/api/v1/employees/{id}/timeline` | Yaşam döngüsü timeline | V1 |
+| GET | `/api/v1/employees` | Filtreli çalışan listesi | P4A uygulandı |
+| POST | `/api/v1/employees` | Minimal çalışan oluşturma | P4A uygulandı |
+| GET/PATCH/DELETE | `/api/v1/employees/{employee_id}` | Compatible summary/update/archive | P4A uygulandı; korunur |
+| GET | `/api/v1/employees/{employee_id}/profile` | `{data,meta}` focused Employee 360 + read-only bounded Phase 3 organization | P4B uygulandı; `employee:read:tenant` |
+| PATCH | `/api/v1/employees/{employee_id}/profile/personal` | Expected personal version; core alanlarda expected employee version; atomik audit | P4B uygulandı; `employee:update:tenant` |
+| PATCH | `/api/v1/employees/{employee_id}/profile/employment` | Expected employment version; start date için expected employee version; lifecycle yok | P4B uygulandı; `employee:update:tenant` |
+| POST/GET | `/api/v1/employees/imports...` | Import dry-run/sonuç | P4C+ planı; route yok |
+| POST/GET | `/api/v1/employees/{id}/documents...` | Belge yükleme/listesi | P4C+ planı; route yok |
+| POST | `/api/v1/profile-change-requests...` | Self-servis profil talebi/onay | Sonraki plan; route yok |
+| POST | `/api/v1/employees/{id}/terminate` | İşten ayrılış lifecycle | P4F/V1 planı; P4B'de route/UI yok |
+| GET | `/api/v1/employees/{id}/timeline` | Yaşam döngüsü timeline | V1 planı; route yok |
+
+Üç P4B endpointi success'te `{data,meta}` zarfı ve `Cache-Control: no-store` kullanır. GET response
+`core.employee_version`, `personal.version`, `employment.version` değerlerini ayrı taşır. Her PATCH
+section `expected_version` ister; core compatibility alanı değişiyorsa
+`expected_employee_version` da zorunludur. Stale write `409 concurrent_write_conflict`, invalid
+alan/enum `422 employee_validation_error`, missing/cross-tenant ID aynı
+`404 employee_not_found` zarfıdır. Status/end-date veya organization mutation payload'ı kabul
+edilmez.
 
 Entegrasyon etkileri:
 
@@ -231,6 +269,10 @@ Entegrasyon etkileri:
 - PAY/TIME: V1/V2'de bordro ve puantaj için employee/employment verisi.
 
 ## 9. Yetki, scope ve güvenlik kuralları
+
+Aşağıdaki rol matrisi geniş ürün hedefidir. Güncel P4B backend authority'si daha dardır: aggregate
+read yalnız `employee:read:tenant`, iki PATCH yalnız `employee:update:tenant` ister. Own/team,
+self-servis, payroll field veya document permission P4B profil endpointlerini açmaz.
 
 | İşlem | `employee` | `manager` | `hr_specialist` | `hr_director` | `payroll_specialist` | `auditor` |
 |---|---|---|---|---|---|---|
@@ -267,6 +309,8 @@ Audit eventleri:
 
 - `employee.created`
 - `employee.updated`
+- `employee.personal_profile.updated` — yalnız P4B personal allowlist changed fields/values
+- `employee.employment_profile.updated` — yalnız P4B employment allowlist changed fields/values
 - `employee.status_changed`
 - `employee.sensitive_field.viewed`
 - `employee.import.started`
@@ -278,6 +322,11 @@ Audit eventleri:
 - `profile_change.requested`
 - `profile_change.approved`
 - `profile_change.rejected`
+
+P4B eventleri command UoW transaction'ındadır; stale/version/validation veya audit persistence
+hatası employee/profile değişikliğini tamamen rollback eder. Full request, unrelated employee
+snapshot'ı ve P4B-dışı hassas değerler audit before/after alanına girmez. Bu iki implemented event
+dışındaki document/import/profile-change eventleri ilgili gelecek route'ların hedef listesidir.
 
 Saklama kararı: MVP'de belge ve çalışan verisi için retention metadata tutulmalıdır; otomatik imha/anonimleştirme V2'de derinleşebilir.
 
@@ -302,6 +351,12 @@ Arka plan işler:
 
 ## 12. Test senaryoları
 
+Güncel P4B acceptance senaryoları: migration'da employee başına tam iki focused satır; same UUID
+cross-tenant read/write gizleme; bağımsız personal/employment stale token reddi; core + section +
+audit atomik rollback; allowlist redaction; bounded Employee 360/assignment query; P4A ve Phase 3
+regresyonu; responsive dört-tab HR journey ve direct-denial no-mount. Aşağıdaki belge/import/
+self-servis senaryoları gelecek ürün test planıdır.
+
 | Tür | Senaryo |
 |---|---|
 | Unit | Employee number tenant içinde benzersiz |
@@ -318,6 +373,19 @@ Arka plan işler:
 | Performance | Büyük çalışan listesinde filtreleme ve arama |
 
 ## 13. Kabul kriterleri
+
+P4B için uygulanmış kabul sınırı:
+
+- HR read yetkisiyle dört sekmeli Employee 360'ı açabilir; update yetkisiyle yalnız approved
+  personal/employment alanlarını optimistic token ile değiştirebilir.
+- Organization current/history Phase 3 kaynağından bounded ve salt-okunur gelir; assignment write
+  veya sahiplik tekrarı yoktur.
+- Stale update `409` ile partial employee/profile/audit state bırakmaz; cross-tenant ID normal
+  not-found davranışından ayrıştırılamaz.
+- TCKN/pasaport, IBAN/banka, compensation, health, address/emergency, document, lifecycle,
+  self-servis/import/mail/P4C+ alan ve aksiyonları yoktur.
+
+Aşağıdaki maddeler geniş modül MVP/V1 hedefidir; P4B tamamlandı iddiası değildir:
 
 - HR yetkili kullanıcı çalışan oluşturabilir ve güncelleyebilir.
 - Employee number tenant içinde benzersizdir.

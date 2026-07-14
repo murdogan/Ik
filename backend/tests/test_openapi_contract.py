@@ -166,6 +166,12 @@ P3I_ADDITIVE_OPERATIONS = {
 P3I_BEARER_OPERATIONS = P3I_ADDITIVE_OPERATIONS
 P3J_ADDITIVE_OPERATIONS = {"GET /api/v1/org-chart"}
 P3J_BEARER_OPERATIONS = P3J_ADDITIVE_OPERATIONS
+P4B_ADDITIVE_OPERATIONS = {
+    "GET /api/v1/employees/{employee_id}/profile",
+    "PATCH /api/v1/employees/{employee_id}/profile/employment",
+    "PATCH /api/v1/employees/{employee_id}/profile/personal",
+}
+P4B_BEARER_OPERATIONS = P4B_ADDITIVE_OPERATIONS
 P3K_AUTH_MIGRATED_OPERATIONS = {
     "GET /api/v1/dashboard/summary",
     "GET /api/v1/employees",
@@ -217,13 +223,13 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
 
 
 def test_current_openapi_surface_is_the_approved_additive_identity_contract() -> None:
-    """Preserve the historical surface while approving focused P3C/P3D additions."""
+    """Preserve the historical surface while approving focused additive operations."""
 
     f1e = _load_contract(F1E_SNAPSHOT_PATH)
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
 
-    assert current["operation_count"] == 74
+    assert current["operation_count"] == 77
     assert set(current["operations"]) == (
         set(f1e["operations"])
         | F2_APPROVED_ADDITIVE_OPERATIONS
@@ -235,6 +241,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3H_ADDITIVE_OPERATIONS
         | P3I_ADDITIVE_OPERATIONS
         | P3J_ADDITIVE_OPERATIONS
+        | P4B_ADDITIVE_OPERATIONS
     )
     bearer_security = [{"BearerAuth": []}]
     assert {
@@ -250,6 +257,7 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
         | P3H_BEARER_OPERATIONS
         | P3I_BEARER_OPERATIONS
         | P3J_BEARER_OPERATIONS
+        | P4B_BEARER_OPERATIONS
         | P3K_AUTH_MIGRATED_OPERATIONS
     )
     platform_bearer_security = [{"PlatformBearerAuth": []}]
@@ -306,9 +314,116 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
                 | P3H_BEARER_OPERATIONS
                 | P3I_BEARER_OPERATIONS
                 | P3J_BEARER_OPERATIONS
+                | P4B_BEARER_OPERATIONS
                 | P3K_AUTH_MIGRATED_OPERATIONS
             ):
                 assert "security" not in operation
+
+
+def test_p4b_employee_profile_openapi_is_versioned_strict_and_tenant_authenticated() -> None:
+    openapi = create_app().openapi()
+    paths = openapi["paths"]
+    expected_operations = {
+        ("get", "/api/v1/employees/{employee_id}/profile"): (
+            "Read Employee 360 profile",
+            None,
+            "EmployeeProfileRead",
+        ),
+        ("patch", "/api/v1/employees/{employee_id}/profile/personal"): (
+            "Update employee personal profile",
+            "EmployeePersonalProfileUpdate",
+            "EmployeePersonalProfileMutationRead",
+        ),
+        ("patch", "/api/v1/employees/{employee_id}/profile/employment"): (
+            "Update employee employment profile",
+            "EmployeeEmploymentProfileUpdate",
+            "EmployeeEmploymentProfileMutationRead",
+        ),
+    }
+
+    for (method, path), (summary, request_schema, data_schema) in expected_operations.items():
+        operation = paths[path][method]
+        assert operation["tags"] == ["Employees"]
+        assert operation["summary"] == summary
+        assert operation["description"].strip()
+        assert operation["security"] == [{"BearerAuth": []}]
+        assert {parameter["name"] for parameter in operation["parameters"]} == {"employee_id"}
+        assert {"401", "403", "404"} <= set(operation["responses"])
+        assert set(operation["responses"]["200"]["headers"]) == {
+            "X-Request-Id",
+            "X-Trace-Id",
+            "X-Correlation-Id",
+        }
+
+        success_envelope = _resolve_schema(
+            openapi,
+            operation["responses"]["200"]["content"]["application/json"]["schema"],
+        )
+        assert set(success_envelope["properties"]) == {"data", "meta"}
+        assert success_envelope["properties"]["data"] == {
+            "$ref": f"#/components/schemas/{data_schema}"
+        }
+
+        if request_schema is None:
+            assert "requestBody" not in operation
+            continue
+        assert {"409", "422"} <= set(operation["responses"])
+        request_body = operation["requestBody"]["content"]["application/json"]["schema"]
+        assert request_body == {"$ref": f"#/components/schemas/{request_schema}"}
+
+    schemas = openapi["components"]["schemas"]
+    personal_update = schemas["EmployeePersonalProfileUpdate"]
+    employment_update = schemas["EmployeeEmploymentProfileUpdate"]
+    assert personal_update["additionalProperties"] is False
+    assert employment_update["additionalProperties"] is False
+    assert set(personal_update["properties"]) == {
+        "expected_version",
+        "expected_employee_version",
+        "first_name",
+        "last_name",
+        "email",
+        "preferred_name",
+        "birth_date",
+        "phone",
+    }
+    assert set(employment_update["properties"]) == {
+        "expected_version",
+        "expected_employee_version",
+        "employment_start_date",
+        "contract_type",
+        "work_type",
+    }
+    assert personal_update["required"] == ["expected_version"]
+    assert employment_update["required"] == ["expected_version"]
+    assert schemas["EmployeeContractType"]["enum"] == ["indefinite", "fixed_term"]
+    assert schemas["EmployeeWorkType"]["enum"] == ["full_time", "part_time"]
+
+    profile = schemas["EmployeeProfileRead"]
+    assert profile["additionalProperties"] is False
+    assert set(profile["properties"]) == {
+        "core",
+        "personal",
+        "employment",
+        "organization",
+    }
+    serialized_profile_schemas = json.dumps(
+        {
+            name: schema
+            for name, schema in schemas.items()
+            if name.startswith("Employee") and "Profile" in name
+        },
+        sort_keys=True,
+    )
+    for forbidden_field in (
+        "national_id",
+        "passport",
+        "iban",
+        "compensation",
+        "address",
+        "emergency_contact",
+        "employment_end_date",
+    ):
+        assert f'"{forbidden_field}"' not in serialized_profile_schemas
 
 
 def test_p4a_employee_schema_expands_the_legacy_contract_without_sensitive_fields() -> None:
@@ -510,6 +625,15 @@ def _load_contract(path: Path) -> dict[str, Any]:
     snapshot = json.loads(path.read_text(encoding="utf-8"))
     assert snapshot["format_version"] == 1
     return snapshot["contract"]
+
+
+def _resolve_schema(openapi: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    reference = schema.get("$ref")
+    if reference is None:
+        return schema
+    prefix = "#/components/schemas/"
+    assert reference.startswith(prefix)
+    return openapi["components"]["schemas"][reference.removeprefix(prefix)]
 
 
 def _digest(value: object) -> str:

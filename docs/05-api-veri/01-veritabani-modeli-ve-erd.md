@@ -16,7 +16,9 @@ ile ekledi. Phase 3 zinciri doğrusaldır: P3A–P3E global identity, tenant mem
 şemasını `0027`–`0030` ile kurar. P3J lazy org chart için yeni tablo eklemez. P3K'nin
 `0031_p3k_legacy_tenant_auth_boundary` revision'ı da katalog-only kapanıştır: HR director ve HR
 specialist rollerine `leave:manage:tenant` grant'i ekler; Phase 4 verisi veya ürün tablosu eklemez.
-Güncel tek Alembic head bu `0031` revision'ıdır.
+P4A `0032` ile employee directory normalized/index/version sözleşmesini, P4B `0033` ile focused
+kişisel ve istihdam profillerini additive ekler. Güncel tek Alembic head
+`0033_p4b_employee_profiles`'dır.
 
 ## 2. Kavramsal ERD
 
@@ -34,6 +36,8 @@ erDiagram
   departments ||--o{ departments : parent_of
   tenants ||--o{ positions : catalogs
   tenants ||--o{ employees : has
+  tenants ||--o{ employee_profiles : owns
+  tenants ||--o{ employee_employments : owns
   tenants ||--o{ command_idempotency : owns
   tenants ||--|| tenant_settings : configures
   tenants ||--o{ tenant_feature_flags : rolls_out
@@ -43,6 +47,8 @@ erDiagram
   users ||--|| tenant_memberships : legacy_projection
   tenant_memberships ||--o{ membership_roles : assigned
   employees ||--o{ employee_assignments : has
+  employees ||--|| employee_profiles : has_personal
+  employees ||--|| employee_employments : has_employment
   legal_entities ||--o{ employee_assignments : scopes
   branches ||--o{ employee_assignments : scopes
   departments ||--o{ employee_assignments : scopes
@@ -52,18 +58,18 @@ erDiagram
   employees ||--o{ leave_balance_summaries : retains
 ```
 
-Bu diyagram güncel fiziksel core/auth/organization ilişkilerini gösterir. Employee 360 alt
-kayıtları, doküman, payroll, ATS, performance, LMS, PDKS ve entegrasyon tabloları sonraki faz
-planıdır; güncel Phase 3 şeması varmış gibi yorumlanmamalıdır.
+Bu diyagram güncel fiziksel core/auth/organization ve P4B focused Employee 360 ilişkilerini
+gösterir. Employee document, payroll, ATS, performance, LMS, PDKS ve entegrasyon tabloları sonraki
+faz planıdır; P4B'de varmış gibi yorumlanmamalıdır.
 
 ## 3. Domain tablo grupları
 
 | Durum | Domain | Tablolar |
 |---|---|---|
 | Uygulandı | CORE/AUTH/RBAC | `tenants`, `tenant_settings`, `tenant_feature_flags`, `identities`, `tenant_memberships`, `membership_roles`, `users`, `user_activation_tokens`, `password_reset_tokens`, `organization_selection_transactions`, `organization_selection_choices`, `refresh_session_families`, `refresh_session_tokens`, `platform_identity_roles`, `platform_refresh_session_families`, `platform_refresh_session_tokens`, `authentication_rate_limit_buckets`, `roles`, `permissions`, `role_permissions`, `user_roles`, `command_idempotency` |
-| Uygulandı | EMP/ORG | `employees`, `legal_entities`, `branches`, `department_hierarchy_write_fences`, `departments`, `positions`, `employee_assignments` |
+| Uygulandı | EMP/ORG | `employees`, `employee_profiles`, `employee_employments`, `legal_entities`, `branches`, `department_hierarchy_write_fences`, `departments`, `positions`, `employee_assignments` |
 | Uygulandı | LEAVE/OPS | `leave_requests`, `leave_balance_summaries`, append-only `audit_events` |
-| Phase 4+ planı | Employee/DOC | `employee_profiles`, `employee_employments`, `employee_documents`, `document_types` |
+| P4C+ planı | Employee/DOC | `employee_documents`, `document_types` ve onaylanacak diğer employee alt kayıtları |
 | Sonraki faz planı | TIME/PAY/ATS/PERF/LMS/Workflow/REP/AI/INT | `leave_types`, `holiday_calendars`, `time_clock_events`, payroll, recruitment, performance, learning, workflow, reporting, AI ve integration tabloları |
 | Sonraki faz planı | OPS | `security_events`, `outbox_events`, `background_jobs` |
 
@@ -128,6 +134,30 @@ P3F–P3J organization kuralları:
   türetir. `GET /api/v1/org-chart` root veya tek direct-report seviyesini bounded cursor ile lazy
   getirir; full-tenant recursive payload veya N+1 per-node lookup yoktur.
 
+P4A–P4B employee-master kuralları:
+
+- Core compatibility identity `employees` üzerinde kalır: employee number, first/last name ve
+  nullable iş e-postası. P4A trim/lowercase normalized generated kolonları, tenant-scoped
+  employee-number/non-null work-email benzersizliği, directory indexleri ve pozitif optimistic
+  `version` ekler; mevcut legacy alanları veya assignment history'yi kaldırmaz.
+- `employee_profiles` yalnız `preferred_name`, `birth_date`, `phone`, pozitif bağımsız `version`
+  ve timestamp'leri taşır. `employee_employments` yalnız nullable
+  `contract_type=indefinite|fixed_term`, nullable `work_type=full_time|part_time`, pozitif bağımsız
+  `version` ve timestamp'leri taşır. `employment_start_date`, status ve end-date compatibility
+  sahibi `employees` kaydında kalır.
+- İki profil tablosunda da UUID `id`, `tenant_id`, `employee_id`, `(tenant_id,id)` candidate key ve
+  `(tenant_id,employee_id)` unique constraint'i vardır. Composite employee FK'si
+  `(tenant_id,employee_id) → employees(tenant_id,id)` ile tenant karışmasını DB seviyesinde
+  engeller ve `ON DELETE RESTRICT` kullanır.
+- `0033` upgrade'i arşivli/terminated kayıtlar dahil her mevcut employee için tam bir kişisel ve
+  bir istihdam satırını deterministic ID ile backfill eder. Collision preflight tablo DDL'inden
+  önce, missing/orphan doğrulaması backfill'den sonra aynı transaction'da çalışır.
+- Organization aggregate'i yeni sahiplik kurmaz. Employee 360 current assignment ve en fazla 50
+  history satırını Phase 3 `employee_assignments` sorgu/contract'ından salt-okunur project eder;
+  profil endpointleri assignment yazmaz.
+- TCKN/ulusal kimlik, pasaport, IBAN/banka, ücret/bordro, sağlık/özel nitelikli veri, adres/acil
+  kişi, belge, leave policy ve custom field P4B şemasında yoktur.
+
 F1A tenant/config kuralları:
 
 - Mevcut `tenants.status` DB check'i `provisioning|trial|active|suspended|offboarding|closed`
@@ -189,14 +219,16 @@ P0E sonrasında employee yaşam döngüsü ve komut retry verisi için ek kurall
 | `tenants` | unique `slug`; mevcut lifecycle status check'i; yeni plan/region/locale inputları API/domain allowlist'inde |
 | `tenant_settings` | primary key `tenant_id` aynı zamanda tenant foreign key |
 | `tenant_feature_flags` | composite primary key `(tenant_id,key)`; fixed key/enabled check; tenant root FK; katalog sırası bounded olduğu için ayrı liste indexi yok |
-| `employees` | `(tenant_id, employee_number) unique`, `(tenant_id, status)`, `(tenant_id, archived_at)`, non-archived `(tenant_id, id)` directory cursor, non-archived `(tenant_id, status, id)` status cursor, non-archived `employee_number`/`email` partial `pg_trgm` GIN, non-archived `(tenant_id, department_normalized)` |
+| `employees` | Legacy `(tenant_id, employee_number) unique`; P4A normalized employee-number/non-null work-email unique indexleri; non-archived `(tenant_id,id)` ve `(tenant_id,status,id)` directory cursor indexleri; full-name ve legacy employee-number/email `pg_trgm`; `(tenant_id,archived_at)` ve department/assignment filtre indexleri |
+| `employee_profiles` | Primary `id`; candidate `(tenant_id,id)` ve çalışan başına unique `(tenant_id,employee_id)`; composite employee FK tenant bütünlüğü |
+| `employee_employments` | Primary `id`; candidate `(tenant_id,id)` ve çalışan başına unique `(tenant_id,employee_id)`; composite employee FK tenant bütünlüğü |
 | `command_idempotency` | `(tenant_id, idempotency_key) unique`, `(tenant_id)` |
 | `legal_entities` | tenant-unique normalized code, tek default partial unique, `(tenant_id,status,code_normalized)` |
 | `branches` | tenant-unique normalized code, `(tenant_id,status,code_normalized)`, `(tenant_id,legal_entity_id,status)` |
 | `departments` | tenant-unique normalized code, `(tenant_id,status,code_normalized,id)`, `(tenant_id,parent_id,status,code_normalized,id)` |
 | `positions` | tenant-unique normalized code, status/code cursor B-tree'leri ve normalized code/title `pg_trgm` GIN araması |
 | `employee_assignments` | tek open assignment partial unique; `(tenant_id,employee_id,effective_from,id)` history; manager scope, department ve branch effective indexleri |
-| `employee_documents` (Phase 4+ planı) | `(tenant_id, employee_id, document_type_id)`, `(tenant_id, valid_until)` |
+| `employee_documents` (P4C+ planı) | `(tenant_id, employee_id, document_type_id)`, `(tenant_id, valid_until)` |
 | `leave_requests` | `(tenant_id, employee_id, start_date)`, `(tenant_id, status, created_at)`, `(tenant_id, created_at desc, start_date asc, id asc)` |
 | `time_clock_events` (sonraki faz planı) | `(tenant_id, employee_id, event_at desc)`, `(tenant_id, device_id, event_at)` |
 | `payroll_exports` (sonraki faz planı) | `(tenant_id, period, created_at desc)` |
@@ -231,8 +263,9 @@ Seed existing assignment history'sini overwrite etmez ve plaintext credential ya
 
 ## 7. Hassas veri yaklaşımı
 
-Aşağıdaki alanlar Phase 4+ tasarım hedefidir; TCKN, IBAN, ücret, sağlık, aday veya AI
-payload'ı güncel Phase 3 şemasında yoktur.
+Aşağıdaki alanlar P4C+ güvenlik/ürün kararı gerektiren gelecek hedefleridir; TCKN, IBAN, ücret,
+sağlık, aday veya AI payload'ı güncel P4B şemasında yoktur. P4B yalnız yukarıdaki non-sensitive
+focused profil alanlarını saklar; bu tablo gelecek hassas alanlar için örtük onay değildir.
 
 | Alan | Yaklaşım |
 |---|---|
@@ -276,6 +309,10 @@ Kurallar:
 - Feature tablosunda app role yalnız tenant-scoped `SELECT`, platform role yalnız
   `SELECT/INSERT/UPDATE` alır; ikisi de `DELETE` alamaz. Platform feature policy'si HR grant'i
   yaratmaz.
+- P4B `employee_profiles` ve `employee_employments` tablolarında inherited/default ACL önce
+  sıfırlanır. Tenant app yalnız table `SELECT,INSERT` ve onaylı bölüm alanları ile
+  `version,updated_at` kolonlarında `UPDATE` alır; `PUBLIC`, platform ve authentication rolleri
+  tablo/kolon grant'i almaz. İki tablo `ENABLE + FORCE RLS` kullanır.
 - Eksik/empty context sıfır satır, malformed UUID hata üretir; pool reuse tenant state taşımaz.
 - Policy'siz, RLS'siz veya FORCE edilmemiş tenant tablosu PostgreSQL catalog testinde fail eder.
 
@@ -322,10 +359,17 @@ Kurallar:
   mevcut tarihsel assignment resolved etiketleriyle okunabilir kalır.
 - Manager team scope serbest metinden değil, yalnız güncel structured assignment manager bağından
   türetilir. Org chart tek bounded seviyeyi lazy getirir.
+- Her employee için tenant-consistent tam bir `employee_profiles` ve `employee_employments` satırı
+  vardır; iki bölüm version'ı birbirinden ve `employees.version` değerinden bağımsızdır.
+- P4B downgrade'i herhangi bir profil değeri yazılmış veya bölüm version'ı ilerlemişse counted
+  preflight ile durur; P4A employee ve Phase 3 assignment verisini düşürmez.
+- P4B PostgreSQL test yolu RLS/ACL/constraint/cross-tenant davranışını opt-in doğrular. SQLite ve
+  offline sonuçları PostgreSQL runtime kanıtı sayılmaz; bu çalışma ortamında
+  `IK_TEST_DATABASE_URL` olmadığı için P4B PostgreSQL execution sonucu iddia edilmez.
 
 ## 11. Phase 3 / P3K final şema ve backfill kapısı
 
-Güncel fiziksel zincir `0022_p3a_identity_memberships` ile başlayan identity expand adımlarından,
+Phase 3 final fiziksel zinciri `0022_p3a_identity_memberships` ile başlayan identity expand adımlarından,
 `0030_p3i_employee_assignments` organization backfill'ine ve katalog-only
 `0031_p3k_legacy_tenant_auth_boundary` kapanışına kadar lineerdir. P3J ayrı migration eklemez.
 
@@ -346,7 +390,20 @@ kaydeder. SQLite hızlı migration uyumluluk hattıdır; PostgreSQL RLS, grant, 
 cycle veya query-plan iddiasını kanıtlamaz. Capability rolleri cluster-global olduğu için yönetim
 DSN'i shared uygulama cluster'ına değil disposable test cluster'ına ait olmalıdır.
 
-## 12. İlgili dokümanlar
+## 12. Güncel Phase 4 P4A/P4B şema kapısı
+
+Phase 3 kapanış zinciri değiştirilmeden `0032_p4a_employee_directory` ve
+`0033_p4b_employee_profiles` ileri revision'ları eklenmiştir. `0032`, employee identity
+normalization/version/index sözleşmesini; `0033`, her employee için focused kişisel/istihdam
+bire-bir kayıtlarını kurar. Güncel tek head `0033_p4b_employee_profiles`'dır.
+
+Portable migration/model testleri lineer head, SQLite backfill, offline SQL ordering, metadata
+parity ve destructive downgrade guard'ını kapsar. Disposable PostgreSQL lane'i profile count,
+constraint adları/SQLSTATE, `ENABLE + FORCE RLS`, narrow grants, tenant role izolasyonu ve failed
+downgrade rollback'ini kapsayacak şekilde eklenmiştir; DSN olmadığı için bu doküman P4B için gerçek
+PostgreSQL çalıştırma kanıtı ileri sürmez.
+
+## 13. İlgili dokümanlar
 
 - [Çok Kiracılık ve Veri İzolasyonu](../04-mimari/02-cok-kiracilik-ve-veri-izolasyonu.md)
 - [CORE, AUTH ve RBAC Modülleri](../03-moduller/01-core-auth-rbac.md)

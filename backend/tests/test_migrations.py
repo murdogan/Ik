@@ -567,6 +567,40 @@ def _run_alembic_p4a_downgrade_offline_subprocess() -> subprocess.CompletedProce
     )
 
 
+def _run_alembic_p4b_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0032_p4a_employee_directory:0033_p4b_employee_profiles",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_alembic_p4b_downgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "downgrade",
+            "0033_p4b_employee_profiles:0032_p4a_employee_directory",
+            "--sql",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_alembic_config_points_to_backend_migrations() -> None:
     config = _alembic_config()
 
@@ -639,8 +673,11 @@ def test_core_migration_chain_is_linear() -> None:
         "0031_p3k_legacy_tenant_auth_boundary"
     )
     p4a_employee_master_revision = script.get_revision("0032_p4a_employee_directory")
+    p4b_employee_profiles_revision = script.get_revision(
+        "0033_p4b_employee_profiles"
+    )
 
-    assert script.get_heads() == ["0032_p4a_employee_directory"]
+    assert script.get_heads() == ["0033_p4b_employee_profiles"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -724,6 +761,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p4a_employee_master_revision is not None
     assert p4a_employee_master_revision.down_revision == (
         "0031_p3k_legacy_tenant_auth_boundary"
+    )
+    assert p4b_employee_profiles_revision is not None
+    assert p4b_employee_profiles_revision.down_revision == (
+        "0032_p4a_employee_directory"
     )
 
 
@@ -908,7 +949,7 @@ def test_sqlite_p4a_upgrade_enforces_normalized_keys_and_round_trips(
         alembic_command.upgrade(config, "head")
         with engine.connect() as connection:
             assert connection.scalar(text("select version_num from alembic_version")) == (
-                "0032_p4a_employee_directory"
+                "0033_p4b_employee_profiles"
             )
     finally:
         engine.dispose()
@@ -954,6 +995,396 @@ def test_sqlite_p4a_downgrade_refuses_to_rebaseline_changed_versions(
             ) == 2
     finally:
         engine.dispose()
+
+
+def test_sqlite_p4b_backfills_every_employee_and_enforces_profile_integrity(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p4b-backfill.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0032_p4a_employee_directory")
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_a_id = "b1000000000040008000000000000001"
+    tenant_b_id = "b1000000000040008000000000000002"
+    active_employee_id = "b2000000000040008000000000000001"
+    archived_employee_id = "b2000000000040008000000000000002"
+    terminated_employee_id = "b2000000000040008000000000000003"
+    tenant_b_employee_id = "b2000000000040008000000000000004"
+    try:
+        with engine.begin() as connection:
+            _seed_p4b_tenant(connection, tenant_a_id, slug="p4b-tenant-a")
+            _seed_p4b_tenant(connection, tenant_b_id, slug="p4b-tenant-b")
+            _seed_p4b_employee(
+                connection,
+                employee_id=active_employee_id,
+                tenant_id=tenant_a_id,
+                employee_number="P4B-ACTIVE",
+            )
+            _seed_p4b_employee(
+                connection,
+                employee_id=archived_employee_id,
+                tenant_id=tenant_a_id,
+                employee_number="P4B-ARCHIVED",
+                archived=True,
+            )
+            _seed_p4b_employee(
+                connection,
+                employee_id=terminated_employee_id,
+                tenant_id=tenant_a_id,
+                employee_number="P4B-TERMINATED",
+                status="terminated",
+                employment_end_date="2026-07-10",
+            )
+            _seed_p4b_employee(
+                connection,
+                employee_id=tenant_b_employee_id,
+                tenant_id=tenant_b_id,
+                employee_number="P4B-TENANT-B",
+            )
+
+        alembic_command.upgrade(config, "0033_p4b_employee_profiles")
+
+        inspector = inspect(engine)
+        assert set(inspector.get_table_names()) >= {
+            "employee_profiles",
+            "employee_employments",
+        }
+        assert {column["name"] for column in inspector.get_columns("employee_profiles")} == {
+            "id",
+            "tenant_id",
+            "employee_id",
+            "preferred_name",
+            "birth_date",
+            "phone",
+            "version",
+            "created_at",
+            "updated_at",
+        }
+        assert {column["name"] for column in inspector.get_columns("employee_employments")} == {
+            "id",
+            "tenant_id",
+            "employee_id",
+            "contract_type",
+            "work_type",
+            "version",
+            "created_at",
+            "updated_at",
+        }
+
+        for table_name in ("employee_profiles", "employee_employments"):
+            columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+            for required_column in (
+                "id",
+                "tenant_id",
+                "employee_id",
+                "version",
+                "created_at",
+                "updated_at",
+            ):
+                assert columns[required_column]["nullable"] is False
+            assert columns["version"]["default"] is not None
+            assert columns["created_at"]["default"] is not None
+            assert columns["updated_at"]["default"] is not None
+
+            unique_constraints = {
+                constraint["name"]: tuple(constraint["column_names"])
+                for constraint in inspector.get_unique_constraints(table_name)
+            }
+            assert unique_constraints == {
+                f"uq_{table_name}_tenant_id_id": ("tenant_id", "id"),
+                f"uq_{table_name}_tenant_employee_id": (
+                    "tenant_id",
+                    "employee_id",
+                ),
+            }
+            foreign_keys = {
+                foreign_key["name"]: (
+                    tuple(foreign_key["constrained_columns"]),
+                    foreign_key["referred_table"],
+                    tuple(foreign_key["referred_columns"]),
+                    foreign_key["options"].get("ondelete"),
+                )
+                for foreign_key in inspector.get_foreign_keys(table_name)
+            }
+            assert foreign_keys == {
+                f"fk_{table_name}_tenant_id_tenants": (
+                    ("tenant_id",),
+                    "tenants",
+                    ("id",),
+                    "CASCADE",
+                ),
+                f"fk_{table_name}_tenant_employee_id_employees": (
+                    ("tenant_id", "employee_id"),
+                    "employees",
+                    ("tenant_id", "id"),
+                    "RESTRICT",
+                ),
+            }
+            expected_checks = {f"ck_{table_name}_version_positive"}
+            if table_name == "employee_employments":
+                expected_checks.update(
+                    {
+                        "ck_employee_employments_contract_type",
+                        "ck_employee_employments_work_type",
+                    }
+                )
+            assert {
+                constraint["name"] for constraint in inspector.get_check_constraints(table_name)
+            } == expected_checks
+            with engine.connect() as connection:
+                backing_indexes = (
+                    connection.execute(text(f"pragma index_list('{table_name}')")).mappings().all()
+                )
+            assert sum(bool(index["unique"]) for index in backing_indexes) == 3
+
+        with engine.connect() as connection:
+            profile_counts = dict(
+                connection.execute(
+                    text("select tenant_id, count(*) from employee_profiles group by tenant_id")
+                ).tuples().all()
+            )
+            employment_counts = dict(
+                connection.execute(
+                    text("select tenant_id, count(*) from employee_employments group by tenant_id")
+                ).tuples().all()
+            )
+            backfilled = (
+                connection.execute(
+                    text(
+                        "select e.id, e.status, e.archived_at, "
+                        "p.tenant_id, p.employee_id, p.preferred_name, p.birth_date, "
+                        "p.phone, p.version, m.tenant_id, m.employee_id, "
+                        "m.contract_type, m.work_type, m.version "
+                        "from employees as e "
+                        "join employee_profiles as p "
+                        "on p.tenant_id = e.tenant_id and p.employee_id = e.id "
+                        "join employee_employments as m "
+                        "on m.tenant_id = e.tenant_id and m.employee_id = e.id "
+                        "order by e.id"
+                    )
+                )
+                .tuples()
+                .all()
+            )
+
+        assert profile_counts == {tenant_a_id: 3, tenant_b_id: 1}
+        assert employment_counts == {tenant_a_id: 3, tenant_b_id: 1}
+        assert [row[0] for row in backfilled] == [
+            active_employee_id,
+            archived_employee_id,
+            terminated_employee_id,
+            tenant_b_employee_id,
+        ]
+        assert backfilled[1][2] is not None
+        assert backfilled[2][1] == "terminated"
+        for row in backfilled:
+            assert row[3:9] == (row[3], row[0], None, None, None, 1)
+            assert row[9:14] == (row[9], row[0], None, None, 1)
+
+        for table_name in ("employee_profiles", "employee_employments"):
+            table_suffix = "01" if table_name == "employee_profiles" else "02"
+            extension_values = (
+                "preferred_name, birth_date, phone"
+                if table_name == "employee_profiles"
+                else "contract_type, work_type"
+            )
+            extension_bindings = (
+                "null, null, null" if table_name == "employee_profiles" else "null, null"
+            )
+            _assert_sqlite_p4b_integrity_error(
+                engine,
+                text(
+                    f"insert into {table_name} ("
+                    "id, tenant_id, employee_id, "
+                    f"{extension_values}, version, created_at, updated_at"
+                    ") values ("
+                    ":id, :tenant_id, :employee_id, "
+                    f"{extension_bindings}, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {
+                    "id": f"b30000000000400080000000000000{table_suffix}",
+                    "tenant_id": tenant_a_id,
+                    "employee_id": active_employee_id,
+                },
+            )
+            _assert_sqlite_p4b_integrity_error(
+                engine,
+                text(
+                    f"update {table_name} set version = 0 "
+                    "where tenant_id = :tenant_id and employee_id = :employee_id"
+                ),
+                {"tenant_id": tenant_a_id, "employee_id": active_employee_id},
+            )
+            if table_name == "employee_employments":
+                for column_name, invalid_value in (
+                    ("contract_type", "contractor"),
+                    ("work_type", "hybrid"),
+                ):
+                    _assert_sqlite_p4b_integrity_error(
+                        engine,
+                        text(
+                            f"update employee_employments set {column_name} = :invalid_value "
+                            "where tenant_id = :tenant_id and employee_id = :employee_id"
+                        ),
+                        {
+                            "invalid_value": invalid_value,
+                            "tenant_id": tenant_a_id,
+                            "employee_id": active_employee_id,
+                        },
+                    )
+            _assert_sqlite_p4b_integrity_error(
+                engine,
+                text(
+                    f"insert into {table_name} ("
+                    "id, tenant_id, employee_id, "
+                    f"{extension_values}, version, created_at, updated_at"
+                    ") values ("
+                    ":id, :tenant_id, :employee_id, "
+                    f"{extension_bindings}, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {
+                    "id": f"b40000000000400080000000000000{table_suffix}",
+                    "tenant_id": tenant_a_id,
+                    "employee_id": tenant_b_employee_id,
+                },
+            )
+
+        alembic_command.downgrade(config, "0032_p4a_employee_directory")
+        assert "employee_profiles" not in inspect(engine).get_table_names()
+        assert "employee_employments" not in inspect(engine).get_table_names()
+        with engine.connect() as connection:
+            assert connection.scalar(text("select count(*) from employees")) == 4
+
+        alembic_command.upgrade(config, "0033_p4b_employee_profiles")
+        with engine.connect() as connection:
+            assert connection.scalar(text("select count(*) from employee_profiles")) == 4
+            assert connection.scalar(text("select count(*) from employee_employments")) == 4
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_p4b_downgrade_refuses_changed_profile_state(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "migration-p4b-downgrade.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    config = _alembic_config(database_url)
+    alembic_command.upgrade(config, "0032_p4a_employee_directory")
+    engine = create_engine(f"sqlite:///{database_path}")
+    tenant_id = "b1000000000040008000000000000011"
+    employee_id = "b2000000000040008000000000000011"
+    try:
+        with engine.begin() as connection:
+            _seed_p4b_tenant(connection, tenant_id, slug="p4b-downgrade")
+            _seed_p4b_employee(
+                connection,
+                employee_id=employee_id,
+                tenant_id=tenant_id,
+                employee_number="P4B-DOWNGRADE",
+            )
+        alembic_command.upgrade(config, "0033_p4b_employee_profiles")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "update employee_profiles set preferred_name = 'Ada', version = 2 "
+                    "where tenant_id = :tenant_id and employee_id = :employee_id"
+                ),
+                {"tenant_id": tenant_id, "employee_id": employee_id},
+            )
+            connection.execute(
+                text(
+                    "update employee_employments "
+                    "set contract_type = 'fixed_term', version = 2 "
+                    "where tenant_id = :tenant_id and employee_id = :employee_id"
+                ),
+                {"tenant_id": tenant_id, "employee_id": employee_id},
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match="P4B employee profile downgrade refused",
+        ):
+            alembic_command.downgrade(config, "0032_p4a_employee_directory")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("select version_num from alembic_version")) == (
+                "0033_p4b_employee_profiles"
+            )
+            assert connection.execute(
+                text(
+                    "select preferred_name, version from employee_profiles "
+                    "where tenant_id = :tenant_id and employee_id = :employee_id"
+                ),
+                {"tenant_id": tenant_id, "employee_id": employee_id},
+            ).one() == ("Ada", 2)
+            assert connection.execute(
+                text(
+                    "select contract_type, version from employee_employments "
+                    "where tenant_id = :tenant_id and employee_id = :employee_id"
+                ),
+                {"tenant_id": tenant_id, "employee_id": employee_id},
+            ).one() == ("fixed_term", 2)
+    finally:
+        engine.dispose()
+
+
+def _assert_sqlite_p4b_integrity_error(engine, statement, parameters) -> None:
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+        connection.commit()
+        with pytest.raises(IntegrityError), connection.begin():
+            connection.execute(statement, parameters)
+
+
+def _seed_p4b_tenant(connection, tenant_id: str, *, slug: str) -> None:
+    connection.execute(
+        text(
+            "insert into tenants ("
+            "id, slug, name, status, plan_code, data_region, locale, timezone, "
+            "created_at, updated_at"
+            ") values ("
+            ":tenant_id, :slug, 'P4B Employee Tenant', 'active', 'core', "
+            "'tr-1', 'en-US', 'UTC', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+            ")"
+        ),
+        {"tenant_id": tenant_id, "slug": slug},
+    )
+
+
+def _seed_p4b_employee(
+    connection,
+    *,
+    employee_id: str,
+    tenant_id: str,
+    employee_number: str,
+    status: str = "active",
+    employment_end_date: str | None = None,
+    archived: bool = False,
+) -> None:
+    connection.execute(
+        text(
+            "insert into employees ("
+            "id, tenant_id, employee_number, first_name, last_name, email, department, "
+            "position, status, employment_start_date, employment_end_date, archived_at, "
+            "created_at, updated_at"
+            ") values ("
+            ":employee_id, :tenant_id, :employee_number, 'Ada', 'Employee', null, "
+            "'People', 'Specialist', :status, '2026-07-01', :employment_end_date, "
+            ":archived_at, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+            ")"
+        ),
+        {
+            "employee_id": employee_id,
+            "tenant_id": tenant_id,
+            "employee_number": employee_number,
+            "status": status,
+            "employment_end_date": employment_end_date,
+            "archived_at": "2026-07-11 12:00:00" if archived else None,
+        },
+    )
 
 
 def _seed_p4a_tenant(connection, tenant_id: str) -> None:
@@ -1659,6 +2090,77 @@ def test_alembic_offline_p4a_downgrade_guards_changed_versions_before_drops() ->
     assert 'ALTER TABLE "employees" FORCE ROW LEVEL SECURITY' in result.stdout
 
 
+def test_alembic_offline_p4b_renders_profiles_backfill_rls_acl_and_constraints() -> None:
+    result = _run_alembic_p4b_upgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "DO $p4b_employee_profile_id_preflight$" in result.stdout
+    assert "generated_id_collision" in result.stdout
+    assert result.stdout.index("DO $p4b_employee_profile_id_preflight$") < result.stdout.index(
+        "CREATE TABLE employee_profiles"
+    )
+    employee_no_force = result.stdout.index(
+        'ALTER TABLE "employees" NO FORCE ROW LEVEL SECURITY'
+    )
+    employee_force = result.stdout.rindex(
+        'ALTER TABLE "employees" FORCE ROW LEVEL SECURITY'
+    )
+    assert employee_no_force < result.stdout.index(
+        "DO $p4b_employee_profile_id_preflight$"
+    ) < employee_force
+    for table_name in ("employee_profiles", "employee_employments"):
+        assert f"CREATE TABLE {table_name}" in result.stdout
+        assert f"ck_{table_name}_version_positive" in result.stdout
+        assert f"uq_{table_name}_tenant_id_id" in result.stdout
+        assert f"uq_{table_name}_tenant_employee_id" in result.stdout
+        assert f"fk_{table_name}_tenant_id_tenants" in result.stdout
+        assert f"fk_{table_name}_tenant_employee_id_employees" in result.stdout
+        assert f"INSERT INTO {table_name}" in result.stdout
+        assert f'ALTER TABLE "{table_name}" ENABLE ROW LEVEL SECURITY' in result.stdout
+        assert f'ALTER TABLE "{table_name}" FORCE ROW LEVEL SECURITY' in result.stdout
+        assert f'CREATE POLICY "tenant_isolation_app" ON "{table_name}"' in result.stdout
+        assert (
+            f'GRANT SELECT, INSERT ON TABLE "{table_name}" TO "wealthy_falcon_app"'
+        ) in result.stdout
+        update_columns = {
+            "employee_profiles": (
+                '"preferred_name", "birth_date", "phone", "version", "updated_at"'
+            ),
+            "employee_employments": (
+                '"contract_type", "work_type", "version", "updated_at"'
+            ),
+        }[table_name]
+        assert (
+            f'GRANT UPDATE ({update_columns}) ON TABLE "{table_name}" '
+            'TO "wealthy_falcon_app"'
+        ) in result.stdout
+    assert "preferred_name" in result.stdout
+    assert "birth_date" in result.stdout
+    assert "phone" in result.stdout
+    assert "contract_type" in result.stdout
+    assert "work_type" in result.stdout
+    assert "employment_start_date" not in result.stdout
+    assert "GRANT DELETE" not in result.stdout
+
+
+def test_alembic_offline_p4b_downgrade_guards_changed_profiles_before_drops() -> None:
+    result = _run_alembic_p4b_downgrade_offline_subprocess()
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "P4B employee profile downgrade refused" in result.stdout
+    preflight_position = result.stdout.index("P4B employee profile downgrade refused")
+    first_drop_position = min(
+        result.stdout.index("DROP TABLE employee_profiles"),
+        result.stdout.index("DROP TABLE employee_employments"),
+    )
+    assert preflight_position < first_drop_position
+    for table_name in ("employee_profiles", "employee_employments"):
+        no_force_position = result.stdout.index(
+            f'ALTER TABLE "{table_name}" NO FORCE ROW LEVEL SECURITY'
+        )
+        assert no_force_position < preflight_position
+
+
 def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-metadata-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
@@ -2310,7 +2812,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             revision = connection.scalar(text("select version_num from alembic_version"))
 
         assert second_projection == first_projection
-        assert revision == "0032_p4a_employee_directory"
+        assert revision == "0033_p4b_employee_profiles"
     finally:
         engine.dispose()
 

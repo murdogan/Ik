@@ -1,15 +1,58 @@
 # API Implementation Status Report
 
-Date: 2026-07-13
+Date: 2026-07-14
 Branch: `codex/mvp-phase4-employee-master`
-Task: `P4A HR employee directory, minimal create and summary`
-Review checkpoint: `P4A only; P4B and later Phase 4 blocks remain unopened`
-Review decision: `P4A implementation and local verification are recorded below`
-Push state: `P4A commit is intentionally left unpushed for the supervisor; no merge or deploy`
+Task: `P4B focused Employee 360 profile editing`
+Review checkpoint: `P4A preserved; P4B implemented; P4C and later blocks remain unopened`
+Review decision: `P4B implementation contract is recorded below for supervisor review`
+Push state: `P4B commit is intentionally left unpushed for the supervisor; no merge or deploy`
 
 ## Scope
 
-### P4A employee directory and minimal HR create
+### P4B focused Employee 360 profile editing
+
+- An HR user with `employee:read:tenant` can open the real responsive
+  `/employees/{employee_id}` Employee 360 from the P4A directory/create flow. The route exposes
+  keyboard-usable **Özet**, **Kişisel**, **İstihdam** and **Organizasyon** tabs with loading,
+  empty, error/retry and mobile states. A direct route without employee-read permission is stopped
+  by the layout boundary before profile or assignment data clients mount.
+- `GET /api/v1/employees/{employee_id}/profile` returns a `{data,meta}` aggregate containing core
+  identity/status, focused personal and employment sections with independent positive versions,
+  and current assignment plus at most 50 assignment-history rows. Organization data is a read-only
+  projection of the existing Phase 3 assignment service/contract; P4B adds no assignment owner or
+  write path and does not issue per-tab/per-history-row queries.
+- `PATCH .../profile/personal` requires `expected_version`; first/last/work-email compatibility
+  changes additionally require `expected_employee_version`. It accepts only first name, last name,
+  nullable work email, preferred name, birth date and phone. `PATCH .../profile/employment` follows
+  the same section token rule for contract/work type; start-date changes additionally require the
+  employee token because that compatibility field remains on `employees`.
+- Stale section or core tokens return deterministic `409 concurrent_write_conflict` without a
+  partial employee/profile write or audit event. Successful changed rows increment their own token
+  once. The command/UoW owns core + section + allowlisted before/after audit atomically; no service
+  commit or full payload/employee snapshot is written.
+- `0033_p4b_employee_profiles` backfills exactly one `employee_profiles` and one
+  `employee_employments` row for every existing employee. Each tenant-owned table has UUID ID,
+  tenant and employee IDs, timestamps, positive version, one-row-per-tenant-employee uniqueness and
+  a composite employee FK. PostgreSQL uses FORCE RLS, an app-only tenant policy, table
+  `SELECT,INSERT`, and column-only UPDATE for approved fields/version/timestamp after inherited ACL
+  reset. Changed-data downgrade is refused before either table is dropped.
+- P4B adds exactly three operations, bringing the current surface to 77 generated operations and
+  78 documented runtime endpoints including `/openapi.json`. Existing P4A employee list/create/
+  detail/PATCH/archive contracts remain compatible.
+- TCKN/national ID, passport, IBAN/bank, compensation/payroll, health/special-category data,
+  address/emergency contacts, documents, leave policy, custom fields, mail, lifecycle/end-date
+  actions, assignment writes and all P4C+ modules remain outside P4B.
+
+### P4B verification boundary
+
+Portable migration/model/API/service/transaction/audit/OpenAPI/smoke and frontend gates are part of
+the P4B handoff. The opt-in PostgreSQL migration/RLS/ACL/cross-tenant tests are committed, but
+`IK_TEST_DATABASE_URL` is unavailable in this execution environment; this report therefore makes
+no P4B PostgreSQL runtime-pass claim. The unmodified local ASGI/SQLite executable smoke returned
+`BACKEND_SMOKE_OK` with all 78 documented endpoints executed after the two current endpoint tables
+were synchronized.
+
+### Historical P4A employee directory and minimal HR create
 
 - An HR director/specialist with `employee:read:tenant` sees **Çalışanlar** in desktop/mobile
   navigation and can open `/employees`; direct routing is permission-gated before employee API
@@ -57,7 +100,8 @@ execution risk until that lane is run.
 | Frontend lint/typecheck/build | `npm --prefix frontend run lint`, `npm --prefix frontend run typecheck`, Playwright webServer production build | Passed: exit 0 for lint/typecheck/build |
 | Focused browser journey | `cd frontend && PLAYWRIGHT_BROWSERS_PATH=/tmp/pw1223 npm run test:e2e -- --project=chromium tests/employee-directory-flow.spec.ts` | Passed: 2 Chromium tests in 28.9s covering HR create/open and permission-shaped navigation/direct denial |
 
-P4A stops after the single local commit. The supervisor owns review and push; P4B does not begin.
+At that historical checkpoint P4A stopped after the single local commit and P4B had not begun. The
+current P4B state is recorded above; the supervisor still owns review and push.
 
 ### P3K combined identity and organization hardening gate
 
@@ -1000,6 +1044,9 @@ PostgreSQL plan evidence was not rerun or relabeled as repair evidence.
 | GET | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:read:tenant`; active summary with additive version/current assignment and indistinguishable cross-tenant `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:update:tenant`; compatible partial update plus optional optimistic version and actual-change audit |
 | DELETE | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:update:tenant`; idempotent archive, retained history and first-transition audit |
+| GET | `/api/v1/employees/{employee_id}/profile` | P4B implemented | `employee:read:tenant`; `{data,meta}` core/personal/employment aggregate plus bounded Phase 3 current assignment/history, separate section versions and no-store response |
+| PATCH | `/api/v1/employees/{employee_id}/profile/personal` | P4B implemented | `employee:update:tenant`; mandatory personal version, conditional employee version for core fields, atomic allowlisted update/audit and stale `409` |
+| PATCH | `/api/v1/employees/{employee_id}/profile/employment` | P4B implemented | `employee:update:tenant`; mandatory employment version, conditional employee version for start date, no lifecycle or assignment mutation |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | P3K verified | `leave:read:tenant`; active-employee manual summaries and cross-tenant hiding |
 | GET | `/api/v1/leave-requests` | P3K verified | `leave:read:tenant`; tenant filters, mixed-order cursor and deprecated offset compatibility |
 | POST | `/api/v1/leave-requests` | P3K verified | HR-only `leave:manage:tenant`; pending create, tenant validation and optional replay |
@@ -1012,9 +1059,11 @@ list/detail and the separate platform audit list. P3C adds two organization-sele
 P3D adds four platform-auth operations, P3E adds two password-recovery operations, P3F adds
 nine legal-entity/branch operations, P3G adds six department operations and P3H adds five position
 catalog operations. P3I adds six assignment/team operations and P3J adds the lazy org-chart read,
-bringing the current surface to 74 generated operations and 75 documented runtime endpoints
+bringing the Phase 3 surface to 74 generated operations and 75 documented runtime endpoints
 including `/openapi.json`. P3K changes the authority metadata and enforcement of twelve historical
-operations without adding a route. The executable smoke covers email-only login, multi-org
+operations without adding a route. P4A changes no route count; P4B adds the three Employee 360
+operations above, so the current surface is 77 generated operations and 78 documented runtime
+endpoints. The executable smoke covers email-only login, multi-org
 selection, platform/tenant realm separation, organization administration, assignment/team/chart
 flows, legacy HR authorization and contract-table drift without printing credential material.
 
@@ -1136,8 +1185,9 @@ flows, legacy HR authorization and contract-table drift without printing credent
   implementation report, endpoint draft and smoke agreed on 15 documented endpoints. Historical
   F1A target was 21 generated operations plus runtime `/openapi.json`; historical F1D/F1E have 24
   generated and 25 documented endpoints. F2F has 39 generated and 40 documented endpoints without
-  rewriting any earlier checkpoint evidence. The current P3K registry has 74 generated operations
-  and 75 documented runtime endpoints.
+  rewriting any earlier checkpoint evidence. The P3K registry had 74 generated operations and 75
+  documented runtime endpoints; P4B's three additive profile operations make the current registry
+  77 generated operations and 78 documented runtime endpoints.
 - README and `03-openapi-endpoint-taslagi.md` now carry W4B3 concrete examples for employee
   list/create/detail/update/delete, leave balance summary reads, leave request list/create, and
   approve/reject/cancel decision flows.
@@ -1287,13 +1337,15 @@ SQLite. The PostgreSQL baseline invokes the same script with `--database-url` ag
 test database. Neither path uses deploy, staging URLs, cron, tokens, credentials, `.env`, or external
 services.
 
-Current P3K documentation expects the registry to contain 75 rows: 74 generated operations plus
+Current P4B documentation expects the registry to contain 78 rows: 77 generated operations plus
 runtime `/openapi.json`. Smoke executes every row, using real credentials for browser-facing
 tenant/platform auth and narrowly scoped dependency overrides only for historical trusted-principal
 compatibility paths. It verifies activation, email-only login, one- and multi-org selection,
 refresh/logout, realm token cross-use denial, tenant-admin user/role/audit behavior, organization
-administration, assignment/team/chart flows, employee mutation denial, tenant-header spoof
-resistance, projected no-HR platform output, exact security metadata and bounded cursors.
+administration, assignment/team/chart flows, Employee 360 read/personal/employment mutations,
+independent stale-version conflict handling, cross-tenant hiding, employee mutation denial,
+tenant-header spoof resistance, projected no-HR platform output, exact security metadata and
+bounded cursors.
 Historical Phase-0/F1A/F1B smoke evidence below remains checkpoint evidence only.
 
 The script now verifies the documented API surface in four directions:
@@ -1611,10 +1663,10 @@ Historical P0B local gate evidence retained for continuity:
   opt-in PostgreSQL lane was not rerun for a new persistence claim. The P0A PostgreSQL 16.4
   baseline remains 5 integration tests passed.
 
-## Post-P3K backlog — outside this task
+## Post-P4B backlog — outside this task
 
-P3K closes Phase 3 only. It does not authorize Phase 4 employee-master/field-security work or any
-later product module.
+P4B closes only the approved focused Employee 360 slice. It does not authorize P4C or any later
+product module.
 
 - Enforced privileged-role MFA/step-up remains deferred. Separate platform login, audience,
   cookie, live session/principal, tenant administration and platform audit demo are implemented;
@@ -1635,7 +1687,8 @@ later product module.
 - Optional leave request detail endpoint if product workflow needs direct request reads.
 - Leave policy/accrual calculation, holiday calendars, manual adjustments/imports, and employee
   self-service leave balance views.
-- Phase 4 employee master/360/field security, employee documents, reporting, analytics and export
-  endpoints remain later MVP phases.
+- Employee documents, broader field security, import/export, lifecycle workflow, reporting,
+  analytics, notification/mail and all other P4C+ endpoints remain later MVP phases. P4B is not
+  approval for sensitive identity/financial/health fields or assignment ownership duplication.
 - Activating the documented CI template remains repository administration outside this block; the
   template now describes both the fast SQLite and PostgreSQL service-backed test steps.

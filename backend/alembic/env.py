@@ -10,6 +10,8 @@ from app.models import (  # noqa: F401
     AuthenticationRateLimitBucket,
     CommandIdempotency,
     Employee,
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
     Identity,
     LeaveBalanceSummary,
     LeaveRequest,

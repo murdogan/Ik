@@ -7,6 +7,10 @@ from app.models.authorization import UserRole
 from app.models.department import Department
 from app.models.employee import Employee
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.identity import (
     Identity,
     IdentityStatus,
@@ -184,6 +188,8 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert await _count(session, MembershipRole) == expected_tenant_role_count
         assert await _count(session, PlatformIdentityRole) == 1
         assert await _count(session, Employee) == len(DEMO_EMPLOYEES)
+        assert await _count(session, EmployeePersonalProfile) == len(DEMO_EMPLOYEES)
+        assert await _count(session, EmployeeEmploymentProfile) == len(DEMO_EMPLOYEES)
         assert await _count(session, LeaveRequest) == len(DEMO_LEAVE_REQUESTS)
         assert set(second_result.tenant_ids) == {tenant.id for tenant in DEMO_TENANTS}
         shared_identity = await session.scalar(

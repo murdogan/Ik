@@ -151,6 +151,21 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
             "Read tenant employee",
             "same not-found envelope as missing records",
         ),
+        ("/api/v1/employees/{employee_id}/profile", "get"): (
+            EMPLOYEES_TAG,
+            "Read Employee 360 profile",
+            "bounded assignment history",
+        ),
+        ("/api/v1/employees/{employee_id}/profile/personal", "patch"): (
+            EMPLOYEES_TAG,
+            "Update employee personal profile",
+            "expected section version",
+        ),
+        ("/api/v1/employees/{employee_id}/profile/employment", "patch"): (
+            EMPLOYEES_TAG,
+            "Update employee employment profile",
+            "expected section version",
+        ),
         ("/api/v1/employees/{employee_id}", "patch"): (
             EMPLOYEES_TAG,
             "Update tenant employee",

@@ -420,7 +420,44 @@ daraltmadan HR çalışan dizini için gereken en küçük persistence genişlem
 - Downgrade yalnız bütün employee version değerleri `1` iken çalışır. İlerlemiş optimistic token'ı
   sessizce yeniden `1` yapmak yerine counted preflight ile durur; raw employee değerleri silinmez.
 
-Güncel tek head `0032_p4a_employee_directory`'dır. SQLite migration hattı tamamlayıcıdır;
-generated-column, named-index, ACL/RLS ve concurrency iddialarının gerçek PostgreSQL yolu
+P4A checkpoint'indeki tek head `0032_p4a_employee_directory` idi. SQLite migration hattı
+tamamlayıcıdır; generated-column, named-index, ACL/RLS ve concurrency iddialarının gerçek
+PostgreSQL yolu
 `backend/tests/integration/test_postgresql_p4a_employee_master.py` ve
 `test_postgresql_command_transactions.py` içindedir.
+
+## P4B focused Employee 360 profiles
+
+`0033_p4b_employee_profiles`, `0032` sonrasında çalışan ana verisini hassas alanlarla genişletmeden
+iki tenant-owned, çalışan başına bire-bir profil kaydı ekler:
+
+- `employee_profiles`: `preferred_name`, `birth_date`, `phone`, pozitif `version` ve timestamp'ler.
+- `employee_employments`: nullable `contract_type=indefinite|fixed_term`, nullable
+  `work_type=full_time|part_time`, pozitif `version` ve timestamp'ler. İşe başlangıç tarihi P4A
+  compatibility sahibi `employees.employment_start_date` alanında kalır; status/end-date yaşam
+  döngüsü bu tabloya kopyalanmaz.
+- İki tablo da UUID primary key, `(tenant_id,id)` candidate key,
+  `(tenant_id,employee_id)` unique constraint'i, `tenant_id → tenants.id` root FK'si ve
+  `(tenant_id,employee_id) → employees(tenant_id,id)` `ON DELETE RESTRICT` composite FK'si taşır.
+  Böylece aynı employee için tenant başına tam bir kişisel ve bir istihdam satırı vardır.
+- Upgrade, herhangi bir profil tablosu yaratılmadan önce deterministic backfill UUID collision
+  preflight'i çalıştırır; sonra arşivli ve sonlanmış kayıtlar dahil her mevcut employee için iki
+  boş/default profil satırı üretir ve missing/orphan sayımlarını DDL transaction'ı içinde doğrular.
+  Global employee taraması için `employees` FORCE RLS geçici kaldırılır ve başarıda geri kurulur;
+  hata bütün adımı rollback eder.
+- PostgreSQL'de iki tablo da `ENABLE + FORCE RLS` ve yalnız `wealthy_falcon_app` rolüne bağlı
+  `tenant_isolation_app` policy'si kullanır. Revision inherited/default ACL'leri önce sıfırlar;
+  tenant app yalnız table-level `SELECT,INSERT` ve kişisel/istihdam alanları ile `version,updated_at`
+  için column-level `UPDATE` alır. `PUBLIC`, platform ve authentication capability'lerine tablo
+  veya kolon yetkisi verilmez.
+- Downgrade, herhangi bir onaylı profil alanı non-null veya bölüm `version` değeri `1` dışında ise
+  counted preflight ile veri kaybını reddeder. Yalnız untouched/default state'te policy/grant ve iki
+  tablo kaldırılır; `employees`, P4A compatibility alanları ve Phase 3 assignment/history korunur.
+  Başarısız downgrade transaction rollback'i profil ve employee FORCE RLS durumunu geri getirir.
+
+Güncel tek head `0033_p4b_employee_profiles`'dır. SQLite/offline testleri doğrusal zincir, schema,
+backfill ve rendered ordering için hızlı kanıttır. RLS/ACL, gerçek constraint SQLSTATE'leri ve
+cross-tenant role davranışı için opt-in PostgreSQL testi
+`backend/tests/integration/test_postgresql_p4b_employee_profiles.py` içindedir; P4B geliştirme
+ortamında `IK_TEST_DATABASE_URL` bulunmadığından bu gerçek PostgreSQL yolu çalıştırılmış olarak
+iddia edilmez.

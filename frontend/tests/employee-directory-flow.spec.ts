@@ -150,6 +150,36 @@ const createdEmployee = {
   current_assignment: null,
 };
 
+const createdProfile = {
+  core: {
+    id: createdEmployee.id,
+    employee_number: createdEmployee.employee_number,
+    first_name: createdEmployee.first_name,
+    last_name: createdEmployee.last_name,
+    email: createdEmployee.email,
+    status: createdEmployee.status,
+    employee_version: createdEmployee.version,
+  },
+  personal: {
+    preferred_name: null,
+    birth_date: null,
+    phone: null,
+    version: 1,
+  },
+  employment: {
+    employment_start_date: createdEmployee.employment_start_date,
+    contract_type: null,
+    work_type: null,
+    version: 1,
+  },
+  organization: {
+    current_assignment: null,
+    history: [],
+    history_limit: 50,
+    history_truncated: false,
+  },
+};
+
 test("HR filters and pages the directory, creates an employee, and opens its summary", async ({
   context,
   page,
@@ -256,12 +286,12 @@ test("HR filters and pages the directory, creates an employee, and opens its sum
       return;
     }
 
-    if (path === `/api/v1/employees/${CREATED_EMPLOYEE_ID}`) {
+    if (path === `/api/v1/employees/${CREATED_EMPLOYEE_ID}/profile`) {
       detailRequests += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(createdEmployee),
+        body: envelope(createdProfile),
       });
       return;
     }
@@ -312,10 +342,12 @@ test("HR filters and pages the directory, creates an employee, and opens its sum
   await createDialog.getByRole("button", { name: "Çalışanı oluştur" }).click();
 
   await expect(page).toHaveURL(new RegExp(`/employees/${CREATED_EMPLOYEE_ID}$`));
-  const summary = page.getByRole("dialog", { name: "Selin Arslan" });
-  await expect(summary).toBeVisible();
-  await expect(summary.getByText("WF-099", { exact: true })).toBeVisible();
-  await expect(summary.getByText("Henüz yapısal atama yok")).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Selin Arslan", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("WF-099", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Henüz yapısal atama yok")).toBeVisible();
   expect(createBody).toEqual({
     employee_number: "WF-099",
     first_name: "Selin",

@@ -98,6 +98,8 @@ class AuditEventType(StrEnum):
     EMPLOYEE_CREATED = "employee.created"
     EMPLOYEE_UPDATED = "employee.updated"
     EMPLOYEE_ARCHIVED = "employee.archived"
+    EMPLOYEE_PERSONAL_PROFILE_UPDATED = "employee.personal_profile.updated"
+    EMPLOYEE_EMPLOYMENT_PROFILE_UPDATED = "employee.employment_profile.updated"
     EMPLOYEE_ASSIGNMENT_CHANGED = "employee.assignment.changed"
     REPORTING_LINE_CHANGED = "reporting_line.changed"
 
@@ -125,8 +127,9 @@ class AuditContext:
 class AuditEventDraft:
     """Closed-shape command passed to a same-session persistence adapter.
 
-    Generic before/after snapshots are deliberately absent. F2E records only allowlisted field
-    names and event-specific safe metadata; later modules must extend the policy explicitly.
+    Before/after mappings are accepted only as candidates for event-specific redaction. The
+    persistence adapter intersects them with the event's explicit value allowlist and the final
+    changed-field set; callers must never pass generic request payloads or domain snapshots.
     """
 
     scope_type: AuditScopeType
@@ -144,6 +147,8 @@ class AuditEventDraft:
     severity: AuditSeverity = AuditSeverity.INFO
     result: AuditResult = AuditResult.SUCCESS
     changed_fields: tuple[str, ...] = ()
+    before_values: Mapping[str, object] = field(default_factory=dict)
+    after_values: Mapping[str, object] = field(default_factory=dict)
     metadata: Mapping[str, object] = field(default_factory=dict)
     data_classification: AuditDataClassification = (
         AuditDataClassification.SECURITY_METADATA

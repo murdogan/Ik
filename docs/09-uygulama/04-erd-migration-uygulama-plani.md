@@ -20,7 +20,8 @@ Bu doküman, foundation ERD dokümanını implementasyon sırasına indirger. Am
   F2 ve P3'te eklenen her tenant-owned tablo aynı catalog gate'ine dahil edilir.
 - F1E'nin historical head'i `0015_f1d_feature_flags` idi. Güncel doğrusal zincir P3I'nin structured
   assignment/backfill revision'ı `0030_p3i_employee_assignments` üzerinden P3K'nin katalog-only
-  `0031_p3k_legacy_tenant_auth_boundary` revision'ına ulaşır; final gate tam bir Alembic head ister.
+  `0031_p3k_legacy_tenant_auth_boundary` revision'ına, ardından P4A `0032` ve P4B `0033`
+  revision'larına ulaşır; final gate tam bir Alembic head ister.
 - P3K `0031` yeni domain tablosu veya Phase 4 verisi eklemez. Yalnız `leave:manage:tenant`
   permission'ını HR director/specialist rollerine grant ederek legacy leave mutation'larını canlı
   tenant auth'a bağlayan katalog sınırını kapatır.
@@ -215,10 +216,35 @@ metadata drift; FORCE RLS/policy/ACL katalogu; cross-tenant composite-FK negatif
 membership-selection saldırıları; departman concurrency/cycle; manager scope ve bounded query
 planları. PostgreSQL-specific iddialar disposable gerçek PostgreSQL lane'inde kanıtlanır.
 
+### 1.12 Uygulanan P4A–P4B employee-master genişlemesi
+
+- `0032_p4a_employee_directory`, `employees` üzerinde normalized employee-number/non-null work-email
+  benzersizliği, full-name normalization, pozitif optimistic version ve immutable-ID directory
+  indexlerini additive kurar. Phase 3 assignment/history ve legacy alanlar korunur.
+- `0033_p4b_employee_profiles`, focused `employee_profiles` ve `employee_employments` tablolarını
+  ekler. İki tabloda da UUID ID, tenant/employee ID, timestamps, pozitif bağımsız version,
+  `(tenant_id,id)` candidate key, çalışan başına `(tenant_id,employee_id)` unique ve composite
+  employee FK vardır.
+- Personal satır yalnız `preferred_name`, `birth_date`, `phone`; employment satır yalnız
+  `contract_type=indefinite|fixed_term` ve `work_type=full_time|part_time` taşır. Core kimlik,
+  `employment_start_date`, status/end-date `employees` üzerinde; organizasyon sahipliği Phase 3
+  `employee_assignments` üzerinde kalır.
+- Upgrade tablo DDL'inden önce deterministic UUID collision preflight'i çalıştırır, arşivli ve
+  terminated kayıtlar dahil her employee için tam bir personal/employment satırı backfill eder ve
+  missing/orphan sayımlarını aynı transaction'da doğrular. Employee population taraması için
+  `employees` FORCE RLS geçici kaldırılıp başarıda geri kurulur.
+- PostgreSQL'de inherited/default ACL sıfırlanır. Yeni tablolar `ENABLE + FORCE RLS` ve app-only
+  tenant policy kullanır; tenant app table `SELECT,INSERT` ile yalnız onaylı alanlar,
+  `version,updated_at` için column `UPDATE` alır. Public/platform/auth capability grant'i yoktur.
+- Downgrade, herhangi bir profil alanı yazılmış veya section version ilerlemişse counted preflight
+  ile durur. Untouched state'te yalnız yeni policy/grant/tablolar kalkar; employee ve assignment
+  verisi korunur. P4B PostgreSQL testi eklenmiştir fakat bu ortamda `IK_TEST_DATABASE_URL` olmadığı
+  için gerçek PostgreSQL execution sonucu iddia edilmez.
+
 ## 2. Migration sırası
 
-Alembic history ve `alembic heads` çıktısı fiziksel sıra için otoritatiftir. Phase 3'te
-uygulanan eklemeler şöyledir:
+Alembic history ve `alembic heads` çıktısı fiziksel sıra için otoritatiftir. Phase 3 ile güncel
+P4A/P4B'de uygulanan eklemeler şöyledir:
 
 | Revision | Dilim | Fiziksel etki |
 |---|---|---|
@@ -232,8 +258,10 @@ uygulanan eklemeler şöyledir:
 | `0029` | P3H | Reusable position/job-title katalogu |
 | `0030` | P3I | Structured effective-dated assignment ve legacy string backfill |
 | `0031` | P3K | Catalog-only `leave:manage:tenant` role grant kapanışı |
+| `0032` | P4A | Employee normalization, optimistic version ve directory/assignment filtre indexleri |
+| `0033` | P4B | Focused personal/employment bire-bir kayıtları, backfill, RLS/ACL ve downgrade guard |
 
-P3J bu fiziksel sıraya revision eklemez. Employee 360 alt tabloları ve documents Phase 4+;
+P3J bu fiziksel sıraya revision eklemez. Employee documents ve diğer P4C+ alt kayıtları;
 holiday/time, payroll, ATS, performance, LMS ve gelişmiş workflow tabloları kendi sonraki
 fazlarında planlanır.
 
@@ -375,6 +403,8 @@ MVP minimal alanlar:
 - `employment_start_date`
 - `employment_end_date`
 - `archived_at`
+- P4A generated `employee_number_normalized`, `email_normalized`, `full_name_normalized`
+- pozitif P4A `version`
 - `created_at`
 - `updated_at`
 
@@ -384,7 +414,31 @@ Unique: `(tenant_id, employee_number)`.
 set eder ve tekrarlandığında no-op olur. Unique constraint arşivlenen employee number'ını tenant
 içinde rezerve tutar.
 
-Hassas alanlar ilk migration'a alınmayabilir; TCKN/IBAN gibi alanlar field encryption planı netleşince eklenmelidir.
+TCKN/IBAN gibi hassas alanlar P4B'ye alınmamıştır; ancak ayrı onaylı field-encryption/policy
+diliminde değerlendirilebilir.
+
+### P4B focused profile tabloları
+
+`employee_profiles`:
+
+- `id`, `tenant_id`, `employee_id`
+- nullable `preferred_name`, `birth_date`, `phone`
+- pozitif bağımsız `version`
+- `created_at`, `updated_at`
+
+`employee_employments`:
+
+- `id`, `tenant_id`, `employee_id`
+- nullable `contract_type` (`indefinite|fixed_term`)
+- nullable `work_type` (`full_time|part_time`)
+- pozitif bağımsız `version`
+- `created_at`, `updated_at`
+
+Her tabloda `(tenant_id,employee_id)` unique ile employee başına tam bir satır ve
+`(tenant_id,employee_id) → employees(tenant_id,id)` composite `ON DELETE RESTRICT` FK vardır.
+`0033` mevcut her employee için iki satırı backfill eder. İşe başlangıç tarihi
+`employees.employment_start_date` alanında kalır; status/end-date lifecycle veya assignment alanı
+bu focused tablolara kopyalanmaz.
 
 ### Phase 3 structured organization ERD
 
@@ -454,6 +508,9 @@ WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid
 
 Her sonraki tenant-owned tablo RLS migration'ını ayrı/frozen inventory ile ekler ve independent
 PostgreSQL catalog discovery testini günceller. SQLite bu standardın güvenlik kanıtı değildir.
+P4B profil tabloları için tenant app policy dışında policy yoktur; table `SELECT,INSERT` ve dar
+column `UPDATE` dışındaki inherited/default grant'ler revision içinde sıfırlanır. Public, platform
+ve authentication capability'leri tablo veya kolon erişimi almaz.
 
 ## 7. Test planı
 
@@ -488,6 +545,11 @@ PostgreSQL catalog discovery testini günceller. SQLite bu standardın güvenlik
 | Manager scope | Team/org chart yalnız current `manager_user_id` bağından türetiliyor mu |
 | Bounded query | Department tree, position search, assignment/team ve org-chart sorguları index/limit bütçesine uyuyor mu |
 | P3K permission catalog | `leave:manage:tenant` yalnız hedef HR rolleri için eklenip read permission mutation authority olmaktan çıkıyor mu |
+| P4A compatibility | Existing employee create/list/detail/PATCH/archive ve assignment contract'ları `0032` sonrasında korunuyor mu |
+| P4B profile backfill | Her existing employee için tenant-consistent tam bir personal/employment satırı var mı |
+| P4B section concurrency | Personal ve employment version'ları bağımsız stale write'ı `409` ile reddedip başarıda bir kez ilerliyor mu |
+| P4B transaction/audit | Core + section + allowlisted before/after audit aynı UoW'da mı; failure partial state/event bırakmıyor mu |
+| P4B PostgreSQL catalog | Composite FK/check/unique, FORCE RLS, app-only policy ve dar table/column grants exact mı |
 
 ## 8. Seed planı
 
@@ -510,6 +572,10 @@ Mevcut local/development seed deterministik ve idempotenttir:
 - Tenant, user, employee, leave ve generated organization/assignment UUID'leri tekrar
   çalıştırmalarda deterministiktir. Var olan assignment history'si seed tarafından overwrite
   edilmez; conflict sessizce yorumlanmak yerine fail eder.
+- `0033` migration'ı upgrade anında mevcut her employee için boş/default personal ve employment
+  satırını backfill eder; güncel demo seed migration sonrasında oluşturulan/onarılmış employee'ler
+  için aynı iki focused kaydı idempotent tamamlar. Seed TCKN, IBAN, ücret, sağlık veya başka
+  P4B-dışı profil değeri üretmez.
 - `scripts/seed_demo_data.py --auth-demo` yalnız local/dev ve local database hedefinde `wf_admin`
   ile `wf_manager` kullanıcılarını invited duruma getirip iki etiketli, farklı, tek-kullanımlı
   activation URL üretir. Seed plaintext/default parola yazmaz. Admin aktivasyonu global shared
@@ -534,12 +600,14 @@ Mevcut local/development seed deterministik ve idempotenttir:
   dönüştürülmez.
 - Historical F1D revision'ı audit persistence tablosu eklememiştir; bu yüzey F2E'de uygulanıp P3
   organization/auth eventleriyle genişletilmiştir.
-- Phase 3 zinciri tek head `0031_p3k_legacy_tenant_auth_boundary` ile kapanır; `0031` katalog-only'dir
-  ve Phase 4 tablosu eklemez.
+- Phase 3 tarihsel olarak `0031_p3k_legacy_tenant_auth_boundary` ile kapanır; `0031` katalog-only'dir
+  ve Phase 4 tablosu eklemez. Güncel P4B zinciri tek head `0033_p4b_employee_profiles` ile biter.
 - Email/password-only tenant login, post-auth multi-org selection ve ayrı platform auth realm'i
   migration/grant/catalog negatifleriyle uyumludur.
 - Legal entity/branch/department/position/assignment backfill'i legacy alanları korur; manager team
   scope ve lazy org chart structured assignment'tan türetilir.
+- P4B her existing employee için tam bir focused personal/employment satırı sağlar; core/start-date
+  ve organization ownership kaynaklarını çoğaltmaz, changed-data downgrade'ını reddeder.
 - PostgreSQL lane cycle/concurrency, RLS/grant, composite-FK ve bounded-query iddialarını gerçek
   PostgreSQL'de kanıtlar; SQLite sonucu bu iddialar için yeterli değildir.
 
@@ -551,7 +619,7 @@ Mevcut local/development seed deterministik ve idempotenttir:
 | User email canonicalization | Legacy `(tenant_id, email)` unique davranışı korunur; canonical auth `identities.email_normalized=lower(btrim(email))` global unique projection'ını kullanır, `citext` kullanılmaz | P3A–P3E uygulandı |
 | RLS | Faz 0 composite FK + app guard üzerinde `0014` forced RLS, app/platform capability rolleri ve transaction-local tenant context uygulanır | F1E final tekrar: tam PostgreSQL `30`, RLS + direct attack `12` passed |
 | F1A tenant settings | `0013` fixed-column settings check'leri, existing-tenant backfill ve custom-settings downgrade refusal ekler; tenant plan/region/locale input allowlist'i API/domain'dedir; arbitrary JSON/features/legal entity yoktur | F1A; SQLite + PostgreSQL 17.10 gate passed |
-| Faz 1 feature/limit metadata | `0015` fixed feature table/backfill, nullable configured active employee limit, FORCE RLS ve exact tenant/platform/no-DELETE grants ekler; downgrade override/limit kaybını reddeder | Historical F1E snapshot; güncel head P3K `0031` |
+| Faz 1 feature/limit metadata | `0015` fixed feature table/backfill, nullable configured active employee limit, FORCE RLS ve exact tenant/platform/no-DELETE grants ekler; downgrade override/limit kaybını reddeder | Historical F1E snapshot; güncel head P4B `0033` |
 | Hassas alan encryption | Key/provider ve envelope encryption kararı olmadan TCKN, IBAN, ücret veya sağlık kolonları eklenmez | İlgili employee/security fazı öncesi Murat kararı |
 | Audit immutability | Audit aynı PostgreSQL DB'de append-only write modelidir; runtime role update/delete engeli ve recorder Faz 2'de birlikte uygulanır | Faz 2 |
 | Global identity / membership | E-posta global normalized identity'de unique; tenant yetkisi membership ve membership-role projection'ındadır | P3A–P3E uygulandı |
@@ -559,6 +627,8 @@ Mevcut local/development seed deterministik ve idempotenttir:
 | Platform realm | Ayrı route, principal, access audience, refresh cookie ve tenantless session family; cross-use denied | P3D/P3K gate |
 | Structured organization | Legal entity/branch, cycle-safe department, reusable position, effective-dated assignment, derived team ve lazy chart | P3F–P3J uygulandı |
 | Legacy leave auth boundary | `leave:manage:tenant` HR director/specialist katalog grant'i; read scope mutation authority değil | P3K `0031` |
+| Employee directory compatibility | Normalized employee number/work email, positive version ve immutable-ID cursor/index contract'ı | P4A `0032` uygulandı |
+| Focused Employee 360 persistence | Employee başına personal/employment record, independent versions, safe backfill, FORCE RLS ve narrow grants | P4B `0033` uygulandı; PostgreSQL runtime lane DSN yokluğu nedeniyle çalıştırılmış sayılmaz |
 
 Bu tablo tamamlanmış davranış ile hedef kararı ayırır. Özellikle TCKN, IBAN ve maaş gibi alanlar,
 encryption ve masking kararı netleşmeden migration'a eklenirse sonradan veri taşıma maliyeti doğar.

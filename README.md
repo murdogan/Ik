@@ -297,7 +297,7 @@ P3F–P3J legal entity/branch, department hierarchy, position catalog, effective
 assignment, derived team ve lazy organization chart ürün yüzeylerini tamamlar. P3K final hardening
 gate'i legacy dashboard/employee/leave route'larını caller-controlled tenant header'larından
 ayırır: tenant yalnız doğrulanmış canlı `BearerAuth` session'ından gelir. Güncel tek Alembic head
-P4A'nın additive `0032_p4a_employee_directory` revision'ıdır. P3K'nin katalog-only
+P4B'nin additive `0033_p4b_employee_profiles` revision'ıdır. P3K'nin katalog-only
 `0031_p3k_legacy_tenant_auth_boundary` revision'ı `leave:manage:tenant` yetkisini yalnız HR
 director/specialist rollerine verir. P4A mevcut employee/assignment sözleşmesini daraltmadan
 normalized numara/iş-e-postası benzersizliği, optimistic version ve indexed directory desteği
@@ -305,6 +305,13 @@ ekler; tenant admin employee yetkisini implicit olarak almaz. Employee directory
 payload'ı yalnız `id: UUID` taşır; sıra `Employee.id ASC`, devam predicate'i tam olarak
 `Employee.id > cursor.id` ve fiziksel cursor indexleri `(tenant_id, id)` ile
 `(tenant_id, status, id)`'dir.
+
+P4B her mevcut employee için focused `employee_profiles` ve `employee_employments` bire-bir
+kayıtlarını backfill eder. Kişisel bölüm yalnız tercih edilen ad, doğum tarihi ve telefonu;
+istihdam bölümü yalnız sözleşme/çalışma türünü tutar. İşe başlangıç ile core kimlik alanları mevcut
+`employees` compatibility kaynağında, organizasyon ise Phase 3 `employee_assignments` kaynağında
+kalır. İki profil bölümünün bağımsız pozitif optimistic version'ı vardır; TCKN/pasaport, IBAN,
+ücret, sağlık, adres/acil kişi, belge ve yaşam döngüsü aksiyonları eklenmez.
 
 Veritabanı migration komutları:
 
@@ -378,6 +385,10 @@ Bu smoke testi server veya lokal PostgreSQL gerektirmez. FastAPI uygulamasını 
   `cursor`/`X-Next-Cursor` keyset pagination, geriye uyumlu deprecated `offset`, default
   `limit=50`, max `limit=200`, normalized number/iş-e-postası conflict'leri, optimistic version,
   güncel assignment özeti ve oluşturma/detay/güncelleme/silme
+- `/api/v1/employees/{employee_id}/profile` Employee 360 core/personal/employment aggregate'i ile
+  Phase 3 kaynağından salt-okunur güncel atama ve en fazla 50 assignment history kaydı;
+  `/profile/personal` ve `/profile/employment` PATCH'lerinde zorunlu bölüm version'ı, gerektiğinde
+  core employee version'ı, atomik audit ve deterministic stale-write `409`
 - `/api/v1/employees/{employee_id}/leave-balances` read-only manuel izin bakiyesi özetleri,
   `period_year` filtresi, tenant-scoped çalışan kontrolü ve mevcut leave requestlerden otomatik
   bakiye üretmeme davranışı
@@ -389,6 +400,9 @@ Smoke testi ayrıca generated OpenAPI operasyonlarını, güncel dokümanlardaki
 ve runtime'da gerçekten çağrılan endpoint setini kendi coverage registry'siyle karşılaştırır;
 dokümanlanan endpoint smoke kapsamı dışında kalırsa veya smoke senaryosunda hiç çağrılmazsa komut
 fail olur.
+
+P4B güncel registry'si 77 generated operation ve runtime `/openapi.json` dahil 78 documented
+endpoint'tir. Üç additive profil operation'ı mevcut P4A endpointlerini değiştirmez.
 
 F1A smoke/contract gate'i lifecycle, default-deny principals, typed extra-key rejection,
 cross-tenant principal isolation ve platform response'unda HR alanı bulunmamasını da kanıtlamalıdır;
@@ -989,7 +1003,7 @@ membership'i `tenant_admin + hr_specialist` rollerini birlikte taşır; **Çalı
 yetki `tenant_admin` değil, explicit HR `employee:read:tenant` grant'idir.
 
 1. `uv run alembic heads` çıktısında tek head olarak
-   `0032_p4a_employee_directory` bulunduğunu doğrulayın; ardından API ve frontend'i ayrı
+   `0033_p4b_employee_profiles` bulunduğunu doğrulayın; ardından API ve frontend'i ayrı
    terminallerde başlatın.
 2. `http://localhost:3000/login` üzerinden Wealthy Falcon tenant'ına girin ve **Çalışanlar**
    menüsünü açın. İlk yükleme, boş/filtered-empty, error-retry ve responsive tablo/kart durumları
@@ -1012,6 +1026,35 @@ yetki `tenant_admin` değil, explicit HR `employee:read:tenant` grant'idir.
 P4A create akışı SMTP/e-posta göndermez; notification ve gerçek mail entegrasyonu Phase 7'ye
 ertelenmiştir. Assignment, belge, import/export, raporlama veya hassas profil alanı da create
 transaction'ına eklenmez.
+
+## P4B Employee 360 manuel demo
+
+Yukarıdaki P3K demo kurulumu ve `wf_admin` login'i kullanılır. `wf_admin` içindeki
+`hr_specialist`, tenant-wide `employee:read:tenant` ve `employee:update:tenant` yetkilerini taşır.
+
+1. `/employees` dizininden mevcut bir çalışanı açın veya P4A **Yeni çalışan** akışını tamamlayın;
+   başarı `/employees/<employee-id>` responsive Employee 360 sayfasına gider.
+2. Klavye okları ile **Özet**, **Kişisel**, **İstihdam** ve **Organizasyon** sekmeleri arasında
+   gezinilebildiğini doğrulayın. Özet core kimlik/durum ve güncel organizasyonu; loading, empty,
+   error/retry durumları da aynı route'u terk etmeden gösterir.
+3. **Kişisel** sekmesinde ad, soyad, iş e-postası, tercih edilen ad, doğum tarihi ve telefonu
+   güncelleyin. Form bölüm `version` değerini ve core alan değişiyorsa `employee_version` değerini
+   gönderir; `409 concurrent_write_conflict` olduğunda kayıt yapmadan güncel veriyi yeniden yükleme
+   aksiyonu sunar. `422` ve correlation referansı anlaşılır hata mesajında görünür.
+4. **İstihdam** sekmesinde işe başlangıç tarihi, `Belirsiz/Belirli süreli` sözleşme ve
+   `Tam/Yarı zamanlı` çalışma türünü güncelleyin. Status, end-date, terminate/archive veya başka
+   yaşam döngüsü aksiyonu bu formda bulunmaz.
+5. **Organizasyon** sekmesinde güncel atama ve en fazla 50 korunmuş atama satırını salt-okunur
+   inceleyin. Atama değişikliği Employee 360'tan değil mevcut Phase 3 Organization çalışma
+   alanından yapılır.
+6. Yalnız read yetkisi olan HR profili bölümleri okuyabilir fakat edit formlarını görmez. Tenant
+   employee-read yetkisi olmayan kullanıcı doğrudan route'a giderse permission boundary profil veya
+   assignment data client'ını mount etmeden yetkili ana sayfasına döner.
+
+Access token browser storage/cookie/DOM'a yazılmaz; kısa ömürlü credential yalnız session
+provider belleğindedir ve refresh credential aynı-origin HttpOnly cookie olarak kalır. P4B
+TCKN/pasaport, IBAN/banka, ücret/bordro, sağlık/özel nitelikli veri, adres/acil kişi, belge, leave
+policy, custom field, mail, assignment write veya P4C+ ürün yüzeyi eklemez.
 
 ## Branch iş akışı
 
@@ -1050,15 +1093,16 @@ henüz yoktur:
 ## Durum
 
 P0A–P0G Faz 0, F1A–F1E Faz 1, F2A–F2F Faz 2 ve P3A–P3K Phase 3 identity/organization ürün
-dilimleri tamamlanmıştır. Phase 4 yalnız P4A çalışan dizini/minimal create/summary bloğuyla
-başlatılmıştır; P4B ve sonraki profil, belge, import, workflow, notification ve raporlama blokları
-başlatılmamıştır. Güncel uygulama yüzeyi ve kanıtlar
-[API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md), migration
-zinciri ve populated backfill sonucu ise
+dilimleri tamamlanmıştır. Phase 4'te P4A çalışan dizini/minimal create ve P4B focused Employee 360
+profil düzenleme blokları uygulanmıştır. Belge, import/export, lifecycle workflow, notification,
+raporlama ve diğer P4C+ blokları başlatılmamıştır. Güncel uygulama yüzeyi ve kanıtlar
+[API Implementation Status Report](docs/09-uygulama/11-api-implementation-status.md), güncel P4B
+migration/backfill/RLS sözleşmesi [Alembic versions](backend/alembic/versions/README.md), tarihsel
+Phase 3 populated backfill sonucu ise
 [Phase 3 Migration and Backfill Report](docs/09-uygulama/13-phase-3-migration-backfill-report.md)
 içinde kayıtlıdır.
 
-P4A commit'inden sonra supervisor review/push checkpoint'inde kalır. Codex push/merge/deploy
+P4B commit'inden sonra supervisor review/push checkpoint'inde kalır. Codex push/merge/deploy
 yapmaz; review branch push'u ve remote sync
 doğrulaması supervisor sorumluluğundadır. Yürütme otoritesi
 [MVP First Release Master Development Plan](.hermes/plans/2026-07-10_122125-mvp-first-release-master-development-plan.md)'dır;

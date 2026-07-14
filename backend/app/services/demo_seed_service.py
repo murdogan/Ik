@@ -9,6 +9,10 @@ from app.models.authorization import UserRole
 from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.identity import (
     Identity,
     IdentityStatus,
@@ -354,6 +358,8 @@ async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
     await session.flush()
 
     employees = await _upsert_employees(session, tenants)
+    await session.flush()
+    await _ensure_employee_profiles(session, employees)
     await session.flush()
 
     await _ensure_structured_employee_assignments(
@@ -756,6 +762,62 @@ async def _upsert_employees(
         employee.archived_at = None
         employees[fixture.key] = employee
     return employees
+
+
+async def _ensure_employee_profiles(
+    session: AsyncSession,
+    employees: dict[str, Employee],
+) -> None:
+    """Keep the P4B one-to-one invariant when demo employees are inserted after 0033."""
+
+    for key, employee in employees.items():
+        personal = await session.scalar(
+            select(EmployeePersonalProfile).where(
+                EmployeePersonalProfile.tenant_id == employee.tenant_id,
+                EmployeePersonalProfile.employee_id == employee.id,
+            )
+        )
+        if personal is None:
+            personal_id = _demo_structure_id(
+                "employee-personal-profile",
+                employee.tenant_id,
+                key,
+            )
+            if await session.get(EmployeePersonalProfile, personal_id) is not None:
+                raise DemoSeedConflictError(
+                    f"Demo personal profile id {personal_id} is already in use"
+                )
+            session.add(
+                EmployeePersonalProfile(
+                    id=personal_id,
+                    tenant_id=employee.tenant_id,
+                    employee_id=employee.id,
+                )
+            )
+
+        employment = await session.scalar(
+            select(EmployeeEmploymentProfile).where(
+                EmployeeEmploymentProfile.tenant_id == employee.tenant_id,
+                EmployeeEmploymentProfile.employee_id == employee.id,
+            )
+        )
+        if employment is None:
+            employment_id = _demo_structure_id(
+                "employee-employment-profile",
+                employee.tenant_id,
+                key,
+            )
+            if await session.get(EmployeeEmploymentProfile, employment_id) is not None:
+                raise DemoSeedConflictError(
+                    f"Demo employment profile id {employment_id} is already in use"
+                )
+            session.add(
+                EmployeeEmploymentProfile(
+                    id=employment_id,
+                    tenant_id=employee.tenant_id,
+                    employee_id=employee.id,
+                )
+            )
 
 
 async def _ensure_structured_employee_assignments(

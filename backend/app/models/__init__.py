@@ -21,6 +21,10 @@ from app.models.department import (
 )
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.identity import (
     Identity,
     IdentityStatus,
@@ -47,6 +51,8 @@ __all__ = [
     "DepartmentStatus",
     "Employee",
     "EmployeeAssignment",
+    "EmployeeEmploymentProfile",
+    "EmployeePersonalProfile",
     "EmployeeStatus",
     "Identity",
     "IdentityStatus",

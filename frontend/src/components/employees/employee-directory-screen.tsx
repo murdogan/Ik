@@ -35,7 +35,6 @@ import {
   formatEmployeeDate,
 } from "./employee-presentation";
 import { EmployeeStatusBadge } from "./employee-status-badge";
-import { EmployeeSummaryDialog } from "./employee-summary-dialog";
 import styles from "./employees.module.css";
 
 const PAGE_LIMIT = 25;
@@ -71,11 +70,7 @@ function currentPosition(employee: Employee): string {
   return employee.current_assignment?.position.title || employee.position || "Atama yok";
 }
 
-export function EmployeeDirectoryScreen({
-  selectedEmployeeId = null,
-}: {
-  selectedEmployeeId?: string | null;
-}) {
+export function EmployeeDirectoryScreen() {
   const router = useRouter();
   const { user: actor } = useSession();
   const canCreateEmployees = hasPermission(
@@ -608,13 +603,6 @@ export function EmployeeDirectoryScreen({
         />
       ) : null}
 
-      {selectedEmployeeId ? (
-        <EmployeeSummaryDialog
-          key={selectedEmployeeId}
-          employeeId={selectedEmployeeId}
-          onClose={() => router.replace("/employees")}
-        />
-      ) : null}
     </section>
   );
 }
