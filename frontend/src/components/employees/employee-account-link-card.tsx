@@ -533,6 +533,8 @@ export function EmployeeAccountLinkCard({ employeeId }: { employeeId: string }) 
     }
   }
 
+  if (!canManage) return null;
+
   return (
     <section className={styles.card} aria-labelledby="employee-account-link-title">
       <header className={styles.cardHeader}>

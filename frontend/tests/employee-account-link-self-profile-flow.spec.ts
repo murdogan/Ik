@@ -123,6 +123,24 @@ const unauthorizedUser = {
   permission_version: 5,
 };
 
+const employeeReadOnlyUser = {
+  ...hrUser,
+  id: "fc200000-0000-4000-8000-000000000005",
+  membership_id: "fc300000-0000-4000-8000-000000000005",
+  email: "auditor@wealthyfalcon.demo",
+  full_name: "Aylin Denetçi",
+  roles: [
+    {
+      id: "fc400000-0000-4000-8000-000000000005",
+      code: "auditor",
+      name: "Denetçi",
+      scope_type: "tenant",
+    },
+  ],
+  permissions: ["dashboard:read:own", "employee:read:tenant"],
+  permission_version: 6,
+};
+
 const employee360Profile = {
   core: {
     id: EMPLOYEE_ID,
@@ -212,6 +230,7 @@ test("HR links a canonical membership and only that linked session can populate 
     };
   } = { employee_id: EMPLOYEE_ID, link: null };
   let accountPatchBody: unknown = null;
+  let accountLinkReads = 0;
   let eligibleSearches = 0;
   let ownProfileRequests = 0;
   let employeePathRequestsFromOwnSessions = 0;
@@ -302,6 +321,7 @@ test("HR links a canonical membership and only that linked session can populate 
 
     if (path === `/api/v1/employees/${EMPLOYEE_ID}/account-link`) {
       if (request.method() === "GET") {
+        accountLinkReads += 1;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -474,4 +494,15 @@ test("HR links a canonical membership and only that linked session can populate 
   await expect(page.getByRole("heading", { name: "Merhaba, İpek Teknik" })).toBeVisible();
   expect(ownProfileRequests).toBe(ownRequestsBeforeDenial);
   expect(employeePathRequestsFromOwnSessions).toBe(0);
+
+  const accountLinkReadsBeforeReadOnly = accountLinkReads;
+  nextUser = employeeReadOnlyUser;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.goto(`/employees/${EMPLOYEE_ID}`);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Ada Yılmaz", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hesap bağlantısı" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Hesap bağlantısını yönet" })).toHaveCount(0);
+  expect(accountLinkReads).toBe(accountLinkReadsBeforeReadOnly);
 });
