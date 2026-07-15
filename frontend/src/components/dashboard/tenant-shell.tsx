@@ -49,6 +49,13 @@ const navigationItems = [
     feature: null,
   },
   {
+    href: "/document-types",
+    label: "Belge türleri",
+    icon: "B",
+    permissions: [AUTHORIZATION_PERMISSIONS.manageDocumentTypes],
+    feature: null,
+  },
+  {
     href: "/profile-change-requests",
     label: "Değişiklik talepleri",
     icon: "D",

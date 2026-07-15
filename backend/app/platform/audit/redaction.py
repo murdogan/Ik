@@ -108,6 +108,35 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
             "other",
         }
     ),
+    "before_state": frozenset(
+        {
+            "active",
+            "archived",
+            "pending_upload",
+            "pending_scan",
+            "available",
+            "infected",
+            "scan_error",
+            "rejected",
+        }
+    ),
+    "after_state": frozenset(
+        {
+            "active",
+            "archived",
+            "pending_upload",
+            "pending_scan",
+            "available",
+            "infected",
+            "scan_error",
+            "rejected",
+        }
+    ),
+    "file_class": frozenset({"pdf", "jpeg", "png"}),
+    "scan_result": frozenset({"clean", "infected", "error"}),
+    "scanner_provider": frozenset({"clamav", "local_clean"}),
+    "access_scope": frozenset({"hr", "own"}),
+    "sensitivity": frozenset({"standard", "sensitive", "highly_sensitive"}),
 }
 
 _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
@@ -394,6 +423,80 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     ),
     AuditEventType.REPORTING_LINE_CHANGED: AuditMetadataPolicy(
         changed_fields=frozenset({"manager_id"})
+    ),
+    AuditEventType.DOCUMENT_TYPE_CREATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"sensitivity"}),
+        changed_fields=frozenset(
+            {
+                "code",
+                "name",
+                "description",
+                "required",
+                "employee_visible",
+                "sensitivity",
+                "expiry_mode",
+                "allowed_mime_types",
+                "allowed_extensions",
+                "max_size_bytes",
+            }
+        ),
+    ),
+    AuditEventType.DOCUMENT_TYPE_UPDATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"sensitivity"}),
+        changed_fields=frozenset(
+            {
+                "name",
+                "description",
+                "required",
+                "employee_visible",
+                "sensitivity",
+                "expiry_mode",
+                "allowed_mime_types",
+                "allowed_extensions",
+                "max_size_bytes",
+            }
+        ),
+    ),
+    AuditEventType.DOCUMENT_TYPE_ARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_state", "after_state"}),
+        changed_fields=frozenset({"archived_at"}),
+    ),
+    AuditEventType.DOCUMENT_TYPE_UNARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_state", "after_state"}),
+        changed_fields=frozenset({"archived_at"}),
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_UPLOAD_INITIATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"after_state", "file_class", "sensitivity"}),
+        changed_fields=frozenset({"processing_state"}),
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_UPLOAD_FINALIZED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_state", "after_state", "file_class"}),
+        changed_fields=frozenset({"processing_state", "finalized_at"}),
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_SCAN_COMPLETED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"before_state", "after_state", "scan_result", "scanner_provider"}
+        ),
+        changed_fields=frozenset({"processing_state", "scan_result", "scanned_at"}),
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_UPDATED: AuditMetadataPolicy(
+        changed_fields=frozenset(
+            {"display_filename", "issued_on", "expires_on", "employee_visible"}
+        )
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_ARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_state", "after_state"}),
+        changed_fields=frozenset({"archived_at"}),
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_UNARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_state", "after_state"}),
+        changed_fields=frozenset({"archived_at"}),
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_VIEWED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"access_scope"})
+    ),
+    AuditEventType.EMPLOYEE_DOCUMENT_DOWNLOAD_URL_ISSUED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"access_scope"})
     ),
 }
 

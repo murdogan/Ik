@@ -31,6 +31,32 @@ class Settings(BaseSettings):
     auth_login_rate_limit_source_attempts: int = Field(default=40, ge=1, le=1000)
     auth_login_rate_limit_identity_attempts: int = Field(default=8, ge=1, le=100)
     frontend_base_url: str = "http://localhost:3000"
+    document_storage_backend: Literal["disabled", "s3"] = "disabled"
+    document_scanner_backend: Literal["local_clean", "clamav"] = "local_clean"
+    document_default_max_size_bytes: int = Field(
+        default=20 * 1024 * 1024,
+        ge=1,
+        le=50 * 1024 * 1024,
+    )
+    document_upload_ttl_seconds: int = Field(default=300, ge=60, le=900)
+    document_download_ttl_seconds: int = Field(default=120, ge=30, le=900)
+    document_upload_intent_ttl_minutes: int = Field(default=10, ge=2, le=30)
+    document_expiring_window_days: int = Field(default=30, ge=1, le=365)
+    s3_internal_endpoint_url: str | None = None
+    s3_presign_endpoint_url: str | None = None
+    s3_region: str = Field(default="us-east-1", min_length=1, max_length=64)
+    s3_bucket: str = Field(default="wealthy-falcon-documents", min_length=3, max_length=63)
+    s3_access_key_id: SecretStr | None = None
+    s3_secret_access_key: SecretStr | None = None
+    s3_session_token: SecretStr | None = None
+    s3_addressing_style: Literal["path", "virtual"] = "path"
+    s3_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    s3_read_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    s3_create_bucket: bool = False
+    clamav_host: str | None = None
+    clamav_port: int = Field(default=3310, ge=1, le=65_535)
+    clamav_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    clamav_scan_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
 
     model_config = SettingsConfigDict(env_prefix="IK_", env_file=".env", extra="ignore")
 
@@ -55,6 +81,31 @@ class Settings(BaseSettings):
             or (port is not None and not 1 <= port <= 65_535)
         ):
             raise ValueError("frontend_base_url must be an absolute HTTP(S) URL")
+        return normalized
+
+    @field_validator("s3_internal_endpoint_url", "s3_presign_endpoint_url")
+    @classmethod
+    def validate_optional_endpoint_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.rstrip("/")
+        if any(ord(character) < 32 for character in normalized):
+            raise ValueError("S3 endpoint contains invalid control characters")
+        try:
+            parsed = urlsplit(normalized)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("S3 endpoint must be a valid absolute URL") from exc
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or (port is not None and not 1 <= port <= 65_535)
+        ):
+            raise ValueError("S3 endpoint must be an absolute HTTP(S) URL")
         return normalized
 
 

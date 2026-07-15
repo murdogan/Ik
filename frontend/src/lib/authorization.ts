@@ -11,6 +11,9 @@ export const AUTHORIZATION_PERMISSIONS = {
   readTeamEmployees: "employee:read:team",
   readTenantEmployees: "employee:read:tenant",
   updateEmployees: "employee:update:tenant",
+  manageDocumentTypes: "document_type:manage:tenant",
+  manageEmployeeDocuments: "employee_document:manage:tenant",
+  readOwnEmployeeDocuments: "employee_document:read:own",
   readTenantAudit: "audit:read:tenant",
   readPlatformAudit: "audit:read:platform",
 } as const;

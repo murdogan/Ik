@@ -24,6 +24,7 @@ import {
 import { isSessionGenerationCurrent } from "@/lib/session";
 
 import { OwnProfileChangeRequests } from "./own-profile-change-requests";
+import { OwnDocuments } from "./own-documents";
 import styles from "./self-profile.module.css";
 
 interface SelfProfileBoundary {
@@ -113,6 +114,10 @@ function errorPresentation(cause: unknown): SelfProfileError {
 export function SelfProfileScreen() {
   const { user, sessionGeneration } = useSession();
   const canReadOwn = hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnEmployee);
+  const canReadOwnDocuments = hasPermission(
+    user,
+    AUTHORIZATION_PERMISSIONS.readOwnEmployeeDocuments,
+  );
   const boundary = useMemo<SelfProfileBoundary>(
     () => ({
       sessionGeneration,
@@ -368,6 +373,13 @@ export function SelfProfileScreen() {
           )}
         </section>
       </div>
+
+      {canReadOwnDocuments ? (
+        <OwnDocuments
+          key={`${boundary.sessionGeneration}:${boundary.userId}:${boundary.membershipId}:${boundary.tenantId}:${boundary.permissionVersion}:${result.employee_id}:documents`}
+          employeeId={result.employee_id}
+        />
+      ) : null}
 
       <OwnProfileChangeRequests
         key={`${boundary.sessionGeneration}:${boundary.userId}:${boundary.membershipId}:${boundary.tenantId}:${boundary.permissionVersion}:${result.employee_id}`}

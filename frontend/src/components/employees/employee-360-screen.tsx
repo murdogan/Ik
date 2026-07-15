@@ -50,10 +50,11 @@ import { isSessionGenerationCurrent } from "@/lib/session";
 
 import { formatEmployeeDate } from "./employee-presentation";
 import { EmployeeAccountLinkCard } from "./employee-account-link-card";
+import { EmployeeDocumentsPanel } from "./employee-documents-panel";
 import { EmployeeStatusBadge } from "./employee-status-badge";
 import styles from "./employees.module.css";
 
-type ProfileTab = "summary" | "personal" | "employment" | "organization";
+type ProfileTab = "summary" | "personal" | "employment" | "organization" | "documents";
 type ProfileAction = "read" | "personal" | "employment";
 type LifecycleDialogAction = "active" | "on_leave" | "terminated" | "archive";
 
@@ -99,6 +100,7 @@ const PROFILE_TABS: ReadonlyArray<{ id: ProfileTab; label: string }> = [
   { id: "personal", label: "Kişisel" },
   { id: "employment", label: "İstihdam" },
   { id: "organization", label: "Organizasyon" },
+  { id: "documents", label: "Belgeler" },
 ];
 
 const CONTRACT_TYPE_LABELS = {
@@ -804,19 +806,23 @@ function EmployeeInsightsOverview({
       ) : (
         <>
           <div className={styles.insightCards} aria-label="Çalışan güncel özetleri">
-            <article
-              className={`${styles.insightCard} ${styles.insightCardUnavailable}`}
-            >
+            <article className={styles.insightCard}>
               <header>
                 <span className={styles.insightCardIcon} aria-hidden="true">B</span>
                 <div><h4>Belgeler</h4><p>Çalışan belgeleri</p></div>
               </header>
-              <strong className={styles.insightUnavailableMetric}>Faz 5</strong>
+              <strong className={styles.insightMetric}>
+                {INSIGHT_NUMBER_FORMAT.format(insights.documents.missing)}
+                <small> eksik</small>
+              </strong>
               <p className={styles.insightCardDescription}>
-                Belge özeti henüz kullanılamıyor.
+                Zorunlu özlük belgeleri
               </p>
               <div className={styles.insightCardDetail}>
-                <span>Durum</span><b>Kullanılamıyor</b>
+                <span>
+                  {insights.documents.expiring} yaklaşıyor · {insights.documents.expired} doldu
+                </span>
+                <b>{insights.documents.available} mevcut</b>
               </div>
             </article>
 
@@ -1523,6 +1529,17 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
     AUTHORIZATION_PERMISSIONS.readTenantEmployees,
   );
   const canUpdate = hasPermission(user, AUTHORIZATION_PERMISSIONS.updateEmployees);
+  const canManageDocuments = hasPermission(
+    user,
+    AUTHORIZATION_PERMISSIONS.manageEmployeeDocuments,
+  );
+  const profileTabs = useMemo(
+    () =>
+      PROFILE_TABS.filter(
+        (tab) => tab.id !== "documents" || canManageDocuments,
+      ),
+    [canManageDocuments],
+  );
   const readBoundary = useMemo<ProfileRequestBoundary>(
     () => ({
       sessionGeneration,
@@ -1574,6 +1591,8 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [activeTab, setActiveTab] = useState<ProfileTab>("summary");
   const tabRefs = useRef<Partial<Record<ProfileTab, HTMLButtonElement>>>({});
+  const effectiveActiveTab =
+    activeTab === "documents" && !canManageDocuments ? "summary" : activeTab;
 
   useLayoutEffect(() => {
     latestReadBoundary.current = readBoundary;
@@ -1692,15 +1711,15 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
   }
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, tab: ProfileTab) {
-    const currentIndex = PROFILE_TABS.findIndex((item) => item.id === tab);
+    const currentIndex = profileTabs.findIndex((item) => item.id === tab);
     let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % PROFILE_TABS.length;
-    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + PROFILE_TABS.length) % PROFILE_TABS.length;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % profileTabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + profileTabs.length) % profileTabs.length;
     if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = PROFILE_TABS.length - 1;
+    if (event.key === "End") nextIndex = profileTabs.length - 1;
     if (nextIndex === null) return;
     event.preventDefault();
-    activateTab(PROFILE_TABS[nextIndex].id, true);
+    activateTab(profileTabs[nextIndex].id, true);
   }
 
   if (isLoading) {
@@ -1770,16 +1789,16 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
 
       <div className={styles.profileWorkspace}>
         <div className={styles.profileTabs} role="tablist" aria-label="Çalışan profil bölümleri">
-          {PROFILE_TABS.map((tab) => (
+          {profileTabs.map((tab) => (
             <button
               ref={(node) => { tabRefs.current[tab.id] = node ?? undefined; }}
               className={styles.profileTab}
               id={`employee-profile-tab-${tab.id}`}
               type="button"
               role="tab"
-              aria-selected={activeTab === tab.id}
+              aria-selected={effectiveActiveTab === tab.id}
               aria-controls={`employee-profile-panel-${tab.id}`}
-              tabIndex={activeTab === tab.id ? 0 : -1}
+              tabIndex={effectiveActiveTab === tab.id ? 0 : -1}
               onClick={() => activateTab(tab.id)}
               onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
               key={tab.id}
@@ -1791,19 +1810,19 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
 
         <section
           className={styles.profilePanel}
-          id={`employee-profile-panel-${activeTab}`}
+          id={`employee-profile-panel-${effectiveActiveTab}`}
           role="tabpanel"
-          aria-labelledby={`employee-profile-tab-${activeTab}`}
+          aria-labelledby={`employee-profile-tab-${effectiveActiveTab}`}
           tabIndex={0}
         >
-          {activeTab === "summary" ? (
+          {effectiveActiveTab === "summary" ? (
             <SummaryPanel
               key={profileRequestBoundaryKey(readBoundary)}
               profile={profile}
               requestBoundary={readBoundary}
             />
           ) : null}
-          {activeTab === "personal" ? (
+          {effectiveActiveTab === "personal" ? (
             <PersonalPanel
               key={profileRequestBoundaryKey(updateBoundary)}
               core={profile.core}
@@ -1814,7 +1833,7 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
               onSaved={mergePersonalProfile}
             />
           ) : null}
-          {activeTab === "employment" ? (
+          {effectiveActiveTab === "employment" ? (
             <EmploymentPanel
               key={profileRequestBoundaryKey(updateBoundary)}
               core={profile.core}
@@ -1825,7 +1844,14 @@ export function Employee360Screen({ employeeId }: { employeeId: string }) {
               onSaved={mergeEmploymentProfile}
             />
           ) : null}
-          {activeTab === "organization" ? <OrganizationPanel profile={profile} /> : null}
+          {effectiveActiveTab === "organization" ? <OrganizationPanel profile={profile} /> : null}
+          {effectiveActiveTab === "documents" && canManageDocuments ? (
+            <EmployeeDocumentsPanel
+              key={`${profileRequestBoundaryKey(readBoundary)}:${user.permission_version}`}
+              employeeId={employeeId}
+              employeeArchived={isArchived}
+            />
+          ) : null}
         </section>
       </div>
     </section>

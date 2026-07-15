@@ -246,6 +246,17 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     _permission(31, "organization:read:tenant", "Read current-tenant organization settings."),
     _permission(32, "organization:update:tenant", "Manage current-tenant organization settings."),
     _permission(33, "leave:manage:tenant", "Manage leave requests across the current tenant."),
+    _permission(34, "document_type:manage:tenant", "Manage tenant employee-document types."),
+    _permission(
+        35,
+        "employee_document:manage:tenant",
+        "Manage employee document metadata and private content across the tenant.",
+    ),
+    _permission(
+        36,
+        "employee_document:read:own",
+        "Read clean employee-visible documents linked to the current membership.",
+    ),
 )
 
 
@@ -299,6 +310,9 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "audit:read:tenant",
                 "organization:read:tenant",
                 "organization:update:tenant",
+                "document_type:manage:tenant",
+                "employee_document:manage:tenant",
+                "employee_document:read:own",
             }
         ),
         "hr_specialist": frozenset(
@@ -317,6 +331,9 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:manage:tenant",
                 "organization:read:tenant",
                 "organization:update:tenant",
+                "document_type:manage:tenant",
+                "employee_document:manage:tenant",
+                "employee_document:read:own",
             }
         ),
         "it_admin": frozenset(
@@ -349,6 +366,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "dashboard:read:own",
                 "employee:read:own",
                 "leave:read:own",
+                "employee_document:read:own",
             }
         ),
     }

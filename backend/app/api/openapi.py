@@ -12,6 +12,7 @@ PLATFORM_TENANTS_TAG = "Platform Tenants"
 TENANT_SETTINGS_TAG = "Tenant Settings"
 DASHBOARD_TAG = "Dashboard"
 EMPLOYEES_TAG = "Employees"
+DOCUMENTS_TAG = "Employee Documents"
 LEAVE_BALANCES_TAG = "Leave Balances"
 LEAVE_REQUESTS_TAG = "Leave Requests"
 
@@ -140,6 +141,13 @@ OPENAPI_TAGS = [
         "description": (
             "Tenant-scoped employee master data for directory search, profile lookup, lifecycle "
             "status, and record changes."
+        ),
+    },
+    {
+        "name": DOCUMENTS_TAG,
+        "description": (
+            "Tenant-scoped document policies, short-lived object grants, verified upload "
+            "finalization, malware quarantine, HR checklists, and employee-safe own access."
         ),
     },
     {

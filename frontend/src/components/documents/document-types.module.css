@@ -1,0 +1,72 @@
+.page { display: grid; gap: 28px; }
+.hero { max-width: 760px; }
+.hero > span { color: var(--wf-green); font-size: 11px; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
+.hero h1 { margin: 9px 0 10px; font-size: clamp(32px, 5vw, 48px); letter-spacing: -.05em; }
+.hero p,
+.createCard header p,
+.listSection > header p { margin: 0; color: var(--wf-muted); font-size: 13px; line-height: 1.6; }
+
+.createCard,
+.listSection { display: grid; gap: 18px; padding: 22px; border: 1px solid var(--wf-line); border-radius: var(--wf-radius-md); background: #fff; box-shadow: 0 12px 34px rgba(28, 64, 49, .05); }
+.createCard header,
+.listSection > header { display: grid; gap: 4px; }
+.createCard h2,
+.listSection h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+
+.form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding-top: 16px; border-top: 1px solid var(--wf-line); }
+.form > label { display: grid; align-content: start; gap: 6px; font-size: 11px; font-weight: 800; }
+.form input,
+.form select,
+.form textarea { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #c6d8ce; border-radius: 9px; color: var(--wf-ink); background: #fff; font: inherit; }
+.form textarea { resize: vertical; }
+.wideField { grid-column: 1 / -1; }
+.form fieldset { display: flex; flex-wrap: wrap; gap: 14px; padding: 12px; border: 1px solid #d3e0d9; border-radius: 10px; }
+.form legend { padding: 0 5px; font-size: 11px; font-weight: 800; }
+.form fieldset label,
+.switches label { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 700; }
+.form fieldset input,
+.switches input { width: 16px; min-height: auto; height: 16px; }
+.switches { display: grid; align-content: center; gap: 9px; }
+.formActions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+.formActions button,
+.typeList footer button,
+.errorState button { min-height: 40px; padding: 0 14px; border: 1px solid #b9d8c8; border-radius: 9px; color: var(--wf-green-strong); background: #fff; font-size: 11px; font-weight: 800; cursor: pointer; }
+.formActions .primaryButton { border-color: var(--wf-green-strong); color: #fff; background: var(--wf-green-strong); }
+button.primaryButton:disabled,
+.formActions button:disabled,
+.typeList footer button:disabled { opacity: .55; cursor: not-allowed; }
+
+.typeList { display: grid; gap: 12px; }
+.typeList article { display: grid; gap: 15px; padding: 17px; border: 1px solid var(--wf-line); border-radius: 13px; background: #fbfdfc; }
+.typeList article > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.typeList article > header > div:first-child { display: grid; min-width: 0; gap: 3px; }
+.typeList article > header > div:first-child > span { color: var(--wf-green); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.typeList h3 { margin: 0; font-size: 16px; }
+.typeList article > header p { margin: 0; color: var(--wf-muted); font-size: 11px; }
+.badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.badges span { padding: 5px 7px; border-radius: 7px; color: var(--wf-muted); background: #edf3f0; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.typeList dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.typeList dl div { display: grid; gap: 3px; padding: 10px; border-radius: 9px; background: #fff; }
+.typeList dt { color: var(--wf-muted); font-size: 9px; }
+.typeList dd { margin: 0; font-size: 11px; font-weight: 750; }
+.typeList footer { display: flex; justify-content: flex-end; gap: 8px; }
+.archived { opacity: .72; }
+
+.loadingState,
+.errorState,
+.notice { padding: 14px 16px; border: 1px solid var(--wf-line); border-radius: 11px; color: var(--wf-muted); background: #fbfdfc; font-size: 12px; }
+.errorState { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-color: var(--wf-danger-line); color: #7e3434; background: var(--wf-danger-bg); }
+.errorState > div,
+.errorState:not(:has(div)) { display: grid; gap: 3px; }
+.errorState span,
+.errorState small { font-size: 11px; }
+.notice { border-color: #b9ddc8; color: #17633f; background: #eef9f3; font-weight: 750; }
+
+@media (max-width: 720px) {
+  .form { grid-template-columns: 1fr; }
+  .wideField,
+  .formActions { grid-column: auto; }
+  .typeList article > header { display: grid; }
+  .badges { justify-content: flex-start; }
+  .typeList dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

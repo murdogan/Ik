@@ -14,6 +14,15 @@ from app.api.departments import router as departments_router
 from app.api.employee_account_links import own_router as employee_own_profile_router
 from app.api.employee_account_links import router as employee_account_links_router
 from app.api.employee_assignments import assignments_router, teams_router
+from app.api.employee_documents import (
+    document_types_router,
+)
+from app.api.employee_documents import (
+    employee_router as employee_documents_router,
+)
+from app.api.employee_documents import (
+    own_router as own_employee_documents_router,
+)
 from app.api.employee_profile_change_requests import (
     own_router as employee_own_profile_change_requests_router,
 )
@@ -47,6 +56,10 @@ from app.db.session import (
     DATABASE_RUNTIME_STATE_KEY,
     create_database_runtime,
 )
+from app.modules.documents import (
+    DOCUMENT_RUNTIME_STATE_KEY,
+    create_document_runtime,
+)
 from app.platform.errors import ApiError, ApplicationError, api_error_handler
 from app.platform.observability.correlation import CorrelationMiddleware
 
@@ -57,14 +70,21 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     if settings is None:
         settings = get_settings()
     runtime = create_database_runtime(settings)
+    document_runtime = create_document_runtime(settings)
     setattr(application.state, DATABASE_RUNTIME_STATE_KEY, runtime)
+    setattr(application.state, DOCUMENT_RUNTIME_STATE_KEY, document_runtime)
     try:
+        await document_runtime.initialize()
         yield
     finally:
         try:
-            await runtime.dispose()
+            await document_runtime.close()
         finally:
-            delattr(application.state, DATABASE_RUNTIME_STATE_KEY)
+            try:
+                await runtime.dispose()
+            finally:
+                delattr(application.state, DOCUMENT_RUNTIME_STATE_KEY)
+                delattr(application.state, DATABASE_RUNTIME_STATE_KEY)
 
 
 def create_app(*, settings: Settings | None = None) -> FastAPI:
@@ -108,6 +128,9 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(employee_profile_change_requests_router)
     app.include_router(employee_own_profile_change_requests_router)
     app.include_router(employee_profiles_router)
+    app.include_router(document_types_router)
+    app.include_router(employee_documents_router)
+    app.include_router(own_employee_documents_router)
     app.include_router(employees_router)
     app.include_router(leave_balances_router)
     app.include_router(leave_requests_router)

@@ -1,1 +1,27 @@
-"""Object-storage contracts and adapters boundary; providers are outside P0B."""
+"""Private object-storage contracts and S3-compatible production adapter."""
+
+from app.platform.storage.contracts import (
+    DownloadedObject,
+    ObjectAlreadyExistsError,
+    ObjectHead,
+    ObjectNotFoundError,
+    ObjectStorage,
+    ObjectStorageError,
+    ObjectStorageUnavailableError,
+    PresignedRequest,
+)
+from app.platform.storage.s3 import S3ObjectStorage
+from app.platform.storage.unavailable import UnavailableObjectStorage
+
+__all__ = [
+    "DownloadedObject",
+    "ObjectAlreadyExistsError",
+    "ObjectHead",
+    "ObjectNotFoundError",
+    "ObjectStorage",
+    "ObjectStorageError",
+    "ObjectStorageUnavailableError",
+    "PresignedRequest",
+    "S3ObjectStorage",
+    "UnavailableObjectStorage",
+]

@@ -22,6 +22,16 @@ from app.models.department import (
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_account_link import EmployeeAccountLink
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_document import (
+    DocumentExpiryMode,
+    DocumentProcessingState,
+    DocumentScanResult,
+    DocumentSensitivity,
+    DocumentType,
+    DocumentUploadIntentStatus,
+    EmployeeDocument,
+    EmployeeDocumentUploadIntent,
+)
 from app.models.employee_profile import (
     EmployeeEmploymentProfile,
     EmployeePersonalProfile,
@@ -57,6 +67,14 @@ __all__ = [
     "Employee",
     "EmployeeAccountLink",
     "EmployeeAssignment",
+    "EmployeeDocument",
+    "EmployeeDocumentUploadIntent",
+    "DocumentExpiryMode",
+    "DocumentProcessingState",
+    "DocumentScanResult",
+    "DocumentSensitivity",
+    "DocumentType",
+    "DocumentUploadIntentStatus",
     "EmployeeEmploymentProfile",
     "EmployeePersonalProfile",
     "EmployeeProfileChangeRequest",

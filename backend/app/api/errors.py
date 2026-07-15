@@ -64,6 +64,14 @@ from app.services.employee_assignment_service import (
     EmployeeAssignmentConflictError,
     EmployeeAssignmentNotFoundError,
 )
+from app.services.employee_document_service import (
+    DocumentConflictError,
+    DocumentNotFoundError,
+    DocumentStorageUnavailableError,
+    DocumentTypeNotFoundError,
+    DocumentValidationError,
+    DocumentVersionConflictError,
+)
 from app.services.employee_profile_change_request_service import (
     EmployeeProfileChangeRequestConflictError,
     EmployeeProfileChangeRequestInvalidError,
@@ -156,6 +164,8 @@ POSITION_API_PREFIX = "/api/v1/positions"
 EMPLOYEE_ASSIGNMENT_API_PREFIX = "/api/v1/employee-assignments"
 MANAGER_TEAM_API_PREFIX = "/api/v1/teams/me"
 ORG_CHART_API_PREFIX = "/api/v1/org-chart"
+DOCUMENT_TYPE_API_PREFIX = "/api/v1/document-types"
+OWN_DOCUMENT_API_PREFIX = "/api/v1/me/documents"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -323,6 +333,16 @@ EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_CODE = "employee_assignment_not_found"
 EMPLOYEE_ASSIGNMENT_NOT_FOUND_ERROR_MESSAGE = "Employee assignment was not found"
 EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_CODE = "employee_assignment_conflict"
 EMPLOYEE_ASSIGNMENT_CONFLICT_ERROR_MESSAGE = "The requested employee assignment is not allowed"
+DOCUMENT_VALIDATION_ERROR_CODE = "document_validation_error"
+DOCUMENT_VALIDATION_ERROR_MESSAGE = "Employee document request validation failed"
+DOCUMENT_NOT_FOUND_ERROR_CODE = "document_not_found"
+DOCUMENT_NOT_FOUND_ERROR_MESSAGE = "Employee document was not found"
+DOCUMENT_TYPE_NOT_FOUND_ERROR_CODE = "document_type_not_found"
+DOCUMENT_TYPE_NOT_FOUND_ERROR_MESSAGE = "Employee document type was not found"
+DOCUMENT_CONFLICT_ERROR_CODE = "document_conflict"
+DOCUMENT_CONFLICT_ERROR_MESSAGE = "The employee document operation is not allowed"
+DOCUMENT_STORAGE_UNAVAILABLE_ERROR_CODE = "document_storage_unavailable"
+DOCUMENT_STORAGE_UNAVAILABLE_ERROR_MESSAGE = "Employee document storage is temporarily unavailable"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -1128,6 +1148,18 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return employee_profile_change_request_stale_profile_error()
     if isinstance(exc, EmployeeProfileChangeRequestConflictError):
         return employee_profile_change_request_conflict_error()
+    if isinstance(exc, DocumentValidationError):
+        return document_validation_error(str(exc))
+    if isinstance(exc, DocumentTypeNotFoundError):
+        return document_type_not_found_error()
+    if isinstance(exc, DocumentNotFoundError):
+        return document_not_found_error()
+    if isinstance(exc, DocumentVersionConflictError):
+        return concurrent_write_conflict_error()
+    if isinstance(exc, DocumentConflictError):
+        return document_conflict_error(str(exc))
+    if isinstance(exc, DocumentStorageUnavailableError):
+        return document_storage_unavailable_error()
     if isinstance(exc, EmployeeAccountLinkUnavailableError):
         return employee_account_link_conflict_error()
     if isinstance(exc, OrganizationAccessDeniedError):
@@ -1684,6 +1716,46 @@ def employee_profile_change_request_stale_profile_error() -> ApiError:
     )
 
 
+def document_validation_error(message: str = "") -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=DOCUMENT_VALIDATION_ERROR_CODE,
+        message=message or DOCUMENT_VALIDATION_ERROR_MESSAGE,
+    )
+
+
+def document_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=DOCUMENT_NOT_FOUND_ERROR_CODE,
+        message=DOCUMENT_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def document_type_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=DOCUMENT_TYPE_NOT_FOUND_ERROR_CODE,
+        message=DOCUMENT_TYPE_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def document_conflict_error(message: str = "") -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=DOCUMENT_CONFLICT_ERROR_CODE,
+        message=message or DOCUMENT_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def document_storage_unavailable_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code=DOCUMENT_STORAGE_UNAVAILABLE_ERROR_CODE,
+        message=DOCUMENT_STORAGE_UNAVAILABLE_ERROR_MESSAGE,
+    )
+
+
 def employee_date_range_error(message: str) -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1843,6 +1915,15 @@ def _domain_request_validation_error(
         path, HR_PROFILE_CHANGE_REQUEST_API_PREFIX
     ):
         return employee_profile_change_request_validation_error()
+    if (
+        _matches_api_prefix(path, DOCUMENT_TYPE_API_PREFIX)
+        or _matches_api_prefix(path, OWN_DOCUMENT_API_PREFIX)
+        or (
+            _matches_api_prefix(path, EMPLOYEE_API_PREFIX)
+            and "/documents" in path
+        )
+    ):
+        return document_validation_error()
     if _matches_api_prefix(path, EMPLOYEE_API_PREFIX):
         return _employee_request_validation_error(exc)
     if _matches_api_prefix(path, LEAVE_REQUEST_API_PREFIX):

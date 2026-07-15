@@ -108,6 +108,18 @@ class AuditEventType(StrEnum):
     EMPLOYEE_PROFILE_CHANGE_REQUEST_CANCELLED = "employee.profile_change_request.cancelled"
     EMPLOYEE_ASSIGNMENT_CHANGED = "employee.assignment.changed"
     REPORTING_LINE_CHANGED = "reporting_line.changed"
+    DOCUMENT_TYPE_CREATED = "document_type.created"
+    DOCUMENT_TYPE_UPDATED = "document_type.updated"
+    DOCUMENT_TYPE_ARCHIVED = "document_type.archived"
+    DOCUMENT_TYPE_UNARCHIVED = "document_type.unarchived"
+    EMPLOYEE_DOCUMENT_UPLOAD_INITIATED = "employee_document.upload.initiated"
+    EMPLOYEE_DOCUMENT_UPLOAD_FINALIZED = "employee_document.upload.finalized"
+    EMPLOYEE_DOCUMENT_SCAN_COMPLETED = "employee_document.scan.completed"
+    EMPLOYEE_DOCUMENT_UPDATED = "employee_document.updated"
+    EMPLOYEE_DOCUMENT_ARCHIVED = "employee_document.archived"
+    EMPLOYEE_DOCUMENT_UNARCHIVED = "employee_document.unarchived"
+    EMPLOYEE_DOCUMENT_VIEWED = "employee_document.viewed"
+    EMPLOYEE_DOCUMENT_DOWNLOAD_URL_ISSUED = "employee_document.download_url.issued"
 
 
 @dataclass(frozen=True, slots=True)

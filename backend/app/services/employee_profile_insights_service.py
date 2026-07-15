@@ -28,6 +28,7 @@ from app.schemas.employee_profile_insights import (
     EmployeeProfileChangesSummaryRead,
     EmployeeProfileInsightsRead,
 )
+from app.services.employee_document_service import EmployeeDocumentQueryService
 from app.services.employee_profile_service import EmployeeProfileNotFoundError
 
 _DIRECT_EMPLOYEE_ACTIVITY_KINDS = (
@@ -70,6 +71,12 @@ class EmployeeProfileInsightsService:
             if cursor is not None
             else None
         )
+        document_summary = await EmployeeDocumentQueryService(
+            self.session,
+        ).summary(
+            tenant_id=tenant_id,
+            employee_id=employee_id,
+        )
         leave, profile_changes = await self._summaries(
             tenant_id=tenant_id,
             employee_id=employee_id,
@@ -81,7 +88,7 @@ class EmployeeProfileInsightsService:
             cursor=activity_cursor,
         )
         return EmployeeProfileInsightsRead(
-            documents=EmployeeDocumentsSummaryRead(),
+            documents=EmployeeDocumentsSummaryRead(**document_summary.model_dump()),
             leave=leave,
             profile_changes=profile_changes,
             activity=activity,

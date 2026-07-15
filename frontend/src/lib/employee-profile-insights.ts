@@ -29,7 +29,10 @@ export type EmployeeProfileChangeStatus =
   (typeof EMPLOYEE_PROFILE_CHANGE_STATUSES)[number];
 
 export interface EmployeeDocumentsInsight {
-  availability: "unavailable";
+  missing: number;
+  available: number;
+  expiring: number;
+  expired: number;
 }
 
 export interface EmployeeLeaveInsight {
@@ -125,8 +128,11 @@ function isUuid(value: unknown): value is string {
 function isDocumentsInsight(value: unknown): value is EmployeeDocumentsInsight {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["availability"]) &&
-    value.availability === "unavailable"
+    hasExactKeys(value, ["missing", "available", "expiring", "expired"]) &&
+    isNonNegativeInteger(value.missing) &&
+    isNonNegativeInteger(value.available) &&
+    isNonNegativeInteger(value.expiring) &&
+    isNonNegativeInteger(value.expired)
   );
 }
 

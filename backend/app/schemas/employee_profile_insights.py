@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -46,11 +46,14 @@ class EmployeeProfileActivityKind(StrEnum):
 
 
 class EmployeeDocumentsSummaryRead(BaseModel):
-    """Stable Phase 5 placeholder; deliberately carries no synthetic document count."""
+    """Real checklist counts; missing includes required types only."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    availability: Literal["unavailable"] = "unavailable"
+    missing: int = Field(ge=0)
+    available: int = Field(ge=0)
+    expiring: int = Field(ge=0)
+    expired: int = Field(ge=0)
 
 
 class EmployeeLeaveSummaryRead(BaseModel):
