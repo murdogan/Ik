@@ -48,6 +48,16 @@ from app.models.identity import (
     PlatformIdentityRole,
     TenantMembership,
 )
+from app.models.leave import (
+    HolidayCalendar,
+    HolidayEntry,
+    LeaveBalanceLedger,
+    LeavePolicy,
+    LeaveRequestDay,
+    LeaveRequestTimeline,
+    LeaveType,
+    OutboxEvent,
+)
 from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
@@ -82,9 +92,16 @@ __all__ = [
     "EmployeeStatus",
     "Identity",
     "IdentityStatus",
+    "HolidayCalendar",
+    "HolidayEntry",
+    "LeaveBalanceLedger",
     "LeaveBalanceSummary",
+    "LeavePolicy",
     "LeaveRequest",
+    "LeaveRequestDay",
     "LeaveRequestStatus",
+    "LeaveRequestTimeline",
+    "LeaveType",
     "LegalEntity",
     "LegalEntityStatus",
     "MembershipRole",
@@ -92,6 +109,7 @@ __all__ = [
     "Permission",
     "OrganizationSelectionTransaction",
     "OrganizationSelectionChoice",
+    "OutboxEvent",
     "PasswordResetToken",
     "PlatformIdentityRole",
     "PlatformRefreshSessionFamily",

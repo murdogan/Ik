@@ -13,8 +13,10 @@ TENANT_SETTINGS_TAG = "Tenant Settings"
 DASHBOARD_TAG = "Dashboard"
 EMPLOYEES_TAG = "Employees"
 DOCUMENTS_TAG = "Employee Documents"
+LEAVE_CONFIGURATION_TAG = "Leave Configuration"
 LEAVE_BALANCES_TAG = "Leave Balances"
 LEAVE_REQUESTS_TAG = "Leave Requests"
+LEAVE_APPROVALS_TAG = "Leave Approvals"
 
 # Phase 1 has no caller-facing credential format: authorization is supplied only by the trusted
 # principal dependency seam and fails closed by default.  A standard OpenAPI security scheme would
@@ -151,17 +153,31 @@ OPENAPI_TAGS = [
         ),
     },
     {
+        "name": LEAVE_CONFIGURATION_TAG,
+        "description": (
+            "Tenant-scoped leave types, workweek and holiday calendars, and immutable "
+            "effective-dated policy versions administered by authorized HR roles."
+        ),
+    },
+    {
         "name": LEAVE_BALANCES_TAG,
         "description": (
-            "Tenant-scoped read-only manual leave balance summaries for HR review; no accrual "
-            "engine or external integrations are exposed."
+            "Identity-derived employee balances and authorized HR views backed by an append-only "
+            "ledger, including reason-required manual adjustments and bounded history."
         ),
     },
     {
         "name": LEAVE_REQUESTS_TAG,
         "description": (
-            "Tenant-scoped leave request intake, filtered review queues, and pending-request "
-            "approve, reject, or cancel decisions."
+            "Identity-derived leave request submission, counted-day validation, private detail "
+            "history, and concurrency-safe cancellation within the authenticated tenant."
+        ),
+    },
+    {
+        "name": LEAVE_APPROVALS_TAG,
+        "description": (
+            "Current-assignment manager approval tasks, concurrency-safe decisions, and bounded "
+            "team calendar visibility with tenant-wide HR administration where authorized."
         ),
     },
 ]

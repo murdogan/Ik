@@ -15,7 +15,7 @@ from app.api.errors import (
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, AuthRuntime
 from app.core.config import APP_SETTINGS_STATE_KEY, Settings
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
-from app.platform.authorization import DenyByDefaultPolicy, PermissionName
+from app.platform.authorization import PERMISSIONS_BY_CODE, DenyByDefaultPolicy, PermissionName
 from app.platform.errors.application import ApplicationError
 from app.platform.identity import (
     AccessPrincipal,
@@ -313,6 +313,41 @@ def require_permission(
     return dependency
 
 
+def require_any_permission(
+    *permission_codes: str,
+    denied_error: type[ApplicationError] = AuthorizationAccessDeniedError,
+):
+    """Build a dependency that requires at least one exact, known permission."""
+
+    if not permission_codes:
+        raise ValueError("At least one permission code is required")
+
+    required_permissions: list[PermissionName] = []
+    for permission_code in permission_codes:
+        permission = PermissionName.parse(permission_code)
+        if permission.code not in PERMISSIONS_BY_CODE:
+            raise ValueError(f"Unknown permission code: {permission.code}")
+        required_permissions.append(permission)
+
+    async def dependency(
+        authenticated: Annotated[
+            AuthenticatedSession,
+            Depends(require_authenticated_session),
+        ],
+    ) -> AuthenticatedSession:
+        if not any(
+            _authorization_policy.allows(
+                required_permission,
+                authenticated.user.permissions,
+            )
+            for required_permission in required_permissions
+        ):
+            raise denied_error()
+        return authenticated
+
+    return dependency
+
+
 def get_authenticated_request_context(
     request: Request,
     authenticated_session: Annotated[
@@ -360,6 +395,7 @@ __all__ = [
     "require_platform_access_principal",
     "require_platform_authenticated_session",
     "require_platform_step_up",
+    "require_any_permission",
     "require_permission",
     "require_invitation_principal",
 ]

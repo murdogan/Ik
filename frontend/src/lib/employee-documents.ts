@@ -436,19 +436,20 @@ function isOwnDocument(
 
 function isOwnWorkspace(
   value: unknown,
-  employeeId: string,
+  employeeId?: string,
 ): value is OwnEmployeeDocumentWorkspace {
+  if (!isRecord(value) || !isUuid(value.employee_id)) return false;
+  const resolvedEmployeeId = value.employee_id;
   return (
-    isRecord(value) &&
     hasExactKeys(value, ["employee_id", "summary", "checklist", "documents"]) &&
-    value.employee_id === employeeId &&
+    (employeeId === undefined || resolvedEmployeeId === employeeId) &&
     isSummary(value.summary) &&
     Array.isArray(value.checklist) &&
     value.checklist.length <= 200 &&
     value.checklist.every(isChecklistItem) &&
     Array.isArray(value.documents) &&
     value.documents.length <= 200 &&
-    value.documents.every((item) => isOwnDocument(item, employeeId))
+    value.documents.every((item) => isOwnDocument(item, resolvedEmployeeId))
   );
 }
 
@@ -477,7 +478,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 
 function isUploadGrant(
   value: unknown,
-  employeeId: string,
+  employeeId?: string,
 ): value is UploadGrant {
   return (
     isRecord(value) &&
@@ -728,12 +729,64 @@ export async function issueEmployeeDocumentDownload(
 }
 
 export async function readOwnEmployeeDocuments(
-  employeeId: string,
+  employeeId?: string,
 ): Promise<OwnEmployeeDocumentWorkspace> {
   return readEnvelope(
     "/api/v1/me/documents",
     (value): value is OwnEmployeeDocumentWorkspace =>
       isOwnWorkspace(value, employeeId),
+  );
+}
+
+export async function listOwnEmployeeDocumentUploadTypes(): Promise<
+  EmployeeDocumentType[]
+> {
+  return readEnvelope(
+    "/api/v1/me/documents/upload-types",
+    (value): value is EmployeeDocumentType[] =>
+      Array.isArray(value) &&
+      value.length <= 200 &&
+      value.every(isDocumentType),
+  );
+}
+
+export async function uploadOwnEmployeeDocument(
+  file: File,
+  fields: EmployeeDocumentUploadFields,
+): Promise<EmployeeDocument> {
+  const extension = fileExtension(file.name);
+  if (extension === null) {
+    throw new TypeError("Only PDF, JPG, JPEG, and PNG files are supported");
+  }
+  const contentType = mimeForExtension(extension);
+  if (file.type !== "" && file.type !== contentType) {
+    throw new TypeError("File MIME type and extension do not match");
+  }
+  const grant = await readEnvelope(
+    "/api/v1/me/documents/uploads",
+    (value): value is UploadGrant => isUploadGrant(value),
+    {
+      method: "POST",
+      body: {
+        document_type_id: fields.documentTypeId,
+        display_filename: file.name,
+        declared_content_type: contentType,
+        size_bytes: file.size,
+        issued_on: fields.issuedOn,
+        expires_on: fields.expiresOn,
+        employee_visible: fields.employeeVisible,
+      },
+    },
+  );
+  await putPresignedObject(grant, file);
+  return readEnvelope(
+    `/api/v1/me/documents/${encodeURIComponent(grant.document.id)}/finalize`,
+    (value): value is EmployeeDocument =>
+      isEmployeeDocument(value) && value.id === grant.document.id,
+    {
+      method: "POST",
+      body: { upload_intent_id: grant.upload_intent_id },
+    },
   );
 }
 

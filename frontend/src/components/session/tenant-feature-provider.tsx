@@ -12,19 +12,12 @@ import {
 } from "react";
 
 import { useSession } from "@/components/session/session-provider";
-import { ApiClientError } from "@/lib/api-client";
-import {
-  AUTHORIZATION_PERMISSIONS,
-  hasPermission,
-  homePathForUser,
-} from "@/lib/authorization";
-import {
-  listLegalEntities,
-} from "@/lib/organization";
+import { homePathForUser } from "@/lib/authorization";
 import {
   TENANT_FEATURES,
   type TenantFeatureKey,
 } from "@/lib/feature-rollout";
+import { readTenantFeatures } from "@/lib/tenant-features";
 
 import styles from "./session.module.css";
 
@@ -52,23 +45,12 @@ export function TenantFeatureProvider({ children }: { children: ReactNode }) {
     status: "loading",
     enabledFeatures: new Set<TenantFeatureKey>(),
   }));
-  const canReadOrganization = hasPermission(
-    user,
-    AUTHORIZATION_PERMISSIONS.readOrganization,
-  );
-
   useEffect(() => {
     let isActive = true;
     const tenantId = user.tenant_id;
     const permissionVersion = user.permission_version;
-    if (!canReadOrganization) {
-      return () => {
-        isActive = false;
-      };
-    }
-
-    void listLegalEntities({ limit: 1 }).then(
-      () => {
+    void readTenantFeatures().then(
+      (features) => {
         if (!isActive) {
           return;
         }
@@ -76,20 +58,27 @@ export function TenantFeatureProvider({ children }: { children: ReactNode }) {
           tenantId,
           permissionVersion,
           status: "ready",
-          enabledFeatures: new Set([TENANT_FEATURES.organization]),
+          enabledFeatures: new Set(
+            features
+              .filter((feature) => feature.enabled)
+              .map((feature) => feature.key)
+              .filter(
+                (key): key is TenantFeatureKey =>
+                  Object.values(TENANT_FEATURES).includes(
+                    key as TenantFeatureKey,
+                  ),
+              ),
+          ),
         });
       },
-      (cause) => {
+      () => {
         if (!isActive) {
           return;
         }
-        const isDisabled =
-          cause instanceof ApiClientError &&
-          cause.code === "organization_feature_unavailable";
         setState({
           tenantId,
           permissionVersion,
-          status: isDisabled ? "ready" : "error",
+          status: "error",
           enabledFeatures: new Set<TenantFeatureKey>(),
         });
       },
@@ -98,23 +87,18 @@ export function TenantFeatureProvider({ children }: { children: ReactNode }) {
     return () => {
       isActive = false;
     };
-  }, [canReadOrganization, user.permission_version, user.tenant_id]);
+  }, [user.permission_version, user.tenant_id]);
 
   const stateMatchesTenant =
     state.tenantId === user.tenant_id &&
     state.permissionVersion === user.permission_version;
-  const status = !canReadOrganization
-    ? "ready"
-    : stateMatchesTenant
-      ? state.status
-      : "loading";
+  const status = stateMatchesTenant ? state.status : "loading";
   const isEnabled = useCallback(
     (feature: TenantFeatureKey) =>
-      canReadOrganization &&
       stateMatchesTenant &&
       state.status === "ready" &&
       state.enabledFeatures.has(feature),
-    [canReadOrganization, state, stateMatchesTenant],
+    [state, stateMatchesTenant],
   );
   const contextValue = useMemo<TenantFeatureContextValue>(
     () => ({ status, isEnabled }),

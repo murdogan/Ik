@@ -1,5 +1,6 @@
 export const TENANT_FEATURES = {
   organization: "organization",
+  leave: "leave",
 } as const;
 
 export type TenantFeatureKey =

@@ -38,8 +38,18 @@ from app.api.errors import (
 )
 from app.api.health import router as health_router
 from app.api.landing import router as landing_router
-from app.api.leave_balances import router as leave_balances_router
-from app.api.leave_requests import router as leave_requests_router
+from app.api.leave import (
+    approval_router as leave_approval_router,
+)
+from app.api.leave import (
+    balance_router as leave_balance_router,
+)
+from app.api.leave import (
+    configuration_router as leave_configuration_router,
+)
+from app.api.leave import (
+    request_router as leave_request_router,
+)
 from app.api.openapi import OPENAPI_TAGS
 from app.api.org_chart import router as org_chart_router
 from app.api.organization import branches_router, legal_entities_router
@@ -132,8 +142,10 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(employee_documents_router)
     app.include_router(own_employee_documents_router)
     app.include_router(employees_router)
-    app.include_router(leave_balances_router)
-    app.include_router(leave_requests_router)
+    app.include_router(leave_configuration_router)
+    app.include_router(leave_balance_router)
+    app.include_router(leave_request_router)
+    app.include_router(leave_approval_router)
     app.include_router(landing_router)
     app.include_router(health_router)
     return app

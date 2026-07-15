@@ -481,6 +481,88 @@ async def get_own_documents(
     return data_envelope(workspace, request_context)
 
 
+@own_router.get(
+    "/upload-types",
+    response_model=DataEnvelope[list[DocumentTypeRead]],
+    summary="List document types allowed for an own upload",
+)
+async def list_own_document_upload_types(
+    response: Response,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee_document:upload:own")),
+    ],
+    service: Annotated[EmployeeDocumentService, Depends(get_employee_document_service)],
+) -> DataEnvelope[list[DocumentTypeRead]]:
+    _prevent_storage(response)
+    records = await service.list_own_upload_types(
+        tenant_id=request_context.require_tenant().tenant_id,
+        request_context=request_context,
+    )
+    return data_envelope(records, request_context)
+
+
+@own_router.post(
+    "/uploads",
+    response_model=DataEnvelope[EmployeeDocumentUploadGrantRead],
+    status_code=status.HTTP_201_CREATED,
+    summary="Initiate an own employee-document upload",
+)
+async def initiate_own_document_upload(
+    payload: EmployeeDocumentUploadInitiate,
+    response: Response,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee_document:upload:own")),
+    ],
+    service: Annotated[EmployeeDocumentService, Depends(get_employee_document_service)],
+) -> DataEnvelope[EmployeeDocumentUploadGrantRead]:
+    _prevent_storage(response)
+    grant = await service.initiate_own_upload(
+        tenant_id=request_context.require_tenant().tenant_id,
+        payload=payload,
+        request_context=request_context,
+    )
+    return data_envelope(grant, request_context)
+
+
+@own_router.post(
+    "/{document_id}/finalize",
+    response_model=DataEnvelope[EmployeeDocumentRead],
+    summary="Finalize an own employee-document upload",
+)
+async def finalize_own_document_upload(
+    document_id: UUID,
+    payload: EmployeeDocumentFinalize,
+    response: Response,
+    request_context: Annotated[
+        RequestContext,
+        Depends(get_authenticated_tenant_request_context),
+    ],
+    _authorized: Annotated[
+        AuthenticatedSession,
+        Depends(require_permission("employee_document:upload:own")),
+    ],
+    service: Annotated[EmployeeDocumentService, Depends(get_employee_document_service)],
+) -> DataEnvelope[EmployeeDocumentRead]:
+    _prevent_storage(response)
+    document = await service.finalize_own_upload(
+        tenant_id=request_context.require_tenant().tenant_id,
+        document_id=document_id,
+        upload_intent_id=payload.upload_intent_id,
+        request_context=request_context,
+    )
+    return data_envelope(document, request_context)
+
+
 @own_router.post(
     "/{document_id}/download",
     response_model=DataEnvelope[EmployeeDocumentDownloadGrantRead],

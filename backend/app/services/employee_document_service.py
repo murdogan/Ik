@@ -600,6 +600,77 @@ class EmployeeDocumentService:
 
             return await unit_of_work.execute(operation)
 
+    async def list_own_upload_types(
+        self,
+        *,
+        tenant_id: UUID,
+        request_context: RequestContext,
+    ) -> list[DocumentTypeRead]:
+        """Return only active policies an employee may use for a self-owned upload."""
+
+        actor = _Actor.from_request_context(request_context)
+        async with self._tenant_session(tenant_id, actor) as session:
+            async with session.begin():
+                await self._own_employee_id(session, tenant_id, actor)
+                records = tuple(
+                    await session.scalars(
+                        select(DocumentType)
+                        .where(
+                            DocumentType.tenant_id == tenant_id,
+                            DocumentType.archived_at.is_(None),
+                            DocumentType.employee_visible.is_(True),
+                        )
+                        .order_by(DocumentType.name, DocumentType.id)
+                        .limit(DOCUMENT_LIST_LIMIT)
+                    )
+                )
+        return [_document_type_read(record) for record in records]
+
+    async def initiate_own_upload(
+        self,
+        *,
+        tenant_id: UUID,
+        payload: EmployeeDocumentUploadInitiate,
+        request_context: RequestContext,
+    ) -> EmployeeDocumentUploadGrantRead:
+        """Initiate an upload for the employee derived from the authenticated membership."""
+
+        actor = _Actor.from_request_context(request_context)
+        async with self._tenant_session(tenant_id, actor) as session:
+            async with session.begin():
+                employee_id = await self._own_employee_id(session, tenant_id, actor)
+        own_payload = payload.model_copy(update={"employee_visible": True})
+        return await self.initiate_upload(
+            tenant_id=tenant_id,
+            employee_id=employee_id,
+            payload=own_payload,
+            request_context=request_context,
+            require_own=True,
+        )
+
+    async def finalize_own_upload(
+        self,
+        *,
+        tenant_id: UUID,
+        document_id: UUID,
+        upload_intent_id: UUID,
+        request_context: RequestContext,
+    ) -> EmployeeDocumentRead:
+        """Finalize a self upload without accepting an employee selector."""
+
+        actor = _Actor.from_request_context(request_context)
+        async with self._tenant_session(tenant_id, actor) as session:
+            async with session.begin():
+                employee_id = await self._own_employee_id(session, tenant_id, actor)
+        return await self.finalize_upload(
+            tenant_id=tenant_id,
+            employee_id=employee_id,
+            document_id=document_id,
+            upload_intent_id=upload_intent_id,
+            request_context=request_context,
+            require_own=True,
+        )
+
     async def initiate_upload(
         self,
         *,
@@ -607,6 +678,7 @@ class EmployeeDocumentService:
         employee_id: UUID,
         payload: EmployeeDocumentUploadInitiate,
         request_context: RequestContext,
+        require_own: bool = False,
     ) -> EmployeeDocumentUploadGrantRead:
         actor = _Actor.from_request_context(request_context)
         filename, extension = sanitize_display_filename(payload.display_filename)
@@ -617,6 +689,10 @@ class EmployeeDocumentService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> EmployeeDocumentUploadGrantRead:
+                if require_own:
+                    current_employee_id = await self._own_employee_id(session, tenant_id, actor)
+                    if current_employee_id != employee_id:
+                        raise DocumentNotFoundError
                 await self._require_employee(session, tenant_id, employee_id)
                 document_count = await session.scalar(
                     select(func.count(EmployeeDocument.id)).where(
@@ -634,6 +710,8 @@ class EmployeeDocumentService:
                     document_type_id=payload.document_type_id,
                 )
                 if document_type.archived_at is not None:
+                    raise DocumentTypeNotFoundError
+                if require_own and not document_type.employee_visible:
                     raise DocumentTypeNotFoundError
                 self._validate_upload_policy(
                     document_type=document_type,
@@ -755,6 +833,7 @@ class EmployeeDocumentService:
         document_id: UUID,
         upload_intent_id: UUID,
         request_context: RequestContext,
+        require_own: bool = False,
     ) -> EmployeeDocumentRead:
         actor = _Actor.from_request_context(request_context)
         snapshot, existing = await self._finalize_snapshot(
@@ -763,6 +842,7 @@ class EmployeeDocumentService:
             document_id=document_id,
             upload_intent_id=upload_intent_id,
             actor=actor,
+            require_own=require_own,
         )
         if existing is not None:
             return existing
@@ -1092,6 +1172,7 @@ class EmployeeDocumentService:
         document_id: UUID,
         upload_intent_id: UUID,
         actor: _Actor,
+        require_own: bool = False,
     ) -> tuple[_FinalizeSnapshot, EmployeeDocumentRead | None]:
         async with self._tenant_session(tenant_id, actor) as session:
             async with session.begin():
@@ -1124,6 +1205,10 @@ class EmployeeDocumentService:
                 if row is None:
                     raise DocumentNotFoundError
                 document, intent, document_type = row
+                if require_own:
+                    current_employee_id = await self._own_employee_id(session, tenant_id, actor)
+                    if current_employee_id != document.employee_id:
+                        raise DocumentNotFoundError
                 if (
                     intent.initiated_by_user_id != actor.user_id
                     or intent.initiated_by_membership_id != actor.membership_id

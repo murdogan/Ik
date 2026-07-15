@@ -98,6 +98,15 @@ from app.services.leave_request_service import (
     LeaveRequestTransitionError,
     LeaveRequestUserNotFoundError,
 )
+from app.services.leave_service import (
+    LeaveAccessDeniedError,
+    LeaveConflictError,
+    LeaveEmployeeLinkUnavailableError,
+    LeaveInsufficientBalanceError,
+    LeaveNotFoundError,
+    LeaveValidationError,
+    LeaveVersionConflictError,
+)
 from app.services.organization_service import (
     BranchNotFoundError,
     DuplicateBranchCodeError,
@@ -151,6 +160,13 @@ OWN_PROFILE_CHANGE_REQUEST_API_PREFIX = "/api/v1/me/profile-change-requests"
 HR_PROFILE_CHANGE_REQUEST_API_PREFIX = "/api/v1/employee-profile-change-requests"
 LEAVE_BALANCE_API_SEGMENT = "/leave-balances"
 LEAVE_REQUEST_API_PREFIX = "/api/v1/leave-requests"
+LEAVE_TYPE_API_PREFIX = "/api/v1/leave-types"
+HOLIDAY_CALENDAR_API_PREFIX = "/api/v1/holiday-calendars"
+LEAVE_POLICY_API_PREFIX = "/api/v1/leave-policies"
+LEAVE_ADJUSTMENT_API_PREFIX = "/api/v1/leave-adjustments"
+OWN_LEAVE_BALANCE_API_PREFIX = "/api/v1/me/leave-balances"
+APPROVAL_TASK_API_PREFIX = "/api/v1/approval-tasks"
+TEAM_CALENDAR_API_PREFIX = "/api/v1/team-calendar"
 PLATFORM_TENANT_API_PREFIX = "/api/v1/platform/tenants"
 TENANT_API_PREFIX = "/api/v1/tenant"
 AUTH_API_PREFIX = "/api/v1/auth"
@@ -213,6 +229,12 @@ LEAVE_REQUEST_NOT_FOUND_ERROR_CODE = "leave_request_not_found"
 LEAVE_REQUEST_NOT_FOUND_ERROR_MESSAGE = LEAVE_REQUEST_NOT_FOUND_MESSAGE
 LEAVE_REQUEST_INVALID_DATE_RANGE_ERROR_CODE = "leave_request_invalid_date_range"
 LEAVE_REQUEST_TRANSITION_CONFLICT_ERROR_CODE = "leave_request_transition_conflict"
+LEAVE_VALIDATION_ERROR_CODE = "leave_validation_error"
+LEAVE_VALIDATION_ERROR_MESSAGE = "Leave request validation failed"
+LEAVE_NOT_FOUND_ERROR_CODE = "leave_not_found"
+LEAVE_NOT_FOUND_ERROR_MESSAGE = "The leave resource was not found"
+LEAVE_CONFLICT_ERROR_CODE = "leave_conflict"
+LEAVE_INSUFFICIENT_BALANCE_ERROR_CODE = "leave_balance_insufficient"
 USER_NOT_FOUND_ERROR_CODE = "user_not_found"
 USER_NOT_FOUND_ERROR_MESSAGE = USER_NOT_FOUND_MESSAGE
 DATA_INTEGRITY_CONFLICT_ERROR_CODE = "data_integrity_conflict"
@@ -1160,6 +1182,20 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return document_conflict_error(str(exc))
     if isinstance(exc, DocumentStorageUnavailableError):
         return document_storage_unavailable_error()
+    if isinstance(exc, LeaveAccessDeniedError):
+        return authorization_access_denied_error()
+    if isinstance(exc, LeaveEmployeeLinkUnavailableError):
+        return employee_account_link_conflict_error()
+    if isinstance(exc, LeaveNotFoundError):
+        return leave_not_found_error()
+    if isinstance(exc, LeaveVersionConflictError):
+        return concurrent_write_conflict_error()
+    if isinstance(exc, LeaveInsufficientBalanceError):
+        return leave_insufficient_balance_error(str(exc))
+    if isinstance(exc, LeaveValidationError):
+        return leave_validation_error(str(exc))
+    if isinstance(exc, LeaveConflictError):
+        return leave_conflict_error(str(exc))
     if isinstance(exc, EmployeeAccountLinkUnavailableError):
         return employee_account_link_conflict_error()
     if isinstance(exc, OrganizationAccessDeniedError):
@@ -1836,6 +1872,38 @@ def leave_request_transition_conflict_error(message: str) -> ApiError:
     )
 
 
+def leave_validation_error(message: str = "") -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=LEAVE_VALIDATION_ERROR_CODE,
+        message=message or LEAVE_VALIDATION_ERROR_MESSAGE,
+    )
+
+
+def leave_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=LEAVE_NOT_FOUND_ERROR_CODE,
+        message=LEAVE_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def leave_conflict_error(message: str = "") -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=LEAVE_CONFLICT_ERROR_CODE,
+        message=message or "The requested leave operation conflicts with current state",
+    )
+
+
+def leave_insufficient_balance_error(message: str = "") -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=LEAVE_INSUFFICIENT_BALANCE_ERROR_CODE,
+        message=message or "Available leave balance is insufficient",
+    )
+
+
 def data_integrity_conflict_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_409_CONFLICT,
@@ -1909,6 +1977,19 @@ def _domain_request_validation_error(
             code=TENANT_SETTINGS_VALIDATION_ERROR_CODE,
             message=TENANT_SETTINGS_VALIDATION_ERROR_MESSAGE,
         )
+    if any(
+        _matches_api_prefix(path, prefix)
+        for prefix in (
+            LEAVE_TYPE_API_PREFIX,
+            HOLIDAY_CALENDAR_API_PREFIX,
+            LEAVE_POLICY_API_PREFIX,
+            LEAVE_ADJUSTMENT_API_PREFIX,
+            OWN_LEAVE_BALANCE_API_PREFIX,
+            APPROVAL_TASK_API_PREFIX,
+            TEAM_CALENDAR_API_PREFIX,
+        )
+    ):
+        return leave_validation_error()
     if _is_leave_balance_api_path(path):
         return _leave_balance_request_validation_error()
     if _matches_api_prefix(path, OWN_PROFILE_CHANGE_REQUEST_API_PREFIX) or _matches_api_prefix(

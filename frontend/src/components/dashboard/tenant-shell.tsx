@@ -56,6 +56,33 @@ const navigationItems = [
     feature: null,
   },
   {
+    href: "/leave",
+    label: "İzinlerim",
+    icon: "İ",
+    permissions: [AUTHORIZATION_PERMISSIONS.readOwnLeave],
+    feature: TENANT_FEATURES.leave,
+  },
+  {
+    href: "/leave/approvals",
+    label: "Onay görevleri",
+    icon: "✓",
+    permissions: [
+      AUTHORIZATION_PERMISSIONS.readTeamLeave,
+      AUTHORIZATION_PERMISSIONS.approveTeamLeave,
+    ],
+    feature: TENANT_FEATURES.leave,
+  },
+  {
+    href: "/leave/admin",
+    label: "İzin yönetimi",
+    icon: "Y",
+    permissions: [
+      AUTHORIZATION_PERMISSIONS.readTenantLeave,
+      AUTHORIZATION_PERMISSIONS.manageTenantLeave,
+    ],
+    feature: TENANT_FEATURES.leave,
+  },
+  {
     href: "/profile-change-requests",
     label: "Değişiklik talepleri",
     icon: "D",
@@ -97,7 +124,9 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
       aria-label={mobile ? "Mobil ana menü" : "Ana menü"}
     >
       {visibleItems.map((item) => {
-        const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const isActive =
+          pathname === item.href ||
+          (item.href !== "/leave" && pathname.startsWith(`${item.href}/`));
         return (
           <Link
             className={`${styles.navigationItem} ${isActive ? styles.activeNavigationItem : ""}`}

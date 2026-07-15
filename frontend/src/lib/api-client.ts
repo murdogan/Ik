@@ -26,6 +26,7 @@ export interface ApiRequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: object;
   accessToken?: string;
+  idempotencyKey?: string;
 }
 
 export class ApiClientError extends Error {
@@ -85,7 +86,7 @@ async function responsePayload(response: Response): Promise<unknown> {
 
 async function sendApiRequest(
   path: `/api/${string}`,
-  { method = "GET", body, accessToken }: ApiRequestOptions,
+  { method = "GET", body, accessToken, idempotencyKey }: ApiRequestOptions,
 ): Promise<{ payload: unknown; response: Response }> {
   const headers = new Headers({ Accept: "application/json" });
   if (body !== undefined) {
@@ -93,6 +94,9 @@ async function sendApiRequest(
   }
   if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+  if (idempotencyKey) {
+    headers.set("X-Idempotency-Key", idempotencyKey);
   }
 
   let response: Response;

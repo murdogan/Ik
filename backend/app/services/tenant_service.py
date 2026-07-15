@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.leave import HolidayCalendar, LeavePolicy, LeaveType
 from app.models.organization import LegalEntity, LegalEntityStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
 from app.modules.core.domain.feature_flags import FEATURE_FLAG_DEFAULTS
@@ -33,6 +36,13 @@ from app.schemas.tenant import (
 
 TENANT_SLUG_UNIQUE_CONSTRAINTS = frozenset({"tenants_slug_key", "uq_tenants_slug"})
 _SQLITE_TENANT_SLUG_UNIQUE_SIGNATURE = "UNIQUE constraint failed: tenants.slug"
+_LEAVE_POLICY_EFFECTIVE_FROM = date(1900, 1, 1)
+_STARTER_LEAVE_TYPES = (
+    ("annual", "Annual leave", True, False),
+    ("excuse", "Excuse leave", True, False),
+    ("unpaid", "Unpaid leave", False, False),
+    ("medical_report", "Medical/report leave", True, True),
+)
 
 
 class TenantNotFoundError(ApplicationError):
@@ -162,6 +172,12 @@ class TenantService:
             )
             for key, enabled in FEATURE_FLAG_DEFAULTS.items()
         )
+        leave_configuration = _starter_leave_configuration(tenant.id)
+        self.session.add_all(
+            item for item in leave_configuration if not isinstance(item, LeavePolicy)
+        )
+        await self.session.flush()
+        self.session.add_all(item for item in leave_configuration if isinstance(item, LeavePolicy))
         await self.session.flush()
         await self.session.refresh(tenant)
         return tenant
@@ -317,6 +333,65 @@ def _provided_values(
         field_name: getattr(payload, field_name)
         for field_name in payload.model_fields_set
     }
+
+
+def _starter_leave_configuration(
+    tenant_id: UUID,
+) -> tuple[LeaveType | HolidayCalendar | LeavePolicy, ...]:
+    configuration: list[LeaveType | HolidayCalendar | LeavePolicy] = []
+    created_at = datetime.now(UTC)
+    for code, name, paid, document_required in _STARTER_LEAVE_TYPES:
+        leave_type_id = _deterministic_uuid(f"p6:leave-type:{tenant_id}:{code}")
+        configuration.append(
+            LeaveType(
+                id=leave_type_id,
+                tenant_id=tenant_id,
+                code=code,
+                name=name,
+                description=None,
+                is_active=True,
+                version=1,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+        )
+        configuration.append(
+            LeavePolicy(
+                id=_deterministic_uuid(f"p6:leave-policy:{tenant_id}:{leave_type_id}:1"),
+                tenant_id=tenant_id,
+                leave_type_id=leave_type_id,
+                version=1,
+                effective_from=_LEAVE_POLICY_EFFECTIVE_FROM,
+                paid=paid,
+                document_required=document_required,
+                negative_balance_allowed=False,
+                accrual_enabled=False,
+                accrual_days_per_month=Decimal("0.00"),
+                carryover_enabled=False,
+                carryover_limit_days=None,
+                created_by_user_id=None,
+                created_at=created_at,
+            )
+        )
+    configuration.append(
+        HolidayCalendar(
+            id=_deterministic_uuid(f"p6:holiday-calendar:{tenant_id}:default"),
+            tenant_id=tenant_id,
+            name="Default work calendar",
+            is_default=True,
+            is_active=True,
+            non_working_weekdays=[5, 6],
+            version=1,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+    )
+    return tuple(configuration)
+
+
+def _deterministic_uuid(value: str) -> UUID:
+    digest = hashlib.md5(value.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return UUID(digest, version=4)
 
 
 def _provided_tenant_values(payload: TenantPlatformUpdate) -> dict[str, object]:

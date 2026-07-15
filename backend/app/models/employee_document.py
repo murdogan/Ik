@@ -165,6 +165,12 @@ class EmployeeDocument(Base, TimestampMixin):
             name="ck_employee_documents_scan_state",
         ),
         UniqueConstraint("tenant_id", "id", name="uq_employee_documents_tenant_id_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "employee_id",
+            "id",
+            name="uq_employee_documents_tenant_employee_id",
+        ),
         UniqueConstraint("object_key", name="uq_employee_documents_object_key"),
         ForeignKeyConstraint(
             ("tenant_id", "employee_id"),
@@ -313,9 +319,7 @@ class EmployeeDocumentUploadIntent(Base, TimestampMixin):
     )
     document_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     initiated_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    initiated_by_membership_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=False
-    )
+    initiated_by_membership_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     upload_object_key: Mapped[str] = mapped_column(Text, nullable=False)
     expected_content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)

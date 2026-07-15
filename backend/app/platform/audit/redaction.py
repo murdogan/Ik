@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from ipaddress import ip_address
 from re import compile as compile_regex
@@ -38,6 +39,8 @@ _FORBIDDEN_KEY_PARTS = frozenset(
         "token",
     }
 )
+_FORBIDDEN_EXACT_KEYS = frozenset({"reason", "decision_note", "employee_note"})
+_SAFE_KEY_EXCEPTIONS = frozenset({"document_required"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +66,10 @@ _STATUS_VALUES = frozenset(
         "invited",
         "active",
         "on_leave",
+        "pending",
+        "approved",
+        "rejected",
+        "cancelled",
         "terminated",
         "inactive",
         "archived",
@@ -93,8 +100,12 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "plan_code": frozenset({"core", "professional", "enterprise"}),
     "data_region": frozenset({"tr-1", "eu-1"}),
     "link_status": frozenset({"linked", "relinked", "unlinked"}),
-    "before_request_status": frozenset({"none", "submitted"}),
-    "after_request_status": frozenset({"submitted", "approved", "rejected", "cancelled"}),
+    "before_request_status": frozenset(
+        {"none", "submitted", "pending", "approved", "rejected", "cancelled"}
+    ),
+    "after_request_status": frozenset(
+        {"submitted", "pending", "approved", "rejected", "cancelled"}
+    ),
     "reason_code": frozenset(
         {
             "employee_submitted",
@@ -111,6 +122,7 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "before_state": frozenset(
         {
             "active",
+            "inactive",
             "archived",
             "pending_upload",
             "pending_scan",
@@ -123,6 +135,7 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "after_state": frozenset(
         {
             "active",
+            "inactive",
             "archived",
             "pending_upload",
             "pending_scan",
@@ -424,6 +437,141 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     AuditEventType.REPORTING_LINE_CHANGED: AuditMetadataPolicy(
         changed_fields=frozenset({"manager_id"})
     ),
+    AuditEventType.LEAVE_TYPE_CREATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"leave_type_id", "after_status", "version"}),
+        changed_fields=frozenset({"code", "name", "description", "is_active"}),
+    ),
+    AuditEventType.LEAVE_TYPE_UPDATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"leave_type_id", "before_status", "after_status", "version"}),
+        changed_fields=frozenset({"name", "description", "is_active"}),
+    ),
+    AuditEventType.LEAVE_TYPE_DEACTIVATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"leave_type_id", "before_status", "after_status", "version"}),
+        changed_fields=frozenset({"is_active"}),
+    ),
+    AuditEventType.HOLIDAY_CALENDAR_CREATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"calendar_id", "after_status", "version"}),
+        changed_fields=frozenset({"name", "is_default", "is_active", "non_working_weekdays"}),
+    ),
+    AuditEventType.HOLIDAY_CALENDAR_UPDATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"calendar_id", "before_status", "after_status", "version"}),
+        changed_fields=frozenset({"name", "is_default", "is_active", "non_working_weekdays"}),
+    ),
+    AuditEventType.HOLIDAY_ENTRY_CREATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"calendar_id", "holiday_entry_id", "after_status", "version"}),
+        changed_fields=frozenset({"holiday_date", "name", "is_active"}),
+    ),
+    AuditEventType.HOLIDAY_ENTRY_UPDATED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "calendar_id",
+                "holiday_entry_id",
+                "before_status",
+                "after_status",
+                "version",
+            }
+        ),
+        changed_fields=frozenset({"name", "is_active"}),
+    ),
+    AuditEventType.HOLIDAY_ENTRY_DEACTIVATED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "calendar_id",
+                "holiday_entry_id",
+                "before_status",
+                "after_status",
+                "version",
+            }
+        ),
+        changed_fields=frozenset({"is_active"}),
+    ),
+    AuditEventType.LEAVE_POLICY_VERSION_CREATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"policy_id", "leave_type_id", "policy_version"}),
+        changed_fields=frozenset(
+            {
+                "leave_type_id",
+                "version",
+                "effective_from",
+                "effective_to",
+                "paid",
+                "document_required",
+                "negative_balance_allowed",
+                "accrual_enabled",
+                "accrual_days_per_month",
+                "carryover_enabled",
+                "carryover_limit_days",
+            }
+        ),
+    ),
+    AuditEventType.LEAVE_BALANCE_ADJUSTED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"employee_id", "leave_type_id", "period_year", "amount_days"}),
+        changed_fields=frozenset({"adjusted_days", "available_days"}),
+    ),
+    AuditEventType.LEAVE_REQUEST_SUBMITTED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "leave_type_id",
+                "policy_id",
+                "before_status",
+                "after_status",
+                "before_request_status",
+                "after_request_status",
+                "counted_days",
+                "version",
+            }
+        ),
+        changed_fields=frozenset({"status", "counted_days", "version"}),
+    ),
+    AuditEventType.LEAVE_REQUEST_APPROVED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "leave_type_id",
+                "before_status",
+                "after_status",
+                "before_request_status",
+                "after_request_status",
+                "counted_days",
+                "version",
+            }
+        ),
+        changed_fields=frozenset({"status", "counted_days", "version"}),
+    ),
+    AuditEventType.LEAVE_REQUEST_REJECTED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "leave_type_id",
+                "before_status",
+                "after_status",
+                "before_request_status",
+                "after_request_status",
+                "counted_days",
+                "version",
+            }
+        ),
+        changed_fields=frozenset({"status", "counted_days", "version"}),
+    ),
+    AuditEventType.LEAVE_REQUEST_CANCELLED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "request_id",
+                "employee_id",
+                "leave_type_id",
+                "before_status",
+                "after_status",
+                "before_request_status",
+                "after_request_status",
+                "counted_days",
+                "version",
+            }
+        ),
+        changed_fields=frozenset({"status", "counted_days", "version"}),
+    ),
     AuditEventType.DOCUMENT_TYPE_CREATED: AuditMetadataPolicy(
         metadata_keys=frozenset({"sensitivity"}),
         changed_fields=frozenset(
@@ -584,6 +732,11 @@ def _safe_metadata_value(key: str, value: object) -> object | None:
         value = str(value)
     if isinstance(value, bool):
         return value
+    if isinstance(value, Decimal):
+        if not value.is_finite() or abs(value) > Decimal("2147483647"):
+            return None
+        formatted = format(value, "f")
+        return formatted if len(formatted) <= 128 else None
     if type(value) is int:
         return value if 0 <= value <= 2_147_483_647 else None
     if isinstance(value, str):
@@ -640,7 +793,11 @@ def _safe_changed_value(value: object) -> object:
 
 def _is_forbidden_key(key: str) -> bool:
     normalized = key.lower()
-    return any(part in normalized for part in _FORBIDDEN_KEY_PARTS)
+    if normalized in _SAFE_KEY_EXCEPTIONS:
+        return False
+    return normalized in _FORBIDDEN_EXACT_KEYS or any(
+        part in normalized for part in _FORBIDDEN_KEY_PARTS
+    )
 
 
 def safe_metadata_keys() -> Mapping[AuditEventType, frozenset[str]]:

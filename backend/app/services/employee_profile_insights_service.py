@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditEvent
@@ -15,7 +15,7 @@ from app.models.employee_profile_change_request import (
     EmployeeProfileChangeRequest,
     EmployeeProfileChangeRequestStatus,
 )
-from app.models.leave_balance_summary import LeaveBalanceSummary
+from app.models.leave import LeaveBalanceLedger
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.platform.audit import AuditResult, AuditScopeType
 from app.schemas.employee_profile_insights import (
@@ -115,17 +115,23 @@ class EmployeeProfileInsightsService:
             select(
                 func.coalesce(
                     func.sum(
-                        LeaveBalanceSummary.opening_balance_days
-                        - LeaveBalanceSummary.used_days
-                        - LeaveBalanceSummary.planned_days
+                        case(
+                            (
+                                LeaveBalanceLedger.entry_type.in_(
+                                    ("earned", "adjustment")
+                                ),
+                                LeaveBalanceLedger.amount_days,
+                            ),
+                            else_=-LeaveBalanceLedger.amount_days,
+                        )
                     ),
                     0.0,
                 )
             )
             .where(
-                LeaveBalanceSummary.tenant_id == tenant_id,
-                LeaveBalanceSummary.employee_id == employee_id,
-                LeaveBalanceSummary.period_year == period_year,
+                LeaveBalanceLedger.tenant_id == tenant_id,
+                LeaveBalanceLedger.employee_id == employee_id,
+                LeaveBalanceLedger.period_year == period_year,
             )
             .scalar_subquery()
         )

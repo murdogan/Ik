@@ -40,6 +40,7 @@ export const config = {
     "/users/:path*",
     "/organization/:path*",
     "/audit/:path*",
+    "/leave/:path*",
     "/platform/:path*",
   ],
 };

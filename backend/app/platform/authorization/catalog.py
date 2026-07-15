@@ -257,6 +257,18 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
         "employee_document:read:own",
         "Read clean employee-visible documents linked to the current membership.",
     ),
+    _permission(37, "leave:create:own", "Create leave requests for the current employee."),
+    _permission(38, "leave:cancel:own", "Cancel the current employee's leave requests."),
+    _permission(
+        39,
+        "leave:adjust:tenant",
+        "Record reason-backed leave balance adjustments across the current tenant.",
+    ),
+    _permission(
+        40,
+        "employee_document:upload:own",
+        "Upload employee documents linked to the current membership.",
+    ),
 )
 
 
@@ -307,12 +319,16 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:read:branch",
                 "leave:read:tenant",
                 "leave:manage:tenant",
+                "leave:create:own",
+                "leave:cancel:own",
+                "leave:adjust:tenant",
                 "audit:read:tenant",
                 "organization:read:tenant",
                 "organization:update:tenant",
                 "document_type:manage:tenant",
                 "employee_document:manage:tenant",
                 "employee_document:read:own",
+                "employee_document:upload:own",
             }
         ),
         "hr_specialist": frozenset(
@@ -329,11 +345,15 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:read:branch",
                 "leave:read:tenant",
                 "leave:manage:tenant",
+                "leave:create:own",
+                "leave:cancel:own",
+                "leave:adjust:tenant",
                 "organization:read:tenant",
                 "organization:update:tenant",
                 "document_type:manage:tenant",
                 "employee_document:manage:tenant",
                 "employee_document:read:own",
+                "employee_document:upload:own",
             }
         ),
         "it_admin": frozenset(
@@ -359,6 +379,10 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:read:own",
                 "leave:read:team",
                 "leave:approve:team",
+                "leave:create:own",
+                "leave:cancel:own",
+                "employee_document:read:own",
+                "employee_document:upload:own",
             }
         ),
         "employee": frozenset(
@@ -366,7 +390,10 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "dashboard:read:own",
                 "employee:read:own",
                 "leave:read:own",
+                "leave:create:own",
+                "leave:cancel:own",
                 "employee_document:read:own",
+                "employee_document:upload:own",
             }
         ),
     }
