@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
+from app.api.announcements import router as announcements_router
 from app.api.audit import platform_router as platform_audit_router
 from app.api.audit import tenant_router as tenant_audit_router
 from app.api.auth import me_router
@@ -11,6 +12,7 @@ from app.api.auth import router as auth_router
 from app.api.authorization import router as authorization_router
 from app.api.dashboard import router as dashboard_router
 from app.api.departments import router as departments_router
+from app.api.document_requests import router as document_requests_router
 from app.api.employee_account_links import own_router as employee_own_profile_router
 from app.api.employee_account_links import router as employee_account_links_router
 from app.api.employee_assignments import assignments_router, teams_router
@@ -50,6 +52,7 @@ from app.api.leave import (
 from app.api.leave import (
     request_router as leave_request_router,
 )
+from app.api.notifications import router as notifications_router
 from app.api.openapi import OPENAPI_TAGS
 from app.api.org_chart import router as org_chart_router
 from app.api.organization import branches_router, legal_entities_router
@@ -57,6 +60,8 @@ from app.api.platform_auth import me_router as platform_me_router
 from app.api.platform_auth import router as platform_auth_router
 from app.api.platform_tenants import router as platform_tenants_router
 from app.api.positions import router as positions_router
+from app.api.requests import router as requests_router
+from app.api.self_service import router as self_service_router
 from app.api.tenant import router as tenant_router
 from app.api.user_invitations import router as user_invitations_router
 from app.api.users import router as users_router
@@ -146,6 +151,11 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(leave_balance_router)
     app.include_router(leave_request_router)
     app.include_router(leave_approval_router)
+    app.include_router(requests_router)
+    app.include_router(document_requests_router)
+    app.include_router(self_service_router)
+    app.include_router(announcements_router)
+    app.include_router(notifications_router)
     app.include_router(landing_router)
     app.include_router(health_router)
     return app

@@ -1,5 +1,13 @@
 """Database models."""
 
+from app.models.announcement import (
+    Announcement,
+    AnnouncementBranchTarget,
+    AnnouncementDepartmentTarget,
+    AnnouncementRecipient,
+    AnnouncementRoleTarget,
+    AnnouncementStatus,
+)
 from app.models.audit import AuditEvent
 from app.models.auth import (
     AuthenticationRateLimitBucket,
@@ -18,6 +26,12 @@ from app.models.department import (
     Department,
     DepartmentHierarchyWriteFence,
     DepartmentStatus,
+)
+from app.models.document_request import (
+    EmployeeDocumentRequest,
+    EmployeeDocumentRequestStatus,
+    EmployeeDocumentRequestTimeline,
+    EmployeeDocumentRequestType,
 )
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_account_link import EmployeeAccountLink
@@ -60,6 +74,14 @@ from app.models.leave import (
 )
 from app.models.leave_balance_summary import LeaveBalanceSummary
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
+from app.models.notification import (
+    EmailCapture,
+    Notification,
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationDeliveryStatus,
+    OutboxEventConsumption,
+)
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
 from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
@@ -67,6 +89,12 @@ from app.models.user import User, UserStatus
 
 __all__ = [
     "AuditEvent",
+    "Announcement",
+    "AnnouncementBranchTarget",
+    "AnnouncementDepartmentTarget",
+    "AnnouncementRecipient",
+    "AnnouncementRoleTarget",
+    "AnnouncementStatus",
     "AuthenticationRateLimitBucket",
     "Branch",
     "BranchStatus",
@@ -78,6 +106,10 @@ __all__ = [
     "EmployeeAccountLink",
     "EmployeeAssignment",
     "EmployeeDocument",
+    "EmployeeDocumentRequest",
+    "EmployeeDocumentRequestStatus",
+    "EmployeeDocumentRequestTimeline",
+    "EmployeeDocumentRequestType",
     "EmployeeDocumentUploadIntent",
     "DocumentExpiryMode",
     "DocumentProcessingState",
@@ -106,10 +138,16 @@ __all__ = [
     "LegalEntityStatus",
     "MembershipRole",
     "MembershipStatus",
+    "EmailCapture",
+    "Notification",
+    "NotificationChannel",
+    "NotificationDelivery",
+    "NotificationDeliveryStatus",
     "Permission",
     "OrganizationSelectionTransaction",
     "OrganizationSelectionChoice",
     "OutboxEvent",
+    "OutboxEventConsumption",
     "PasswordResetToken",
     "PlatformIdentityRole",
     "PlatformRefreshSessionFamily",

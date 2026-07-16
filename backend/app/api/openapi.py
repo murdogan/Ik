@@ -17,6 +17,10 @@ LEAVE_CONFIGURATION_TAG = "Leave Configuration"
 LEAVE_BALANCES_TAG = "Leave Balances"
 LEAVE_REQUESTS_TAG = "Leave Requests"
 LEAVE_APPROVALS_TAG = "Leave Approvals"
+REQUESTS_TAG = "Requests"
+SELF_SERVICE_TAG = "Self Service"
+ANNOUNCEMENTS_TAG = "Announcements"
+NOTIFICATIONS_TAG = "Notifications"
 
 # Phase 1 has no caller-facing credential format: authorization is supplied only by the trusted
 # principal dependency seam and fails closed by default.  A standard OpenAPI security scheme would
@@ -179,5 +183,25 @@ OPENAPI_TAGS = [
             "Current-assignment manager approval tasks, concurrency-safe decisions, and bounded "
             "team calendar visibility with tenant-wide HR administration where authorized."
         ),
+    },
+    {
+        "name": REQUESTS_TAG,
+        "description": (
+            "Fixed, scope-safe request projection and employee-to-HR document request commands."
+        ),
+    },
+    {
+        "name": SELF_SERVICE_TAG,
+        "description": "Bounded current-employee home and task composition.",
+    },
+    {
+        "name": ANNOUNCEMENTS_TAG,
+        "description": (
+            "Draft/publish/archive announcements with publication-time audience snapshots."
+        ),
+    },
+    {
+        "name": NOTIFICATIONS_TAG,
+        "description": "Current-user notification inbox and idempotent read state.",
     },
 ]

@@ -99,3 +99,50 @@ export function PermissionBoundary({
 
   return children;
 }
+
+export function AnyPermissionBoundary({
+  children,
+  permissions,
+}: {
+  children: ReactNode;
+  permissions: readonly string[];
+}) {
+  const router = useRouter();
+  const { user } = useSession();
+  const isAllowed = permissions.some((permission) => hasPermission(user, permission));
+
+  useEffect(() => {
+    if (isAllowed) return;
+    let isActive = true;
+    void restoreSession().then(
+      (restoredUser) => {
+        if (
+          isActive &&
+          !permissions.some((permission) => hasPermission(restoredUser, permission))
+        ) {
+          router.replace(homePathForUser(restoredUser));
+        }
+      },
+      () => {
+        if (isActive) router.replace(homePathForUser(user));
+      },
+    );
+    return () => {
+      isActive = false;
+    };
+  }, [isAllowed, permissions, router, user]);
+
+  if (!isAllowed) {
+    return (
+      <section className={styles.authorizationNotice} role="status" aria-live="polite">
+        <span className={styles.spinner} aria-hidden="true" />
+        <div>
+          <strong>Yetkili ana sayfanız açılıyor</strong>
+          <p>Bu alan mevcut rolleriniz için kullanılabilir değil.</p>
+        </div>
+      </section>
+    );
+  }
+
+  return children;
+}

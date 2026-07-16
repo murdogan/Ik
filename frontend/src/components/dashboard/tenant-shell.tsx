@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { useSession } from "@/components/session/session-provider";
 import { useTenantFeatures } from "@/components/session/tenant-feature-provider";
+import { NotificationBadge } from "@/components/self-service/notification-badge";
 import type { AuthUser } from "@/lib/auth-contracts";
 import {
   AUTHORIZATION_PERMISSIONS,
@@ -20,6 +21,13 @@ function displayName(fullName: string | null, email: string): string {
 }
 
 const navigationItems = [
+  {
+    href: "/home",
+    label: "Çalışan ana sayfası",
+    icon: "⌂",
+    permissions: [AUTHORIZATION_PERMISSIONS.readOwnSelfService],
+    feature: TENANT_FEATURES.selfService,
+  },
   {
     href: "/dashboard",
     label: "Genel bakış",
@@ -56,11 +64,29 @@ const navigationItems = [
     feature: null,
   },
   {
+    href: "/requests",
+    label: "Talepler",
+    icon: "T",
+    permissions: [AUTHORIZATION_PERMISSIONS.readOwnRequests],
+    feature: TENANT_FEATURES.selfService,
+  },
+  {
     href: "/leave",
     label: "İzinlerim",
     icon: "İ",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnLeave],
     feature: TENANT_FEATURES.leave,
+  },
+  {
+    href: "/manager",
+    label: "Yönetici alanı",
+    icon: "E",
+    permissions: [
+      AUTHORIZATION_PERMISSIONS.readTeamEmployees,
+      AUTHORIZATION_PERMISSIONS.readTeamLeave,
+      AUTHORIZATION_PERMISSIONS.approveTeamLeave,
+    ],
+    feature: TENANT_FEATURES.selfService,
   },
   {
     href: "/leave/approvals",
@@ -93,6 +119,37 @@ const navigationItems = [
     feature: null,
   },
   {
+    href: "/hr/requests",
+    label: "HR talepleri",
+    icon: "H",
+    permissions: [
+      AUTHORIZATION_PERMISSIONS.readTenantRequests,
+      AUTHORIZATION_PERMISSIONS.manageTenantDocumentRequests,
+    ],
+    feature: TENANT_FEATURES.selfService,
+  },
+  {
+    href: "/announcements",
+    label: "Duyurular",
+    icon: "D",
+    permissions: [AUTHORIZATION_PERMISSIONS.readOwnAnnouncements],
+    feature: TENANT_FEATURES.selfService,
+  },
+  {
+    href: "/announcements/manage",
+    label: "Duyuru yönetimi",
+    icon: "Y",
+    permissions: [AUTHORIZATION_PERMISSIONS.manageTenantAnnouncements],
+    feature: TENANT_FEATURES.selfService,
+  },
+  {
+    href: "/notifications",
+    label: "Bildirimler",
+    icon: "B",
+    permissions: [AUTHORIZATION_PERMISSIONS.readOwnNotifications],
+    feature: TENANT_FEATURES.notifications,
+  },
+  {
     href: "/organization",
     label: "Organizasyon",
     icon: "O",
@@ -111,11 +168,43 @@ const navigationItems = [
 function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
   const pathname = usePathname();
   const { status: featureStatus, isEnabled } = useTenantFeatures();
+  const selfServiceEnabled =
+    featureStatus === "ready" && isEnabled(TENANT_FEATURES.selfService);
   const visibleItems = navigationItems.filter(
-    (item) =>
-      item.permissions.every((permission) => hasPermission(user, permission)) &&
-      (item.feature === null ||
-        (featureStatus === "ready" && isEnabled(item.feature))),
+    (item) => {
+      if (
+        item.href === "/manager" &&
+        (!selfServiceEnabled || !isEnabled(TENANT_FEATURES.leave))
+      ) {
+        return false;
+      }
+      if (
+        item.href === "/dashboard" &&
+        selfServiceEnabled &&
+        hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnSelfService)
+      ) {
+        return false;
+      }
+      if (
+        item.href === "/leave/approvals" &&
+        selfServiceEnabled &&
+        hasPermission(user, AUTHORIZATION_PERMISSIONS.readTeamEmployees)
+      ) {
+        return false;
+      }
+      if (
+        item.href === "/profile-change-requests" &&
+        selfServiceEnabled &&
+        hasPermission(user, AUTHORIZATION_PERMISSIONS.manageTenantDocumentRequests)
+      ) {
+        return false;
+      }
+      return (
+        item.permissions.every((permission) => hasPermission(user, permission)) &&
+        (item.feature === null ||
+          (featureStatus === "ready" && isEnabled(item.feature)))
+      );
+    },
   );
 
   return (
@@ -126,7 +215,10 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
       {visibleItems.map((item) => {
         const isActive =
           pathname === item.href ||
-          (item.href !== "/leave" && pathname.startsWith(`${item.href}/`));
+          (item.href === "/announcements"
+            ? pathname.startsWith("/announcements/") &&
+              !pathname.startsWith("/announcements/manage")
+            : item.href !== "/leave" && pathname.startsWith(`${item.href}/`));
         return (
           <Link
             className={`${styles.navigationItem} ${isActive ? styles.activeNavigationItem : ""}`}
@@ -153,8 +245,13 @@ export function TenantShell({ children }: { children: ReactNode }) {
     signOut,
     switchOrganization,
   } = useSession();
+  const { status: featureStatus, isEnabled } = useTenantFeatures();
   const name = displayName(user.full_name, user.email);
   const roleNames = user.roles.map((role) => role.name).join(" · ") || "Rol atanmamış";
+  const showNotifications =
+    hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnNotifications) &&
+    featureStatus === "ready" &&
+    isEnabled(TENANT_FEATURES.notifications);
 
   return (
     <div className={styles.application} data-workspace-shell="tenant">
@@ -194,6 +291,7 @@ export function TenantShell({ children }: { children: ReactNode }) {
             <small>{user.email}</small>
           </div>
           <div className={styles.headerActions}>
+            {showNotifications ? <NotificationBadge /> : null}
             <button
               className={styles.mobileSwitchButton}
               type="button"

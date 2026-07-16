@@ -269,6 +269,16 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
         "employee_document:upload:own",
         "Upload employee documents linked to the current membership.",
     ),
+    _permission(41, "request:read:own", "Read the current employee's fixed request projection."),
+    _permission(42, "request:read:team", "Read team leave requests in the fixed projection."),
+    _permission(43, "request:read:tenant", "Read the tenant HR request projection."),
+    _permission(44, "document_request:create:own", "Request an HR-produced document."),
+    _permission(45, "document_request:read:own", "Read own HR document requests."),
+    _permission(46, "document_request:manage:tenant", "Resolve tenant document requests."),
+    _permission(47, "announcement:read:own", "Read announcements snapshotted for this user."),
+    _permission(48, "announcement:manage:tenant", "Manage and publish tenant announcements."),
+    _permission(49, "notification:read:own", "Read and consume the current user's inbox."),
+    _permission(50, "self_service:read:own", "Read the employee self-service home."),
 )
 
 
@@ -329,6 +339,15 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "employee_document:manage:tenant",
                 "employee_document:read:own",
                 "employee_document:upload:own",
+                "request:read:own",
+                "request:read:tenant",
+                "document_request:create:own",
+                "document_request:read:own",
+                "document_request:manage:tenant",
+                "announcement:read:own",
+                "announcement:manage:tenant",
+                "notification:read:own",
+                "self_service:read:own",
             }
         ),
         "hr_specialist": frozenset(
@@ -354,6 +373,15 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "employee_document:manage:tenant",
                 "employee_document:read:own",
                 "employee_document:upload:own",
+                "request:read:own",
+                "request:read:tenant",
+                "document_request:create:own",
+                "document_request:read:own",
+                "document_request:manage:tenant",
+                "announcement:read:own",
+                "announcement:manage:tenant",
+                "notification:read:own",
+                "self_service:read:own",
             }
         ),
         "it_admin": frozenset(
@@ -383,6 +411,13 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:cancel:own",
                 "employee_document:read:own",
                 "employee_document:upload:own",
+                "request:read:own",
+                "request:read:team",
+                "document_request:create:own",
+                "document_request:read:own",
+                "announcement:read:own",
+                "notification:read:own",
+                "self_service:read:own",
             }
         ),
         "employee": frozenset(
@@ -394,6 +429,12 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "leave:cancel:own",
                 "employee_document:read:own",
                 "employee_document:upload:own",
+                "request:read:own",
+                "document_request:create:own",
+                "document_request:read:own",
+                "announcement:read:own",
+                "notification:read:own",
+                "self_service:read:own",
             }
         ),
     }

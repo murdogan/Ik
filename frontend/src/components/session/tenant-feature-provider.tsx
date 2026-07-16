@@ -126,9 +126,11 @@ export function TenantFeatureBoundary({
 
   useEffect(() => {
     if (status !== "loading" && !isAllowed) {
-      router.replace(homePathForUser(user));
+      router.replace(
+        feature === TENANT_FEATURES.selfService ? "/dashboard" : homePathForUser(user),
+      );
     }
-  }, [isAllowed, router, status, user]);
+  }, [feature, isAllowed, router, status, user]);
 
   if (!isAllowed) {
     return (

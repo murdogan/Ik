@@ -30,9 +30,9 @@ FEATURE_FLAG_DEFAULTS: Mapping[FeatureFlagKey, bool] = MappingProxyType(
         FeatureFlagKey.EMPLOYEES: True,
         FeatureFlagKey.DOCUMENTS: False,
         FeatureFlagKey.LEAVE: True,
-        FeatureFlagKey.SELF_SERVICE: False,
+        FeatureFlagKey.SELF_SERVICE: True,
         FeatureFlagKey.REPORTING: True,
-        FeatureFlagKey.NOTIFICATIONS: False,
+        FeatureFlagKey.NOTIFICATIONS: True,
     }
 )
 

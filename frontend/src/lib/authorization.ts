@@ -23,6 +23,16 @@ export const AUTHORIZATION_PERMISSIONS = {
   manageEmployeeDocuments: "employee_document:manage:tenant",
   readOwnEmployeeDocuments: "employee_document:read:own",
   uploadOwnEmployeeDocuments: "employee_document:upload:own",
+  readOwnRequests: "request:read:own",
+  readTeamRequests: "request:read:team",
+  readTenantRequests: "request:read:tenant",
+  createOwnDocumentRequest: "document_request:create:own",
+  readOwnDocumentRequests: "document_request:read:own",
+  manageTenantDocumentRequests: "document_request:manage:tenant",
+  readOwnAnnouncements: "announcement:read:own",
+  manageTenantAnnouncements: "announcement:manage:tenant",
+  readOwnNotifications: "notification:read:own",
+  readOwnSelfService: "self_service:read:own",
   readTenantAudit: "audit:read:tenant",
   readPlatformAudit: "audit:read:platform",
 } as const;
@@ -38,7 +48,8 @@ export function isWorkspace(user: AuthUser, scope: WorkspaceScope): boolean {
   return user.workspace_scope === scope;
 }
 
-export function homePathForUser(user: AuthUser): "/dashboard" {
-  void user;
-  return "/dashboard";
+export function homePathForUser(user: AuthUser): "/home" | "/dashboard" {
+  return hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnSelfService)
+    ? "/home"
+    : "/dashboard";
 }

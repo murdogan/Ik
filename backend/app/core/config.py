@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 APP_SETTINGS_STATE_KEY = "settings"
@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     clamav_port: int = Field(default=3310, ge=1, le=65_535)
     clamav_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     clamav_scan_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    notification_worker_tenant_batch_size: int = Field(default=25, ge=1, le=100)
+    notification_worker_event_batch_size: int = Field(default=25, ge=1, le=50)
+    notification_worker_delivery_batch_size: int = Field(default=25, ge=1, le=50)
+    notification_worker_max_attempts: int = Field(default=5, ge=1, le=10)
+    notification_worker_backoff_base_seconds: int = Field(default=30, ge=1, le=3600)
+    notification_worker_backoff_max_seconds: int = Field(default=3600, ge=1, le=86_400)
+    notification_worker_poll_seconds: float = Field(default=5.0, ge=0.25, le=60.0)
+    notification_email_backend: Literal["disabled", "fake"] = "disabled"
+    notification_fake_email_failures_before_success: int = Field(default=0, ge=0, le=20)
 
     model_config = SettingsConfigDict(env_prefix="IK_", env_file=".env", extra="ignore")
 
@@ -107,6 +116,22 @@ class Settings(BaseSettings):
         ):
             raise ValueError("S3 endpoint must be an absolute HTTP(S) URL")
         return normalized
+
+    @model_validator(mode="after")
+    def validate_notification_delivery_mode(self) -> "Settings":
+        if self.environment == "prod" and self.notification_email_backend != "disabled":
+            raise ValueError("Production notification email requires a real provider adapter")
+        if (
+            self.notification_email_backend != "fake"
+            and self.notification_fake_email_failures_before_success != 0
+        ):
+            raise ValueError("Fake email failure simulation requires the fake adapter")
+        if (
+            self.notification_worker_backoff_max_seconds
+            < self.notification_worker_backoff_base_seconds
+        ):
+            raise ValueError("Notification retry maximum must not be below its base delay")
+        return self
 
 
 @lru_cache

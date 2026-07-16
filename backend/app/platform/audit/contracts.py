@@ -134,6 +134,15 @@ class AuditEventType(StrEnum):
     EMPLOYEE_DOCUMENT_UNARCHIVED = "employee_document.unarchived"
     EMPLOYEE_DOCUMENT_VIEWED = "employee_document.viewed"
     EMPLOYEE_DOCUMENT_DOWNLOAD_URL_ISSUED = "employee_document.download_url.issued"
+    DOCUMENT_REQUEST_SUBMITTED = "document_request.submitted"
+    DOCUMENT_REQUEST_RESOLVED = "document_request.resolved"
+    DOCUMENT_REQUEST_REJECTED = "document_request.rejected"
+    ANNOUNCEMENT_CREATED = "announcement.created"
+    ANNOUNCEMENT_UPDATED = "announcement.updated"
+    ANNOUNCEMENT_PUBLISHED = "announcement.published"
+    ANNOUNCEMENT_ARCHIVED = "announcement.archived"
+    ANNOUNCEMENT_ACKNOWLEDGED = "announcement.acknowledged"
+    NOTIFICATION_DELIVERY_FAILED = "notification.delivery.failed"
 
 
 @dataclass(frozen=True, slots=True)

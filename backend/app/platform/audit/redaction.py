@@ -67,8 +67,11 @@ _STATUS_VALUES = frozenset(
         "active",
         "on_leave",
         "pending",
+        "draft",
+        "published",
         "approved",
         "rejected",
+        "resolved",
         "cancelled",
         "terminated",
         "inactive",
@@ -101,10 +104,18 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "data_region": frozenset({"tr-1", "eu-1"}),
     "link_status": frozenset({"linked", "relinked", "unlinked"}),
     "before_request_status": frozenset(
-        {"none", "submitted", "pending", "approved", "rejected", "cancelled"}
+        {
+            "none",
+            "submitted",
+            "pending",
+            "approved",
+            "rejected",
+            "resolved",
+            "cancelled",
+        }
     ),
     "after_request_status": frozenset(
-        {"submitted", "pending", "approved", "rejected", "cancelled"}
+        {"submitted", "pending", "approved", "rejected", "resolved", "cancelled"}
     ),
     "reason_code": frozenset(
         {
@@ -150,6 +161,15 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
     "scanner_provider": frozenset({"clamav", "local_clean"}),
     "access_scope": frozenset({"hr", "own"}),
     "sensitivity": frozenset({"standard", "sensitive", "highly_sensitive"}),
+    "channel": frozenset({"email"}),
+    "delivery_error_code": frozenset(
+        {
+            "provider_unavailable",
+            "provider_rejected",
+            "recipient_unavailable",
+            "capture_failed",
+        }
+    ),
 }
 
 _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
@@ -645,6 +665,50 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     ),
     AuditEventType.EMPLOYEE_DOCUMENT_DOWNLOAD_URL_ISSUED: AuditMetadataPolicy(
         metadata_keys=frozenset({"access_scope"})
+    ),
+    AuditEventType.DOCUMENT_REQUEST_SUBMITTED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"request_id", "employee_id", "after_request_status"}),
+        changed_fields=frozenset({"status", "version"}),
+    ),
+    AuditEventType.DOCUMENT_REQUEST_RESOLVED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"request_id", "employee_id", "before_request_status", "after_request_status"}
+        ),
+        changed_fields=frozenset({"status", "version"}),
+    ),
+    AuditEventType.DOCUMENT_REQUEST_REJECTED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"request_id", "employee_id", "before_request_status", "after_request_status"}
+        ),
+        changed_fields=frozenset({"status", "version"}),
+    ),
+    AuditEventType.ANNOUNCEMENT_CREATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"after_status", "version"}),
+        changed_fields=frozenset(
+            {"title", "text_changed", "is_critical", "targeting", "status", "version"}
+        ),
+    ),
+    AuditEventType.ANNOUNCEMENT_UPDATED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_status", "after_status", "version"}),
+        changed_fields=frozenset(
+            {"title", "text_changed", "is_critical", "targeting", "version"}
+        ),
+    ),
+    AuditEventType.ANNOUNCEMENT_PUBLISHED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_status", "after_status", "recipient_count", "version"}),
+        changed_fields=frozenset({"status", "published_at", "version"}),
+    ),
+    AuditEventType.ANNOUNCEMENT_ARCHIVED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"before_status", "after_status", "version"}),
+        changed_fields=frozenset({"status", "archived_at", "version"}),
+    ),
+    AuditEventType.ANNOUNCEMENT_ACKNOWLEDGED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"after_status", "version"}),
+        changed_fields=frozenset({"acknowledged_at", "version"}),
+    ),
+    AuditEventType.NOTIFICATION_DELIVERY_FAILED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"channel", "delivery_error_code", "attempt_count"}),
+        changed_fields=frozenset({"status", "attempt_count"}),
     ),
 }
 

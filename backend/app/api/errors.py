@@ -117,6 +117,14 @@ from app.services.organization_service import (
     OrganizationFeatureUnavailableError,
 )
 from app.services.password_recovery_service import InvalidPasswordResetError
+from app.services.phase7_access import (
+    Phase7AccessDeniedError,
+    Phase7ConflictError,
+    Phase7FeatureUnavailableError,
+    Phase7NotFoundError,
+    Phase7ValidationError,
+    Phase7VersionConflictError,
+)
 from app.services.platform_auth_session_service import (
     InvalidPlatformSessionError,
     PlatformRoleRequiredError,
@@ -182,6 +190,13 @@ MANAGER_TEAM_API_PREFIX = "/api/v1/teams/me"
 ORG_CHART_API_PREFIX = "/api/v1/org-chart"
 DOCUMENT_TYPE_API_PREFIX = "/api/v1/document-types"
 OWN_DOCUMENT_API_PREFIX = "/api/v1/me/documents"
+PHASE7_API_PREFIXES = (
+    "/api/v1/requests",
+    "/api/v1/document-requests",
+    "/api/v1/self-service",
+    "/api/v1/announcements",
+    "/api/v1/notifications",
+)
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -1114,6 +1129,18 @@ async def unexpected_error_handler(request: Request, _exc: Exception) -> Respons
 
 
 def application_error_to_api_error(exc: ApplicationError) -> ApiError:
+    if isinstance(exc, Phase7AccessDeniedError):
+        return authorization_access_denied_error()
+    if isinstance(exc, Phase7VersionConflictError):
+        return concurrent_write_conflict_error()
+    if isinstance(exc, Phase7NotFoundError):
+        return phase7_not_found_error()
+    if isinstance(exc, Phase7ValidationError):
+        return phase7_validation_error()
+    if isinstance(exc, Phase7FeatureUnavailableError):
+        return phase7_feature_unavailable_error()
+    if isinstance(exc, Phase7ConflictError):
+        return phase7_conflict_error()
     if isinstance(exc, AuthenticationRateLimitExceededError):
         return authentication_rate_limit_error()
     if isinstance(exc, InvalidCredentialsError):
@@ -1888,6 +1915,38 @@ def leave_not_found_error() -> ApiError:
     )
 
 
+def phase7_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code="self_service_resource_not_found",
+        message="The requested self-service resource was not found",
+    )
+
+
+def phase7_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code="self_service_validation_error",
+        message="Self-service request validation failed",
+    )
+
+
+def phase7_feature_unavailable_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code="self_service_feature_unavailable",
+        message="This self-service feature is not enabled",
+    )
+
+
+def phase7_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code="self_service_conflict",
+        message="The resource changed or cannot be changed in its current state",
+    )
+
+
 def leave_conflict_error(message: str = "") -> ApiError:
     return ApiError(
         status_code=status.HTTP_409_CONFLICT,
@@ -1941,6 +2000,8 @@ def _domain_request_validation_error(
     exc: RequestValidationError,
 ) -> ApiError | None:
     path = request.url.path
+    if any(_matches_api_prefix(path, prefix) for prefix in PHASE7_API_PREFIXES):
+        return phase7_validation_error()
     if (
         _matches_api_prefix(path, AUTH_API_PREFIX)
         or _matches_api_prefix(path, PLATFORM_AUTH_API_PREFIX)
