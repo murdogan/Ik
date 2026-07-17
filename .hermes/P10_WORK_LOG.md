@@ -62,6 +62,26 @@ Known baseline test drift, not caused by P10B:
 - Existing OpenAPI metadata tests expect stale summaries/descriptions/error examples from earlier phases.
 - These broad historical fixture/snapshot repairs remain in Phase 11 regression/repair scope.
 
+## P10C — Operational readiness and signals
+
+Status: implementation and focused verification complete; checkpoint commit pending at the time of this entry.
+
+### Delivered
+
+- Backward-compatible legacy `/health` plus public constant-time `/health/live`.
+- Bounded database-only `/health/ready` with generic 200/503 component state and no-cache headers.
+- Strict immutable release SHA/build timestamp validation with staging/production fail-fast behavior.
+- Dedicated idempotent one-line JSON operational logger with finite field allowlists.
+- Correlated request completion signals using code-owned route templates, without raw path/query/body/header or tenant/user/session identifiers.
+- Rate-limited notification/reporting worker start, heartbeat, failure, and stop signals; identifier-bearing legacy worker log fields scrubbed.
+
+### Attribution and verification
+
+- Production implementation authored by Codex CLI using `gpt-5.6-sol` with `ultra` reasoning.
+- Contract, isolation, mechanical Ruff formatting, integration, security inspection, and verification performed by Hermes.
+- Passed targeted Ruff lint/format, Python compile, generated runtime import, exact legacy health payload, live 200, readiness 200/503, no-cache headers, route-template JSON output, and PII-field absence smoke.
+- No tests were added and no broad test/build suite was run.
+
 ## Next block
 
-P10C — liveness/readiness probes, immutable release identity, and PII-free structured operational signals.
+P10D — secure installable PWA shell and mobile critical-flow hardening.

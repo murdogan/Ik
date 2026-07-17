@@ -1,4 +1,6 @@
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from re import compile as compile_regex
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -6,12 +8,17 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 APP_SETTINGS_STATE_KEY = "settings"
+_RELEASE_COMMIT_SHA_PATTERN = compile_regex(r"[0-9a-f]{40}")
 
 
 class Settings(BaseSettings):
     app_name: str = "IK Platform API"
     app_version: str = "0.1.0"
     environment: Literal["local", "dev", "test", "staging", "prod"] = "local"
+    release_commit_sha: str = "development"
+    release_build_timestamp: datetime | None = None
+    health_readiness_timeout_seconds: float = Field(default=2.0, ge=0.1, le=10.0)
+    worker_heartbeat_interval_seconds: float = Field(default=60.0, ge=10.0, le=3600.0)
     database_url: str = "postgresql+asyncpg://ik:ik@localhost:5432/ik"
     database_pool_size: int = Field(default=5, ge=1)
     database_max_overflow: int = Field(default=10, ge=0)
@@ -82,6 +89,24 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="IK_", env_file=".env", extra="ignore")
 
+    @field_validator("release_commit_sha")
+    @classmethod
+    def validate_release_commit_sha(cls, value: str) -> str:
+        if value != "development" and _RELEASE_COMMIT_SHA_PATTERN.fullmatch(value) is None:
+            raise ValueError("release_commit_sha must be development or a lowercase commit SHA")
+        return value
+
+    @field_validator("release_build_timestamp")
+    @classmethod
+    def validate_release_build_timestamp(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("release_build_timestamp must include a timezone")
+        if value.utcoffset() != timedelta(0):
+            raise ValueError("release_build_timestamp must be UTC")
+        return value.astimezone(UTC)
+
     @field_validator("frontend_base_url")
     @classmethod
     def validate_frontend_base_url(cls, value: str) -> str:
@@ -129,6 +154,16 @@ class Settings(BaseSettings):
         ):
             raise ValueError("S3 endpoint must be an absolute HTTP(S) URL")
         return normalized
+
+    @model_validator(mode="after")
+    def validate_release_identity(self) -> "Settings":
+        if self.environment in {"staging", "prod"} and (
+            self.release_commit_sha == "development" or self.release_build_timestamp is None
+        ):
+            raise ValueError(
+                "Staging and production require an immutable commit SHA and build timestamp"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_notification_delivery_mode(self) -> "Settings":

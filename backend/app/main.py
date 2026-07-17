@@ -83,6 +83,7 @@ from app.modules.documents import (
 from app.platform.errors import ApiError, ApplicationError, api_error_handler
 from app.platform.http_limits import RequestBodyLimitMiddleware
 from app.platform.observability.correlation import CorrelationMiddleware
+from app.platform.observability.operational import configure_operational_logger
 from app.schemas.employee_import import EMPLOYEE_IMPORT_MAX_REQUEST_BYTES
 
 
@@ -111,6 +112,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 def create_app(*, settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    operational_logger = configure_operational_logger()
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -129,7 +131,14 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
         error_code="reporting_validation_error",
         error_message="Report or import request validation failed",
     )
-    app.add_middleware(CorrelationMiddleware)
+    app.add_middleware(
+        CorrelationMiddleware,
+        logger=operational_logger,
+        service=settings.app_name,
+        version=settings.app_version,
+        commit_sha=settings.release_commit_sha,
+        routes=app.router.routes,
+    )
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(ApplicationError, application_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
