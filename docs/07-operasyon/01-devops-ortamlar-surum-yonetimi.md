@@ -251,4 +251,5 @@ Prod erişim ilkeleri:
 
 - [Observability, SLO ve Alarm](02-observability-slo-alarm.md)
 - [Test Stratejisi ve QA](03-test-stratejisi-qa.md)
+- [Backup, Restore ve Rollback Runbook](04-backup-restore-rollback-runbook.md)
 - [Güvenlik Mimarisi, OWASP ve Incident](../06-guvenlik-uyum/03-guvenlik-mimarisi-owasp-incident.md)

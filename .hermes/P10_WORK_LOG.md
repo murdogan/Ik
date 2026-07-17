@@ -100,6 +100,24 @@ Status: implementation and focused verification complete; checkpoint commit pend
 - Passed TypeScript, ESLint, service-worker syntax, PNG signature/dimension, dependency-integrity, and diff hygiene checks.
 - No tests were added and no broad test/build suite was run.
 
+## P10E — Recovery proof tooling
+
+Status: implementation and focused static verification complete; checkpoint commit pending at the time of this entry.
+
+### Delivered
+
+- Stdlib-only fail-closed recovery CLI with `backup`, `verify-backup`, `restore-proof`, and `rollback-guard` commands.
+- Private custom-format PostgreSQL backups, canonical manifests/checksums, optional preconfigured-`mc` object mirror, strict path/mode/symlink controls, secret-free subprocess environment, and bounded execution.
+- Restore proof restricted to a separately named disposable `*_restore_proof` database with explicit acknowledgements and mandatory cleanup; source restore and migration downgrade are forbidden.
+- Read-only release rollback compatibility guard and detailed Turkish operator runbook with stop/escalation rules.
+
+### Attribution and verification
+
+- Production implementation authored by Codex CLI using `gpt-5.6-sol` with `ultra` reasoning.
+- Contract, correction of the Alembic revision grammar to `[0-9a-z_]+`, integration, security inspection, and verification performed by Hermes.
+- Passed Python compile, Ruff lint/format, all four command help probes, generic fail-closed output smoke, and diff hygiene.
+- No tests were added, no broad suite was run, and no service connection or destructive operation occurred during implementation.
+
 ## Next block
 
-P10E — executable backup, restore, and rollback proof tooling with operator runbook.
+P10F — active CI quality workflow and immutable release manifest generation.
