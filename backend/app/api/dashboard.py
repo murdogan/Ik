@@ -1,9 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth_dependencies import AuthenticatedSession, require_permission
+from app.api.auth_dependencies import AuthenticatedSession, require_any_permission
 from app.api.dependencies import get_authenticated_tenant_request_context
 from app.api.errors import AUTHENTICATION_REQUIRED_RESPONSES, AUTHORIZATION_RESPONSES
 from app.api.openapi import DASHBOARD_TAG
@@ -40,14 +40,30 @@ def get_dashboard_service(
     response_description="Dashboard summary metrics.",
 )
 async def dashboard_summary(
+    response: Response,
     request_context: Annotated[
         RequestContext,
         Depends(get_authenticated_tenant_request_context),
     ],
-    _authorized: Annotated[
+    authorized: Annotated[
         AuthenticatedSession,
-        Depends(require_permission("dashboard:read:tenant")),
+        Depends(
+            require_any_permission(
+                "dashboard:read:tenant",
+                "dashboard:read:team",
+                "dashboard:read:own",
+            )
+        ),
     ],
     service: Annotated[DashboardService, Depends(get_dashboard_service)],
 ) -> DashboardSummary:
-    return await service.get_summary(request_context.require_tenant().tenant_id)
+    if request_context.actor_id is None:
+        raise RuntimeError("Dashboard actor context is unavailable")
+    summary = await service.get_summary(
+        request_context.require_tenant().tenant_id,
+        actor_id=request_context.actor_id,
+        permissions=authorized.user.permissions,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return summary

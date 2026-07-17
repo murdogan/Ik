@@ -355,6 +355,220 @@
   line-height: 1.5;
 }
 
+.dashboardLoading,
+.dashboardError,
+.ownScopeNotice {
+  display: flex;
+  min-height: 94px;
+  align-items: center;
+  gap: 13px;
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid var(--wf-line);
+  border-radius: var(--wf-radius-md);
+  background: #ffffff;
+  color: var(--wf-muted);
+  font-size: 13px;
+}
+
+.dashboardError {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  border-color: var(--wf-danger-line);
+  color: #7e3434;
+  background: var(--wf-danger-bg);
+}
+
+.dashboardError span {
+  font-size: 12px;
+}
+
+.ownScopeNotice > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 13px;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-weight: 900;
+}
+
+.ownScopeNotice p {
+  margin: 5px 0 0;
+  color: var(--wf-muted);
+  font-size: 12px;
+}
+
+.dashboardScopeLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 30px;
+}
+
+.dashboardScopeLine > span {
+  color: var(--wf-green);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dashboardScopeLine a {
+  color: var(--wf-green-strong);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.dashboardScopeLine a:hover {
+  text-decoration: underline;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px;
+  margin-top: 14px;
+}
+
+.metricGrid article {
+  display: grid;
+  gap: 5px;
+  padding: 18px;
+  border: 1px solid var(--wf-line);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(28, 64, 49, 0.045);
+}
+
+.metricGrid span,
+.metricGrid small {
+  color: var(--wf-muted);
+  font-size: 10px;
+}
+
+.metricGrid span {
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.metricGrid strong {
+  color: var(--wf-ink);
+  font-size: 29px;
+  letter-spacing: -0.04em;
+}
+
+.dashboardDetails {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+  margin-top: 15px;
+}
+
+.dashboardDetails > article {
+  overflow: hidden;
+  border: 1px solid var(--wf-line);
+  border-radius: 15px;
+  background: #ffffff;
+}
+
+.dashboardDetails header {
+  padding: 17px 19px;
+  border-bottom: 1px solid var(--wf-line);
+  background: #fbfdfc;
+}
+
+.dashboardDetails header span {
+  color: var(--wf-green);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dashboardDetails h2 {
+  margin: 5px 0 0;
+  font-size: 15px;
+}
+
+.distributionList,
+.activityList {
+  max-height: 285px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.distributionList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 19px;
+  border-top: 1px solid #eef3f0;
+  color: #46534d;
+  font-size: 12px;
+}
+
+.distributionList li:first-child,
+.activityList li:first-child {
+  border-top: 0;
+}
+
+.distributionList strong {
+  display: grid;
+  min-width: 30px;
+  height: 25px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--wf-green-strong);
+  background: var(--wf-mint);
+  font-size: 11px;
+}
+
+.activityList li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 19px;
+  border-top: 1px solid #eef3f0;
+}
+
+.activityList > li > span {
+  color: var(--wf-green);
+  font-size: 21px;
+  line-height: 14px;
+}
+
+.activityList div {
+  display: grid;
+  gap: 4px;
+}
+
+.activityList strong {
+  color: #46534d;
+  font-size: 11px;
+}
+
+.activityList small {
+  color: var(--wf-muted);
+  font-size: 9px;
+}
+
+.dashboardEmpty {
+  margin: 0;
+  padding: 24px 19px;
+  color: var(--wf-muted);
+  font-size: 12px;
+}
+
 .teamCard {
   overflow: hidden;
   margin-top: 22px;
@@ -681,6 +895,16 @@
 
   .cards {
     grid-template-columns: 1fr;
+  }
+
+  .metricGrid,
+  .dashboardDetails {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboardScopeLine {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .teamHeader,

@@ -1,13 +1,19 @@
+"""Bounded role-aware dashboard metrics and allowlisted audit-derived activity."""
+
+from __future__ import annotations
+
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.audit import AuditEvent
 from app.models.department import Department
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_document import DocumentProcessingState, DocumentType, EmployeeDocument
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.schemas.dashboard import (
     DashboardActivityItem,
@@ -15,25 +21,37 @@ from app.schemas.dashboard import (
     DepartmentDistributionItem,
 )
 
-CURRENT_EMPLOYEE_STATUSES = [
-    EmployeeStatus.ACTIVE.value,
-    EmployeeStatus.ON_LEAVE.value,
-]
-
-LEAVE_ACTIVITY_BY_STATUS = {
-    LeaveRequestStatus.PENDING.value: "leave.requested",
-    LeaveRequestStatus.APPROVED.value: "leave.approved",
-    LeaveRequestStatus.REJECTED.value: "leave.rejected",
-    LeaveRequestStatus.CANCELLED.value: "leave.cancelled",
+_CURRENT_STATUSES = (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
+_AUDIT_ACTIVITY = {
+    "employee.created": ("employee.created", "Employee record created"),
+    "employee.updated": ("employee.updated", "Employee record updated"),
+    "employee.lifecycle.changed": (
+        "employee.lifecycle.changed",
+        "Employee lifecycle updated",
+    ),
+    # Preserve the established dashboard activity values while sourcing them from audit facts.
+    "leave_request.submitted": ("leave.requested", "Leave request submitted"),
+    "leave_request.approved": ("leave.approved", "Leave request approved"),
+    "leave_request.rejected": ("leave.rejected", "Leave request rejected"),
+    "leave_request.cancelled": ("leave.cancelled", "Leave request cancelled"),
 }
+_EMPLOYEE_ACTIVITY_TYPES = (
+    "employee.created",
+    "employee.updated",
+    "employee.lifecycle.changed",
+)
+_LEAVE_ACTIVITY_TYPES = (
+    "leave_request.submitted",
+    "leave_request.approved",
+    "leave_request.rejected",
+    "leave_request.cancelled",
+)
 
 
-@dataclass(frozen=True)
-class _DashboardCounts:
-    active_employee_count: int
-    employee_count: int
-    pending_leave_count: int
-    new_starters_this_month: int
+@dataclass(frozen=True, slots=True)
+class _DashboardScope:
+    value: str
+    manager_user_id: UUID | None = None
 
 
 class DashboardService:
@@ -42,359 +60,372 @@ class DashboardService:
         session: AsyncSession,
         today: date | None = None,
         recent_activity_limit: int = 5,
+        document_expiring_days: int = 30,
     ) -> None:
         self.session = session
         self.today = today or date.today()
-        self.recent_activity_limit = max(recent_activity_limit, 0)
+        self.recent_activity_limit = min(max(recent_activity_limit, 0), 20)
+        self.document_expiring_days = document_expiring_days
 
-    async def get_summary(self, tenant_id: UUID) -> DashboardSummary:
-        counts = await _query_dashboard_counts(
-            session=self.session,
+    async def get_summary(
+        self,
+        tenant_id: UUID,
+        *,
+        actor_id: UUID,
+        permissions: tuple[str, ...],
+    ) -> DashboardSummary:
+        scope = _dashboard_scope(actor_id=actor_id, permissions=permissions)
+        if scope.value == "own":
+            return _empty_summary()
+        start_date, end_date = _month_window(self.today)
+        employee_scope = _employee_scope_predicate(
             tenant_id=tenant_id,
-            today=self.today,
-        )
-        department_distribution = await _query_department_distribution(
-            session=self.session,
-            tenant_id=tenant_id,
+            employee_id=Employee.id,
+            scope=scope,
             effective_on=self.today,
         )
-        recent_activity = await _query_recent_activity(
-            session=self.session,
+        row = (
+            await self.session.execute(
+                select(
+                    func.count()
+                    .filter(Employee.status == EmployeeStatus.ACTIVE.value)
+                    .label("active_count"),
+                    func.count().filter(Employee.status.in_(_CURRENT_STATUSES)).label("headcount"),
+                    func.count()
+                    .filter(
+                        and_(
+                            Employee.status.in_(_CURRENT_STATUSES),
+                            Employee.employment_start_date >= start_date,
+                            Employee.employment_start_date < end_date,
+                        )
+                    )
+                    .label("starters"),
+                    func.count()
+                    .filter(
+                        and_(
+                            Employee.status == EmployeeStatus.TERMINATED.value,
+                            Employee.employment_end_date >= start_date,
+                            Employee.employment_end_date < end_date,
+                        )
+                    )
+                    .label("terminated"),
+                )
+                .select_from(Employee)
+                .where(
+                    Employee.tenant_id == tenant_id,
+                    Employee.archived_at.is_(None),
+                    employee_scope,
+                )
+            )
+        ).mappings().one()
+        pending_leave = await self.session.scalar(
+            select(func.count())
+            .select_from(LeaveRequest)
+            .where(
+                LeaveRequest.tenant_id == tenant_id,
+                LeaveRequest.status == LeaveRequestStatus.PENDING.value,
+                _employee_scope_predicate(
+                    tenant_id=tenant_id,
+                    employee_id=LeaveRequest.employee_id,
+                    scope=scope,
+                    effective_on=self.today,
+                ),
+            )
+        )
+        missing_documents, expiring_documents = await _document_counts(
+            self.session,
             tenant_id=tenant_id,
+            scope=scope,
+            effective_on=self.today,
+            expiring_on=self.today + timedelta(days=self.document_expiring_days),
+        )
+        distribution = await _department_distribution(
+            self.session,
+            tenant_id=tenant_id,
+            scope=scope,
+            effective_on=self.today,
+        )
+        activity = await _recent_activity(
+            self.session,
+            tenant_id=tenant_id,
+            scope=scope,
+            effective_on=self.today,
             limit=self.recent_activity_limit,
         )
-
-        return _dashboard_summary(
-            counts=counts,
-            department_distribution=department_distribution,
-            recent_activity=recent_activity,
+        return DashboardSummary(
+            scope=scope.value,
+            active_employee_count=int(row["active_count"] or 0),
+            pending_leave_count=int(pending_leave or 0),
+            employee_count=int(row["headcount"] or 0),
+            pending_leave_requests=int(pending_leave or 0),
+            new_starters_this_month=int(row["starters"] or 0),
+            terminated_this_month=int(row["terminated"] or 0),
+            missing_document_count=missing_documents,
+            expiring_document_count=expiring_documents,
+            open_tasks=int(pending_leave or 0),
+            department_distribution=distribution,
+            recent_activity=activity,
         )
 
 
-def _month_window(today: date) -> tuple[date, date]:
-    start_date = date(today.year, today.month, 1)
-    if today.month == 12:
-        return start_date, date(today.year + 1, 1, 1)
-    return start_date, date(today.year, today.month + 1, 1)
-
-
-async def _query_dashboard_counts(
+async def _document_counts(
     session: AsyncSession,
+    *,
     tenant_id: UUID,
-    today: date,
-) -> _DashboardCounts:
-    start_date, end_date = _month_window(today)
-    result = await session.execute(
-        _dashboard_counts_statement(
-            tenant_id=tenant_id,
-            start_date=start_date,
-            end_date=end_date,
+    scope: _DashboardScope,
+    effective_on: date,
+    expiring_on: date,
+) -> tuple[int, int]:
+    available_document = exists(
+        select(EmployeeDocument.id).where(
+            EmployeeDocument.tenant_id == tenant_id,
+            EmployeeDocument.employee_id == Employee.id,
+            EmployeeDocument.document_type_id == DocumentType.id,
+            EmployeeDocument.processing_state == DocumentProcessingState.AVAILABLE.value,
+            EmployeeDocument.archived_at.is_(None),
         )
     )
-    row = result.mappings().one()
-    return _DashboardCounts(
-        active_employee_count=int(row["active_employee_count"] or 0),
-        employee_count=int(row["employee_count"] or 0),
-        pending_leave_count=int(row["pending_leave_count"] or 0),
-        new_starters_this_month=int(row["new_starters_this_month"] or 0),
+    best_expiry = (
+        select(EmployeeDocument.expires_on)
+        .where(
+            EmployeeDocument.tenant_id == tenant_id,
+            EmployeeDocument.employee_id == Employee.id,
+            EmployeeDocument.document_type_id == DocumentType.id,
+            EmployeeDocument.processing_state == DocumentProcessingState.AVAILABLE.value,
+            EmployeeDocument.archived_at.is_(None),
+        )
+        .order_by(
+            EmployeeDocument.expires_on.desc().nulls_first(),
+            EmployeeDocument.created_at.desc(),
+            EmployeeDocument.id.desc(),
+        )
+        .limit(1)
+        .correlate(Employee, DocumentType)
+        .scalar_subquery()
     )
+    row = (
+        await session.execute(
+            select(
+                func.count().filter(~available_document).label("missing"),
+                func.count()
+                .filter(
+                    best_expiry.is_not(None),
+                    best_expiry >= effective_on,
+                    best_expiry <= expiring_on,
+                )
+                .label("expiring"),
+            )
+            .select_from(Employee)
+            .join(DocumentType, DocumentType.tenant_id == Employee.tenant_id)
+            .where(
+                Employee.tenant_id == tenant_id,
+                Employee.archived_at.is_(None),
+                Employee.status.in_(_CURRENT_STATUSES),
+                DocumentType.required.is_(True),
+                DocumentType.archived_at.is_(None),
+                _employee_scope_predicate(
+                    tenant_id=tenant_id,
+                    employee_id=Employee.id,
+                    scope=scope,
+                    effective_on=effective_on,
+                ),
+            )
+        )
+    ).mappings().one()
+    return int(row["missing"] or 0), int(row["expiring"] or 0)
 
 
-async def _query_department_distribution(
+async def _department_distribution(
     session: AsyncSession,
+    *,
     tenant_id: UUID,
+    scope: _DashboardScope,
     effective_on: date,
 ) -> list[DepartmentDistributionItem]:
-    rows = await _mapped_rows(
-        session,
-        _department_distribution_statement(
-            tenant_id,
-            effective_on=effective_on,
-        ),
+    department_label = func.coalesce(
+        func.nullif(func.trim(Department.name), ""),
+        func.nullif(func.trim(Employee.department), ""),
+        "Unassigned",
     )
-    return [_department_distribution_item(row) for row in rows]
+    statement = (
+        select(
+            department_label.label("department"),
+            func.count(Employee.id).label("employee_count"),
+        )
+        .select_from(Employee)
+        .outerjoin(
+            EmployeeAssignment,
+            and_(
+                Employee.tenant_id == EmployeeAssignment.tenant_id,
+                Employee.id == EmployeeAssignment.employee_id,
+                EmployeeAssignment.effective_from <= effective_on,
+                or_(
+                    EmployeeAssignment.effective_to.is_(None),
+                    EmployeeAssignment.effective_to > effective_on,
+                ),
+            ),
+        )
+        .outerjoin(
+            Department,
+            and_(
+                Department.tenant_id == EmployeeAssignment.tenant_id,
+                Department.id == EmployeeAssignment.department_id,
+            ),
+        )
+        .where(
+            Employee.tenant_id == tenant_id,
+            Employee.archived_at.is_(None),
+            Employee.status.in_(_CURRENT_STATUSES),
+        )
+        .group_by(department_label)
+        .order_by(func.count(Employee.id).desc(), department_label.asc())
+        .limit(20)
+    )
+    if scope.value == "team":
+        statement = statement.where(EmployeeAssignment.manager_user_id == scope.manager_user_id)
+    rows = (await session.execute(statement)).all()
+    return [
+        DepartmentDistributionItem(department=name, count=int(count))
+        for name, count in rows
+    ]
 
 
-async def _query_recent_activity(
+async def _recent_activity(
     session: AsyncSession,
+    *,
     tenant_id: UUID,
+    scope: _DashboardScope,
+    effective_on: date,
     limit: int,
 ) -> list[DashboardActivityItem]:
     if limit == 0:
         return []
-
-    activity = [
-        *await _query_recent_employee_activity(
-            session=session,
-            tenant_id=tenant_id,
-            limit=limit,
-        ),
-        *await _query_recent_leave_activity(
-            session=session,
-            tenant_id=tenant_id,
-            limit=limit,
-        ),
-    ]
-    return _latest_activity(activity, limit)
-
-
-async def _query_recent_employee_activity(
-    session: AsyncSession,
-    tenant_id: UUID,
-    limit: int,
-) -> list[DashboardActivityItem]:
-    rows = await _query_recent_employee_activity_rows(
-        session=session,
-        tenant_id=tenant_id,
-        limit=limit,
-    )
-    return _activity_items(rows, _employee_activity_item)
-
-
-async def _query_recent_leave_activity(
-    session: AsyncSession,
-    tenant_id: UUID,
-    limit: int,
-) -> list[DashboardActivityItem]:
-    rows = await _query_recent_leave_activity_rows(
-        session=session,
-        tenant_id=tenant_id,
-        limit=limit,
-    )
-    return _activity_items(rows, _leave_activity_item)
-
-
-async def _query_recent_employee_activity_rows(
-    session: AsyncSession,
-    tenant_id: UUID,
-    limit: int,
-):
-    return await _mapped_rows(
-        session,
-        _recent_employee_activity_statement(
-            tenant_id=tenant_id,
-            limit=limit,
+    statement = select(
+        AuditEvent.event_type,
+        AuditEvent.resource_type,
+        AuditEvent.resource_id,
+        AuditEvent.occurred_at,
+    ).where(
+        AuditEvent.tenant_id == tenant_id,
+        AuditEvent.event_type.in_(tuple(_AUDIT_ACTIVITY)),
+        AuditEvent.resource_id.is_not(None),
+        AuditEvent.result == "success",
+        or_(
+            and_(
+                AuditEvent.event_type.in_(_EMPLOYEE_ACTIVITY_TYPES),
+                AuditEvent.resource_type == "employee",
+            ),
+            and_(
+                AuditEvent.event_type.in_(_LEAVE_ACTIVITY_TYPES),
+                AuditEvent.resource_type == "leave_request",
+            ),
         ),
     )
-
-
-async def _query_recent_leave_activity_rows(
-    session: AsyncSession,
-    tenant_id: UUID,
-    limit: int,
-):
-    return await _mapped_rows(
-        session,
-        _recent_leave_activity_statement(
-            tenant_id=tenant_id,
-            limit=limit,
-        ),
-    )
-
-
-async def _mapped_rows(session: AsyncSession, statement):
-    return (await session.execute(statement)).mappings().all()
-
-
-def _dashboard_summary(
-    counts: _DashboardCounts,
-    department_distribution: list[DepartmentDistributionItem],
-    recent_activity: list[DashboardActivityItem],
-) -> DashboardSummary:
-    return DashboardSummary(
-        active_employee_count=counts.active_employee_count,
-        pending_leave_count=counts.pending_leave_count,
-        employee_count=counts.employee_count,
-        pending_leave_requests=counts.pending_leave_count,
-        new_starters_this_month=counts.new_starters_this_month,
-        open_tasks=0,
-        department_distribution=department_distribution,
-        recent_activity=recent_activity,
-    )
-
-
-def _activity_items(rows, mapper) -> list[DashboardActivityItem]:
-    activity_items = []
-    for row in rows:
-        activity_item = mapper(row)
-        if activity_item is not None:
-            activity_items.append(activity_item)
-    return activity_items
-
-
-def _latest_activity(
-    activity: list[DashboardActivityItem],
-    limit: int,
-) -> list[DashboardActivityItem]:
-    return sorted(activity, key=_activity_timestamp, reverse=True)[:limit]
-
-
-def _dashboard_counts_statement(tenant_id: UUID, start_date: date, end_date: date):
-    current_employee = Employee.status.in_(CURRENT_EMPLOYEE_STATUSES)
-    pending_leave_count = (
-        select(func.count())
-        .select_from(LeaveRequest)
-        .where(LeaveRequest.tenant_id == tenant_id)
-        .where(LeaveRequest.status == LeaveRequestStatus.PENDING.value)
-        .scalar_subquery()
-    )
-    return (
-        select(
-            func.count()
-            .filter(Employee.status == EmployeeStatus.ACTIVE.value)
-            .label("active_employee_count"),
-            func.count().filter(current_employee).label("employee_count"),
-            pending_leave_count.label("pending_leave_count"),
-            func.count()
-            .filter(
+    if scope.value == "team":
+        statement = statement.where(
+            or_(
                 and_(
-                    current_employee,
-                    Employee.employment_start_date >= start_date,
-                    Employee.employment_start_date < end_date,
-                )
+                    AuditEvent.resource_type == "employee",
+                    _employee_scope_predicate(
+                        tenant_id=tenant_id,
+                        employee_id=AuditEvent.resource_id,
+                        scope=scope,
+                        effective_on=effective_on,
+                    ),
+                ),
+                and_(
+                    AuditEvent.resource_type == "leave_request",
+                    exists(
+                        select(LeaveRequest.id).where(
+                            LeaveRequest.tenant_id == tenant_id,
+                            LeaveRequest.id == AuditEvent.resource_id,
+                            _employee_scope_predicate(
+                                tenant_id=tenant_id,
+                                employee_id=LeaveRequest.employee_id,
+                                scope=scope,
+                                effective_on=effective_on,
+                            ),
+                        )
+                    ),
+                ),
             )
-            .label("new_starters_this_month"),
         )
-        .select_from(Employee)
-        .where(Employee.tenant_id == tenant_id)
-        .where(Employee.archived_at.is_(None))
-    )
+    events = (
+        await session.execute(
+            statement.order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc()).limit(limit)
+        )
+    ).all()
+    return [
+        DashboardActivityItem(
+            activity_type=_AUDIT_ACTIVITY[event_type][0],
+            entity_type=resource_type,
+            entity_id=resource_id,
+            title=_AUDIT_ACTIVITY[event_type][1],
+            occurred_at=occurred_at,
+        )
+        for event_type, resource_type, resource_id, occurred_at in events
+        if resource_id is not None
+    ]
 
 
-def _department_distribution_statement(
-    tenant_id: UUID,
+def _employee_scope_predicate(
     *,
-    effective_on: date | None = None,
+    tenant_id: UUID,
+    employee_id,
+    scope: _DashboardScope,
+    effective_on: date,
 ):
-    effective_on = effective_on or date.today()
-    current_assignments = (
-        select(
-            EmployeeAssignment.employee_id,
-            EmployeeAssignment.department_id,
-        )
-        .where(
+    if scope.value == "tenant":
+        return literal(True)
+    if scope.manager_user_id is None:
+        return literal(False)
+    return exists(
+        select(EmployeeAssignment.id).where(
             EmployeeAssignment.tenant_id == tenant_id,
+            EmployeeAssignment.employee_id == employee_id,
+            EmployeeAssignment.manager_user_id == scope.manager_user_id,
             EmployeeAssignment.effective_from <= effective_on,
             or_(
                 EmployeeAssignment.effective_to.is_(None),
                 EmployeeAssignment.effective_to > effective_on,
             ),
         )
-        .subquery("current_employee_assignments")
-    )
-    legacy_department_label = _legacy_department_label()
-    department_label = case(
-        (
-            current_assignments.c.employee_id.is_not(None),
-            func.coalesce(
-                func.nullif(func.trim(Department.name), ""),
-                "Unassigned",
-            ),
-        ),
-        else_=legacy_department_label,
-    )
-    employee_count = func.count(Employee.id)
-    return (
-        select(
-            department_label.label("department"),
-            employee_count.label("employee_count"),
-        )
-        .select_from(Employee)
-        .outerjoin(
-            current_assignments,
-            current_assignments.c.employee_id == Employee.id,
-        )
-        .outerjoin(
-            Department,
-            and_(
-                Department.tenant_id == Employee.tenant_id,
-                Department.id == current_assignments.c.department_id,
-            ),
-        )
-        .where(Employee.tenant_id == tenant_id)
-        .where(Employee.archived_at.is_(None))
-        .where(Employee.status.in_(CURRENT_EMPLOYEE_STATUSES))
-        .group_by(department_label)
-        .order_by(employee_count.desc(), department_label.asc())
     )
 
 
-def _legacy_department_label():
-    return func.coalesce(
-        func.nullif(func.trim(Employee.department), ""),
-        "Unassigned",
+def _dashboard_scope(*, actor_id: UUID, permissions: tuple[str, ...]) -> _DashboardScope:
+    if "dashboard:read:tenant" in permissions:
+        return _DashboardScope("tenant")
+    if "dashboard:read:team" in permissions:
+        return _DashboardScope("team", actor_id)
+    return _DashboardScope("own")
+
+
+def _month_window(today: date) -> tuple[date, date]:
+    start = date(today.year, today.month, 1)
+    end = (
+        date(today.year + 1, 1, 1)
+        if today.month == 12
+        else date(today.year, today.month + 1, 1)
+    )
+    return start, end
+
+
+def _empty_summary() -> DashboardSummary:
+    return DashboardSummary(
+        scope="own",
+        active_employee_count=0,
+        pending_leave_count=0,
+        employee_count=0,
+        pending_leave_requests=0,
+        new_starters_this_month=0,
+        terminated_this_month=0,
+        missing_document_count=0,
+        expiring_document_count=0,
+        open_tasks=0,
+        department_distribution=[],
+        recent_activity=[],
     )
 
 
-def _recent_employee_activity_statement(tenant_id: UUID, limit: int):
-    return (
-        select(
-            Employee.id.label("entity_id"),
-            Employee.first_name,
-            Employee.last_name,
-            Employee.created_at.label("occurred_at"),
-        )
-        .where(Employee.tenant_id == tenant_id)
-        .where(Employee.archived_at.is_(None))
-        .order_by(Employee.created_at.desc())
-        .limit(limit)
-    )
-
-
-def _recent_leave_activity_statement(tenant_id: UUID, limit: int):
-    return (
-        select(
-            LeaveRequest.id.label("entity_id"),
-            LeaveRequest.status,
-            LeaveRequest.leave_type,
-            LeaveRequest.created_at.label("occurred_at"),
-            Employee.first_name,
-            Employee.last_name,
-        )
-        .join(Employee, Employee.id == LeaveRequest.employee_id)
-        .where(LeaveRequest.tenant_id == tenant_id)
-        .where(Employee.tenant_id == tenant_id)
-        .order_by(LeaveRequest.created_at.desc())
-        .limit(limit)
-    )
-
-
-def _department_distribution_item(row) -> DepartmentDistributionItem:
-    return DepartmentDistributionItem(
-        department=row["department"],
-        count=row["employee_count"],
-    )
-
-
-def _employee_activity_item(row) -> DashboardActivityItem | None:
-    occurred_at = row["occurred_at"]
-    if not isinstance(occurred_at, datetime):
-        return None
-    return DashboardActivityItem(
-        activity_type="employee.created",
-        entity_type="employee",
-        entity_id=row["entity_id"],
-        title=f"{row['first_name']} {row['last_name']} employee profile created",
-        occurred_at=occurred_at,
-    )
-
-
-def _leave_activity_item(row) -> DashboardActivityItem | None:
-    activity_type = LEAVE_ACTIVITY_BY_STATUS.get(row["status"])
-    occurred_at = row["occurred_at"]
-    if activity_type is None or not isinstance(occurred_at, datetime):
-        return None
-    return DashboardActivityItem(
-        activity_type=activity_type,
-        entity_type="leave_request",
-        entity_id=row["entity_id"],
-        title=(
-            f"{row['first_name']} {row['last_name']} "
-            f"{row['leave_type']} leave request {row['status']}"
-        ),
-        occurred_at=occurred_at,
-    )
-
-
-def _activity_timestamp(activity: DashboardActivityItem) -> float:
-    return activity.occurred_at.timestamp()
+__all__ = ["DashboardService"]

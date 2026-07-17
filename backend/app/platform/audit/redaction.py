@@ -170,6 +170,24 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
             "capture_failed",
         }
     ),
+    "report_type": frozenset({"employees", "leaves", "missing_documents"}),
+    "export_format": frozenset({"csv", "xlsx"}),
+    "report_scope": frozenset({"tenant", "team"}),
+    "file_format": frozenset({"csv", "xlsx"}),
+    "template_version": frozenset({"1"}),
+    "failure_code": frozenset(
+        {
+            "authorization_revoked",
+            "cancelled",
+            "file_too_large",
+            "infected_file",
+            "invalid_file",
+            "row_limit_exceeded",
+            "scanner_unavailable",
+            "storage_unavailable",
+            "worker_failure",
+        }
+    ),
 }
 
 _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
@@ -710,6 +728,64 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         metadata_keys=frozenset({"channel", "delivery_error_code", "attempt_count"}),
         changed_fields=frozenset({"status", "attempt_count"}),
     ),
+    AuditEventType.REPORT_EXPORT_REQUESTED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"report_type", "export_format", "report_scope", "field_count", "field_classifications"}
+        ),
+        changed_fields=frozenset({"status"}),
+    ),
+    AuditEventType.REPORT_EXPORT_COMPLETED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "report_type",
+                "export_format",
+                "report_scope",
+                "row_count",
+                "field_count",
+                "field_classifications",
+            }
+        ),
+        changed_fields=frozenset({"status"}),
+    ),
+    AuditEventType.REPORT_EXPORT_FAILED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"report_type", "export_format", "failure_code", "attempt_count"}),
+        changed_fields=frozenset({"status", "attempt_count"}),
+    ),
+    AuditEventType.REPORT_EXPORT_CANCELLED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"report_type", "export_format"}),
+        changed_fields=frozenset({"status"}),
+    ),
+    AuditEventType.REPORT_EXPORT_EXPIRED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"report_type", "export_format", "row_count"}),
+        changed_fields=frozenset({"status"}),
+    ),
+    AuditEventType.REPORT_EXPORT_DOWNLOAD_INTENT_ISSUED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"report_type", "export_format", "download_intent_count"})
+    ),
+    AuditEventType.EMPLOYEE_IMPORT_UPLOADED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"file_format", "template_version", "size_bytes"}),
+        changed_fields=frozenset({"status"}),
+    ),
+    AuditEventType.EMPLOYEE_IMPORT_VALIDATED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"file_format", "template_version", "row_count", "error_count", "warning_count"}
+        ),
+        changed_fields=frozenset({"status"}),
+    ),
+    AuditEventType.EMPLOYEE_IMPORT_FAILED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"file_format", "template_version", "failure_code", "attempt_count"}
+        ),
+        changed_fields=frozenset({"status", "attempt_count"}),
+    ),
+    AuditEventType.EMPLOYEE_IMPORT_COMMITTED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"file_format", "template_version", "row_count"}),
+        changed_fields=frozenset({"status"}),
+    ),
+    AuditEventType.EMPLOYEE_IMPORT_SOURCE_EXPIRED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"file_format", "template_version", "row_count"}),
+        changed_fields=frozenset({"source_deleted_at", "status"}),
+    ),
 }
 
 
@@ -811,6 +887,15 @@ def _safe_metadata_value(key: str, value: object) -> object | None:
             return None
         return value if len(value) <= 128 and _SAFE_VALUE.fullmatch(value) else None
     if isinstance(value, (list, tuple, frozenset)):
+        if key == "field_classifications":
+            classifications = sorted({str(item) for item in value})
+            if len(classifications) > 8 or not set(classifications) <= {
+                "hr_metadata",
+                "work_contact",
+                "work_safe",
+            }:
+                return None
+            return classifications
         if key not in {"before_role_codes", "after_role_codes"} or len(value) > 16:
             return None
         role_codes = sorted({str(item) for item in value})

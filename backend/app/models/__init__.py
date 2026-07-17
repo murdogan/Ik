@@ -46,6 +46,13 @@ from app.models.employee_document import (
     EmployeeDocument,
     EmployeeDocumentUploadIntent,
 )
+from app.models.employee_import import (
+    EmployeeImport,
+    EmployeeImportIssue,
+    EmployeeImportRow,
+    EmployeeImportScanResult,
+    EmployeeImportStatus,
+)
 from app.models.employee_profile import (
     EmployeeEmploymentProfile,
     EmployeePersonalProfile,
@@ -84,6 +91,14 @@ from app.models.notification import (
 )
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
 from app.models.position import Position, PositionStatus
+from app.models.reporting import (
+    ExportFormat,
+    ExportJobStatus,
+    ReportExportDownloadIntent,
+    ReportExportJob,
+    ReportScope,
+    ReportType,
+)
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
 from app.models.user import User, UserStatus
 
@@ -103,6 +118,11 @@ __all__ = [
     "DepartmentHierarchyWriteFence",
     "DepartmentStatus",
     "Employee",
+    "EmployeeImport",
+    "EmployeeImportIssue",
+    "EmployeeImportRow",
+    "EmployeeImportScanResult",
+    "EmployeeImportStatus",
     "EmployeeAccountLink",
     "EmployeeAssignment",
     "EmployeeDocument",
@@ -156,6 +176,12 @@ __all__ = [
     "PositionStatus",
     "RefreshSessionFamily",
     "RefreshSessionToken",
+    "ExportFormat",
+    "ExportJobStatus",
+    "ReportExportDownloadIntent",
+    "ReportExportJob",
+    "ReportScope",
+    "ReportType",
     "Role",
     "RolePermission",
     "Tenant",

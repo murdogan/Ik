@@ -143,6 +143,17 @@ class AuditEventType(StrEnum):
     ANNOUNCEMENT_ARCHIVED = "announcement.archived"
     ANNOUNCEMENT_ACKNOWLEDGED = "announcement.acknowledged"
     NOTIFICATION_DELIVERY_FAILED = "notification.delivery.failed"
+    REPORT_EXPORT_REQUESTED = "report.export.requested"
+    REPORT_EXPORT_COMPLETED = "report.export.completed"
+    REPORT_EXPORT_FAILED = "report.export.failed"
+    REPORT_EXPORT_CANCELLED = "report.export.cancelled"
+    REPORT_EXPORT_EXPIRED = "report.export.expired"
+    REPORT_EXPORT_DOWNLOAD_INTENT_ISSUED = "report.export.download_intent.issued"
+    EMPLOYEE_IMPORT_UPLOADED = "employee.import.uploaded"
+    EMPLOYEE_IMPORT_VALIDATED = "employee.import.validated"
+    EMPLOYEE_IMPORT_FAILED = "employee.import.failed"
+    EMPLOYEE_IMPORT_COMMITTED = "employee.import.committed"
+    EMPLOYEE_IMPORT_SOURCE_EXPIRED = "employee.import.source_expired"
 
 
 @dataclass(frozen=True, slots=True)

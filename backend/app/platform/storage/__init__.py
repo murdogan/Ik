@@ -9,6 +9,7 @@ from app.platform.storage.contracts import (
     ObjectStorageError,
     ObjectStorageUnavailableError,
     PresignedRequest,
+    UploadedObject,
 )
 from app.platform.storage.s3 import S3ObjectStorage
 from app.platform.storage.unavailable import UnavailableObjectStorage
@@ -22,6 +23,7 @@ __all__ = [
     "ObjectStorageError",
     "ObjectStorageUnavailableError",
     "PresignedRequest",
+    "UploadedObject",
     "S3ObjectStorage",
     "UnavailableObjectStorage",
 ]

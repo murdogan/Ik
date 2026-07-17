@@ -66,6 +66,19 @@ class Settings(BaseSettings):
     notification_worker_poll_seconds: float = Field(default=5.0, ge=0.25, le=60.0)
     notification_email_backend: Literal["disabled", "fake"] = "disabled"
     notification_fake_email_failures_before_success: int = Field(default=0, ge=0, le=20)
+    reporting_worker_tenant_batch_size: int = Field(default=25, ge=1, le=100)
+    reporting_worker_export_batch_size: int = Field(default=5, ge=1, le=20)
+    reporting_worker_import_batch_size: int = Field(default=3, ge=1, le=10)
+    reporting_worker_max_attempts: int = Field(default=3, ge=1, le=5)
+    reporting_worker_poll_seconds: float = Field(default=5.0, ge=0.25, le=60.0)
+    reporting_worker_lease_seconds: int = Field(default=900, ge=60, le=3600)
+    export_download_ttl_seconds: int = Field(default=300, ge=30, le=300)
+    export_artifact_ttl_hours: int = Field(default=24, ge=1, le=24)
+    export_max_file_size_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        ge=1024 * 1024,
+        le=50 * 1024 * 1024,
+    )
 
     model_config = SettingsConfigDict(env_prefix="IK_", env_file=".env", extra="ignore")
 

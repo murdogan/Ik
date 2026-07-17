@@ -43,6 +43,7 @@ export const config = {
     "/profile-change-requests/:path*",
     "/team/:path*",
     "/employees/:path*",
+    "/reports/:path*",
     "/users/:path*",
     "/organization/:path*",
     "/audit/:path*",

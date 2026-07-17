@@ -21,6 +21,7 @@ from app.platform.storage.contracts import (
     ObjectNotFoundError,
     ObjectStorageError,
     PresignedRequest,
+    UploadedObject,
 )
 
 
@@ -182,6 +183,8 @@ class S3ObjectStorage:
             raise ObjectStorageError("Object could not be read") from exc
         except BotoCoreError as exc:
             raise ObjectStorageError("Object could not be read") from exc
+        except OSError as exc:
+            raise ObjectStorageError("Object destination could not be written") from exc
 
     def _download_to_path_sync(
         self,
@@ -247,6 +250,63 @@ class S3ObjectStorage:
             raise ObjectStorageError("Object could not be finalized") from exc
         except BotoCoreError as exc:
             raise ObjectStorageError("Object could not be finalized") from exc
+
+    async def upload_from_path(
+        self,
+        *,
+        key: str,
+        source: Path,
+        content_type: str,
+        metadata: Mapping[str, str],
+        maximum_bytes: int,
+    ) -> UploadedObject:
+        _validate_key(key)
+        if maximum_bytes < 1:
+            raise ValueError("maximum_bytes must be positive")
+        try:
+            return await asyncio.to_thread(
+                self._upload_from_path_sync,
+                key,
+                source,
+                content_type,
+                dict(metadata),
+                maximum_bytes,
+            )
+        except ClientError as exc:
+            if _http_status(exc) in {409, 412}:
+                raise ObjectAlreadyExistsError("Destination object already exists") from exc
+            raise ObjectStorageError("Object could not be stored") from exc
+        except BotoCoreError as exc:
+            raise ObjectStorageError("Object could not be stored") from exc
+        except OSError as exc:
+            raise ObjectStorageError("Object source could not be read") from exc
+
+    def _upload_from_path_sync(
+        self,
+        key: str,
+        source: Path,
+        content_type: str,
+        metadata: Mapping[str, str],
+        maximum_bytes: int,
+    ) -> UploadedObject:
+        size_bytes = source.stat().st_size
+        if size_bytes < 1 or size_bytes > maximum_bytes:
+            raise ObjectStorageError("Object exceeds the bounded upload size")
+        digest = hashlib.sha256()
+        with source.open("rb") as file_handle:
+            while chunk := file_handle.read(128 * 1024):
+                digest.update(chunk)
+            file_handle.seek(0)
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=file_handle,
+                ContentLength=size_bytes,
+                ContentType=content_type,
+                Metadata=dict(metadata),
+                IfNoneMatch="*",
+            )
+        return UploadedObject(size_bytes=size_bytes, sha256=digest.hexdigest())
 
     async def delete(self, key: str) -> None:
         _validate_key(key)

@@ -127,7 +127,7 @@ class CommandIdempotencyService:
 
 @dataclass(slots=True)
 class IdempotentCommandExecutor:
-    """Wrap one command with an optional durable idempotency receipt."""
+    """Wrap one command with a durable receipt and optional transactional precondition."""
 
     service: CommandIdempotencyService
     unit_of_work: UnitOfWork
@@ -139,14 +139,23 @@ class IdempotentCommandExecutor:
         idempotency_key: str | None,
         command_name: str,
         request_fingerprint: str,
+        precondition: Callable[[], Awaitable[None]] | None = None,
         operation: Callable[[], Awaitable[_ResultT]],
         serialize: Callable[[_ResultT], dict[str, object]],
         deserialize: Callable[[dict[str, object]], _ResultT],
     ) -> _ResultT:
         if idempotency_key is None:
-            return await self.unit_of_work.execute(operation)
+
+            async def execute_unkeyed_command() -> _ResultT:
+                if precondition is not None:
+                    await precondition()
+                return await operation()
+
+            return await self.unit_of_work.execute(execute_unkeyed_command)
 
         async def execute_claimed_command() -> _ResultT:
+            if precondition is not None:
+                await precondition()
             claim = await self.service.begin(
                 tenant_id=tenant_id,
                 idempotency_key=idempotency_key,
@@ -167,14 +176,18 @@ class IdempotentCommandExecutor:
         try:
             return await self.unit_of_work.execute(execute_claimed_command)
         except _ConcurrentIdempotencyClaimError:
-            replay = await self.unit_of_work.execute(
-                lambda: self.service.replay(
+
+            async def replay_claimed_command() -> IdempotencyReplay:
+                if precondition is not None:
+                    await precondition()
+                return await self.service.replay(
                     tenant_id=tenant_id,
                     idempotency_key=idempotency_key,
                     command_name=command_name,
                     request_fingerprint=request_fingerprint,
                 )
-            )
+
+            replay = await self.unit_of_work.execute(replay_claimed_command)
             return deserialize(replay.response_payload)
 
 

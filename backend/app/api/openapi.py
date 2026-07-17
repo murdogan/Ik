@@ -21,6 +21,9 @@ REQUESTS_TAG = "Requests"
 SELF_SERVICE_TAG = "Self Service"
 ANNOUNCEMENTS_TAG = "Announcements"
 NOTIFICATIONS_TAG = "Notifications"
+REPORTS_TAG = "Reports"
+EXPORTS_TAG = "Report Exports"
+IMPORTS_TAG = "Employee Imports"
 
 # Phase 1 has no caller-facing credential format: authorization is supplied only by the trusted
 # principal dependency seam and fails closed by default.  A standard OpenAPI security scheme would
@@ -203,5 +206,17 @@ OPENAPI_TAGS = [
     {
         "name": NOTIFICATIONS_TAG,
         "description": "Current-user notification inbox and idempotent read state.",
+    },
+    {
+        "name": REPORTS_TAG,
+        "description": "Fixed allowlisted employee, leave, and document compliance reports.",
+    },
+    {
+        "name": EXPORTS_TAG,
+        "description": "Asynchronous CSV/XLSX exports with private expiring artifacts.",
+    },
+    {
+        "name": IMPORTS_TAG,
+        "description": "Versioned employee import validation and explicit atomic commit.",
     },
 ]

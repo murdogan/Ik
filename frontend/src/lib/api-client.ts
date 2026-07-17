@@ -24,9 +24,18 @@ export interface ApiPlainCursorSuccess<TResponse> extends ApiPlainSuccess<TRespo
 
 export interface ApiRequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  body?: object;
+  body?: object | FormData;
   accessToken?: string;
   idempotencyKey?: string;
+  accept?: string;
+}
+
+export interface ApiFileSuccess {
+  blob: Blob;
+  contentType: string;
+  filename: string | null;
+  status: number;
+  headers: Headers;
 }
 
 export class ApiClientError extends Error {
@@ -84,12 +93,22 @@ async function responsePayload(response: Response): Promise<unknown> {
   }
 }
 
-async function sendApiRequest(
+function isFormData(value: object | FormData): value is FormData {
+  return typeof FormData !== "undefined" && value instanceof FormData;
+}
+
+async function sendRawApiRequest(
   path: `/api/${string}`,
-  { method = "GET", body, accessToken, idempotencyKey }: ApiRequestOptions,
-): Promise<{ payload: unknown; response: Response }> {
-  const headers = new Headers({ Accept: "application/json" });
-  if (body !== undefined) {
+  {
+    method = "GET",
+    body,
+    accessToken,
+    idempotencyKey,
+    accept = "application/json",
+  }: ApiRequestOptions,
+): Promise<Response> {
+  const headers = new Headers({ Accept: accept });
+  if (body !== undefined && !isFormData(body)) {
     headers.set("Content-Type", "application/json");
   }
   if (accessToken) {
@@ -106,7 +125,12 @@ async function sendApiRequest(
       headers,
       credentials: "same-origin",
       cache: "no-store",
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : isFormData(body)
+            ? body
+            : JSON.stringify(body),
     });
   } catch {
     throw new ApiClientError({
@@ -115,8 +139,8 @@ async function sendApiRequest(
     });
   }
 
-  const payload = await responsePayload(response);
   if (!response.ok) {
+    const payload = await responsePayload(response);
     const metadata = errorMetadata(payload, response);
     throw new ApiClientError({
       status: response.status,
@@ -125,7 +149,23 @@ async function sendApiRequest(
     });
   }
 
+  return response;
+}
+
+async function sendApiRequest(
+  path: `/api/${string}`,
+  options: ApiRequestOptions,
+): Promise<{ payload: unknown; response: Response }> {
+  const response = await sendRawApiRequest(path, options);
+  const payload = await responsePayload(response);
+
   return { payload, response };
+}
+
+function responseFilename(response: Response): string | null {
+  const disposition = response.headers.get("content-disposition");
+  const match = disposition?.match(/(?:^|;)\s*filename="([^"\\\r\n]{1,255})"(?:;|$)/i);
+  return match?.[1] ?? null;
 }
 
 export async function requestApi<TResponse>(
@@ -203,6 +243,33 @@ export async function requestApiNoContent(
       correlationId: response.headers.get("x-request-id"),
     });
   }
+}
+
+export async function requestApiFile(
+  path: `/api/${string}`,
+  options: ApiRequestOptions = {},
+): Promise<ApiFileSuccess> {
+  const response = await sendRawApiRequest(path, {
+    ...options,
+    accept:
+      options.accept ??
+      "text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() ?? "";
+  if (!contentType || contentType === "application/json") {
+    throw new ApiClientError({
+      status: response.status,
+      code: "invalid_response",
+      correlationId: response.headers.get("x-request-id"),
+    });
+  }
+  return {
+    blob: await response.blob(),
+    contentType,
+    filename: responseFilename(response),
+    status: response.status,
+    headers: response.headers,
+  };
 }
 
 export async function postApi<TRequest extends object, TResponse>(

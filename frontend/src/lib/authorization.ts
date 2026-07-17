@@ -35,6 +35,15 @@ export const AUTHORIZATION_PERMISSIONS = {
   readOwnSelfService: "self_service:read:own",
   readTenantAudit: "audit:read:tenant",
   readPlatformAudit: "audit:read:platform",
+  readTenantDashboard: "dashboard:read:tenant",
+  readTeamDashboard: "dashboard:read:team",
+  readOwnDashboard: "dashboard:read:own",
+  readTenantReports: "report:read:tenant",
+  readTeamReports: "report:read:team",
+  exportTenantReports: "report:export:tenant",
+  exportTeamReports: "report:export:team",
+  readReportWorkEmail: "report_field:read:work_email",
+  manageEmployeeImports: "employee_import:manage:tenant",
 } as const;
 
 export function hasPermission(

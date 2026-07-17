@@ -7,12 +7,14 @@ import type {
 } from "./auth-contracts";
 import {
   ApiClientError,
+  type ApiFileSuccess,
   type ApiPlainCursorSuccess,
   type ApiPlainSuccess,
   type ApiRequestOptions,
   type ApiSuccessEnvelope,
   requestApi,
   requestApiEnvelope,
+  requestApiFile,
   requestApiNoContent,
   requestApiPlainCursorSuccess,
   requestApiPlainSuccess,
@@ -243,6 +245,15 @@ export async function requestAuthenticatedApiPlainCursorSuccess<TResponse>(
 ): Promise<ApiPlainCursorSuccess<TResponse>> {
   return requestAuthenticated(path, options, (requestPath, requestOptions) =>
     requestApiPlainCursorSuccess<TResponse>(requestPath, requestOptions),
+  );
+}
+
+export async function requestAuthenticatedApiFile(
+  path: `/api/${string}`,
+  options: AuthenticatedRequestOptions = {},
+): Promise<ApiFileSuccess> {
+  return requestAuthenticated(path, options, (requestPath, requestOptions) =>
+    requestApiFile(requestPath, requestOptions),
   );
 }
 

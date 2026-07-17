@@ -279,6 +279,17 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
     _permission(48, "announcement:manage:tenant", "Manage and publish tenant announcements."),
     _permission(49, "notification:read:own", "Read and consume the current user's inbox."),
     _permission(50, "self_service:read:own", "Read the employee self-service home."),
+    _permission(51, "dashboard:read:team", "Read current direct-team dashboard metrics."),
+    _permission(52, "report:read:tenant", "Read allowlisted HR reports across the tenant."),
+    _permission(53, "report:read:team", "Read allowlisted reports for the current direct team."),
+    _permission(54, "report:export:tenant", "Create tenant-scoped allowlisted report exports."),
+    _permission(55, "report:export:team", "Create direct-team allowlisted report exports."),
+    _permission(
+        56,
+        "report_field:read:work_email",
+        "Include work email in an otherwise authorized report projection.",
+    ),
+    _permission(57, "employee_import:manage:tenant", "Validate and commit employee imports."),
 )
 
 
@@ -300,7 +311,6 @@ ROLE_PERMISSION_CODES = MappingProxyType(
             {
                 "tenant:read:tenant",
                 "tenant:update:tenant",
-                "dashboard:read:tenant",
                 "dashboard:read:own",
                 "user:read:tenant",
                 "user:update:tenant",
@@ -348,6 +358,10 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "announcement:manage:tenant",
                 "notification:read:own",
                 "self_service:read:own",
+                "report:read:tenant",
+                "report:export:tenant",
+                "report_field:read:work_email",
+                "employee_import:manage:tenant",
             }
         ),
         "hr_specialist": frozenset(
@@ -382,6 +396,10 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "announcement:manage:tenant",
                 "notification:read:own",
                 "self_service:read:own",
+                "report:read:tenant",
+                "report:export:tenant",
+                "report_field:read:work_email",
+                "employee_import:manage:tenant",
             }
         ),
         "it_admin": frozenset(
@@ -402,6 +420,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
         "manager": frozenset(
             {
                 "dashboard:read:own",
+                "dashboard:read:team",
                 "employee:read:own",
                 "employee:read:team",
                 "leave:read:own",
@@ -418,6 +437,9 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "announcement:read:own",
                 "notification:read:own",
                 "self_service:read:own",
+                "report:read:team",
+                "report:export:team",
+                "report_field:read:work_email",
             }
         ),
         "employee": frozenset(

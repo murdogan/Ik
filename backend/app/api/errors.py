@@ -135,6 +135,14 @@ from app.services.position_service import (
     PositionConflictError,
     PositionNotFoundError,
 )
+from app.services.reporting_access import (
+    ReportingAccessDeniedError,
+    ReportingConflictError,
+    ReportingFeatureUnavailableError,
+    ReportingNotFoundError,
+    ReportingStorageUnavailableError,
+    ReportingValidationError,
+)
 from app.services.tenant_service import (
     DuplicateTenantSlugError,
     TenantClosedError,
@@ -197,6 +205,9 @@ PHASE7_API_PREFIXES = (
     "/api/v1/announcements",
     "/api/v1/notifications",
 )
+REPORT_API_PREFIX = "/api/v1/reports"
+EXPORT_JOB_API_PREFIX = "/api/v1/export-jobs"
+EMPLOYEE_IMPORT_API_PREFIX = "/api/v1/employees/imports"
 
 EMPLOYEE_VALIDATION_ERROR_CODE = "employee_validation_error"
 EMPLOYEE_VALIDATION_ERROR_MESSAGE = EMPLOYEE_REQUEST_VALIDATION_FAILED_MESSAGE
@@ -380,6 +391,18 @@ DOCUMENT_CONFLICT_ERROR_CODE = "document_conflict"
 DOCUMENT_CONFLICT_ERROR_MESSAGE = "The employee document operation is not allowed"
 DOCUMENT_STORAGE_UNAVAILABLE_ERROR_CODE = "document_storage_unavailable"
 DOCUMENT_STORAGE_UNAVAILABLE_ERROR_MESSAGE = "Employee document storage is temporarily unavailable"
+REPORTING_VALIDATION_ERROR_CODE = "reporting_validation_error"
+REPORTING_VALIDATION_ERROR_MESSAGE = "Report or import request validation failed"
+REPORTING_NOT_FOUND_ERROR_CODE = "reporting_resource_not_found"
+REPORTING_NOT_FOUND_ERROR_MESSAGE = "The requested report, export, or import was not found"
+REPORTING_CONFLICT_ERROR_CODE = "reporting_conflict"
+REPORTING_CONFLICT_ERROR_MESSAGE = (
+    "The report, export, or import cannot be changed in its current state"
+)
+REPORTING_FEATURE_UNAVAILABLE_ERROR_CODE = "reporting_feature_unavailable"
+REPORTING_FEATURE_UNAVAILABLE_ERROR_MESSAGE = "Reporting is not enabled for this organization"
+REPORTING_STORAGE_UNAVAILABLE_ERROR_CODE = "reporting_storage_unavailable"
+REPORTING_STORAGE_UNAVAILABLE_ERROR_MESSAGE = "Private report storage is temporarily unavailable"
 
 
 EMPLOYEE_VALIDATION_RESPONSES = {
@@ -1129,6 +1152,18 @@ async def unexpected_error_handler(request: Request, _exc: Exception) -> Respons
 
 
 def application_error_to_api_error(exc: ApplicationError) -> ApiError:
+    if isinstance(exc, ReportingAccessDeniedError):
+        return authorization_access_denied_error()
+    if isinstance(exc, ReportingValidationError):
+        return reporting_validation_error()
+    if isinstance(exc, ReportingNotFoundError):
+        return reporting_not_found_error()
+    if isinstance(exc, ReportingFeatureUnavailableError):
+        return reporting_feature_unavailable_error()
+    if isinstance(exc, ReportingStorageUnavailableError):
+        return reporting_storage_unavailable_error()
+    if isinstance(exc, ReportingConflictError):
+        return reporting_conflict_error()
     if isinstance(exc, Phase7AccessDeniedError):
         return authorization_access_denied_error()
     if isinstance(exc, Phase7VersionConflictError):
@@ -1819,6 +1854,46 @@ def document_storage_unavailable_error() -> ApiError:
     )
 
 
+def reporting_validation_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=REPORTING_VALIDATION_ERROR_CODE,
+        message=REPORTING_VALIDATION_ERROR_MESSAGE,
+    )
+
+
+def reporting_not_found_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=REPORTING_NOT_FOUND_ERROR_CODE,
+        message=REPORTING_NOT_FOUND_ERROR_MESSAGE,
+    )
+
+
+def reporting_conflict_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=REPORTING_CONFLICT_ERROR_CODE,
+        message=REPORTING_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def reporting_feature_unavailable_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=REPORTING_FEATURE_UNAVAILABLE_ERROR_CODE,
+        message=REPORTING_FEATURE_UNAVAILABLE_ERROR_MESSAGE,
+    )
+
+
+def reporting_storage_unavailable_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code=REPORTING_STORAGE_UNAVAILABLE_ERROR_CODE,
+        message=REPORTING_STORAGE_UNAVAILABLE_ERROR_MESSAGE,
+    )
+
+
 def employee_date_range_error(message: str) -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -2000,6 +2075,11 @@ def _domain_request_validation_error(
     exc: RequestValidationError,
 ) -> ApiError | None:
     path = request.url.path
+    if any(
+        _matches_api_prefix(path, prefix)
+        for prefix in (REPORT_API_PREFIX, EXPORT_JOB_API_PREFIX, EMPLOYEE_IMPORT_API_PREFIX)
+    ):
+        return reporting_validation_error()
     if any(_matches_api_prefix(path, prefix) for prefix in PHASE7_API_PREFIXES):
         return phase7_validation_error()
     if (

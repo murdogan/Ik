@@ -20,7 +20,16 @@ function displayName(fullName: string | null, email: string): string {
   return fullName?.trim() || email;
 }
 
-const navigationItems = [
+interface NavigationItem {
+  href: string;
+  label: string;
+  icon: string;
+  permissions?: readonly string[];
+  anyPermissions?: readonly string[];
+  feature: (typeof TENANT_FEATURES)[keyof typeof TENANT_FEATURES] | null;
+}
+
+const navigationItems: readonly NavigationItem[] = [
   {
     href: "/home",
     label: "Çalışan ana sayfası",
@@ -62,6 +71,17 @@ const navigationItems = [
     icon: "B",
     permissions: [AUTHORIZATION_PERMISSIONS.manageDocumentTypes],
     feature: null,
+  },
+  {
+    href: "/reports",
+    label: "Raporlar ve aktarımlar",
+    icon: "R",
+    anyPermissions: [
+      AUTHORIZATION_PERMISSIONS.readTenantReports,
+      AUTHORIZATION_PERMISSIONS.readTeamReports,
+      AUTHORIZATION_PERMISSIONS.manageEmployeeImports,
+    ],
+    feature: TENANT_FEATURES.reporting,
   },
   {
     href: "/requests",
@@ -163,7 +183,7 @@ const navigationItems = [
     permissions: [AUTHORIZATION_PERMISSIONS.readTenantAudit],
     feature: null,
   },
-] as const;
+];
 
 function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
   const pathname = usePathname();
@@ -181,7 +201,9 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
       if (
         item.href === "/dashboard" &&
         selfServiceEnabled &&
-        hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnSelfService)
+        hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnSelfService) &&
+        !hasPermission(user, AUTHORIZATION_PERMISSIONS.readTenantDashboard) &&
+        !hasPermission(user, AUTHORIZATION_PERMISSIONS.readTeamDashboard)
       ) {
         return false;
       }
@@ -200,7 +222,9 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
         return false;
       }
       return (
-        item.permissions.every((permission) => hasPermission(user, permission)) &&
+        (item.permissions ?? []).every((permission) => hasPermission(user, permission)) &&
+        (item.anyPermissions === undefined ||
+          item.anyPermissions.some((permission) => hasPermission(user, permission))) &&
         (item.feature === null ||
           (featureStatus === "ready" && isEnabled(item.feature)))
       );

@@ -235,26 +235,11 @@ class EmployeeService:
                 tenant_id=tenant_id,
                 work_email=payload.email,
             )
-        employee = Employee(
-            id=uuid4(),
+        employee, personal_profile, employment_profile = build_employee_graph(
             tenant_id=tenant_id,
-            **_employee_create_values(payload),
+            payload=payload,
         )
-        self.session.add(employee)
-        self.session.add_all(
-            [
-                EmployeePersonalProfile(
-                    id=uuid4(),
-                    tenant_id=tenant_id,
-                    employee_id=employee.id,
-                ),
-                EmployeeEmploymentProfile(
-                    id=uuid4(),
-                    tenant_id=tenant_id,
-                    employee_id=employee.id,
-                ),
-            ]
-        )
+        self.session.add_all([employee, personal_profile, employment_profile])
         await self._flush_employee_write()
         await self.session.refresh(employee)
         return employee
@@ -934,6 +919,39 @@ def _employee_list_statement(
 def _escaped_contains_pattern(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def build_employee_graph(
+    *,
+    tenant_id: UUID,
+    payload: EmployeeCreate,
+    employee_id: UUID | None = None,
+) -> tuple[Employee, EmployeePersonalProfile, EmployeeEmploymentProfile]:
+    """Build the canonical employee/profile aggregate after caller-owned uniqueness checks."""
+
+    _validate_employment_lifecycle(
+        status=payload.status,
+        start_date=payload.employment_start_date,
+        end_date=payload.employment_end_date,
+    )
+    employee = Employee(
+        id=employee_id or uuid4(),
+        tenant_id=tenant_id,
+        **_employee_create_values(payload),
+    )
+    return (
+        employee,
+        EmployeePersonalProfile(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            employee_id=employee.id,
+        ),
+        EmployeeEmploymentProfile(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            employee_id=employee.id,
+        ),
+    )
 
 
 def _is_employee_number_unique_violation(exc: IntegrityError) -> bool:

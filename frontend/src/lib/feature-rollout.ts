@@ -3,6 +3,7 @@ export const TENANT_FEATURES = {
   leave: "leave",
   selfService: "self_service",
   notifications: "notifications",
+  reporting: "reporting",
 } as const;
 
 export type TenantFeatureKey =

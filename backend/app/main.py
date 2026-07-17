@@ -25,6 +25,7 @@ from app.api.employee_documents import (
 from app.api.employee_documents import (
     own_router as own_employee_documents_router,
 )
+from app.api.employee_imports import router as employee_imports_router
 from app.api.employee_profile_change_requests import (
     own_router as employee_own_profile_change_requests_router,
 )
@@ -38,6 +39,7 @@ from app.api.errors import (
     request_validation_error_handler,
     unexpected_error_handler,
 )
+from app.api.export_jobs import router as export_jobs_router
 from app.api.health import router as health_router
 from app.api.landing import router as landing_router
 from app.api.leave import (
@@ -60,6 +62,7 @@ from app.api.platform_auth import me_router as platform_me_router
 from app.api.platform_auth import router as platform_auth_router
 from app.api.platform_tenants import router as platform_tenants_router
 from app.api.positions import router as positions_router
+from app.api.reports import router as reports_router
 from app.api.requests import router as requests_router
 from app.api.self_service import router as self_service_router
 from app.api.tenant import router as tenant_router
@@ -76,7 +79,9 @@ from app.modules.documents import (
     create_document_runtime,
 )
 from app.platform.errors import ApiError, ApplicationError, api_error_handler
+from app.platform.http_limits import RequestBodyLimitMiddleware
 from app.platform.observability.correlation import CorrelationMiddleware
+from app.schemas.employee_import import EMPLOYEE_IMPORT_MAX_REQUEST_BYTES
 
 
 @asynccontextmanager
@@ -114,6 +119,14 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     )
     setattr(app.state, APP_SETTINGS_STATE_KEY, settings)
     setattr(app.state, AUTH_RUNTIME_STATE_KEY, create_auth_runtime(settings))
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        method="POST",
+        path="/api/v1/employees/imports",
+        maximum_bytes=EMPLOYEE_IMPORT_MAX_REQUEST_BYTES,
+        error_code="reporting_validation_error",
+        error_message="Report or import request validation failed",
+    )
     app.add_middleware(CorrelationMiddleware)
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(ApplicationError, application_error_handler)
@@ -146,7 +159,10 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(document_types_router)
     app.include_router(employee_documents_router)
     app.include_router(own_employee_documents_router)
+    app.include_router(employee_imports_router)
     app.include_router(employees_router)
+    app.include_router(reports_router)
+    app.include_router(export_jobs_router)
     app.include_router(leave_configuration_router)
     app.include_router(leave_balance_router)
     app.include_router(leave_request_router)

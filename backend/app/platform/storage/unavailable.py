@@ -10,6 +10,7 @@ from app.platform.storage.contracts import (
     ObjectHead,
     ObjectStorageUnavailableError,
     PresignedRequest,
+    UploadedObject,
 )
 
 
@@ -52,6 +53,17 @@ class UnavailableObjectStorage:
         metadata: Mapping[str, str],
     ) -> None:
         raise ObjectStorageUnavailableError("Employee document storage is not configured")
+
+    async def upload_from_path(
+        self,
+        *,
+        key: str,
+        source: Path,
+        content_type: str,
+        metadata: Mapping[str, str],
+        maximum_bytes: int,
+    ) -> UploadedObject:
+        raise ObjectStorageUnavailableError("Private object storage is not configured")
 
     async def delete(self, key: str) -> None:
         raise ObjectStorageUnavailableError("Employee document storage is not configured")

@@ -48,6 +48,12 @@ class DownloadedObject:
     magic_prefix: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class UploadedObject:
+    size_bytes: int
+    sha256: str
+
+
 class ObjectStorage(Protocol):
     async def initialize(self) -> None: ...
 
@@ -72,6 +78,16 @@ class ObjectStorage(Protocol):
         destination: Path,
         maximum_bytes: int,
     ) -> DownloadedObject: ...
+
+    async def upload_from_path(
+        self,
+        *,
+        key: str,
+        source: Path,
+        content_type: str,
+        metadata: Mapping[str, str],
+        maximum_bytes: int,
+    ) -> UploadedObject: ...
 
     async def copy_if_absent(
         self,
@@ -102,4 +118,5 @@ __all__ = [
     "ObjectStorageError",
     "ObjectStorageUnavailableError",
     "PresignedRequest",
+    "UploadedObject",
 ]
