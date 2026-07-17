@@ -462,11 +462,9 @@ function NoticeManagement({ boundary }: { boundary: ComplianceBoundary }) {
             <span>{error.message}</span>
             {error.reference ? <small>Referans: {error.reference}</small> : null}
           </div>
-          {error.conflict ? (
-            <button className={styles.secondaryButton} type="button" onClick={reload}>
-              Güncel listeyi yükle
-            </button>
-          ) : null}
+          <button className={styles.secondaryButton} type="button" onClick={reload}>
+            {error.conflict ? "Güncel listeyi yükle" : "Yeniden dene"}
+          </button>
         </div>
       ) : null}
       {success ? (
@@ -587,7 +585,7 @@ function NoticeManagement({ boundary }: { boundary: ComplianceBoundary }) {
               <p>En fazla 50 sürüm ve toplu kapsam sayıları hazırlanıyor…</p>
             </div>
           </div>
-        ) : items.length === 0 ? (
+        ) : error && items.length === 0 ? null : items.length === 0 ? (
           <div className={styles.emptyState}>
             <span className={styles.stateIcon} aria-hidden="true">0</span>
             <div>
@@ -671,6 +669,14 @@ function NoticeManagement({ boundary }: { boundary: ComplianceBoundary }) {
                 Taslak yeni ve değişmez bir bildirim sürümüne dönüşecek. Metin, sürüm ve
                 içerik özeti yayınlandıktan sonra düzenlenemez.
               </p>
+              <dl className={styles.metadataGrid}>
+                <div><dt>Sürüm</dt><dd>{publishTarget.notice_version}</dd></div>
+                <div><dt>Revizyon</dt><dd>{publishTarget.revision}</dd></div>
+                <div><dt>Dil</dt><dd>{publishTarget.locale}</dd></div>
+                <div className={styles.hashField}>
+                  <dt>SHA-256</dt><dd><code>{publishTarget.content_hash}</code></dd>
+                </div>
+              </dl>
             </div>
           }
           confirmLabel="Değişmez sürümü yayınla"
@@ -876,11 +882,9 @@ function RetentionManagement({ boundary }: { boundary: ComplianceBoundary }) {
             <span>{error.message}</span>
             {error.reference ? <small>Referans: {error.reference}</small> : null}
           </div>
-          {error.conflict ? (
-            <button className={styles.secondaryButton} type="button" onClick={reload}>
-              Güncel listeyi yükle
-            </button>
-          ) : null}
+          <button className={styles.secondaryButton} type="button" onClick={reload}>
+            {error.conflict ? "Güncel listeyi yükle" : "Yeniden dene"}
+          </button>
         </div>
       ) : null}
       {success ? (
@@ -1044,7 +1048,7 @@ function RetentionManagement({ boundary }: { boundary: ComplianceBoundary }) {
               <p>Tenant kapsamındaki kayıtlar hazırlanıyor…</p>
             </div>
           </div>
-        ) : policies.length === 0 ? (
+        ) : error && policies.length === 0 ? null : policies.length === 0 ? (
           <div className={styles.emptyState}>
             <span className={styles.stateIcon} aria-hidden="true">0</span>
             <div>

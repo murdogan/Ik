@@ -67,6 +67,12 @@ class RetentionPolicyStatus(StrEnum):
     INACTIVE = "inactive"
 
 
+def _postgresql_regex_check(expression: str, *, name: str) -> CheckConstraint:
+    """Keep PostgreSQL regex invariants without breaking SQLite metadata creation."""
+
+    return CheckConstraint(expression, name=name).ddl_if(dialect="postgresql")
+
+
 class PrivacyNotice(Base, TimestampMixin):
     """One editable draft or immutable published employee-notice version."""
 
@@ -94,7 +100,7 @@ class PrivacyNotice(Base, TimestampMixin):
             "length(trim(body)) > 0 and length(body) <= 20000",
             name="ck_privacy_notices_body_length",
         ),
-        CheckConstraint(
+        _postgresql_regex_check(
             "content_hash ~ '^[0-9a-f]{64}$'",
             name="ck_privacy_notices_content_hash",
         ),
@@ -200,15 +206,15 @@ class PrivacyNoticeAcknowledgement(Base):
             "notice_version > 0",
             name="ck_privacy_notice_acknowledgements_version_positive",
         ),
-        CheckConstraint(
+        _postgresql_regex_check(
             "notice_content_hash ~ '^[0-9a-f]{64}$'",
             name="ck_privacy_notice_acknowledgements_notice_hash",
         ),
-        CheckConstraint(
+        _postgresql_regex_check(
             "evidence_request_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_privacy_notice_acknowledgements_request_hash",
         ),
-        CheckConstraint(
+        _postgresql_regex_check(
             "evidence_session_sha256 is null or "
             "evidence_session_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_privacy_notice_acknowledgements_session_hash",
@@ -288,7 +294,7 @@ class PrivacyConsentPurpose(Base):
 
     __tablename__ = "privacy_consent_purposes"
     __table_args__ = (
-        CheckConstraint(
+        _postgresql_regex_check(
             "code ~ '^[a-z][a-z0-9_]{0,63}$'",
             name="ck_privacy_consent_purposes_code",
         ),

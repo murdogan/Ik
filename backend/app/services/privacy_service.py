@@ -350,10 +350,10 @@ class PrivacyService:
                 action=action.value,
                 changed_fields=("granted", "version"),
                 metadata={
-                    "membership_id": membership_id,
                     "purpose_id": purpose.id,
                     "purpose_version": purpose.version,
                 },
+                anonymize_actor=True,
             )
         histories = await self._consent_histories(
             tenant_id=tenant_id,
@@ -760,7 +760,28 @@ class PrivacyService:
         tenant_id: UUID,
         notice_ids: tuple[UUID, ...],
     ) -> tuple[dict[UUID, int], int]:
-        counts: dict[UUID, int] = {}
+        if not notice_ids:
+            return {}, 0
+        if self.session.get_bind().dialect.name == "postgresql":
+            rows = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT notice_id, acknowledged_count, eligible_count
+                        FROM p9_privacy_notice_coverage(CAST(:notice_ids AS uuid[]))
+                        """
+                    ),
+                    {"notice_ids": list(notice_ids)},
+                )
+            ).mappings()
+            counts: dict[UUID, int] = {}
+            eligible_count = 0
+            for row in rows:
+                counts[row["notice_id"]] = int(row["acknowledged_count"])
+                eligible_count = max(eligible_count, int(row["eligible_count"]))
+            return counts, eligible_count
+
+        counts = {}
         if notice_ids:
             rows = (
                 await self.session.execute(
@@ -982,14 +1003,17 @@ class PrivacyService:
         action: str,
         changed_fields: tuple[str, ...],
         metadata: dict[str, object],
+        anonymize_actor: bool = False,
     ) -> None:
         await self.audit.record(
             AuditEventDraft(
                 scope_type=AuditScopeType.TENANT,
                 tenant_id=request_context.require_tenant().tenant_id,
-                actor_type=AuditActorType.USER,
-                actor_user_id=request_context.actor_id,
-                session_id=request_context.session_id,
+                actor_type=(
+                    AuditActorType.SYSTEM if anonymize_actor else AuditActorType.USER
+                ),
+                actor_user_id=None if anonymize_actor else request_context.actor_id,
+                session_id=None if anonymize_actor else request_context.session_id,
                 event_type=event_type,
                 category=AuditCategory.HR_OPERATIONS,
                 resource_type=resource_type,

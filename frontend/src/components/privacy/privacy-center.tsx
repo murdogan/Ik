@@ -146,6 +146,7 @@ function PrivacyCenterContent({ boundary }: { boundary: PrivacyBoundary }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [isAcknowledging, setIsAcknowledging] = useState(false);
   const [pendingPurposeId, setPendingPurposeId] = useState<string | null>(null);
+  const [grantTarget, setGrantTarget] = useState<ConsentPurposeState | null>(null);
   const [withdrawTarget, setWithdrawTarget] = useState<ConsentPurposeState | null>(
     null,
   );
@@ -274,6 +275,7 @@ function PrivacyCenterContent({ boundary }: { boundary: PrivacyBoundary }) {
           ? { purposes: purposeWithUpdate(current.purposes, updated) }
           : current,
       );
+      setGrantTarget(null);
       setWithdrawTarget(null);
       setSuccess(
         action === "grant"
@@ -515,7 +517,7 @@ function PrivacyCenterContent({ boundary }: { boundary: PrivacyBoundary }) {
                         className={styles.primaryButton}
                         type="button"
                         disabled={pendingPurposeId !== null}
-                        onClick={() => void transitionConsent(purpose, "grant")}
+                        onClick={() => setGrantTarget(purpose)}
                       >
                         {pendingPurposeId === purpose.id
                           ? "Onay kaydediliyor…"
@@ -549,6 +551,26 @@ function PrivacyCenterContent({ boundary }: { boundary: PrivacyBoundary }) {
             </div>
           )}
         </section>
+      ) : null}
+
+      {grantTarget ? (
+        <PrivacyConfirmationDialog
+          title="İsteğe bağlı onay ver"
+          description={
+            <div>
+              <strong>{grantTarget.title} · sürüm {grantTarget.version}</strong>
+              <p>
+                Bu amaç zorunlu değildir. Onayınız ayrı bir hareket olarak kaydedilecek ve
+                daha sonra dilediğiniz zaman geri çekilebilecektir.
+              </p>
+            </div>
+          }
+          confirmLabel="Bu amaç için onay ver"
+          busyLabel="Onay kaydediliyor…"
+          isBusy={pendingPurposeId === grantTarget.id}
+          onCancel={() => setGrantTarget(null)}
+          onConfirm={() => void transitionConsent(grantTarget, "grant")}
+        />
       ) : null}
 
       {withdrawTarget ? (
