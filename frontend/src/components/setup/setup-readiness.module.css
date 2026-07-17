@@ -123,6 +123,7 @@
 
 .loadingState > div {
   display: grid;
+  min-width: 0;
   gap: 4px;
 }
 
@@ -167,10 +168,12 @@
 
 .errorState > div {
   display: grid;
+  min-width: 0;
   gap: 5px;
 }
 
 .errorState small {
+  overflow-wrap: anywhere;
   color: #92534f;
   font-size: 10px;
 }
@@ -381,7 +384,7 @@
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1050px) {
   .hero {
     grid-template-columns: 1fr;
   }
@@ -389,7 +392,9 @@
   .overallState {
     width: 100%;
   }
+}
 
+@media (max-width: 760px) {
   .checklistPanel > header {
     align-items: flex-start;
   }
@@ -414,6 +419,11 @@
   .retryButton {
     grid-column: 1 / -1;
     width: 100%;
+  }
+
+  .retryButton,
+  .remediationLink {
+    min-height: 44px;
   }
 }
 
@@ -443,6 +453,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .spinner {
-    animation-duration: 1.5s;
+    animation: none;
   }
 }

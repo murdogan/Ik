@@ -82,6 +82,24 @@ Status: implementation and focused verification complete; checkpoint commit pend
 - Passed targeted Ruff lint/format, Python compile, generated runtime import, exact legacy health payload, live 200, readiness 200/503, no-cache headers, route-template JSON output, and PII-field absence smoke.
 - No tests were added and no broad test/build suite was run.
 
+## P10D — Secure PWA and mobile hardening
+
+Status: implementation and focused verification complete; checkpoint commit pending at the time of this entry.
+
+### Delivered
+
+- Installable Turkish App Router manifest with valid 192/512/maskable PNG icons.
+- Production-only service-worker registration and exact no-cache/worker-scope headers.
+- Finite service-worker cache allowlist limited to same-origin hashed Next static assets and explicit icons; navigation, HTML, API, auth, tenant content, uploads, and documents are never intercepted or cached.
+- Standalone safe areas, reduced-motion handling, 16px narrow-touch form controls, visible focus, and targeted 320px fixes for tenant navigation, leave, self-service, profile/documents, and setup readiness surfaces.
+
+### Attribution and verification
+
+- Production implementation authored by Codex CLI using `gpt-5.6-sol` with `ultra` reasoning.
+- Contract, isolation, integration, service-worker security inspection, and verification performed by Hermes.
+- Passed TypeScript, ESLint, service-worker syntax, PNG signature/dimension, dependency-integrity, and diff hygiene checks.
+- No tests were added and no broad test/build suite was run.
+
 ## Next block
 
-P10D — secure installable PWA shell and mobile critical-flow hardening.
+P10E — executable backup, restore, and rollback proof tooling with operator runbook.

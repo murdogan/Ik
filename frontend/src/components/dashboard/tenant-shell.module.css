@@ -861,12 +861,17 @@
     display: flex;
     gap: 6px;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
     padding: 9px 20px;
     border-bottom: 1px solid var(--wf-line);
     background: #ffffff;
+    scroll-padding-inline: 20px;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
   }
 
   .mobileNavigation .navigationItem {
+    min-height: 44px;
     flex: 0 0 auto;
     padding: 9px 12px;
     color: var(--wf-muted);
@@ -887,6 +892,12 @@
   .mobileNavigation .navigationItem span {
     width: 16px;
     font-size: 15px;
+  }
+
+  .mobileSwitchButton,
+  .logoutButton,
+  .headerActions > a {
+    min-height: 44px;
   }
 
   .content {
@@ -919,9 +930,28 @@
 }
 
 @media (max-width: 430px) {
+  .header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .header > .headerActions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .headerActions > a {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .mobileTenant,
   .header strong {
     display: block;
-    max-width: 170px;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -931,12 +961,9 @@
     padding: 0 13px;
   }
 
-  .headerActions {
-    gap: 6px;
-  }
-
   .mobileSwitchButton {
-    max-width: 115px;
+    width: 100%;
+    max-width: none;
     padding: 0 10px;
   }
 

@@ -402,4 +402,8 @@
   .stateIcon {
     justify-self: center;
   }
+
+  .secondaryButton {
+    min-height: 44px;
+  }
 }
