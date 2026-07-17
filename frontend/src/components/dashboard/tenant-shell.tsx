@@ -45,6 +45,13 @@ const navigationItems: readonly NavigationItem[] = [
     feature: null,
   },
   {
+    href: "/setup",
+    label: "Kurulum hazırlığı",
+    icon: "✓",
+    permissions: [AUTHORIZATION_PERMISSIONS.updateOrganization],
+    feature: null,
+  },
+  {
     href: "/users",
     label: "Kullanıcılar",
     icon: "K",

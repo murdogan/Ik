@@ -67,6 +67,7 @@ from app.api.reports import router as reports_router
 from app.api.requests import router as requests_router
 from app.api.self_service import router as self_service_router
 from app.api.tenant import router as tenant_router
+from app.api.tenant_readiness import router as tenant_readiness_router
 from app.api.user_invitations import router as user_invitations_router
 from app.api.users import router as users_router
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, create_auth_runtime
@@ -144,6 +145,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(users_router)
     app.include_router(tenant_audit_router)
     app.include_router(tenant_router)
+    app.include_router(tenant_readiness_router)
     app.include_router(legal_entities_router)
     app.include_router(branches_router)
     app.include_router(departments_router)

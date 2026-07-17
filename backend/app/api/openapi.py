@@ -65,6 +65,7 @@ def with_correlation_response_headers(
         for status_code, metadata in responses.items()
     }
 
+
 OPENAPI_TAGS = [
     {
         "name": SYSTEM_TAG,
@@ -135,8 +136,9 @@ OPENAPI_TAGS = [
     {
         "name": TENANT_SETTINGS_TAG,
         "description": (
-            "Trusted-principal tenant metadata, a fixed typed settings allowlist, and read-only "
-            "effective module flags with lifecycle-aware behavior."
+            "Trusted-principal tenant metadata, a fixed typed settings allowlist, read-only "
+            "effective module flags, and a bounded pilot setup-readiness projection with "
+            "lifecycle-aware behavior."
         ),
     },
     {
