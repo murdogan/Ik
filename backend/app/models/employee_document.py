@@ -192,6 +192,13 @@ class EmployeeDocument(Base, TimestampMixin):
             "archived_at",
         ),
         Index(
+            "ix_employee_documents_tenant_archived_at",
+            "tenant_id",
+            "archived_at",
+            postgresql_where=text("archived_at IS NOT NULL"),
+            sqlite_where=text("archived_at IS NOT NULL"),
+        ),
+        Index(
             "ix_employee_documents_tenant_employee_type_expiry",
             "tenant_id",
             "employee_id",

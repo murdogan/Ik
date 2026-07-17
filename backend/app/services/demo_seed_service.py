@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid5
 
 from sqlalchemy import func, select
@@ -28,6 +28,7 @@ from app.models.organization import (
     LegalEntityStatus,
 )
 from app.models.position import Position, PositionStatus
+from app.models.privacy import PrivacyConsentPurpose
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.modules.core.domain.feature_flags import FeatureFlagKey
@@ -347,6 +348,8 @@ async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
     await session.flush()
     await _ensure_tenant_settings(session, tenants)
     await session.flush()
+    await _ensure_privacy_consent_purposes(session, tenants)
+    await session.flush()
     await _ensure_organization_feature(session, tenants)
     await session.flush()
     await _ensure_default_legal_entities(session, tenants)
@@ -417,6 +420,40 @@ async def _ensure_tenant_settings(
     for tenant in tenants.values():
         if await session.get(TenantSettings, tenant.id) is None:
             session.add(TenantSettings(tenant_id=tenant.id))
+
+
+async def _ensure_privacy_consent_purposes(
+    session: AsyncSession,
+    tenants: dict[str, Tenant],
+) -> None:
+    for tenant in tenants.values():
+        purpose = await session.scalar(
+            select(PrivacyConsentPurpose).where(
+                PrivacyConsentPurpose.tenant_id == tenant.id,
+                PrivacyConsentPurpose.code == "optional_communications",
+                PrivacyConsentPurpose.version == 1,
+            )
+        )
+        if purpose is not None:
+            continue
+        session.add(
+            PrivacyConsentPurpose(
+                id=_demo_structure_id(
+                    "privacy-consent-purpose",
+                    tenant.id,
+                    "optional_communications:1",
+                ),
+                tenant_id=tenant.id,
+                code="optional_communications",
+                version=1,
+                title="İsteğe bağlı iletişimler",
+                description=(
+                    "Zorunlu olmayan çalışan iletişimleri için isteğe bağlı onay."
+                ),
+                is_active=True,
+                created_at=datetime.now(UTC),
+            )
+        )
 
 
 async def _ensure_default_legal_entities(

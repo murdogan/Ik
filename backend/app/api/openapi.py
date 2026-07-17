@@ -21,6 +21,7 @@ REQUESTS_TAG = "Requests"
 SELF_SERVICE_TAG = "Self Service"
 ANNOUNCEMENTS_TAG = "Announcements"
 NOTIFICATIONS_TAG = "Notifications"
+PRIVACY_TAG = "Privacy"
 REPORTS_TAG = "Reports"
 EXPORTS_TAG = "Report Exports"
 IMPORTS_TAG = "Employee Imports"
@@ -206,6 +207,13 @@ OPENAPI_TAGS = [
     {
         "name": NOTIFICATIONS_TAG,
         "description": "Current-user notification inbox and idempotent read state.",
+    },
+    {
+        "name": PRIVACY_TAG,
+        "description": (
+            "Employee privacy notices and optional consent evidence, plus bounded tenant "
+            "notice coverage and non-destructive retention-policy inventory."
+        ),
     },
     {
         "name": REPORTS_TAG,

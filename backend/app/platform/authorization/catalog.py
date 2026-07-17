@@ -290,6 +290,32 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
         "Include work email in an otherwise authorized report projection.",
     ),
     _permission(57, "employee_import:manage:tenant", "Validate and commit employee imports."),
+    _permission(58, "privacy_notice:read:own", "Read the current employee privacy notice."),
+    _permission(
+        59,
+        "privacy_notice:acknowledge:own",
+        "Acknowledge the current employee privacy notice.",
+    ),
+    _permission(
+        60,
+        "privacy_consent:manage:own",
+        "Read and change the current employee's optional consent state.",
+    ),
+    _permission(
+        61,
+        "privacy_compliance:read:tenant",
+        "Read bounded tenant privacy-compliance summaries.",
+    ),
+    _permission(
+        62,
+        "privacy_notice:manage:tenant",
+        "Create, edit, and publish tenant employee privacy notices.",
+    ),
+    _permission(
+        63,
+        "retention_policy:manage:tenant",
+        "Manage tenant retention-policy metadata and run count-only dry-runs.",
+    ),
 )
 
 
@@ -321,6 +347,12 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "audit:read:tenant",
                 "organization:read:tenant",
                 "organization:update:tenant",
+                "privacy_notice:read:own",
+                "privacy_notice:acknowledge:own",
+                "privacy_consent:manage:own",
+                "privacy_compliance:read:tenant",
+                "privacy_notice:manage:tenant",
+                "retention_policy:manage:tenant",
             }
         ),
         "hr_director": frozenset(
@@ -362,6 +394,12 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "report:export:tenant",
                 "report_field:read:work_email",
                 "employee_import:manage:tenant",
+                "privacy_notice:read:own",
+                "privacy_notice:acknowledge:own",
+                "privacy_consent:manage:own",
+                "privacy_compliance:read:tenant",
+                "privacy_notice:manage:tenant",
+                "retention_policy:manage:tenant",
             }
         ),
         "hr_specialist": frozenset(
@@ -400,6 +438,11 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "report:export:tenant",
                 "report_field:read:work_email",
                 "employee_import:manage:tenant",
+                "privacy_notice:read:own",
+                "privacy_notice:acknowledge:own",
+                "privacy_consent:manage:own",
+                "privacy_compliance:read:tenant",
+                "privacy_notice:manage:tenant",
             }
         ),
         "it_admin": frozenset(
@@ -408,6 +451,9 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "user:read:tenant",
                 "session:manage:tenant",
                 "audit:read:tenant",
+                "privacy_notice:read:own",
+                "privacy_notice:acknowledge:own",
+                "privacy_consent:manage:own",
             }
         ),
         "auditor": frozenset(
@@ -415,6 +461,10 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "dashboard:read:own",
                 "audit:read:tenant",
                 "organization:read:tenant",
+                "privacy_notice:read:own",
+                "privacy_notice:acknowledge:own",
+                "privacy_consent:manage:own",
+                "privacy_compliance:read:tenant",
             }
         ),
         "manager": frozenset(
@@ -440,6 +490,9 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "report:read:team",
                 "report:export:team",
                 "report_field:read:work_email",
+                "privacy_notice:read:own",
+                "privacy_notice:acknowledge:own",
+                "privacy_consent:manage:own",
             }
         ),
         "employee": frozenset(
@@ -457,6 +510,9 @@ ROLE_PERMISSION_CODES = MappingProxyType(
                 "announcement:read:own",
                 "notification:read:own",
                 "self_service:read:own",
+                "privacy_notice:read:own",
+                "privacy_notice:acknowledge:own",
+                "privacy_consent:manage:own",
             }
         ),
     }

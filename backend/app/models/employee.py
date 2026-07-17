@@ -91,6 +91,13 @@ class Employee(Base, TimestampMixin):
         Index("ix_employees_tenant_status", "tenant_id", "status"),
         Index("ix_employees_tenant_archived_at", "tenant_id", "archived_at"),
         Index(
+            "ix_employees_tenant_employment_end_date",
+            "tenant_id",
+            "employment_end_date",
+            postgresql_where=text("employment_end_date IS NOT NULL"),
+            sqlite_where=text("employment_end_date IS NOT NULL"),
+        ),
+        Index(
             "ix_employees_tenant_directory_cursor",
             "tenant_id",
             "id",

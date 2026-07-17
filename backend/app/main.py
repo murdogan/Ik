@@ -62,6 +62,7 @@ from app.api.platform_auth import me_router as platform_me_router
 from app.api.platform_auth import router as platform_auth_router
 from app.api.platform_tenants import router as platform_tenants_router
 from app.api.positions import router as positions_router
+from app.api.privacy import router as privacy_router
 from app.api.reports import router as reports_router
 from app.api.requests import router as requests_router
 from app.api.self_service import router as self_service_router
@@ -172,6 +173,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(self_service_router)
     app.include_router(announcements_router)
     app.include_router(notifications_router)
+    app.include_router(privacy_router)
     app.include_router(landing_router)
     app.include_router(health_router)
     return app

@@ -14,6 +14,7 @@ from uuid import UUID
 from app.platform.audit.contracts import AuditEventDraft, AuditEventType
 
 _SAFE_VALUE = compile_regex(r"[A-Za-z0-9](?:[A-Za-z0-9_.:-]{0,126}[A-Za-z0-9])?")
+_SHA256_VALUE = compile_regex(r"[0-9a-f]{64}")
 _FORBIDDEN_KEY_PARTS = frozenset(
     {
         "authorization",
@@ -40,7 +41,7 @@ _FORBIDDEN_KEY_PARTS = frozenset(
     }
 )
 _FORBIDDEN_EXACT_KEYS = frozenset({"reason", "decision_note", "employee_note"})
-_SAFE_KEY_EXCEPTIONS = frozenset({"document_required"})
+_SAFE_KEY_EXCEPTIONS = frozenset({"document_required", "notice_content_hash"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +189,16 @@ _METADATA_VALUE_SETS: dict[str, frozenset[str]] = {
             "worker_failure",
         }
     ),
+    "notice_kind": frozenset({"employee"}),
+    "data_category": frozenset(
+        {
+            "employee_records",
+            "employee_documents",
+            "leave_requests",
+            "audit_events",
+        }
+    ),
+    "retention_action": frozenset({"review", "delete", "anonymize"}),
 }
 
 _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
@@ -724,6 +735,52 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         metadata_keys=frozenset({"after_status", "version"}),
         changed_fields=frozenset({"acknowledged_at", "version"}),
     ),
+    AuditEventType.PRIVACY_NOTICE_PUBLISHED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"notice_kind", "notice_version", "notice_content_hash"}
+        ),
+        changed_fields=frozenset({"status", "published_at", "revision"}),
+    ),
+    AuditEventType.PRIVACY_NOTICE_ACKNOWLEDGED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {
+                "notice_kind",
+                "notice_version",
+                "notice_content_hash",
+                "membership_id",
+            }
+        ),
+        changed_fields=frozenset({"acknowledged_at"}),
+    ),
+    AuditEventType.PRIVACY_CONSENT_GRANTED: AuditMetadataPolicy(
+        metadata_keys=frozenset({"membership_id", "purpose_id", "purpose_version"}),
+        changed_fields=frozenset({"granted", "version"}),
+    ),
+    AuditEventType.PRIVACY_CONSENT_WITHDRAWN: AuditMetadataPolicy(
+        metadata_keys=frozenset({"membership_id", "purpose_id", "purpose_version"}),
+        changed_fields=frozenset({"granted", "version"}),
+    ),
+    AuditEventType.RETENTION_POLICY_MUTATED: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"data_category", "retention_action", "policy_version"}
+        ),
+        changed_fields=frozenset(
+            {
+                "data_category",
+                "legal_basis_note",
+                "retention_days",
+                "anchor",
+                "action",
+                "status",
+                "version",
+            }
+        ),
+    ),
+    AuditEventType.RETENTION_DRY_RUN: AuditMetadataPolicy(
+        metadata_keys=frozenset(
+            {"data_category", "retention_action", "policy_version", "count"}
+        )
+    ),
     AuditEventType.NOTIFICATION_DELIVERY_FAILED: AuditMetadataPolicy(
         metadata_keys=frozenset({"channel", "delivery_error_code", "attempt_count"}),
         changed_fields=frozenset({"status", "attempt_count"}),
@@ -880,6 +937,8 @@ def _safe_metadata_value(key: str, value: object) -> object | None:
     if type(value) is int:
         return value if 0 <= value <= 2_147_483_647 else None
     if isinstance(value, str):
+        if key == "notice_content_hash":
+            return value if _SHA256_VALUE.fullmatch(value) is not None else None
         allowed_values = _METADATA_VALUE_SETS.get(key)
         if allowed_values is not None and value not in allowed_values:
             return None

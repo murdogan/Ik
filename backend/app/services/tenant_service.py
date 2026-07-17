@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.leave import HolidayCalendar, LeavePolicy, LeaveType
 from app.models.organization import LegalEntity, LegalEntityStatus
+from app.models.privacy import PrivacyConsentPurpose
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings
 from app.modules.core.domain.feature_flags import FEATURE_FLAG_DEFAULTS
 from app.modules.core.domain.tenant import (
@@ -148,6 +149,20 @@ class TenantService:
                 week_start_day=payload.settings.week_start_day.value,
                 date_format=payload.settings.date_format.value,
                 time_format=payload.settings.time_format.value,
+            )
+        )
+        self.session.add(
+            PrivacyConsentPurpose(
+                id=uuid4(),
+                tenant_id=tenant.id,
+                code="optional_communications",
+                version=1,
+                title="İsteğe bağlı iletişimler",
+                description=(
+                    "Zorunlu olmayan çalışan iletişimleri için isteğe bağlı onay."
+                ),
+                is_active=True,
+                created_at=datetime.now(UTC),
             )
         )
         self.session.add(

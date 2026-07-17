@@ -91,6 +91,21 @@ from app.models.notification import (
 )
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
 from app.models.position import Position, PositionStatus
+from app.models.privacy import (
+    PrivacyConsentAction,
+    PrivacyConsentEvent,
+    PrivacyConsentPurpose,
+    PrivacyConsentState,
+    PrivacyNotice,
+    PrivacyNoticeAcknowledgement,
+    PrivacyNoticeKind,
+    PrivacyNoticeStatus,
+    RetentionAction,
+    RetentionAnchor,
+    RetentionDataCategory,
+    RetentionPolicy,
+    RetentionPolicyStatus,
+)
 from app.models.reporting import (
     ExportFormat,
     ExportJobStatus,
@@ -174,6 +189,14 @@ __all__ = [
     "PlatformRefreshSessionToken",
     "Position",
     "PositionStatus",
+    "PrivacyConsentAction",
+    "PrivacyConsentEvent",
+    "PrivacyConsentPurpose",
+    "PrivacyConsentState",
+    "PrivacyNotice",
+    "PrivacyNoticeAcknowledgement",
+    "PrivacyNoticeKind",
+    "PrivacyNoticeStatus",
     "RefreshSessionFamily",
     "RefreshSessionToken",
     "ExportFormat",
@@ -184,6 +207,11 @@ __all__ = [
     "ReportType",
     "Role",
     "RolePermission",
+    "RetentionAction",
+    "RetentionAnchor",
+    "RetentionDataCategory",
+    "RetentionPolicy",
+    "RetentionPolicyStatus",
     "Tenant",
     "TenantFeatureFlag",
     "TenantMembership",

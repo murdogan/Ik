@@ -59,6 +59,13 @@ const navigationItems: readonly NavigationItem[] = [
     feature: null,
   },
   {
+    href: "/privacy",
+    label: "Gizlilik merkezi",
+    icon: "G",
+    permissions: [AUTHORIZATION_PERMISSIONS.readOwnPrivacyNotice],
+    feature: null,
+  },
+  {
     href: "/employees",
     label: "Çalışanlar",
     icon: "Ç",
@@ -183,6 +190,17 @@ const navigationItems: readonly NavigationItem[] = [
     permissions: [AUTHORIZATION_PERMISSIONS.readTenantAudit],
     feature: null,
   },
+  {
+    href: "/privacy/manage",
+    label: "Gizlilik uyumu",
+    icon: "U",
+    anyPermissions: [
+      AUTHORIZATION_PERMISSIONS.readTenantPrivacyCompliance,
+      AUTHORIZATION_PERMISSIONS.manageTenantPrivacyNotices,
+      AUTHORIZATION_PERMISSIONS.manageTenantRetentionPolicies,
+    ],
+    feature: null,
+  },
 ];
 
 function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
@@ -242,7 +260,10 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
           (item.href === "/announcements"
             ? pathname.startsWith("/announcements/") &&
               !pathname.startsWith("/announcements/manage")
-            : item.href !== "/leave" && pathname.startsWith(`${item.href}/`));
+            : item.href === "/privacy"
+              ? pathname.startsWith("/privacy/") &&
+                !pathname.startsWith("/privacy/manage")
+              : item.href !== "/leave" && pathname.startsWith(`${item.href}/`));
         return (
           <Link
             className={`${styles.navigationItem} ${isActive ? styles.activeNavigationItem : ""}`}

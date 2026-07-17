@@ -204,6 +204,7 @@ PHASE7_API_PREFIXES = (
     "/api/v1/self-service",
     "/api/v1/announcements",
     "/api/v1/notifications",
+    "/api/v1/privacy",
 )
 REPORT_API_PREFIX = "/api/v1/reports"
 EXPORT_JOB_API_PREFIX = "/api/v1/export-jobs"
