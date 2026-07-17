@@ -1,0 +1,306 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-quality:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync frozen Python environment
+        run: uv sync --frozen --all-groups
+
+      - name: Run Ruff lint checks
+        run: uv run --no-sync ruff check backend scripts/ops
+
+      - name: Run Ruff format check
+        run: uv run --no-sync ruff format --check backend scripts/ops
+
+      - name: Compile production Python sources
+        run: uv run --no-sync python -m compileall -q backend/app scripts/ops
+
+      - name: Validate local OpenAPI contract
+        env:
+          IK_ENVIRONMENT: local
+          PYTHONPATH: backend
+        run: |
+          uv run --no-sync python - <<'PY'
+          from __future__ import annotations
+
+          from typing import Any
+
+          from app.main import create_app
+
+
+          def fail(message: str) -> None:
+              raise SystemExit(message)
+
+
+          def get_operation(paths: dict[str, Any], path: str) -> dict[str, Any]:
+              path_item = paths.get(path)
+              if not isinstance(path_item, dict):
+                  fail(f"OpenAPI path is missing: {path}")
+              operation = path_item.get("get")
+              if not isinstance(operation, dict):
+                  fail(f"OpenAPI GET operation is missing: {path}")
+              return operation
+
+
+          schema = create_app().openapi()
+          if schema.get("security") not in (None, []):
+              fail("OpenAPI must not define inherited global security")
+          paths = schema.get("paths")
+          if not isinstance(paths, dict):
+              fail("OpenAPI paths object is missing")
+
+          live = get_operation(paths, "/health/live")
+          ready = get_operation(paths, "/health/ready")
+          tenant_ready = get_operation(paths, "/api/v1/tenant/readiness")
+
+          if live.get("security", []) != [] or ready.get("security", []) != []:
+              fail("Health operations must be public")
+          if tenant_ready.get("security") != [{"BearerAuth": []}]:
+              fail("Tenant readiness must require BearerAuth only")
+
+          components = schema.get("components")
+          if not isinstance(components, dict):
+              fail("OpenAPI components object is missing")
+          security_schemes = components.get("securitySchemes")
+          bearer_auth = (
+              security_schemes.get("BearerAuth")
+              if isinstance(security_schemes, dict)
+              else None
+          )
+          if (
+              not isinstance(bearer_auth, dict)
+              or bearer_auth.get("type") != "http"
+              or bearer_auth.get("scheme") != "bearer"
+          ):
+              fail("OpenAPI BearerAuth security scheme is missing")
+          PY
+
+      # `alembic check` invokes the migration environment/autogenerate path and can require a DB.
+      # Phase 10 static CI therefore runs only the database-free revision-head inspection.
+      - name: Inspect Alembic heads
+        run: uv run --no-sync alembic heads
+
+      # Full backend regression and frontend Playwright/E2E gating starts in Phase 11 after
+      # historical fixture and snapshot repair; Phase 10 does not add a synthetic passing test job.
+
+  frontend-quality:
+    name: Frontend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frozen frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Type-check frontend
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  release-manifest:
+    name: Immutable release manifest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs:
+      - backend-quality
+      - frontend-quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync frozen Python environment
+        run: uv sync --frozen --all-groups
+
+      - name: Generate immutable release manifest
+        id: generate
+        env:
+          RELEASE_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          build_timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          uv run --no-sync python scripts/ops/release_manifest.py \
+            --output release-artifact/release-manifest.json \
+            --commit-sha "$RELEASE_COMMIT_SHA" \
+            --build-timestamp "$build_timestamp"
+          short_sha="${RELEASE_COMMIT_SHA:0:12}"
+          printf 'short_sha=%s\n' "$short_sha" >> "$GITHUB_OUTPUT"
+          printf 'build_timestamp=%s\n' "$build_timestamp" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release manifest checksum and schema
+        env:
+          EXPECTED_BUILD_TIMESTAMP: ${{ steps.generate.outputs.build_timestamp }}
+          EXPECTED_RELEASE_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          (
+            cd release-artifact
+            sha256sum --check release-manifest.json.sha256
+          )
+          uv run --no-sync python - <<'PY'
+          from __future__ import annotations
+
+          import datetime as dt
+          import hashlib
+          import json
+          import os
+          import re
+          import stat
+          from pathlib import Path
+          from typing import Any
+
+
+          COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+          APP_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}")
+          UTC_TIMESTAMP = re.compile(
+              r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+          )
+          REVISION = re.compile(r"[0-9a-z_]+")
+          EXPECTED_KEYS = {
+              "release_commit_sha",
+              "build_timestamp_utc",
+              "app_version",
+              "compatible_migration_head_ids",
+          }
+
+
+          def fail(message: str) -> None:
+              raise SystemExit(message)
+
+
+          def require_private_regular_file(path: Path) -> bytes:
+              if path.is_symlink():
+                  fail(f"Artifact must not be a symlink: {path.name}")
+              result = path.stat()
+              if not stat.S_ISREG(result.st_mode) or stat.S_IMODE(result.st_mode) != 0o600:
+                  fail(f"Artifact must be a private regular file: {path.name}")
+              return path.read_bytes()
+
+
+          manifest_path = Path("release-artifact/release-manifest.json")
+          checksum_path = Path(f"{manifest_path}.sha256")
+          manifest_bytes = require_private_regular_file(manifest_path)
+          checksum_bytes = require_private_regular_file(checksum_path)
+
+          try:
+              manifest: Any = json.loads(manifest_bytes.decode("utf-8", "strict"))
+          except (UnicodeDecodeError, json.JSONDecodeError) as error:
+              fail(f"Release manifest is not strict UTF-8 JSON: {type(error).__name__}")
+
+          if type(manifest) is not dict or set(manifest) != EXPECTED_KEYS:
+              fail("Release manifest schema keys are invalid")
+          canonical = (
+              json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+          ).encode("utf-8")
+          if manifest_bytes != canonical:
+              fail("Release manifest JSON is not canonical")
+
+          commit_sha = manifest["release_commit_sha"]
+          build_timestamp = manifest["build_timestamp_utc"]
+          app_version = manifest["app_version"]
+          revisions = manifest["compatible_migration_head_ids"]
+          if type(commit_sha) is not str or COMMIT_SHA.fullmatch(commit_sha) is None:
+              fail("Release commit SHA is invalid")
+          if type(app_version) is not str or APP_VERSION.fullmatch(app_version) is None:
+              fail("Application version is invalid")
+          if type(build_timestamp) is not str or UTC_TIMESTAMP.fullmatch(build_timestamp) is None:
+              fail("Build timestamp is invalid")
+          try:
+              parsed_timestamp = dt.datetime.strptime(
+                  build_timestamp, "%Y-%m-%dT%H:%M:%SZ"
+              ).replace(tzinfo=dt.UTC)
+          except ValueError:
+              fail("Build timestamp is not calendar-valid UTC")
+          if parsed_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") != build_timestamp:
+              fail("Build timestamp is not canonical UTC")
+          if commit_sha != os.environ["EXPECTED_RELEASE_COMMIT_SHA"]:
+              fail("Release commit SHA does not match the workflow revision")
+          if build_timestamp != os.environ["EXPECTED_BUILD_TIMESTAMP"]:
+              fail("Build timestamp does not match the generated release identity")
+
+          if type(revisions) is not list or not 1 <= len(revisions) <= 64:
+              fail("Migration head list cardinality is invalid")
+          if any(
+              type(revision) is not str
+              or len(revision) > 128
+              or REVISION.fullmatch(revision) is None
+              for revision in revisions
+          ):
+              fail("Migration head identifier is invalid")
+          if revisions != sorted(set(revisions)):
+              fail("Migration heads must be sorted and unique")
+
+          digest = hashlib.sha256(manifest_bytes).hexdigest()
+          expected_checksum = f"{digest}  {manifest_path.name}\n".encode("ascii")
+          if checksum_bytes != expected_checksum:
+              fail("Release manifest checksum file is invalid")
+          PY
+
+      - name: Upload immutable release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ steps.generate.outputs.short_sha }}
+          path: |
+            release-artifact/release-manifest.json
+            release-artifact/release-manifest.json.sha256
+          if-no-files-found: error
+          retention-days: 14

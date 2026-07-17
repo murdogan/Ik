@@ -118,6 +118,24 @@ Status: implementation and focused static verification complete; checkpoint comm
 - Passed Python compile, Ruff lint/format, all four command help probes, generic fail-closed output smoke, and diff hygiene.
 - No tests were added, no broad suite was run, and no service connection or destructive operation occurred during implementation.
 
+## P10F — Active CI and immutable release identity
+
+Status: implementation and focused verification complete; checkpoint commit pending at the time of this entry.
+
+### Delivered
+
+- First active least-privilege GitHub Actions quality workflow for backend static/OpenAPI/Alembic-head checks, frontend typecheck/lint/build, and immutable release artifact generation.
+- Canonical strict release manifest plus checksum generator using repository app version and database-free Alembic head discovery; schema is compatible with the P10E rollback guard.
+- Staging deploy preflight now generates and validates private release artifacts before stopping the current process, injects validated release SHA/timestamp into Uvicorn, and gates startup on `/health/ready` with exact commit matching.
+- Full pytest regression and Playwright/E2E are explicitly deferred to Phase 11 after historical fixture/snapshot repair rather than represented by a fake green job.
+
+### Attribution and verification
+
+- Production implementation authored by Codex CLI using `gpt-5.6-sol` with `ultra` reasoning.
+- Contract, integration, CI/deploy security inspection, and verification performed by Hermes.
+- Passed release generator Ruff/compile/help, deploy shell syntax, workflow YAML parse, real repository Alembic-head manifest generation, checksum/schema verification, and diff hygiene.
+- No tests were added, no broad suite/build was run locally, and no deployment or GitHub Actions invocation occurred.
+
 ## Next block
 
-P10F — active CI quality workflow and immutable release manifest generation.
+P10G — short final static/smoke gate, staging acceptance evidence, and Phase 11 handoff checkpoint.
