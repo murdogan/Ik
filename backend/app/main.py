@@ -67,6 +67,7 @@ from app.api.reports import router as reports_router
 from app.api.requests import router as requests_router
 from app.api.self_service import router as self_service_router
 from app.api.tenant import router as tenant_router
+from app.api.tenant_readiness import router as tenant_readiness_router
 from app.api.user_invitations import router as user_invitations_router
 from app.api.users import router as users_router
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, create_auth_runtime
@@ -82,6 +83,7 @@ from app.modules.documents import (
 from app.platform.errors import ApiError, ApplicationError, api_error_handler
 from app.platform.http_limits import RequestBodyLimitMiddleware
 from app.platform.observability.correlation import CorrelationMiddleware
+from app.platform.observability.operational import configure_operational_logger
 from app.schemas.employee_import import EMPLOYEE_IMPORT_MAX_REQUEST_BYTES
 
 
@@ -110,6 +112,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 def create_app(*, settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    operational_logger = configure_operational_logger()
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -128,7 +131,14 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
         error_code="reporting_validation_error",
         error_message="Report or import request validation failed",
     )
-    app.add_middleware(CorrelationMiddleware)
+    app.add_middleware(
+        CorrelationMiddleware,
+        logger=operational_logger,
+        service=settings.app_name,
+        version=settings.app_version,
+        commit_sha=settings.release_commit_sha,
+        routes=app.router.routes,
+    )
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(ApplicationError, application_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
@@ -144,6 +154,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     app.include_router(users_router)
     app.include_router(tenant_audit_router)
     app.include_router(tenant_router)
+    app.include_router(tenant_readiness_router)
     app.include_router(legal_entities_router)
     app.include_router(branches_router)
     app.include_router(departments_router)

@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from math import isfinite
+from time import monotonic
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
+from fastapi.routing import RouteContext, iter_route_contexts
+from starlette.routing import BaseRoute
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.platform.observability.operational import (
+    configure_operational_logger,
+    log_http_request_completed,
+)
 from app.platform.request_context import (
     RequestContext,
     is_valid_request_id,
@@ -30,7 +38,7 @@ _CORRELATION_RESPONSE_HEADER_NAMES = frozenset(
         _CORRELATION_ID_HEADER_BYTES,
     }
 )
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = configure_operational_logger()
 
 type IdFactory = Callable[[], str]
 type ScopeTarget = MutableMapping[str, Any] | HasScope
@@ -53,49 +61,78 @@ class CorrelationMiddleware:
         request_id_factory: IdFactory = lambda: uuid4().hex,
         trace_id_factory: IdFactory = lambda: uuid4().hex,
         logger: logging.Logger | None = _LOGGER,
+        service: str = "IK Platform API",
+        version: str = "0.1.0",
+        commit_sha: str = "development",
+        routes: Sequence[BaseRoute | RouteContext] | None = None,
     ) -> None:
         self._app = app
         self._request_id_factory = request_id_factory
         self._trace_id_factory = trace_id_factory
         self._logger = logger
+        self._service = service
+        self._version = version
+        self._commit_sha = commit_sha
+        self._routes = tuple(iter_route_contexts(routes)) if routes is not None else None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
 
-        context = get_or_create_request_context(
-            scope,
-            request_id_factory=self._request_id_factory,
-            trace_id_factory=self._trace_id_factory,
-        )
+        started_at = monotonic()
         status_code = 500
-
-        async def send_with_correlation(message: Message) -> None:
-            nonlocal status_code
-            if message["type"] == "http.response.start":
-                status_code = message["status"]
-                message = dict(message)
-                existing_headers = message.get("headers", [])
-                headers = [
-                    (name, value)
-                    for name, value in existing_headers
-                    if name.lower() not in _CORRELATION_RESPONSE_HEADER_NAMES
-                ]
-                headers.extend(correlation_response_headers(context))
-                message["headers"] = headers
-            await send(message)
+        safe_metadata: Mapping[str, str] | None = None
 
         try:
+            context = get_or_create_request_context(
+                scope,
+                request_id_factory=self._request_id_factory,
+                trace_id_factory=self._trace_id_factory,
+            )
+            safe_metadata = context.safe_error_metadata()
+
+            async def send_with_correlation(message: Message) -> None:
+                nonlocal status_code
+                if message["type"] == "http.response.start":
+                    candidate_status = message["status"]
+                    status_code = (
+                        candidate_status
+                        if isinstance(candidate_status, int)
+                        and not isinstance(candidate_status, bool)
+                        and 100 <= candidate_status <= 599
+                        else 500
+                    )
+                    message = dict(message)
+                    existing_headers = message.get("headers", [])
+                    headers = [
+                        (name, value)
+                        for name, value in existing_headers
+                        if name.lower() not in _CORRELATION_RESPONSE_HEADER_NAMES
+                    ]
+                    headers.extend(correlation_response_headers(context))
+                    message["headers"] = headers
+                await send(message)
+
             await self._app(scope, receive, send_with_correlation)
+        except BaseException:
+            status_code = 500
+            raise
         finally:
             if self._logger is not None:
-                # A trusted dependency may have enriched the state after middleware entry.
-                final_context = get_request_context(scope)
-                log_fields: dict[str, str | int] = dict(final_context.safe_log_metadata())
-                log_fields["http_method"] = _safe_http_method(scope.get("method"))
-                log_fields["http_status_code"] = status_code
-                self._logger.info("http.request.completed", extra=log_fields)
+                final_metadata = safe_metadata or _fallback_correlation_metadata()
+                log_http_request_completed(
+                    self._logger,
+                    service=self._service,
+                    version=self._version,
+                    commit_sha=self._commit_sha,
+                    request_id=final_metadata["request_id"],
+                    trace_id=final_metadata["trace_id"],
+                    http_method=_safe_http_method(scope.get("method")),
+                    http_route=_route_template(scope, routes=self._routes),
+                    http_status_code=status_code,
+                    duration_ms=_elapsed_milliseconds(started_at),
+                )
 
 
 def get_or_create_request_context(
@@ -264,6 +301,53 @@ def _safe_http_method(value: object) -> str:
     if not isinstance(value, str) or not value.isascii() or not value.isalpha():
         return "UNKNOWN"
     return value.upper()[:16]
+
+
+def _route_template(
+    scope: Mapping[str, Any],
+    *,
+    routes: Sequence[RouteContext] | None = None,
+) -> str:
+    route = scope.get("route")
+    if isinstance(route, BaseRoute):
+        if routes is None:
+            template = getattr(route, "path", None)
+            return template if isinstance(template, str) else "unmatched"
+        owned_route_contexts = [
+            route_context
+            for route_context in routes
+            if route_context.original_route is route and isinstance(route_context.path, str)
+        ]
+        if len(owned_route_contexts) == 1:
+            return cast(str, owned_route_contexts[0].path)
+
+    if routes is None:
+        return "unmatched"
+    endpoint = scope.get("endpoint")
+    if endpoint is None:
+        return "unmatched"
+    endpoint_route_contexts = [
+        route_context
+        for route_context in routes
+        if route_context.endpoint is endpoint and isinstance(route_context.path, str)
+    ]
+    if len(endpoint_route_contexts) != 1:
+        return "unmatched"
+    return cast(str, endpoint_route_contexts[0].path)
+
+
+def _fallback_correlation_metadata() -> Mapping[str, str]:
+    return {
+        "request_id": uuid4().hex,
+        "trace_id": uuid4().hex,
+    }
+
+
+def _elapsed_milliseconds(started_at: float) -> float:
+    elapsed_ms = (monotonic() - started_at) * 1000
+    if not isfinite(elapsed_ms) or elapsed_ms < 0:
+        return 0.0
+    return round(elapsed_ms, 3)
 
 
 __all__ = [

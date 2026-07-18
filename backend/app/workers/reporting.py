@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from time import monotonic
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from xml.sax.saxutils import escape as xml_escape
 
@@ -54,6 +55,13 @@ from app.platform.audit import (
     AuditVisibilityClass,
 )
 from app.platform.db import configure_platform_database_access, configure_tenant_database_access
+from app.platform.observability.operational import (
+    configure_operational_logger,
+    log_worker_failed,
+    log_worker_heartbeat,
+    log_worker_started,
+    log_worker_stopped,
+)
 from app.platform.storage import ObjectStorage, ObjectStorageError
 from app.schemas.employee import EMAIL_PATTERN, EmployeeCreate
 from app.schemas.employee_import import (
@@ -163,9 +171,7 @@ class ReportingWorker:
             configure_platform_database_access(session)
             async with session.begin():
                 statement = select(Tenant.id).where(
-                    Tenant.status.in_(
-                        ("trial", "active", "suspended", "offboarding", "closed")
-                    )
+                    Tenant.status.in_(("trial", "active", "suspended", "offboarding", "closed"))
                 )
                 if self._tenant_cursor is not None:
                     statement = statement.where(Tenant.id > self._tenant_cursor)
@@ -275,8 +281,7 @@ class ReportingWorker:
                                     EmployeeImport.next_attempt_at <= now,
                                 ),
                                 and_(
-                                    EmployeeImport.status
-                                    == EmployeeImportStatus.PROCESSING.value,
+                                    EmployeeImport.status == EmployeeImportStatus.PROCESSING.value,
                                     EmployeeImport.lease_expires_at < now,
                                 ),
                             ),
@@ -415,8 +420,7 @@ class ReportingWorker:
             await self._retry_import(tenant_id, import_id, "storage_unavailable")
         except Exception as exc:
             _LOGGER.error(
-                "Employee import job failed job_id=%s error_class=%s",
-                import_id,
+                "Employee import job failed error_class=%s",
                 type(exc).__name__,
             )
             await self._retry_import(tenant_id, import_id, "worker_failure")
@@ -643,16 +647,10 @@ class ReportingWorker:
     async def _terminal_import_failure(
         self, tenant_id: UUID, import_id: UUID, failure_code: str
     ) -> None:
-        await self._set_import_failure(
-            tenant_id, import_id, failure_code=failure_code, retry=False
-        )
+        await self._set_import_failure(tenant_id, import_id, failure_code=failure_code, retry=False)
 
-    async def _retry_import(
-        self, tenant_id: UUID, import_id: UUID, failure_code: str
-    ) -> None:
-        await self._set_import_failure(
-            tenant_id, import_id, failure_code=failure_code, retry=True
-        )
+    async def _retry_import(self, tenant_id: UUID, import_id: UUID, failure_code: str) -> None:
+        await self._set_import_failure(tenant_id, import_id, failure_code=failure_code, retry=True)
 
     async def _set_import_failure(
         self,
@@ -677,8 +675,7 @@ class ReportingWorker:
                     return
                 now = datetime.now(UTC)
                 should_retry = (
-                    retry
-                    and job.attempt_count < self.settings.reporting_worker_max_attempts
+                    retry and job.attempt_count < self.settings.reporting_worker_max_attempts
                 )
                 job.status = (
                     EmployeeImportStatus.RETRY.value
@@ -810,8 +807,7 @@ class ReportingWorker:
             )
         except Exception as exc:
             _LOGGER.error(
-                "Report export job failed job_id=%s error_class=%s",
-                export_id,
+                "Report export job failed error_class=%s",
                 type(exc).__name__,
             )
             if artifact_key is not None:
@@ -827,9 +823,7 @@ class ReportingWorker:
                         await self.storage.delete(artifact_key)
                     except ObjectStorageError:
                         pass
-            await self._fail_export(
-                tenant_id, export_id, failure_code="worker_failure", retry=True
-            )
+            await self._fail_export(tenant_id, export_id, failure_code="worker_failure", retry=True)
 
     async def _artifact_registration_state(
         self,
@@ -1108,13 +1102,10 @@ class ReportingWorker:
                     return
                 now = datetime.now(UTC)
                 should_retry = (
-                    retry
-                    and job.attempt_count < self.settings.reporting_worker_max_attempts
+                    retry and job.attempt_count < self.settings.reporting_worker_max_attempts
                 )
                 job.status = (
-                    ExportJobStatus.RETRY.value
-                    if should_retry
-                    else ExportJobStatus.FAILED.value
+                    ExportJobStatus.RETRY.value if should_retry else ExportJobStatus.FAILED.value
                 )
                 job.failure_code = failure_code
                 job.next_attempt_at = (
@@ -1369,8 +1360,7 @@ async def _validate_and_store_chunk(
         _validate_reference(
             legal_entity,
             active=(
-                legal_entity is not None
-                and legal_entity.status == LegalEntityStatus.ACTIVE.value
+                legal_entity is not None and legal_entity.status == LegalEntityStatus.ACTIVE.value
             ),
             row=row,
             field="legal_entity_code",
@@ -1615,9 +1605,7 @@ def _parse_import_row(
         first_name=values["first_name"],
         last_name=values["last_name"],
         work_email=values["work_email"] or None,
-        work_email_normalized=(
-            _normalize(values["work_email"]) if values["work_email"] else None
-        ),
+        work_email_normalized=(_normalize(values["work_email"]) if values["work_email"] else None),
         status=values["status"],
         employment_start_date=start_date,
         employment_end_date=None,
@@ -1894,25 +1882,81 @@ async def _record_worker_import_event(
 
 
 async def run_worker() -> None:
-    settings = get_settings()
-    database_runtime = create_database_runtime(settings)
-    document_runtime = create_document_runtime(settings)
-    await document_runtime.initialize()
-    worker = ReportingWorker(
-        session_factory=database_runtime.session_factory,
-        settings=settings,
-        storage=document_runtime.storage,
-        scanner=document_runtime.scanner,
+    operational_logger = configure_operational_logger()
+    try:
+        settings = get_settings()
+    except Exception as exc:
+        log_worker_failed(
+            operational_logger,
+            worker="reporting",
+            error=exc,
+        )
+        raise
+    log_worker_started(
+        operational_logger,
+        service=settings.app_name,
+        version=settings.app_version,
+        commit_sha=settings.release_commit_sha,
+        worker="reporting",
     )
     try:
-        while True:
-            await worker.run_once()
-            await asyncio.sleep(settings.reporting_worker_poll_seconds)
-    finally:
+        last_heartbeat_at = monotonic()
+        aggregate_processed_count = 0
+        database_runtime = create_database_runtime(settings)
         try:
-            await document_runtime.close()
+            document_runtime = create_document_runtime(settings)
+            try:
+                await document_runtime.initialize()
+                worker = ReportingWorker(
+                    session_factory=database_runtime.session_factory,
+                    settings=settings,
+                    storage=document_runtime.storage,
+                    scanner=document_runtime.scanner,
+                )
+                while True:
+                    cycle_started_at = monotonic()
+                    processed_count = await worker.run_once()
+                    cycle_finished_at = monotonic()
+                    cycle_duration_ms = max(
+                        0.0,
+                        (cycle_finished_at - cycle_started_at) * 1000,
+                    )
+                    aggregate_processed_count += processed_count
+                    if (
+                        cycle_finished_at - last_heartbeat_at
+                        >= settings.worker_heartbeat_interval_seconds
+                    ):
+                        log_worker_heartbeat(
+                            operational_logger,
+                            service=settings.app_name,
+                            version=settings.app_version,
+                            commit_sha=settings.release_commit_sha,
+                            worker="reporting",
+                            cycle_duration_ms=cycle_duration_ms,
+                            processed_count=aggregate_processed_count,
+                        )
+                        aggregate_processed_count = 0
+                        last_heartbeat_at = monotonic()
+                    await asyncio.sleep(settings.reporting_worker_poll_seconds)
+            finally:
+                await document_runtime.close()
         finally:
             await database_runtime.dispose()
+    except Exception as exc:
+        log_worker_failed(
+            operational_logger,
+            worker="reporting",
+            error=exc,
+        )
+        raise
+    finally:
+        log_worker_stopped(
+            operational_logger,
+            service=settings.app_name,
+            version=settings.app_version,
+            commit_sha=settings.release_commit_sha,
+            worker="reporting",
+        )
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from time import monotonic
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import and_, exists, or_, select
@@ -46,6 +47,13 @@ from app.platform.audit import (
     AuditVisibilityClass,
 )
 from app.platform.db import configure_platform_database_access, configure_tenant_database_access
+from app.platform.observability.operational import (
+    configure_operational_logger,
+    log_worker_failed,
+    log_worker_heartbeat,
+    log_worker_started,
+    log_worker_stopped,
+)
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.phase7_access import Phase7FeatureUnavailableError, require_phase7_feature
 
@@ -90,8 +98,7 @@ class NotificationWorker:
                 processed += await self._process_tenant(tenant_id)
             except Exception as exc:
                 _LOGGER.error(
-                    "Notification tenant batch failed tenant_id=%s error_class=%s",
-                    tenant_id,
+                    "Notification tenant batch failed error_class=%s",
                     type(exc).__name__,
                 )
         return processed
@@ -100,9 +107,7 @@ class NotificationWorker:
         async with self.session_factory() as session:
             configure_platform_database_access(session)
             async with session.begin():
-                statement = select(Tenant.id).where(
-                    Tenant.status.in_(("trial", "active"))
-                )
+                statement = select(Tenant.id).where(Tenant.status.in_(("trial", "active")))
                 if self._tenant_cursor is not None:
                     statement = statement.where(Tenant.id > self._tenant_cursor)
                 tenant_ids = list(
@@ -497,15 +502,74 @@ def _stable_uuid(namespace: str, *values: UUID) -> UUID:
 
 
 async def run_worker() -> None:
-    settings = get_settings()
-    runtime = create_database_runtime(settings)
-    worker = NotificationWorker(session_factory=runtime.session_factory, settings=settings)
+    operational_logger = configure_operational_logger()
     try:
-        while True:
-            await worker.run_once()
-            await asyncio.sleep(settings.notification_worker_poll_seconds)
+        settings = get_settings()
+    except Exception as exc:
+        log_worker_failed(
+            operational_logger,
+            worker="notifications",
+            error=exc,
+        )
+        raise
+    log_worker_started(
+        operational_logger,
+        service=settings.app_name,
+        version=settings.app_version,
+        commit_sha=settings.release_commit_sha,
+        worker="notifications",
+    )
+    try:
+        last_heartbeat_at = monotonic()
+        aggregate_processed_count = 0
+        runtime = create_database_runtime(settings)
+        try:
+            worker = NotificationWorker(
+                session_factory=runtime.session_factory,
+                settings=settings,
+            )
+            while True:
+                cycle_started_at = monotonic()
+                processed_count = await worker.run_once()
+                cycle_finished_at = monotonic()
+                cycle_duration_ms = max(
+                    0.0,
+                    (cycle_finished_at - cycle_started_at) * 1000,
+                )
+                aggregate_processed_count += processed_count
+                if (
+                    cycle_finished_at - last_heartbeat_at
+                    >= settings.worker_heartbeat_interval_seconds
+                ):
+                    log_worker_heartbeat(
+                        operational_logger,
+                        service=settings.app_name,
+                        version=settings.app_version,
+                        commit_sha=settings.release_commit_sha,
+                        worker="notifications",
+                        cycle_duration_ms=cycle_duration_ms,
+                        processed_count=aggregate_processed_count,
+                    )
+                    aggregate_processed_count = 0
+                    last_heartbeat_at = monotonic()
+                await asyncio.sleep(settings.notification_worker_poll_seconds)
+        finally:
+            await runtime.dispose()
+    except Exception as exc:
+        log_worker_failed(
+            operational_logger,
+            worker="notifications",
+            error=exc,
+        )
+        raise
     finally:
-        await runtime.dispose()
+        log_worker_stopped(
+            operational_logger,
+            service=settings.app_name,
+            version=settings.app_version,
+            commit_sha=settings.release_commit_sha,
+            worker="notifications",
+        )
 
 
 def main() -> None:

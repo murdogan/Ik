@@ -52,4 +52,6 @@
   .summary { justify-self: start; }
   .checklist { grid-template-columns: 1fr; }
   .documents li { align-items: flex-start; }
+  .documents button,
+  .state button { min-height: 44px; }
 }

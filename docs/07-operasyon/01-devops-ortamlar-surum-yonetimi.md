@@ -55,11 +55,11 @@ Gece Sprint-0 işleri için ayrılmış branch:
 git switch overnight/sprint-0-wealthy-falcon
 ```
 
-Commit öncesi kalite kapıları:
+Phase 10 commit öncesi statik kalite kontrolleri:
 
 ```bash
-uv run ruff check backend
-uv run pytest
+uv run ruff check backend scripts/ops
+uv run ruff format --check backend scripts/ops
 ```
 
 İlgili dosyalar dar kapsamla stage edilir:
@@ -77,12 +77,15 @@ Kurulum:
 uv sync --all-groups
 ```
 
-Backend kalite kontrol:
+Backend statik kalite kontrolü:
 
 ```bash
-uv run ruff check backend
-uv run pytest
+uv run ruff check backend scripts/ops
+uv run ruff format --check backend scripts/ops
 ```
+
+Geniş `pytest` regresyon kapısı, geçmiş fixture/snapshot onarımı tamamlandıktan sonra Phase 11'de
+yeniden etkinleştirilir.
 
 App import smoke testi:
 
@@ -125,6 +128,8 @@ Bu smoke komutu deploy, cron veya ortam ayarı değiştirmez.
 
 ## 3. CI pipeline
 
+Uzun vadeli pipeline kapsamı aşağıdaki aşamalardan oluşur:
+
 | Aşama | Kontrol |
 |---|---|
 | Lint | Python/TypeScript/Markdown kontrolleri |
@@ -137,6 +142,27 @@ Bu smoke komutu deploy, cron veya ortam ayarı değiştirmez.
 | Contract | OpenAPI diff ve client generation |
 | Smoke | Auth, tenant, core akışlar |
 
+### 3.1 Aktif Phase 10 kalite kapısı
+
+`.github/workflows/quality.yml`; pull request'lerde, `main` push'larında ve manuel tetiklemede
+salt-okunur yetkiyle çalışır. Aynı ref için daha yeni bir çalışma başladığında önceki çalışma iptal
+edilir. Aktif kapılar şunlardır:
+
+- Backend işi Ubuntu ve Python 3.13 üzerinde kilitli `uv.lock` ile kurulum yapar; backend ile üretim
+  operasyon scriptlerinde Ruff lint/format kontrolü ve Python derleme kontrolü çalıştırır. OpenAPI
+  şemasını lokal modda üretip `/health/live`, `/health/ready` ve
+  `/api/v1/tenant/readiness` yollarını ve yalnızca tenant readiness yolundaki BearerAuth güvenlik
+  sözleşmesini doğrular. Alembic kontrolü yalnızca veritabanına bağlanmayan `alembic heads` ile
+  statik sınırda kalır; `alembic check` bu koşul kanıtlanmadan çalıştırılmaz.
+- Frontend işi paket engine şartını karşılayan Node sürümü ve `npm ci` ile typecheck, lint ve üretim
+  build kontrollerini çalıştırır.
+- Release-manifest işi yalnızca `main` push'unda veya manuel tetiklemede, backend ve frontend işleri
+  başarılı olduktan sonra çalışır.
+
+Phase 10 kalite workflow'u bilerek geniş `pytest` regresyon paketini ve Playwright/E2E'yi çalıştırmaz.
+Tam backend regresyonu ve E2E kapısı, geçmiş fixture/snapshot onarımı tamamlandıktan sonra Phase 11'de
+etkinleştirilir; mevcut Phase 10 kapıları tam regresyon sonucu olarak yorumlanmaz.
+
 ## 4. CD ve deployment
 
 | Strateji | Kullanım |
@@ -148,6 +174,18 @@ Bu smoke komutu deploy, cron veya ortam ayarı değiştirmez.
 | Maintenance window | Büyük DB migration veya payroll dönemi etkisi |
 
 MVP'de basit deployment yeterlidir; V1/Enterprise için Kubernetes + Helm + GitOps önerilir.
+
+Staging deploy, checkout ve bağımlılık senkronizasyonundan sonra mevcut prosesi durdurmadan önce özel
+bir release dizininde manifesti üretir, checksum ve şemayı doğrular ve hedefli üretim preflight
+kontrollerini tamamlar. Bu aşamalardan biri başarısız olursa çalışan proses durdurulmaz. Yeni proses
+başlatılırken doğrulanmış manifest değerleri `IK_RELEASE_COMMIT_SHA` ve
+`IK_RELEASE_BUILD_TIMESTAMP` olarak Uvicorn ortamına verilir. Bu iki değişken staging ve production
+için zorunludur; commit değeri 40 karakterlik küçük harf hexadecimal SHA, timestamp değeri kesirsiz
+UTC `YYYY-MM-DDTHH:MM:SSZ` biçimindedir ve uygulama çalışırken `.git` içeriğinden türetilmez.
+
+Başlangıç kontrolü `/health/ready` üzerinden yapılır. Yanıttaki `commit_sha`, deploy edilen
+`remote_rev` ile birebir eşleşmeden deployment başarılı sayılmaz; readiness yanıt gövdesi ve release
+ortam değerleri loglanmaz.
 
 ## 5. Migration stratejisi
 
@@ -189,7 +227,21 @@ Backup kapsamı:
 
 ## 8. Release yönetimi
 
-Release checklist:
+### 8.1 Değişmez release manifesti
+
+`scripts/ops/release_manifest.py`, her release için canonical JSON biçiminde şu kapalı şemayı üretir:
+`release_commit_sha`, `build_timestamp_utc`, `app_version` ve
+`compatible_migration_head_ids`. Yanındaki `<manifest>.sha256` dosyası manifestin SHA-256 özetini ve
+yalnızca manifest dosya adını içerir. Manifest ile checksum özel dosya izinleriyle atomik yazılır ve
+doğrulandıktan sonra aynı release kimliğinin değişmez kaydı olarak kullanılır.
+
+Aktif CI release-manifest işi commit SHA ve UTC build timestamp ile manifesti yeniden üretir, strict
+şemayı ve checksum'u doğrular, ardından manifest ile checksum'u güvenli kısa SHA içeren isimle ve
+sonlu saklama süresiyle tek artifact olarak yükler. Artifact credential, host veya repository yolu
+içermez. Manifestteki migration head listesi Phase 10E rollback guard ile uyumludur; uygulama rollback
+kararı ancak canlı migration head'leri hem mevcut hem hedef release manifestiyle aynıysa verilir.
+
+Uzun vadeli release checklist'i (tam regresyon/E2E maddeleri Phase 11 sınırındadır):
 
 - CI yeşil.
 - Migration smoke yeşil.
@@ -241,7 +293,8 @@ Prod erişim ilkeleri:
 ## 11. Kabul kriterleri
 
 - Local/dev gerçek veri barındırmaz.
-- CI test ve güvenlik kontrollerini çalıştırır.
+- Phase 10 CI statik backend/frontend kapılarını ve immutable manifest doğrulamasını çalıştırır;
+  tam regresyon/E2E Phase 11 sınırındadır.
 - Deployment rollback stratejisi tanımlıdır.
 - Backup restore testi planlanmıştır.
 - Migration geriye uyumlu tasarlanır.
@@ -251,4 +304,5 @@ Prod erişim ilkeleri:
 
 - [Observability, SLO ve Alarm](02-observability-slo-alarm.md)
 - [Test Stratejisi ve QA](03-test-stratejisi-qa.md)
+- [Backup, Restore ve Rollback Runbook](04-backup-restore-rollback-runbook.md)
 - [Güvenlik Mimarisi, OWASP ve Incident](../06-guvenlik-uyum/03-guvenlik-mimarisi-owasp-incident.md)

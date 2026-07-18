@@ -385,6 +385,10 @@
   letter-spacing: -0.025em;
 }
 
+.detailPanel > header h2 {
+  overflow-wrap: anywhere;
+}
+
 .sectionHeader > strong {
   display: grid;
   min-width: 42px;
@@ -450,8 +454,14 @@
   gap: 16px;
 }
 
+.balanceCard > header > div,
+.requestCard > header > div {
+  min-width: 0;
+}
+
 .balanceCard h3 {
   margin: 5px 0 0;
+  overflow-wrap: anywhere;
   font-size: 18px;
 }
 
@@ -570,6 +580,7 @@
 
 .attachmentPanel {
   display: grid;
+  min-width: 0;
   gap: 13px;
   margin: 0;
   padding: 16px;
@@ -633,6 +644,7 @@
 .requestCard h3,
 .catalogCard h3 {
   margin: 4px 0 0;
+  overflow-wrap: anywhere;
   font-size: 17px;
 }
 
@@ -1034,7 +1046,9 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: max(20px, var(--wf-safe-area-top))
+    max(20px, var(--wf-safe-area-right)) max(20px, var(--wf-safe-area-bottom))
+    max(20px, var(--wf-safe-area-left));
   background: rgba(12, 29, 22, 0.5);
   backdrop-filter: blur(3px);
 }
@@ -1309,10 +1323,25 @@
     min-width: 0;
     grid-row: 1;
   }
+
+  .primaryButton,
+  .secondaryButton,
+  .dangerButton,
+  .textButton,
+  .dangerTextButton,
+  .segmentedTabs button,
+  .adminTabs button {
+    min-height: 44px;
+  }
+
+  .iconButton {
+    width: 44px;
+    min-height: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .spinner {
-    animation-duration: 1.5s;
+    animation: none;
   }
 }
