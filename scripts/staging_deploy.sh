@@ -7,8 +7,12 @@ BRANCH="${IK_STAGING_BRANCH:-main}"
 APP_DIR="${IK_STAGING_APP_DIR:-/opt/data/staging/ik-app}"
 PORT="${IK_STAGING_PORT:-8001}"
 HOST="${IK_STAGING_HOST:-0.0.0.0}"
+WEB_PORT="${IK_STAGING_WEB_PORT:-3001}"
+WEB_HOST="${IK_STAGING_WEB_HOST:-127.0.0.1}"
 PID_FILE="${IK_STAGING_PID_FILE:-/opt/data/staging/ik-app.pid}"
 LOG_FILE="${IK_STAGING_LOG_FILE:-/opt/data/staging/ik-app.log}"
+WEB_PID_FILE="${IK_STAGING_WEB_PID_FILE:-/opt/data/staging/ik-web.pid}"
+WEB_LOG_FILE="${IK_STAGING_WEB_LOG_FILE:-/opt/data/staging/ik-web.log}"
 NOTIFICATION_PID_FILE="${IK_STAGING_NOTIFICATION_PID_FILE:-/opt/data/staging/ik-notification-worker.pid}"
 NOTIFICATION_LOG_FILE="${IK_STAGING_NOTIFICATION_LOG_FILE:-/opt/data/staging/ik-notification-worker.log}"
 REPORTING_PID_FILE="${IK_STAGING_REPORTING_PID_FILE:-/opt/data/staging/ik-reporting-worker.pid}"
@@ -107,6 +111,14 @@ json.dumps(schema, sort_keys=True, separators=(",", ":"))
 PY
 
 uv run --no-sync alembic heads
+
+(
+  cd frontend
+  npm ci
+  npm run typecheck
+  npm run lint
+  BACKEND_API_URL="http://127.0.0.1:${PORT}" NEXT_TELEMETRY_DISABLED=1 npm run build
+)
 
 build_timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 if [[ ! "$build_timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
@@ -307,10 +319,12 @@ stop_pid_file() {
 }
 
 stop_pid_file "$PID_FILE"
+stop_pid_file "$WEB_PID_FILE"
 stop_pid_file "$NOTIFICATION_PID_FILE"
 stop_pid_file "$REPORTING_PID_FILE"
 
 : > "$LOG_FILE"
+: > "$WEB_LOG_FILE"
 : > "$NOTIFICATION_LOG_FILE"
 : > "$REPORTING_LOG_FILE"
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
@@ -319,6 +333,17 @@ PYTHONPATH=backend \
 nohup uv run --no-sync uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
 new_pid="$!"
 echo "$new_pid" > "$PID_FILE"
+
+(
+  cd frontend
+  IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
+  IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
+  BACKEND_API_URL="http://127.0.0.1:${PORT}" \
+  NEXT_TELEMETRY_DISABLED=1 \
+  nohup npm run start -- --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 &
+  echo "$!" > "$WEB_PID_FILE"
+)
+web_pid="$(cat "$WEB_PID_FILE")"
 
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
@@ -359,6 +384,56 @@ if [[ "$ready" != "1" ]]; then
   exit 1
 fi
 
+web_ready=0
+for _ in {1..50}; do
+  if curl -fsS --connect-timeout 1 --max-time 2 "http://${WEB_HOST}:${WEB_PORT}/" >/dev/null 2>&1; then
+    web_ready=1
+    break
+  fi
+  sleep 0.2
+done
+if [[ "$web_ready" != "1" ]]; then
+  echo "DEPLOY_FAILED: web did not become ready. Log:" >&2
+  tail -80 "$WEB_LOG_FILE" >&2 || true
+  exit 1
+fi
+uv run --no-sync python - "http://${WEB_HOST}:${WEB_PORT}" <<'PY'
+import sys
+import urllib.error
+import urllib.request
+
+base_url = sys.argv[1]
+for path in ("/", "/manifest.webmanifest", "/sw.js"):
+    with urllib.request.urlopen(f"{base_url}{path}", timeout=5) as response:
+        if response.status != 200:
+            raise SystemExit(1)
+        body = response.read()
+        if not body:
+            raise SystemExit(1)
+        if path == "/manifest.webmanifest" and "no-cache" not in response.headers.get(
+            "Cache-Control", ""
+        ):
+            raise SystemExit(1)
+        if path == "/sw.js":
+            cache_control = response.headers.get("Cache-Control", "")
+            if "no-store" not in cache_control or response.headers.get(
+                "Service-Worker-Allowed"
+            ) != "/":
+                raise SystemExit(1)
+try:
+    urllib.request.urlopen(f"{base_url}/api/v1/tenant/readiness", timeout=5)
+except urllib.error.HTTPError as error:
+    if error.code != 401:
+        raise SystemExit(1) from None
+else:
+    raise SystemExit(1)
+PY
+
+if ! kill -0 "$web_pid" 2>/dev/null; then
+  echo "DEPLOY_FAILED: web process exited. Log:" >&2
+  tail -80 "$WEB_LOG_FILE" >&2 || true
+  exit 1
+fi
 if ! kill -0 "$notification_pid" 2>/dev/null; then
   echo "DEPLOY_FAILED: notification worker exited. Log:" >&2
   tail -80 "$NOTIFICATION_LOG_FILE" >&2 || true
@@ -372,4 +447,4 @@ fi
 
 uv run --no-sync python scripts/staging_smoke_test.py "$BASE_URL"
 echo "$remote_rev" > "$REV_FILE"
-echo "DEPLOY_OK branch=${BRANCH} rev=${remote_rev} url=${BASE_URL} pid=${new_pid} notification_pid=${notification_pid} reporting_pid=${reporting_pid} previous=${current_rev}"
+echo "DEPLOY_OK branch=${BRANCH} rev=${remote_rev} api_url=${BASE_URL} web_url=http://${WEB_HOST}:${WEB_PORT} pid=${new_pid} web_pid=${web_pid} notification_pid=${notification_pid} reporting_pid=${reporting_pid} previous=${current_rev}"
