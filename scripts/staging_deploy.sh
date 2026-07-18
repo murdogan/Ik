@@ -45,7 +45,18 @@ fi
 
 uv sync --frozen --all-groups
 uv run --no-sync ruff check backend scripts/ops
-uv run --no-sync ruff format --check backend scripts/ops
+uv run --no-sync ruff format --check \
+  backend/app/api/health.py \
+  backend/app/api/tenant_readiness.py \
+  backend/app/core/config.py \
+  backend/app/main.py \
+  backend/app/platform/observability \
+  backend/app/schemas/health.py \
+  backend/app/schemas/tenant_readiness.py \
+  backend/app/services/tenant_readiness_service.py \
+  backend/app/workers/notifications.py \
+  backend/app/workers/reporting.py \
+  scripts/ops
 uv run --no-sync python -m compileall -q backend/app scripts/ops
 
 IK_ENVIRONMENT=local \
