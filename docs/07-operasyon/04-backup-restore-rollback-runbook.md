@@ -108,8 +108,9 @@ içermeyen `HOME` veya `MC_CONFIG_DIR` mevcut olmalıdır.
    Araç her executable'ı canonical mutlak, regular ve executable bir PATH girdisi olarak
    fail-closed çözer. Binary ile bütün canonical parent'ları root/current-user owned ve
    group/world-writable olmayan path'ler olmalıdır; ilgisiz binary zorunlu tutulmaz.
-   `restore-proof`, database oluşturmadan önce `createdb` description/connection-limit ve
-   `dropdb --force` desteğini de bounded `--help` probe'uyla doğrular. Alembic revision
+   `restore-proof`, database oluşturmadan önce `createdb` description ve `dropdb --force`
+   desteğini bounded `--help` probe'uyla doğrular. Connection limit PostgreSQL 17 uyumlu,
+   bounded bir catalog `ALTER DATABASE` adımıyla uygulanır. Alembic revision
    değerleri strict ve read-only `public.alembic_version` sorgusuyla alınır; `alembic`
    executable'ı yalnız ilgili revision işlemlerinde güvenli PATH prerequisite'i olarak çözülür.
 6. Restore proof için proof database adını ve otomatik drop yetkisini önceden doğrula.
@@ -260,11 +261,13 @@ Proof database:
   kanıtlanamayacağı için bunlar owner'ın zorunlu ön koşuludur. Restore archive SQL sandbox
   kabul edilmez.
 - `template0` ve `UTF8` ile boş olarak oluşturulur.
-- Araç oluşturma çağrısında rastgele generic description marker'ı ile atomik, rastgele yüksek
-  connection-limit kimliği ekler; bu connection-limit değeri önceden bütün database catalog'unda
-  yokluk kontrolünden geçer. Restore'a yalnız marker, connection-limit, owner ve database OID
-  kimliği doğrulanınca geçer. Cleanup aynı OID'yi; OID henüz kaydedilemediyse önceden kaydedilen
-  aktif role OID'si ile atomik connection-limit kimliğinin ikisini birden arar. Yalnız owner
+- Araç oluşturma çağrısında rastgele generic description marker'ını atomik ekler, hemen ardından
+  marker/owner/database OID kimliğini kaydeder ve PostgreSQL 17 uyumlu bounded `ALTER DATABASE`
+  adımıyla rastgele yüksek connection-limit kimliğini uygular; bu değer önceden bütün database
+  catalog'unda yokluk kontrolünden geçer. Restore'a yalnız marker, connection-limit, owner ve
+  database OID kimliği doğrulanınca geçer. ALTER veya sonraki adım başarısız olsa da cleanup kayıtlı
+  OID ve marker sınırında kalır; OID henüz kaydedilemediyse önceden kaydedilen aktif role OID'si ile
+  connection-limit kimliğinin ikisini birden arar. Yalnız owner
   eşleşmesi hiçbir zaman silme yetkisi vermez. Aynı role/proof adını eşzamanlı kullanan başka
   operasyon yasaktır; isim/kimlik belirsizliğinde işlem fail-closed escalation yapar.
 - Restore, `pg_restore --no-owner --no-privileges --exit-on-error --no-password` ile yapılır.

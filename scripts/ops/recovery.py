@@ -1859,13 +1859,13 @@ def _proof_database_identity(
         or not third_separator
         or not oid_text.isdigit()
         or not owner_text.isdigit()
-        or not connection_limit_text.isdigit()
+        or (connection_limit_text != "-1" and not connection_limit_text.isdigit())
     ):
         _raise(failure_code)
     oid = int(oid_text)
     owner_oid = int(owner_text)
     connection_limit = int(connection_limit_text)
-    if oid <= 0 or owner_oid <= 0 or connection_limit < 0:
+    if oid <= 0 or owner_oid <= 0 or connection_limit < -1:
         _raise(failure_code)
     return oid, owner_oid, connection_limit, marker
 
@@ -2090,7 +2090,6 @@ def _restore_proof(args: argparse.Namespace) -> dict[str, Any]:
     _require_tool_help(
         createdb,
         (
-            "--connection-limit",
             "--encoding",
             "--no-password",
             "--template",
@@ -2207,13 +2206,34 @@ def _restore_proof(args: argparse.Namespace) -> dict[str, Any]:
                     "--no-password",
                     "--template=template0",
                     "--encoding=UTF8",
-                    f"--connection-limit={proof_connection_limit}",
                     proof_database,
                     proof_marker,
                 ),
                 environment=maintenance_environment,
                 timeout_seconds=timeout_seconds,
                 failure_code="PROOF_DATABASE_UNAVAILABLE",
+            )
+            created_identity = _proof_database_identity(
+                psql,
+                maintenance_environment,
+                proof_database,
+                timeout_seconds,
+                "PROOF_DATABASE_UNAVAILABLE",
+            )
+            if (
+                created_identity is None
+                or created_identity[1] != proof_owner_oid
+                or created_identity[2] != -1
+                or created_identity[3] != proof_marker
+            ):
+                _raise("PROOF_DATABASE_UNAVAILABLE")
+            proof_oid = created_identity[0]
+            _psql_output(
+                psql,
+                maintenance_environment,
+                f'ALTER DATABASE "{proof_database}" CONNECTION LIMIT {proof_connection_limit};',
+                timeout_seconds,
+                "PROOF_DATABASE_UNAVAILABLE",
             )
             proof_identity = _proof_database_identity(
                 psql,
@@ -2224,12 +2244,12 @@ def _restore_proof(args: argparse.Namespace) -> dict[str, Any]:
             )
             if (
                 proof_identity is None
+                or proof_identity[0] != proof_oid
                 or proof_identity[1] != proof_owner_oid
                 or proof_identity[2] != proof_connection_limit
                 or proof_identity[3] != proof_marker
             ):
                 _raise("PROOF_DATABASE_UNAVAILABLE")
-            proof_oid = proof_identity[0]
             proof_environment = dict(maintenance_environment)
             proof_environment["PGDATABASE"] = proof_database
             _run_command(
