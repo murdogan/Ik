@@ -21,7 +21,7 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
 fi
 
 cd "$APP_DIR"
-git fetch origin "$BRANCH"
+git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
 remote_rev="$(git rev-parse "origin/${BRANCH}")"
 if [[ ! "$remote_rev" =~ ^[0-9a-f]{40}$ ]]; then
   echo "DEPLOY_FAILED: invalid remote revision." >&2
@@ -35,7 +35,7 @@ if [[ "$remote_rev" == "$last_deployed" ]] && [[ "${IK_STAGING_FORCE:-0}" != "1"
   exit 0
 fi
 
-git checkout "$BRANCH"
+git checkout -B "$BRANCH" "origin/$BRANCH"
 git reset --hard "$remote_rev"
 checked_out_rev="$(git rev-parse HEAD)"
 if [[ "$checked_out_rev" != "$remote_rev" ]]; then
