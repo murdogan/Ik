@@ -9,6 +9,10 @@ PORT="${IK_STAGING_PORT:-8001}"
 HOST="${IK_STAGING_HOST:-0.0.0.0}"
 PID_FILE="${IK_STAGING_PID_FILE:-/opt/data/staging/ik-app.pid}"
 LOG_FILE="${IK_STAGING_LOG_FILE:-/opt/data/staging/ik-app.log}"
+NOTIFICATION_PID_FILE="${IK_STAGING_NOTIFICATION_PID_FILE:-/opt/data/staging/ik-notification-worker.pid}"
+NOTIFICATION_LOG_FILE="${IK_STAGING_NOTIFICATION_LOG_FILE:-/opt/data/staging/ik-notification-worker.log}"
+REPORTING_PID_FILE="${IK_STAGING_REPORTING_PID_FILE:-/opt/data/staging/ik-reporting-worker.pid}"
+REPORTING_LOG_FILE="${IK_STAGING_REPORTING_LOG_FILE:-/opt/data/staging/ik-reporting-worker.log}"
 REV_FILE="${IK_STAGING_REV_FILE:-/opt/data/staging/ik-app.rev}"
 BASE_URL="${IK_STAGING_BASE_URL:-http://127.0.0.1:${PORT}}"
 RELEASE_ROOT="${IK_STAGING_RELEASE_ROOT:-/opt/data/staging/ik-releases}"
@@ -278,9 +282,17 @@ if [[ "$release_commit_sha" != "$remote_rev" || "$release_build_timestamp" != "$
 fi
 unset release_identity_output release_identity
 
-if [[ -f "$PID_FILE" ]]; then
-  old_pid="$(cat "$PID_FILE" || true)"
-  if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+stop_pid_file() {
+  local pid_file="$1"
+  local old_pid
+  if [[ ! -f "$pid_file" ]]; then
+    return
+  fi
+  old_pid="$(cat "$pid_file" || true)"
+  if [[ -z "$old_pid" ]] || ! [[ "$old_pid" =~ ^[1-9][0-9]*$ ]]; then
+    return
+  fi
+  if kill -0 "$old_pid" 2>/dev/null; then
     kill "$old_pid" || true
     for _ in {1..20}; do
       if ! kill -0 "$old_pid" 2>/dev/null; then
@@ -292,15 +304,35 @@ if [[ -f "$PID_FILE" ]]; then
       kill -9 "$old_pid" || true
     fi
   fi
-fi
+}
+
+stop_pid_file "$PID_FILE"
+stop_pid_file "$NOTIFICATION_PID_FILE"
+stop_pid_file "$REPORTING_PID_FILE"
 
 : > "$LOG_FILE"
+: > "$NOTIFICATION_LOG_FILE"
+: > "$REPORTING_LOG_FILE"
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
 nohup uv run --no-sync uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
 new_pid="$!"
 echo "$new_pid" > "$PID_FILE"
+
+IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
+IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
+PYTHONPATH=backend \
+nohup uv run --no-sync python -m app.workers.notifications >> "$NOTIFICATION_LOG_FILE" 2>&1 &
+notification_pid="$!"
+echo "$notification_pid" > "$NOTIFICATION_PID_FILE"
+
+IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
+IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
+PYTHONPATH=backend \
+nohup uv run --no-sync python -m app.workers.reporting >> "$REPORTING_LOG_FILE" 2>&1 &
+reporting_pid="$!"
+echo "$reporting_pid" > "$REPORTING_PID_FILE"
 
 ready=0
 for _ in {1..50}; do
@@ -327,6 +359,17 @@ if [[ "$ready" != "1" ]]; then
   exit 1
 fi
 
+if ! kill -0 "$notification_pid" 2>/dev/null; then
+  echo "DEPLOY_FAILED: notification worker exited. Log:" >&2
+  tail -80 "$NOTIFICATION_LOG_FILE" >&2 || true
+  exit 1
+fi
+if ! kill -0 "$reporting_pid" 2>/dev/null; then
+  echo "DEPLOY_FAILED: reporting worker exited. Log:" >&2
+  tail -80 "$REPORTING_LOG_FILE" >&2 || true
+  exit 1
+fi
+
 uv run --no-sync python scripts/staging_smoke_test.py "$BASE_URL"
 echo "$remote_rev" > "$REV_FILE"
-echo "DEPLOY_OK branch=${BRANCH} rev=${remote_rev} url=${BASE_URL} pid=${new_pid} previous=${current_rev}"
+echo "DEPLOY_OK branch=${BRANCH} rev=${remote_rev} url=${BASE_URL} pid=${new_pid} notification_pid=${notification_pid} reporting_pid=${reporting_pid} previous=${current_rev}"
