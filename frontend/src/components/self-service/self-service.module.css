@@ -1,5 +1,6 @@
 .page {
   display: grid;
+  min-width: 0;
   gap: 28px;
 }
 
@@ -11,6 +12,7 @@
 }
 
 .pageHeader > div {
+  min-width: 0;
   max-width: 760px;
 }
 
@@ -25,6 +27,7 @@
 .pageHeader h1,
 .hero h1 {
   margin: 8px 0 10px;
+  overflow-wrap: anywhere;
   font-size: clamp(32px, 5vw, 48px);
   line-height: 1.08;
   letter-spacing: -0.045em;
@@ -206,6 +209,7 @@
 .listItem h3,
 .listItem strong {
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: 16px;
 }
 
@@ -213,6 +217,10 @@
   color: var(--wf-green-strong);
   font-size: 14px;
   font-weight: 700;
+}
+
+.listItem p {
+  overflow-wrap: anywhere;
 }
 
 .badges {
@@ -355,6 +363,15 @@
   cursor: pointer;
 }
 
+.primaryButton,
+.secondaryButton,
+.dangerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
 .primaryButton {
   color: #ffffff;
   background: var(--wf-green-strong);
@@ -364,6 +381,7 @@
   border-color: #c6d6ce;
   color: var(--wf-ink);
   background: #ffffff;
+  text-decoration: none;
 }
 
 .dangerButton {
@@ -490,6 +508,7 @@
 
 .bodyText {
   margin: 0;
+  overflow-wrap: anywhere;
   color: #31473e;
   font-size: 16px;
   line-height: 1.75;
@@ -608,6 +627,21 @@
   .secondaryButton,
   .dangerButton {
     width: 100%;
+  }
+
+  .primaryButton,
+  .secondaryButton,
+  .dangerButton,
+  .textButton,
+  .notificationButton,
+  .tabs button {
+    min-height: 44px;
+  }
+
+  .listItem a {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
   }
 
   .timeline li {

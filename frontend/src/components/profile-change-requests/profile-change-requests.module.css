@@ -887,7 +887,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: max(20px, var(--wf-safe-area-top))
+    max(20px, var(--wf-safe-area-right)) max(20px, var(--wf-safe-area-bottom))
+    max(20px, var(--wf-safe-area-left));
   background: rgba(12, 29, 22, 0.5);
   backdrop-filter: blur(3px);
 }
@@ -1111,6 +1113,25 @@
 
   .dialogBackdrop {
     align-items: flex-end;
-    padding: 8px;
+    padding: max(8px, var(--wf-safe-area-top)) max(8px, var(--wf-safe-area-right))
+      max(8px, var(--wf-safe-area-bottom)) max(8px, var(--wf-safe-area-left));
+  }
+
+  .primaryButton,
+  .secondaryButton,
+  .dangerButton,
+  .dangerTextButton,
+  .loadMoreButton {
+    min-height: 44px;
+  }
+
+  .iconButton {
+    width: 44px;
+    height: 44px;
+  }
+
+  .requestField input,
+  .requestField select {
+    min-height: 44px;
   }
 }

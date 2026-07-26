@@ -16,6 +16,10 @@
   --wf-radius-lg: 28px;
   --wf-radius-md: 18px;
   --wf-radius-sm: 12px;
+  --wf-safe-area-top: env(safe-area-inset-top, 0px);
+  --wf-safe-area-right: env(safe-area-inset-right, 0px);
+  --wf-safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --wf-safe-area-left: env(safe-area-inset-left, 0px);
 }
 
 * {
@@ -23,13 +27,19 @@
 }
 
 html {
+  width: 100%;
   min-width: 320px;
+  max-width: 100%;
   min-height: 100%;
+  overflow-x: hidden;
   background: var(--wf-bg);
 }
 
 body {
+  width: 100%;
+  max-width: 100%;
   min-height: 100%;
+  overflow-x: hidden;
   margin: 0;
   color: var(--wf-ink);
   background: var(--wf-bg);
@@ -41,7 +51,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -57,4 +69,79 @@ a {
 ::selection {
   color: var(--wf-ink);
   background: var(--wf-mint);
+}
+
+img,
+picture,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid rgba(49, 107, 255, 0.42);
+  outline-offset: 2px;
+}
+
+@supports (overflow: clip) {
+  html,
+  body {
+    overflow-x: clip;
+  }
+}
+
+@media (display-mode: standalone) {
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: var(--wf-safe-area-top) var(--wf-safe-area-right)
+      var(--wf-safe-area-bottom) var(--wf-safe-area-left);
+  }
+
+  body > [data-workspace-shell],
+  body > main[data-auth-surface],
+  body > main:not([data-auth-surface]) {
+    min-height: calc(
+      100vh - var(--wf-safe-area-top) - var(--wf-safe-area-bottom)
+    );
+    min-height: calc(
+      100dvh - var(--wf-safe-area-top) - var(--wf-safe-area-bottom)
+    );
+  }
+}
+
+@media (display-mode: standalone) and (max-width: 860px) {
+  body > main[data-auth-surface] > section,
+  body > main[data-auth-surface] > section > div:last-child {
+    min-height: calc(
+      100vh - var(--wf-safe-area-top) - var(--wf-safe-area-bottom)
+    );
+    min-height: calc(
+      100dvh - var(--wf-safe-area-top) - var(--wf-safe-area-bottom)
+    );
+  }
+}
+
+@media (max-width: 700px) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

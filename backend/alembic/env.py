@@ -1,10 +1,12 @@
 import asyncio
+import os
 from logging.config import fileConfig
 from typing import Any
 
 from alembic import context
 from alembic.ddl.postgresql import PostgresqlImpl
 from app.db.base import Base
+from app.db.migration_url import resolve_migration_database_url
 from app.models import (  # noqa: F401
     Announcement,
     AnnouncementBranchTarget,
@@ -92,10 +94,17 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def migration_database_url() -> str:
+    return resolve_migration_database_url(
+        configured_url=config.get_main_option("sqlalchemy.url"),
+        environment=os.environ.get("IK_ENVIRONMENT"),
+        runtime_url=os.environ.get("IK_DATABASE_URL"),
+    )
+
+
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=migration_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -117,8 +126,10 @@ def do_run_migrations(connection) -> None:
 
 
 async def run_migrations_online() -> None:
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = migration_database_url()
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
