@@ -308,19 +308,152 @@ if [[ "$release_commit_sha" != "$remote_rev" || "$release_build_timestamp" != "$
 fi
 unset release_identity_output release_identity
 
-write_pid_file() {
+spawn_service() {
   local pid_file="$1"
-  local pid="$2"
-  local starttime="$3"
-  local temporary
-  [[ "$pid" =~ ^[1-9][0-9]*$ && "$starttime" =~ ^[1-9][0-9]*$ ]] || return 1
-  temporary="$(mktemp "${pid_file}.tmp.XXXXXX")"
-  if ! printf '%s %s\n' "$pid" "$starttime" > "$temporary" \
-    || ! chmod 600 "$temporary" \
-    || ! mv -f "$temporary" "$pid_file"; then
-    rm -f "$temporary"
-    return 1
-  fi
+  local role="$2"
+  local log_file="$3"
+  shift 3
+  python3 - "$pid_file" "$role" "$APP_DIR" "$log_file" "$@" <<'PY'
+import os
+from pathlib import Path
+import re
+import select
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+pid_path = Path(sys.argv[1])
+role = sys.argv[2]
+app_dir = Path(sys.argv[3]).resolve(strict=True)
+log_path = Path(sys.argv[4])
+command = sys.argv[5:]
+release_sha = os.environ.get("IK_RELEASE_COMMIT_SHA", "")
+expected_cwd_by_role = {
+    "api": app_dir,
+    "web": app_dir / "frontend",
+    "notification": app_dir,
+    "reporting": app_dir,
+}
+if role not in expected_cwd_by_role or not command:
+    raise SystemExit("DEPLOY_FAILED: invalid service launch request")
+if re.fullmatch(r"[0-9a-f]{40}", release_sha) is None:
+    raise SystemExit("DEPLOY_FAILED: invalid service release identity")
+expected_cwd = expected_cwd_by_role[role]
+log_descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+process = None
+pidfd = None
+temporary_path = None
+identity_installed = False
+try:
+    process = subprocess.Popen(
+        command,
+        cwd=expected_cwd,
+        env=os.environ.copy(),
+        stdin=subprocess.DEVNULL,
+        stdout=log_descriptor,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+    )
+    os.close(log_descriptor)
+    log_descriptor = -1
+    pidfd = os.pidfd_open(process.pid)
+    process_starttime = None
+    for _ in range(200):
+        if process.poll() is not None:
+            raise RuntimeError("service exited during identity capture")
+        try:
+            proc = Path("/proc") / str(process.pid)
+            status = (proc / "status").read_text(encoding="ascii")
+            uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
+            process_uids = {int(value) for value in uid_line.split()[1:]}
+            process_cwd = Path(os.readlink(proc / "cwd")).resolve(strict=True)
+            command_parts = (proc / "cmdline").read_bytes().split(b"\0")
+            command_text = b"\0".join(part for part in command_parts if part).decode(
+                "utf-8", "strict"
+            )
+            environment = (proc / "environ").read_bytes().split(b"\0")
+            stat_fields = (
+                (proc / "stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+            )
+            process_parent = int(stat_fields[1])
+            candidate_starttime = stat_fields[19]
+            role_matches = {
+                "api": "uvicorn" in command_text and "app.main:app" in command_text,
+                "web": "next-server" in command_text
+                or ("node_modules/.bin/next" in command_text and "start" in command_text),
+                "notification": "app.workers.notifications" in command_text,
+                "reporting": "app.workers.reporting" in command_text,
+            }
+            if (
+                process_uids == {os.geteuid()}
+                and process_cwd == expected_cwd
+                and process_parent == os.getpid()
+                and role_matches[role]
+                and f"IK_RELEASE_COMMIT_SHA={release_sha}".encode() in environment
+            ):
+                process_starttime = candidate_starttime
+                break
+        except (OSError, StopIteration, UnicodeError, ValueError, IndexError):
+            pass
+        time.sleep(0.01)
+    if process_starttime is None:
+        raise RuntimeError("service identity capture timed out")
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{pid_path.name}.tmp.", dir=pid_path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, f"{process.pid} {process_starttime}\n".encode("ascii"))
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary_path, pid_path)
+    temporary_path = None
+    identity_installed = True
+    print(process.pid, process_starttime)
+except BaseException as error:
+    if pidfd is not None:
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN)
+        try:
+            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        if not poller.poll(2000):
+            try:
+                signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            poller.poll(2000)
+    elif process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+    if identity_installed:
+        try:
+            if pid_path.read_text(encoding="ascii").strip() == (
+                f"{process.pid} {process_starttime}"
+            ):
+                pid_path.unlink()
+        except (OSError, UnicodeError):
+            pass
+    raise SystemExit(f"DEPLOY_FAILED: service launch failed ({type(error).__name__})") from None
+finally:
+    if log_descriptor >= 0:
+        os.close(log_descriptor)
+    if pidfd is not None:
+        os.close(pidfd)
+    if temporary_path is not None:
+        temporary_path.unlink(missing_ok=True)
+PY
 }
 
 stop_pid_file() {
@@ -357,7 +490,7 @@ expected_cwd_by_role = {
 }
 if role not in expected_cwd_by_role:
     raise SystemExit("DEPLOY_FAILED: unknown process role")
-if action not in {"capture", "stop", "verify"}:
+if action not in {"stop", "verify"}:
     raise SystemExit("DEPLOY_FAILED: unknown process action")
 if pid_override:
     raw_pid = pid_override
@@ -389,7 +522,7 @@ else:
     raw_pid, recorded_starttime = identity_fields
 if (
     re.fullmatch(r"[1-9][0-9]*", raw_pid) is None
-    or (action != "capture" and re.fullmatch(r"[1-9][0-9]*", recorded_starttime) is None)
+    or re.fullmatch(r"[1-9][0-9]*", recorded_starttime) is None
 ):
     raise SystemExit("DEPLOY_FAILED: invalid PID identity")
 pid = int(raw_pid)
@@ -398,7 +531,7 @@ try:
 except ProcessLookupError:
     if not pid_override:
         pid_path.unlink(missing_ok=True)
-    if action in {"capture", "verify"}:
+    if action == "verify":
         raise SystemExit("DEPLOY_FAILED: process exited") from None
     raise SystemExit(0) from None
 try:
@@ -439,10 +572,6 @@ if (
 ):
     raise SystemExit("DEPLOY_FAILED: PID identity mismatch")
 
-if action == "capture":
-    print(process_starttime)
-    os.close(pidfd)
-    raise SystemExit(0)
 if action == "verify":
     os.close(pidfd)
     raise SystemExit(0)
@@ -471,10 +600,6 @@ verify_pid_file() {
 
 stop_pid_value() {
   stop_pid_file "$1" "$2" stop "$5" "$3" "$4"
-}
-
-capture_pid_identity() {
-  stop_pid_file "$1" "$2" capture "$4" "$3" "" "$5"
 }
 
 stop_pid_file "$PID_FILE" api stop "$last_deployed"
@@ -520,40 +645,28 @@ trap cleanup_failed_deploy EXIT
 : > "$WEB_LOG_FILE"
 : > "$NOTIFICATION_LOG_FILE"
 : > "$REPORTING_LOG_FILE"
-IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
-IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
-PYTHONPATH=backend \
-nohup .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 9>&- &
-new_pid="$!"
-new_starttime="$(capture_pid_identity "$PID_FILE" api "$new_pid" "$release_commit_sha" "$$")"
-write_pid_file "$PID_FILE" "$new_pid" "$new_starttime"
+export IK_RELEASE_COMMIT_SHA="$release_commit_sha"
+export IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp"
+export PYTHONPATH=backend
+export BACKEND_API_URL="http://127.0.0.1:${PORT}"
+export NEXT_TELEMETRY_DISABLED=1
 
-cd frontend
-IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
-IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
-BACKEND_API_URL="http://127.0.0.1:${PORT}" \
-NEXT_TELEMETRY_DISABLED=1 \
-nohup ./node_modules/.bin/next start --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 9>&- &
-web_pid="$!"
-cd ..
-web_starttime="$(capture_pid_identity "$WEB_PID_FILE" web "$web_pid" "$release_commit_sha" "$$")"
-write_pid_file "$WEB_PID_FILE" "$web_pid" "$web_starttime"
-
-IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
-IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
-PYTHONPATH=backend \
-nohup .venv/bin/python -m app.workers.notifications >> "$NOTIFICATION_LOG_FILE" 2>&1 9>&- &
-notification_pid="$!"
-notification_starttime="$(capture_pid_identity "$NOTIFICATION_PID_FILE" notification "$notification_pid" "$release_commit_sha" "$$")"
-write_pid_file "$NOTIFICATION_PID_FILE" "$notification_pid" "$notification_starttime"
-
-IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
-IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
-PYTHONPATH=backend \
-nohup .venv/bin/python -m app.workers.reporting >> "$REPORTING_LOG_FILE" 2>&1 9>&- &
-reporting_pid="$!"
-reporting_starttime="$(capture_pid_identity "$REPORTING_PID_FILE" reporting "$reporting_pid" "$release_commit_sha" "$$")"
-write_pid_file "$REPORTING_PID_FILE" "$reporting_pid" "$reporting_starttime"
+read -r new_pid new_starttime <<< "$(
+  spawn_service "$PID_FILE" api "$LOG_FILE" \
+    .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT"
+)"
+read -r web_pid web_starttime <<< "$(
+  spawn_service "$WEB_PID_FILE" web "$WEB_LOG_FILE" \
+    ./node_modules/.bin/next start --hostname "$WEB_HOST" --port "$WEB_PORT"
+)"
+read -r notification_pid notification_starttime <<< "$(
+  spawn_service "$NOTIFICATION_PID_FILE" notification "$NOTIFICATION_LOG_FILE" \
+    .venv/bin/python -m app.workers.notifications
+)"
+read -r reporting_pid reporting_starttime <<< "$(
+  spawn_service "$REPORTING_PID_FILE" reporting "$REPORTING_LOG_FILE" \
+    .venv/bin/python -m app.workers.reporting
+)"
 
 ready=0
 for _ in {1..50}; do
