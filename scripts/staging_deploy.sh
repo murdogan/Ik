@@ -523,7 +523,7 @@ trap cleanup_failed_deploy EXIT
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
-nohup .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
+nohup .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 9>&- &
 new_pid="$!"
 new_starttime="$(capture_pid_identity "$PID_FILE" api "$new_pid" "$release_commit_sha" "$$")"
 write_pid_file "$PID_FILE" "$new_pid" "$new_starttime"
@@ -533,7 +533,7 @@ IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 BACKEND_API_URL="http://127.0.0.1:${PORT}" \
 NEXT_TELEMETRY_DISABLED=1 \
-nohup ./node_modules/.bin/next start --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 &
+nohup ./node_modules/.bin/next start --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 9>&- &
 web_pid="$!"
 cd ..
 web_starttime="$(capture_pid_identity "$WEB_PID_FILE" web "$web_pid" "$release_commit_sha" "$$")"
@@ -542,7 +542,7 @@ write_pid_file "$WEB_PID_FILE" "$web_pid" "$web_starttime"
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
-nohup .venv/bin/python -m app.workers.notifications >> "$NOTIFICATION_LOG_FILE" 2>&1 &
+nohup .venv/bin/python -m app.workers.notifications >> "$NOTIFICATION_LOG_FILE" 2>&1 9>&- &
 notification_pid="$!"
 notification_starttime="$(capture_pid_identity "$NOTIFICATION_PID_FILE" notification "$notification_pid" "$release_commit_sha" "$$")"
 write_pid_file "$NOTIFICATION_PID_FILE" "$notification_pid" "$notification_starttime"
@@ -550,7 +550,7 @@ write_pid_file "$NOTIFICATION_PID_FILE" "$notification_pid" "$notification_start
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
-nohup .venv/bin/python -m app.workers.reporting >> "$REPORTING_LOG_FILE" 2>&1 &
+nohup .venv/bin/python -m app.workers.reporting >> "$REPORTING_LOG_FILE" 2>&1 9>&- &
 reporting_pid="$!"
 reporting_starttime="$(capture_pid_identity "$REPORTING_PID_FILE" reporting "$reporting_pid" "$release_commit_sha" "$$")"
 write_pid_file "$REPORTING_PID_FILE" "$reporting_pid" "$reporting_starttime"
