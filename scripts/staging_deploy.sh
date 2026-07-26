@@ -302,44 +302,170 @@ if [[ "$release_commit_sha" != "$remote_rev" || "$release_build_timestamp" != "$
 fi
 unset release_identity_output release_identity
 
-stop_pid_file() {
+write_pid_file() {
   local pid_file="$1"
-  local old_pid
-  if [[ ! -f "$pid_file" ]]; then
-    return
-  fi
-  old_pid="$(cat "$pid_file" || true)"
-  if [[ -z "$old_pid" ]] || ! [[ "$old_pid" =~ ^[1-9][0-9]*$ ]]; then
-    return
-  fi
-  if kill -0 "$old_pid" 2>/dev/null; then
-    kill "$old_pid" || true
-    for _ in {1..20}; do
-      if ! kill -0 "$old_pid" 2>/dev/null; then
-        break
-      fi
-      sleep 0.2
-    done
-    if kill -0 "$old_pid" 2>/dev/null; then
-      kill -9 "$old_pid" || true
-    fi
-  fi
+  local pid="$2"
+  local temporary="${pid_file}.tmp.$$"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$pid" > "$temporary"
+  chmod 600 "$temporary"
+  mv -f "$temporary" "$pid_file"
 }
 
-stop_pid_file "$PID_FILE"
-stop_pid_file "$WEB_PID_FILE"
-stop_pid_file "$NOTIFICATION_PID_FILE"
-stop_pid_file "$REPORTING_PID_FILE"
+stop_pid_file() {
+  local pid_file="$1"
+  local role="$2"
+  local action="${3:-stop}"
+  local expected_release="${4:-}"
+  local pid_override="${5:-}"
+  python3 - "$pid_file" "$role" "$APP_DIR" "$action" "$expected_release" "$pid_override" <<'PY'
+import os
+from pathlib import Path
+import re
+import select
+import signal
+import stat
+import sys
+
+pid_path = Path(sys.argv[1])
+role = sys.argv[2]
+app_dir = Path(sys.argv[3]).resolve(strict=True)
+action = sys.argv[4]
+expected_release = sys.argv[5]
+pid_override = sys.argv[6]
+expected = {
+    "api": app_dir,
+    "web": app_dir / "frontend",
+    "notification": app_dir,
+    "reporting": app_dir,
+}
+if role not in expected:
+    raise SystemExit("DEPLOY_FAILED: unknown process role")
+if action not in {"stop", "verify"}:
+    raise SystemExit("DEPLOY_FAILED: unknown process action")
+if pid_override:
+    raw_pid = pid_override
+else:
+    try:
+        metadata = pid_path.lstat()
+    except FileNotFoundError:
+        if action == "verify":
+            raise SystemExit("DEPLOY_FAILED: PID file missing") from None
+        raise SystemExit(0) from None
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_mode & 0o022
+    ):
+        raise SystemExit("DEPLOY_FAILED: unsafe PID file")
+    try:
+        raw_pid = pid_path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        raise SystemExit("DEPLOY_FAILED: unreadable PID file") from None
+if re.fullmatch(r"[1-9][0-9]*", raw_pid) is None:
+    raise SystemExit("DEPLOY_FAILED: invalid PID file")
+pid = int(raw_pid)
+try:
+    pidfd = os.pidfd_open(pid)
+except ProcessLookupError:
+    pid_path.unlink(missing_ok=True)
+    if action == "verify":
+        raise SystemExit("DEPLOY_FAILED: process exited") from None
+    raise SystemExit(0) from None
+try:
+    proc = Path("/proc") / raw_pid
+    status = (proc / "status").read_text(encoding="ascii")
+    uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
+    process_uids = {int(value) for value in uid_line.split()[1:]}
+    process_cwd = Path(os.readlink(proc / "cwd")).resolve(strict=True)
+    command = (proc / "cmdline").read_bytes().split(b"\0")
+    command_text = b"\0".join(part for part in command if part).decode("utf-8", "strict")
+    environment = (proc / "environ").read_bytes().split(b"\0")
+    release_values = [
+        item.split(b"=", 1)[1].decode("ascii", "strict")
+        for item in environment
+        if item.startswith(b"IK_RELEASE_COMMIT_SHA=")
+    ]
+except (OSError, StopIteration, UnicodeError, ValueError):
+    raise SystemExit("DEPLOY_FAILED: process identity unavailable") from None
+expected_cwd = expected[role]
+role_matches = {
+    "api": "uvicorn" in command_text and "app.main:app" in command_text,
+    "web": "next-server" in command_text
+    or ("node_modules/.bin/next" in command_text and "start" in command_text),
+    "notification": "app.workers.notifications" in command_text,
+    "reporting": "app.workers.reporting" in command_text,
+}
+if (
+    process_uids != {os.geteuid()}
+    or process_cwd != expected_cwd
+    or not role_matches[role]
+    or len(release_values) != 1
+    or re.fullmatch(r"[0-9a-f]{40}", release_values[0]) is None
+    or (expected_release and release_values[0] != expected_release)
+):
+    raise SystemExit("DEPLOY_FAILED: PID identity mismatch")
+
+if action == "verify":
+    os.close(pidfd)
+    raise SystemExit(0)
+
+poller = select.poll()
+poller.register(pidfd, select.POLLIN)
+try:
+    signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+except ProcessLookupError:
+    pass
+if not poller.poll(4000):
+    try:
+        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if not poller.poll(2000):
+        raise SystemExit("DEPLOY_FAILED: process did not stop")
+os.close(pidfd)
+pid_path.unlink(missing_ok=True)
+PY
+}
+
+verify_pid_file() {
+  stop_pid_file "$1" "$2" verify "$3"
+}
+
+stop_pid_value() {
+  stop_pid_file "$1" "$2" stop "$4" "$3"
+}
+
+stop_pid_file "$PID_FILE" api
+stop_pid_file "$WEB_PID_FILE" web
+stop_pid_file "$NOTIFICATION_PID_FILE" notification
+stop_pid_file "$REPORTING_PID_FILE" reporting
 
 deployment_committed=0
+new_pid=""
+web_pid=""
+notification_pid=""
+reporting_pid=""
 cleanup_failed_deploy() {
   local status="$?"
+  local cleanup_failed=0
   trap - EXIT
   if [[ "$deployment_committed" != "1" ]]; then
-    stop_pid_file "$PID_FILE"
-    stop_pid_file "$WEB_PID_FILE"
-    stop_pid_file "$NOTIFICATION_PID_FILE"
-    stop_pid_file "$REPORTING_PID_FILE"
+    if [[ -n "$new_pid" ]]; then
+      stop_pid_value "$PID_FILE" api "$new_pid" "$release_commit_sha" || cleanup_failed=1
+    fi
+    if [[ -n "$web_pid" ]]; then
+      stop_pid_value "$WEB_PID_FILE" web "$web_pid" "$release_commit_sha" || cleanup_failed=1
+    fi
+    if [[ -n "$notification_pid" ]]; then
+      stop_pid_value "$NOTIFICATION_PID_FILE" notification "$notification_pid" "$release_commit_sha" || cleanup_failed=1
+    fi
+    if [[ -n "$reporting_pid" ]]; then
+      stop_pid_value "$REPORTING_PID_FILE" reporting "$reporting_pid" "$release_commit_sha" || cleanup_failed=1
+    fi
+    if [[ "$cleanup_failed" == "1" ]]; then
+      echo "DEPLOY_FAILED: one or more new processes require manual cleanup." >&2
+    fi
   fi
   exit "$status"
 }
@@ -354,32 +480,31 @@ IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
 nohup .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
 new_pid="$!"
-echo "$new_pid" > "$PID_FILE"
+write_pid_file "$PID_FILE" "$new_pid"
 
-(
-  cd frontend
-  IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
-  IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
-  BACKEND_API_URL="http://127.0.0.1:${PORT}" \
-  NEXT_TELEMETRY_DISABLED=1 \
-  nohup ./node_modules/.bin/next start --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 &
-  echo "$!" > "$WEB_PID_FILE"
-)
-web_pid="$(cat "$WEB_PID_FILE")"
+cd frontend
+IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
+IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
+BACKEND_API_URL="http://127.0.0.1:${PORT}" \
+NEXT_TELEMETRY_DISABLED=1 \
+nohup ./node_modules/.bin/next start --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 &
+web_pid="$!"
+cd ..
+write_pid_file "$WEB_PID_FILE" "$web_pid"
 
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
 nohup .venv/bin/python -m app.workers.notifications >> "$NOTIFICATION_LOG_FILE" 2>&1 &
 notification_pid="$!"
-echo "$notification_pid" > "$NOTIFICATION_PID_FILE"
+write_pid_file "$NOTIFICATION_PID_FILE" "$notification_pid"
 
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
 nohup .venv/bin/python -m app.workers.reporting >> "$REPORTING_LOG_FILE" 2>&1 &
 reporting_pid="$!"
-echo "$reporting_pid" > "$REPORTING_PID_FILE"
+write_pid_file "$REPORTING_PID_FILE" "$reporting_pid"
 
 ready=0
 for _ in {1..50}; do
@@ -401,8 +526,7 @@ raise SystemExit(0 if type(payload) is dict and payload.get("commit_sha") == sys
 done
 
 if [[ "$ready" != "1" ]]; then
-  echo "DEPLOY_FAILED: app did not become ready. Log:" >&2
-  tail -80 "$LOG_FILE" >&2 || true
+  echo "DEPLOY_FAILED: app did not become ready. Review restricted log: $LOG_FILE" >&2
   exit 1
 fi
 
@@ -415,8 +539,7 @@ for _ in {1..50}; do
   sleep 0.2
 done
 if [[ "$web_ready" != "1" ]]; then
-  echo "DEPLOY_FAILED: web did not become ready. Log:" >&2
-  tail -80 "$WEB_LOG_FILE" >&2 || true
+  echo "DEPLOY_FAILED: web did not become ready. Review restricted log: $WEB_LOG_FILE" >&2
   exit 1
 fi
 uv run --no-sync python - "http://${WEB_HOST}:${WEB_PORT}" <<'PY'
@@ -451,21 +574,19 @@ else:
     raise SystemExit(1)
 PY
 
-if ! kill -0 "$web_pid" 2>/dev/null; then
-  echo "DEPLOY_FAILED: web process exited. Log:" >&2
-  tail -80 "$WEB_LOG_FILE" >&2 || true
+if ! verify_pid_file "$WEB_PID_FILE" web "$release_commit_sha"; then
+  echo "DEPLOY_FAILED: web process identity invalid. Review restricted log: $WEB_LOG_FILE" >&2
   exit 1
 fi
-if ! kill -0 "$notification_pid" 2>/dev/null; then
-  echo "DEPLOY_FAILED: notification worker exited. Log:" >&2
-  tail -80 "$NOTIFICATION_LOG_FILE" >&2 || true
+if ! verify_pid_file "$NOTIFICATION_PID_FILE" notification "$release_commit_sha"; then
+  echo "DEPLOY_FAILED: notification worker identity invalid. Review restricted log: $NOTIFICATION_LOG_FILE" >&2
   exit 1
 fi
-if ! kill -0 "$reporting_pid" 2>/dev/null; then
-  echo "DEPLOY_FAILED: reporting worker exited. Log:" >&2
-  tail -80 "$REPORTING_LOG_FILE" >&2 || true
+if ! verify_pid_file "$REPORTING_PID_FILE" reporting "$release_commit_sha"; then
+  echo "DEPLOY_FAILED: reporting worker identity invalid. Review restricted log: $REPORTING_LOG_FILE" >&2
   exit 1
 fi
+verify_pid_file "$PID_FILE" api "$release_commit_sha"
 
 uv run --no-sync python scripts/staging_smoke_test.py "$BASE_URL"
 echo "$remote_rev" > "$REV_FILE"
