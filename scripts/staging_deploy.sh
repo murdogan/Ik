@@ -317,7 +317,6 @@ spawn_service() {
 import os
 from pathlib import Path
 import re
-import select
 import signal
 import subprocess
 import sys
@@ -357,9 +356,9 @@ try:
         start_new_session=True,
         close_fds=True,
     )
+    pidfd = os.pidfd_open(process.pid)
     os.close(log_descriptor)
     log_descriptor = -1
-    pidfd = os.pidfd_open(process.pid)
     process_starttime = None
     for _ in range(200):
         if process.poll() is not None:
@@ -408,35 +407,50 @@ try:
     temporary_path = Path(temporary_name)
     try:
         os.fchmod(descriptor, 0o600)
-        os.write(descriptor, f"{process.pid} {process_starttime}\n".encode("ascii"))
+        payload = f"{process.pid} {process_starttime}\n".encode("ascii")
+        written = 0
+        while written < len(payload):
+            count = os.write(descriptor, payload[written:])
+            if count == 0:
+                raise OSError("short PID identity write")
+            written += count
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
     os.replace(temporary_path, pid_path)
     temporary_path = None
     identity_installed = True
+    directory_descriptor = os.open(pid_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
     print(process.pid, process_starttime)
 except BaseException as error:
+    cleanup_failed = False
     if pidfd is not None:
-        poller = select.poll()
-        poller.register(pidfd, select.POLLIN)
         try:
             signal.pidfd_send_signal(pidfd, signal.SIGTERM)
         except ProcessLookupError:
             pass
-        if not poller.poll(2000):
-            try:
-                signal.pidfd_send_signal(pidfd, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            poller.poll(2000)
     elif process is not None and process.poll() is None:
+        # An unreaped direct child cannot have its PID reused.
         process.terminate()
+    if process is not None:
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=2)
+            try:
+                if pidfd is not None:
+                    signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                cleanup_failed = True
     if identity_installed:
         try:
             if pid_path.read_text(encoding="ascii").strip() == (
@@ -445,6 +459,8 @@ except BaseException as error:
                 pid_path.unlink()
         except (OSError, UnicodeError):
             pass
+    if cleanup_failed:
+        raise SystemExit("DEPLOY_FAILED: service launch cleanup did not finish") from None
     raise SystemExit(f"DEPLOY_FAILED: service launch failed ({type(error).__name__})") from None
 finally:
     if log_descriptor >= 0:
