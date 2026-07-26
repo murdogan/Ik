@@ -299,25 +299,31 @@ Object status yalnız `verified`, `not_requested` veya `not_applicable` değerle
 
 ### 7.1 Object restore proof
 
-Object proof yalnız aşağıdaki üç argüman birlikte verildiğinde yapılır:
+Object proof yalnız aşağıdaki dört argüman birlikte verildiğinde yapılır:
 
 - `--include-objects`
+- `--confirm-synthetic-object-data`
 - `--proof-object-alias ALIAS`
 - `--proof-object-bucket BUCKET`
 
 Backup object durumu `included` değilse object proof istenmez. Proof alias ve bucket yukarıdaki
 strict allowlist'lerden geçmelidir; proof alias kaynak alias'tan ve proof bucket kaynak bucket'tan
 ayrı ayrı farklı olmalıdır. Proof target önceden mevcut, boş, dedicated, non-production ve ilgili
-change-ticket kapsamında olmalıdır. Alias önceden yapılandırılır; credential CLI'a verilmez.
+change-ticket kapsamında olmalıdır. Backup object setinin tamamının sentetik/anonimleştirilmiş
+olduğu operatör tarafından `--confirm-synthetic-object-data` ile ayrıca onaylanır; gerçek kişisel
+veri içeren backup non-production object proof'ta kullanılamaz. Alias önceden yapılandırılır;
+credential CLI'a verilmez.
 Araç boşluğu önce proof preflight'ta, sonra upload'dan hemen önce tekrar kontrol eder; bu iki
 kontrol external writer'a karşı atomik kilit değildir, bu yüzden target için operasyonel
 exclusive ownership yine zorunludur.
 
-Araç remote target üzerinde `--remove` kullanmaz ve object adı yazdırmaz. Sonuç, `0700`
+Araç remote target üzerinde mirror `--remove` kullanmaz ve object adı yazdırmaz. Sonuç, `0700`
 temporary local mirror üzerinden aggregate olarak doğrulanır; temporary mirror işlem sonunda
 kaldırılır. Temporary mirror temizliği doğrulanamazsa işlem `TEMPORARY_CLEANUP_FAILED` ile
-başarısızdır. CLI remote proof bucket'ını otomatik silmez; retention/cleanup kararı storage
-sahibi tarafından change-ticket ve kurumun onaylı storage prosedürüyle yönetilir.
+başarısızdır. CLI başarı veya hata halinde yalnız dedicated proof bucket içeriğini `mc rm
+--recursive --force` ile temizler ve bucket'ın boş olduğunu doğrular; bucket'ın kendisini silmez.
+Remote cleanup doğrulanamazsa işlem başarısızdır ve storage sahibi change-ticket kapsamında
+manuel cleanup/incident prosedürünü uygular.
 
 ## 8. Rollback guard
 

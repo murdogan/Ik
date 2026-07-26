@@ -1738,9 +1738,15 @@ def _proof_object_configuration(
     verified: VerifiedBackup,
 ) -> tuple[str, str, str, str] | None:
     if not args.include_objects:
-        if args.proof_object_alias is not None or args.proof_object_bucket is not None:
+        if (
+            args.proof_object_alias is not None
+            or args.proof_object_bucket is not None
+            or args.confirm_synthetic_object_data
+        ):
             _raise("RESTORE_GUARD_REJECTED")
         return None
+    if not args.confirm_synthetic_object_data:
+        _raise("RESTORE_GUARD_REJECTED")
     if verified.manifest["object_storage"]["state"] != "included":
         _raise("RESTORE_GUARD_REJECTED")
     if os.environ.get("IK_DOCUMENT_STORAGE_BACKEND") != "s3":
@@ -1774,31 +1780,40 @@ def _restore_and_verify_objects(
 ) -> dict[str, Any]:
     target = f"{proof_alias}/{proof_bucket}"
     _ensure_proof_bucket_empty(mc, proof_alias, proof_bucket, timeout_seconds)
-    _run_command(
-        (
-            mc,
-            "mirror",
-            "--quiet",
-            str(verified.backup_directory / OBJECTS_DIRECTORY_NAME),
-            target,
-        ),
-        environment=_mc_environment(),
-        timeout_seconds=timeout_seconds,
-        failure_code="OBJECT_OPERATION_FAILED",
-    )
-    restored = _remote_object_aggregate(mc, target, timeout_seconds)
-    expected = verified.manifest["object_storage"]
-    if (
-        restored.aggregate_sha256 != expected["aggregate_sha256"]
-        or restored.object_count != expected["object_count"]
-        or restored.total_bytes != expected["total_bytes"]
-    ):
-        _raise("RESTORE_VALIDATION_FAILED")
-    return {
-        "object_count": restored.object_count,
-        "status": "verified",
-        "total_bytes": restored.total_bytes,
-    }
+    try:
+        _run_command(
+            (
+                mc,
+                "mirror",
+                "--quiet",
+                str(verified.backup_directory / OBJECTS_DIRECTORY_NAME),
+                target,
+            ),
+            environment=_mc_environment(),
+            timeout_seconds=timeout_seconds,
+            failure_code="OBJECT_OPERATION_FAILED",
+        )
+        restored = _remote_object_aggregate(mc, target, timeout_seconds)
+        expected = verified.manifest["object_storage"]
+        if (
+            restored.aggregate_sha256 != expected["aggregate_sha256"]
+            or restored.object_count != expected["object_count"]
+            or restored.total_bytes != expected["total_bytes"]
+        ):
+            _raise("RESTORE_VALIDATION_FAILED")
+        return {
+            "object_count": restored.object_count,
+            "status": "verified",
+            "total_bytes": restored.total_bytes,
+        }
+    finally:
+        _run_command(
+            (mc, "rm", "--recursive", "--force", target),
+            environment=_mc_environment(),
+            timeout_seconds=timeout_seconds,
+            failure_code="OBJECT_OPERATION_FAILED",
+        )
+        _ensure_proof_bucket_empty(mc, proof_alias, proof_bucket, timeout_seconds)
 
 
 def _proof_database_name(value: str, source: PostgresConnection, admin: PostgresConnection) -> str:
@@ -2478,6 +2493,7 @@ def _build_parser() -> SafeArgumentParser:
     restore.add_argument("--confirm-non-production-target", action="store_true")
     restore.add_argument("--change-ticket")
     restore.add_argument("--include-objects", action="store_true")
+    restore.add_argument("--confirm-synthetic-object-data", action="store_true")
     restore.add_argument("--proof-object-alias")
     restore.add_argument("--proof-object-bucket")
     restore.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)

@@ -20,6 +20,13 @@ REPORTING_LOG_FILE="${IK_STAGING_REPORTING_LOG_FILE:-/opt/data/staging/ik-report
 REV_FILE="${IK_STAGING_REV_FILE:-/opt/data/staging/ik-app.rev}"
 BASE_URL="${IK_STAGING_BASE_URL:-http://127.0.0.1:${PORT}}"
 RELEASE_ROOT="${IK_STAGING_RELEASE_ROOT:-/opt/data/staging/ik-releases}"
+NODE_MAX_OLD_SPACE_MB="${IK_STAGING_NODE_MAX_OLD_SPACE_MB:-512}"
+
+if [[ ! "$NODE_MAX_OLD_SPACE_MB" =~ ^[0-9]+$ ]] \
+  || (( NODE_MAX_OLD_SPACE_MB < 256 || NODE_MAX_OLD_SPACE_MB > 2048 )); then
+  echo "DEPLOY_FAILED: invalid frontend Node heap limit." >&2
+  exit 1
+fi
 
 mkdir -p "$(dirname "$APP_DIR")" "$(dirname "$PID_FILE")"
 
@@ -114,6 +121,7 @@ uv run --no-sync alembic heads
 
 (
   cd frontend
+  export NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_MB}"
   npm ci
   npm run typecheck
   npm run lint
@@ -323,6 +331,20 @@ stop_pid_file "$WEB_PID_FILE"
 stop_pid_file "$NOTIFICATION_PID_FILE"
 stop_pid_file "$REPORTING_PID_FILE"
 
+deployment_committed=0
+cleanup_failed_deploy() {
+  local status="$?"
+  trap - EXIT
+  if [[ "$deployment_committed" != "1" ]]; then
+    stop_pid_file "$PID_FILE"
+    stop_pid_file "$WEB_PID_FILE"
+    stop_pid_file "$NOTIFICATION_PID_FILE"
+    stop_pid_file "$REPORTING_PID_FILE"
+  fi
+  exit "$status"
+}
+trap cleanup_failed_deploy EXIT
+
 : > "$LOG_FILE"
 : > "$WEB_LOG_FILE"
 : > "$NOTIFICATION_LOG_FILE"
@@ -330,7 +352,7 @@ stop_pid_file "$REPORTING_PID_FILE"
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
-nohup uv run --no-sync uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
+nohup .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
 new_pid="$!"
 echo "$new_pid" > "$PID_FILE"
 
@@ -340,7 +362,7 @@ echo "$new_pid" > "$PID_FILE"
   IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
   BACKEND_API_URL="http://127.0.0.1:${PORT}" \
   NEXT_TELEMETRY_DISABLED=1 \
-  nohup npm run start -- --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 &
+  nohup ./node_modules/.bin/next start --hostname "$WEB_HOST" --port "$WEB_PORT" >> "$WEB_LOG_FILE" 2>&1 &
   echo "$!" > "$WEB_PID_FILE"
 )
 web_pid="$(cat "$WEB_PID_FILE")"
@@ -348,14 +370,14 @@ web_pid="$(cat "$WEB_PID_FILE")"
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
-nohup uv run --no-sync python -m app.workers.notifications >> "$NOTIFICATION_LOG_FILE" 2>&1 &
+nohup .venv/bin/python -m app.workers.notifications >> "$NOTIFICATION_LOG_FILE" 2>&1 &
 notification_pid="$!"
 echo "$notification_pid" > "$NOTIFICATION_PID_FILE"
 
 IK_RELEASE_COMMIT_SHA="$release_commit_sha" \
 IK_RELEASE_BUILD_TIMESTAMP="$release_build_timestamp" \
 PYTHONPATH=backend \
-nohup uv run --no-sync python -m app.workers.reporting >> "$REPORTING_LOG_FILE" 2>&1 &
+nohup .venv/bin/python -m app.workers.reporting >> "$REPORTING_LOG_FILE" 2>&1 &
 reporting_pid="$!"
 echo "$reporting_pid" > "$REPORTING_PID_FILE"
 
@@ -447,4 +469,6 @@ fi
 
 uv run --no-sync python scripts/staging_smoke_test.py "$BASE_URL"
 echo "$remote_rev" > "$REV_FILE"
+deployment_committed=1
+trap - EXIT
 echo "DEPLOY_OK branch=${BRANCH} rev=${remote_rev} api_url=${BASE_URL} web_url=http://${WEB_HOST}:${WEB_PORT} pid=${new_pid} web_pid=${web_pid} notification_pid=${notification_pid} reporting_pid=${reporting_pid} previous=${current_rev}"
