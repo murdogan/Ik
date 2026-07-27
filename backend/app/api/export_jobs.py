@@ -25,7 +25,10 @@ from app.api.errors import (
 from app.api.openapi import EXPORTS_TAG, with_correlation_response_headers
 from app.core.config import Settings
 from app.db.session import DatabaseRuntime
-from app.modules.documents import DOCUMENT_RUNTIME_STATE_KEY, DocumentRuntime
+from app.modules.documents.infrastructure.runtime import (
+    DOCUMENT_RUNTIME_STATE_KEY,
+    DocumentRuntime,
+)
 from app.platform.request_context import RequestContext
 from app.platform.responses import DataEnvelope, data_envelope
 from app.schemas.reporting import ExportDownloadIntentRead, ExportJobCreate, ExportJobRead
@@ -71,9 +74,7 @@ def get_export_job_service(
 async def create_export_job(
     payload: ExportJobCreate,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(
@@ -102,9 +103,7 @@ async def create_export_job(
 async def get_export_job(
     job_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession,
         Depends(
@@ -127,9 +126,7 @@ async def get_export_job(
 async def cancel_export_job(
     job_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession,
         Depends(
@@ -156,9 +153,7 @@ async def cancel_export_job(
 async def create_export_download_intent(
     job_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(

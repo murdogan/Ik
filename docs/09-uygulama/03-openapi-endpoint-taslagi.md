@@ -108,15 +108,17 @@ additive Employee 360 operation'ını ekler; güncel registry 77 generated opera
 | GET | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:read:tenant`; additive version/current-assignment özeti, cross-tenant/missing aynı `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:update:tenant`; compatible partial update, optional optimistic version ve audit |
 | DELETE | `/api/v1/employees/{employee_id}` | P4A uygulandı | `BearerAuth` + `employee:update:tenant`; idempotent archive, retained history ve ilk-transition audit |
+| POST | `/api/v1/employees/{employee_id}/lifecycle-transitions` | P10 doğrulandı | `BearerAuth` + `employee:update:tenant`; explicit optimistic lifecycle transition |
+| POST | `/api/v1/employees/{employee_id}/archive` | P10 doğrulandı | `BearerAuth` + `employee:update:tenant`; terminated-only retained-history archive |
 | GET | `/api/v1/employees/{employee_id}/profile` | P4B uygulandı | `BearerAuth` + `employee:read:tenant`; `{data,meta}` Employee 360 aggregate, independent section versions ve Phase 3 kaynaklı bounded read-only organization history |
 | PATCH | `/api/v1/employees/{employee_id}/profile/personal` | P4B uygulandı | `BearerAuth` + `employee:update:tenant`; expected personal version, core alanlarda expected employee version, atomik allowlisted update/audit |
 | PATCH | `/api/v1/employees/{employee_id}/profile/employment` | P4B uygulandı | `BearerAuth` + `employee:update:tenant`; expected employment version, start date değişiminde expected employee version; lifecycle/assignment write yok |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | P3K doğrulandı | `BearerAuth` + `leave:read:tenant`; read-only manuel özet ve `period_year` filtresi |
 | GET | `/api/v1/leave-requests` | P3K doğrulandı | `BearerAuth` + `leave:read:tenant`; mixed-order cursor ve deprecated offset uyumluluğu |
 | POST | `/api/v1/leave-requests` | P3K doğrulandı | `BearerAuth` + `leave:manage:tenant`; pending create ve tenant-global idempotency |
-| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | P3K doğrulandı | `BearerAuth` + `leave:manage:tenant`; row-lock one-winner ve idempotency |
-| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | P3K doğrulandı | `BearerAuth` + `leave:manage:tenant`; decision note ve row-lock one-winner |
-| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | P3K doğrulandı | `BearerAuth` + `leave:manage:tenant`; pending-only ve row-lock one-winner |
+| POST | `/api/v1/leave-requests/{request_id}/approve` | P6 doğrulandı | `BearerAuth` + current-team veya tenant HR kapsamı; row-lock ve idempotency |
+| POST | `/api/v1/leave-requests/{request_id}/reject` | P6 doğrulandı | `BearerAuth` + current-team veya tenant HR kapsamı; zorunlu karar notu |
+| POST | `/api/v1/leave-requests/{request_id}/cancel` | P6 doğrulandı | `BearerAuth` + own veya tenant HR kapsamı; atomik bakiye iadesi |
 
 F2A historical F1E yüzeyine activation/login/invitation ile üç; F2B refresh/logout/me ile üç;
 F2C user list/detail/update ile üç; F2D role/permission catalog ve exact role replacement ile üç;

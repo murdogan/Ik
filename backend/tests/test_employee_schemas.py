@@ -3,12 +3,13 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from app.models.employee import EmployeeStatus
+from app.models.employee import EmployeeStatus, EmployeeTerminationReason
 from app.platform.pagination import InvalidCursorError, encode_cursor
 from app.schemas.employee import (
     EMPLOYEE_LIST_DEFAULT_LIMIT,
     EMPLOYEE_LIST_MAX_LIMIT,
     EmployeeCreate,
+    EmployeeLifecycleTransition,
     EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
@@ -106,18 +107,16 @@ def test_employee_create_rejects_end_date_for_non_terminated_status(
         )
 
 
-def test_employee_create_allows_same_day_start_and_end_dates() -> None:
-    payload = EmployeeCreate(
-        employee_number="WF-001",
-        first_name="Ada",
-        last_name="Yilmaz",
-        status=EmployeeStatus.TERMINATED,
-        employment_start_date=date(2026, 7, 1),
-        employment_end_date=date(2026, 7, 1),
+def test_employee_lifecycle_transition_allows_same_day_termination() -> None:
+    payload = EmployeeLifecycleTransition(
+        target_status=EmployeeStatus.TERMINATED,
+        expected_version=1,
+        effective_date=date(2026, 7, 1),
+        termination_reason=EmployeeTerminationReason.CONTRACT_END,
     )
 
-    assert payload.employment_end_date == payload.employment_start_date
-    assert payload.status == EmployeeStatus.TERMINATED
+    assert payload.effective_date == date(2026, 7, 1)
+    assert payload.target_status == EmployeeStatus.TERMINATED
 
 
 @pytest.mark.parametrize("value", ["20260701", "2026-W27-3", "2026-02-30"])
@@ -224,19 +223,16 @@ def test_employee_update_rejects_terminated_status_with_explicit_null_end_date()
 
 
 @pytest.mark.parametrize("status", [EmployeeStatus.ACTIVE, EmployeeStatus.ON_LEAVE])
-def test_employee_update_allows_non_terminated_status_with_explicit_null_end_date(
+def test_employee_update_rejects_direct_non_terminated_lifecycle_change(
     status: EmployeeStatus,
 ) -> None:
-    payload = EmployeeUpdate(status=status, employment_end_date=None)
-
-    assert payload.status == status
-    assert payload.employment_end_date is None
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(status=status, employment_end_date=None)
 
 
-def test_employee_update_allows_terminated_status_without_end_date_in_partial_payload() -> None:
-    payload = EmployeeUpdate(status=EmployeeStatus.TERMINATED)
-
-    assert payload.status == EmployeeStatus.TERMINATED
+def test_employee_update_rejects_direct_terminated_lifecycle_change() -> None:
+    with pytest.raises(ValidationError):
+        EmployeeUpdate(status=EmployeeStatus.TERMINATED)
 
 
 def test_employee_update_rejects_datetime_objects_for_date_fields() -> None:

@@ -6,6 +6,8 @@ import {
   type Route,
 } from "@playwright/test";
 
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const PAGE_LIMIT = 25;
 const ENTITY_ID = "fa000000-0000-4000-8000-000000000001";
 const MANAGER_ID = "fb000000-0000-4000-8000-000000000001";
@@ -210,6 +212,14 @@ async function installWorkspaceRoutes(
         status: 200,
         contentType: "application/json",
         body: dataEnvelope({ user: sessionUser }),
+      });
+      return;
+    }
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: dataEnvelope(tenantFeatureCatalog()),
       });
       return;
     }

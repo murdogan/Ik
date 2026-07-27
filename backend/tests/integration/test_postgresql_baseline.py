@@ -402,6 +402,10 @@ def test_tenant_settings_migration_backfills_and_round_trips_postgresql(
         "24h",
     )
 
+    # Later revisions intentionally enable rollout flags. Restore the F1D defaults
+    # before crossing its guarded downgrade boundary; that migration refuses to
+    # discard active overrides.
+    asyncio.run(_restore_feature_defaults(postgres_database_url))
     alembic_command.downgrade(config, "0012_p0f_query_performance")
     assert asyncio.run(_tenant_exists(postgres_database_url, tenant_id)) is True
     alembic_command.upgrade(config, "head")
@@ -480,27 +484,89 @@ def test_f1d_migration_owner_without_bypass_backfills_and_guards_limits(
         asyncio.run(_set_active_employee_limit(postgres_database_url, tenant_id, 250))
         with pytest.raises(
             RuntimeError,
-            match=(
-                "F1D downgrade preflight failed.*"
-                "configured_active_employee_limits=1"
-            ),
+            match=("F1D downgrade preflight failed.*configured_active_employee_limits=1"),
         ):
             alembic_command.downgrade(owner_config, "0014_f1c_postgresql_rls")
 
-        assert asyncio.run(_current_revision(postgres_database_url)) == (
-            "0015_f1d_feature_flags"
-        )
+        assert asyncio.run(_current_revision(postgres_database_url)) == ("0015_f1d_feature_flags")
         assert asyncio.run(_row_security_flags(postgres_database_url, "tenants")) == (
             True,
             True,
         )
-        assert asyncio.run(
-            _row_security_flags(postgres_database_url, "tenant_feature_flags")
-        ) == (True, True)
+        assert asyncio.run(_row_security_flags(postgres_database_url, "tenant_feature_flags")) == (
+            True,
+            True,
+        )
 
         asyncio.run(_set_active_employee_limit(postgres_database_url, tenant_id, None))
         alembic_command.downgrade(owner_config, "0014_f1c_postgresql_rls")
     finally:
+        asyncio.run(
+            _remove_migration_owner(
+                postgres_database_url,
+                migration_role,
+                replacement_owner=admin_user,
+            )
+        )
+
+
+def test_p11_upgrade_runs_as_non_super_migration_owner(
+    postgres_database_url: URL,
+) -> None:
+    migration_role = f"wf_p11_owner_{uuid4().hex[:12]}"
+    admin_user = postgres_database_url.username
+    assert admin_user is not None
+    admin_config = _alembic_config(postgres_database_url)
+    alembic_command.upgrade(admin_config, "0042_p9_privacy_evidence_hardening")
+    asyncio.run(
+        _create_non_bypass_migration_owner(
+            postgres_database_url,
+            migration_role,
+        )
+    )
+    asyncio.run(
+        _prepare_p11_migration_owner(
+            postgres_database_url,
+            migration_role,
+        )
+    )
+    owner_url = postgres_database_url.set(
+        username=migration_role,
+        password=None,
+    )
+    owner_config = _alembic_config(owner_url)
+    try:
+        alembic_command.upgrade(owner_config, "head")
+        assert asyncio.run(_current_revision(postgres_database_url)) == (
+            "0043_p11_employee_lifecycle_profile_lock"
+        )
+        assert asyncio.run(_lifecycle_profile_lock_gateway(postgres_database_url))["owner"] == (
+            "wealthy_falcon_identity_recovery"
+        )
+        assert not asyncio.run(_recovery_owner_can_create_in_public(postgres_database_url))
+
+        alembic_command.downgrade(owner_config, "0042_p9_privacy_evidence_hardening")
+        assert asyncio.run(_current_revision(postgres_database_url)) == (
+            "0042_p9_privacy_evidence_hardening"
+        )
+        assert not asyncio.run(_recovery_owner_can_create_in_public(postgres_database_url))
+
+        alembic_command.upgrade(owner_config, "head")
+        assert asyncio.run(_current_revision(postgres_database_url)) == (
+            "0043_p11_employee_lifecycle_profile_lock"
+        )
+        assert not asyncio.run(_recovery_owner_can_create_in_public(postgres_database_url))
+    finally:
+        if asyncio.run(_current_revision(postgres_database_url)) == (
+            "0043_p11_employee_lifecycle_profile_lock"
+        ):
+            alembic_command.downgrade(admin_config, "0042_p9_privacy_evidence_hardening")
+        asyncio.run(
+            _revoke_p11_migration_owner(
+                postgres_database_url,
+                migration_role,
+            )
+        )
         asyncio.run(
             _remove_migration_owner(
                 postgres_database_url,
@@ -548,11 +614,28 @@ def test_postgresql_catalog_and_constraints_are_native_and_enforced(
 
     assert snapshot["server_version_num"] >= 160_000
     assert snapshot["alembic_version_column_length"] == 128
-    assert snapshot["uuid_columns"] == EXPECTED_UUID_COLUMNS
-    assert snapshot["timestamp_columns"] == EXPECTED_TIMESTAMP_COLUMNS
+    # These P0A catalog invariants remain required as later feature migrations
+    # add more native UUID/timestamptz columns. Full head coverage is enforced by
+    # the metadata-drift test above.
+    assert EXPECTED_UUID_COLUMNS <= snapshot["uuid_columns"]
+    assert EXPECTED_TIMESTAMP_COLUMNS <= snapshot["timestamp_columns"]
     assert EXPECTED_CHECK_CONSTRAINTS <= snapshot["check_constraints"]
     assert EXPECTED_NAMED_UNIQUE_CONSTRAINTS <= snapshot["unique_constraints"]
-    assert snapshot["foreign_key_counts"] == EXPECTED_FOREIGN_KEY_COUNTS
+    assert all(
+        snapshot["foreign_key_counts"].get(table_name, 0) >= expected_count
+        for table_name, expected_count in EXPECTED_FOREIGN_KEY_COUNTS.items()
+    )
+    assert asyncio.run(_lifecycle_profile_lock_gateway(migrated_postgres_database)) == {
+        "security_definer": True,
+        "volatility": "v",
+        "owner": "wealthy_falcon_identity_recovery",
+        "configuration": ["search_path=pg_catalog, public"],
+        "tenant_execute": True,
+        "platform_execute": False,
+        "authentication_execute": False,
+        "tenant_table_update": False,
+        "tenant_column_update": False,
+    }
 
     asyncio.run(_assert_constraints_reject_invalid_rows(migrated_postgres_database))
 
@@ -586,8 +669,9 @@ def test_full_api_smoke_uses_alembic_migrated_postgresql(
 
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     assert result.returncode == 0, output
+    asyncio.run(_assert_lifecycle_profile_lock_boundaries(postgres_database_url))
     assert "BACKEND_SMOKE_OK" in result.stdout
-    assert "documented_endpoints=75" in result.stdout
+    assert "documented_endpoints=80" in result.stdout
 
 
 def _alembic_config(database_url: URL) -> Config:
@@ -741,9 +825,7 @@ async def _create_non_bypass_migration_owner(
             await connection.exec_driver_sql(
                 f"ALTER DATABASE {quoted_database} OWNER TO {quoted_role}"
             )
-            await connection.exec_driver_sql(
-                f"ALTER SCHEMA public OWNER TO {quoted_role}"
-            )
+            await connection.exec_driver_sql(f"ALTER SCHEMA public OWNER TO {quoted_role}")
             role = (
                 await connection.execute(
                     text(
@@ -768,9 +850,7 @@ async def _remove_migration_owner(
     try:
         async with engine.begin() as connection:
             if not await connection.scalar(
-                text(
-                    "select exists(select 1 from pg_catalog.pg_roles where rolname = :role_name)"
-                ),
+                text("select exists(select 1 from pg_catalog.pg_roles where rolname = :role_name)"),
                 {"role_name": role_name},
             ):
                 return
@@ -784,11 +864,70 @@ async def _remove_migration_owner(
             await connection.exec_driver_sql(
                 f"ALTER DATABASE {quoted_database} OWNER TO {quoted_replacement}"
             )
-            await connection.exec_driver_sql(
-                f"ALTER SCHEMA public OWNER TO {quoted_replacement}"
-            )
+            await connection.exec_driver_sql(f"ALTER SCHEMA public OWNER TO {quoted_replacement}")
             await connection.exec_driver_sql(f"DROP OWNED BY {quoted_role}")
             await connection.exec_driver_sql(f"DROP ROLE {quoted_role}")
+    finally:
+        await engine.dispose()
+
+
+async def _prepare_p11_migration_owner(
+    database_url: URL,
+    role_name: str,
+) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            quote = connection.dialect.identifier_preparer.quote
+            quoted_role = quote(role_name)
+            await connection.exec_driver_sql(f"ALTER TABLE alembic_version OWNER TO {quoted_role}")
+            await connection.exec_driver_sql(
+                f"ALTER TABLE employee_profile_change_requests OWNER TO {quoted_role}"
+            )
+            await connection.exec_driver_sql(
+                f'GRANT "wealthy_falcon_identity_recovery" TO {quoted_role}'
+            )
+            assert await connection.scalar(
+                text("select pg_has_role(:role_name, 'wealthy_falcon_identity_recovery', 'SET')"),
+                {"role_name": role_name},
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _revoke_p11_migration_owner(
+    database_url: URL,
+    role_name: str,
+) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            if not await connection.scalar(
+                text("select exists(select 1 from pg_catalog.pg_roles where rolname = :role_name)"),
+                {"role_name": role_name},
+            ):
+                return
+            quoted_role = connection.dialect.identifier_preparer.quote(role_name)
+            await connection.exec_driver_sql(
+                f'REVOKE "wealthy_falcon_identity_recovery" FROM {quoted_role}'
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _recovery_owner_can_create_in_public(database_url: URL) -> bool:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            return bool(
+                await connection.scalar(
+                    text(
+                        "select has_schema_privilege("
+                        "'wealthy_falcon_identity_recovery', 'public', 'CREATE'"
+                        ")"
+                    )
+                )
+            )
     finally:
         await engine.dispose()
 
@@ -799,13 +938,32 @@ async def _tenant_feature_count(database_url: URL, tenant_id) -> int:
         async with engine.connect() as connection:
             return int(
                 await connection.scalar(
-                    text(
-                        "select count(*) from tenant_feature_flags "
-                        "where tenant_id = :tenant_id"
-                    ),
+                    text("select count(*) from tenant_feature_flags where tenant_id = :tenant_id"),
                     {"tenant_id": tenant_id},
                 )
                 or 0
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _restore_feature_defaults(database_url: URL) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """
+                    update tenant_feature_flags
+                    set enabled = case key
+                        when 'employees' then true
+                        when 'leave' then true
+                        when 'reporting' then true
+                        else false
+                    end,
+                    updated_at = now()
+                    """
+                )
             )
     finally:
         await engine.dispose()
@@ -886,10 +1044,7 @@ async def _set_active_employee_limit(
     try:
         async with engine.begin() as connection:
             await connection.execute(
-                text(
-                    "update tenants set active_employee_limit = :value "
-                    "where id = :tenant_id"
-                ),
+                text("update tenants set active_employee_limit = :value where id = :tenant_id"),
                 {"tenant_id": tenant_id, "value": value},
             )
     finally:
@@ -983,16 +1138,11 @@ async def _catalog_snapshot(database_url: URL) -> dict[str, object]:
         "alembic_version_column_length": alembic_version_column_length,
         "uuid_columns": uuid_columns,
         "timestamp_columns": timestamp_columns,
-        "check_constraints": {
-            row["conname"] for row in constraints if row["contype"] == "c"
-        },
-        "unique_constraints": {
-            row["conname"] for row in constraints if row["contype"] == "u"
-        },
+        "check_constraints": {row["conname"] for row in constraints if row["contype"] == "c"},
+        "unique_constraints": {row["conname"] for row in constraints if row["contype"] == "u"},
         "foreign_key_counts": {
             table_name: sum(
-                row["table_name"] == table_name and row["contype"] == "f"
-                for row in constraints
+                row["table_name"] == table_name and row["contype"] == "f" for row in constraints
             )
             for table_name in EXPECTED_FOREIGN_KEY_COUNTS
         },
@@ -1012,6 +1162,146 @@ async def _typed_columns(
         {"postgres_type_name": postgres_type_name},
     )
     return {(row.table_name, row.column_name) for row in rows}
+
+
+async def _lifecycle_profile_lock_gateway(database_url: URL) -> dict[str, object]:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            row = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                        select procedure.prosecdef as security_definer,
+                               procedure.provolatile::text as volatility,
+                               owner.rolname as owner,
+                               procedure.proconfig as configuration,
+                               has_function_privilege(
+                                   'wealthy_falcon_app', procedure.oid, 'EXECUTE'
+                               ) as tenant_execute,
+                               has_function_privilege(
+                                   'wealthy_falcon_platform', procedure.oid, 'EXECUTE'
+                               ) as platform_execute,
+                               has_function_privilege(
+                                   'wealthy_falcon_authentication', procedure.oid, 'EXECUTE'
+                               ) as authentication_execute,
+                               has_table_privilege(
+                                   'wealthy_falcon_app',
+                                   'public.employee_profiles',
+                                   'UPDATE'
+                               ) as tenant_table_update,
+                               has_any_column_privilege(
+                                   'wealthy_falcon_app',
+                                   'public.employee_profiles',
+                                   'UPDATE'
+                               ) as tenant_column_update
+                        from pg_catalog.pg_proc as procedure
+                        join pg_catalog.pg_namespace as namespace
+                          on namespace.oid = procedure.pronamespace
+                        join pg_catalog.pg_roles as owner
+                          on owner.oid = procedure.proowner
+                        where namespace.nspname = 'public'
+                          and procedure.proname = 'lock_employee_profile_for_command'
+                        """
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            return dict(row)
+    finally:
+        await engine.dispose()
+
+
+async def _assert_lifecycle_profile_lock_boundaries(database_url: URL) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            authorized_context = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                        select memberships.tenant_id,
+                               memberships.legacy_user_id as actor_id,
+                               memberships.id as membership_id
+                        from tenant_memberships as memberships
+                        join membership_roles
+                          on membership_roles.tenant_id = memberships.tenant_id
+                         and membership_roles.membership_id = memberships.id
+                         and membership_roles.active is true
+                        join role_permissions
+                          on role_permissions.role_id = membership_roles.role_id
+                        join permissions
+                          on permissions.id = role_permissions.permission_id
+                         and permissions.code = 'employee:update:tenant'
+                        where memberships.status = 'active'
+                        order by memberships.tenant_id, memberships.id
+                        limit 1
+                        """
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            own_employee_id = await connection.scalar(
+                text("select id from employees where tenant_id = :tenant_id order by id limit 1"),
+                {"tenant_id": authorized_context["tenant_id"]},
+            )
+            other_employee_id = await connection.scalar(
+                text(
+                    "select id from employees "
+                    "where tenant_id <> :tenant_id order by tenant_id, id limit 1"
+                ),
+                {"tenant_id": authorized_context["tenant_id"]},
+            )
+            assert own_employee_id is not None
+            assert other_employee_id is not None
+            await connection.commit()
+
+            async with connection.begin():
+                await connection.exec_driver_sql('SET LOCAL ROLE "wealthy_falcon_app"')
+                await connection.exec_driver_sql(
+                    f"SET LOCAL app.tenant_id = '{authorized_context['tenant_id']}'"
+                )
+                assert (
+                    await connection.scalar(
+                        text("select public.lock_employee_profile_for_command(:employee_id)"),
+                        {"employee_id": own_employee_id},
+                    )
+                    is False
+                )
+
+            async with connection.begin():
+                await connection.exec_driver_sql('SET LOCAL ROLE "wealthy_falcon_app"')
+                await connection.exec_driver_sql(
+                    f"SET LOCAL app.tenant_id = '{authorized_context['tenant_id']}'"
+                )
+                await connection.exec_driver_sql(
+                    f"SET LOCAL app.actor_id = '{authorized_context['actor_id']}'"
+                )
+                await connection.exec_driver_sql(
+                    f"SET LOCAL app.membership_id = '{authorized_context['membership_id']}'"
+                )
+                assert (
+                    await connection.scalar(
+                        text("select public.lock_employee_profile_for_command(:employee_id)"),
+                        {"employee_id": other_employee_id},
+                    )
+                    is False
+                )
+                assert (
+                    await connection.scalar(
+                        text("select public.lock_employee_profile_for_command(:employee_id)"),
+                        {"employee_id": own_employee_id},
+                    )
+                    is True
+                )
+    finally:
+        await engine.dispose()
 
 
 async def _assert_constraints_reject_invalid_rows(database_url: URL) -> None:

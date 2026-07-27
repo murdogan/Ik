@@ -3,7 +3,7 @@ from datetime import date
 from types import SimpleNamespace
 from typing import Annotated
 from unittest.mock import AsyncMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from app.api.auth_dependencies import require_authenticated_session
@@ -16,6 +16,10 @@ from app.db.session import get_session
 from app.main import create_app
 from app.models.audit import AuditEvent
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.tenant import Tenant, TenantStatus
 from app.platform.db import SqlAlchemyUnitOfWork
 from app.platform.request_context import RequestContext
@@ -92,6 +96,26 @@ async def employee_database() -> AsyncIterator[EmployeeDatabase]:
                     employee_number="WF-001",
                     first_name="Other",
                 ),
+                EmployeePersonalProfile(
+                    id=uuid4(),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                ),
+                EmployeeEmploymentProfile(
+                    id=uuid4(),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                ),
+                EmployeePersonalProfile(
+                    id=uuid4(),
+                    tenant_id=OTHER_TENANT_ID,
+                    employee_id=OTHER_EMPLOYEE_ID,
+                ),
+                EmployeeEmploymentProfile(
+                    id=uuid4(),
+                    tenant_id=OTHER_TENANT_ID,
+                    employee_id=OTHER_EMPLOYEE_ID,
+                ),
             ]
         )
         await session.commit()
@@ -156,6 +180,7 @@ async def test_employee_service_archive_does_not_commit_and_can_be_rolled_back(
 ) -> None:
     _, session_factory = employee_database
     async with session_factory() as session:
+        await _make_employee_archivable(session)
         commit = _forbid_service_commit(session)
         flush = _observe_service_flush(session)
 
@@ -329,6 +354,7 @@ async def test_employee_command_handler_audits_only_first_archive(
 ) -> None:
     _, session_factory = employee_database
     async with session_factory() as session:
+        await _make_employee_archivable(session)
         handler = EmployeeCommandHandler(
             service=EmployeeService(session),
             unit_of_work=SqlAlchemyUnitOfWork(session),
@@ -374,11 +400,14 @@ async def test_employee_command_handler_rolls_back_when_service_fails_after_flus
         flush.assert_awaited_once_with()
 
     async with session_factory() as verification_session:
-        assert await _employee_by_number(
-            verification_session,
-            TENANT_ID,
-            "WF-ROLLBACK",
-        ) is None
+        assert (
+            await _employee_by_number(
+                verification_session,
+                TENANT_ID,
+                "WF-ROLLBACK",
+            )
+            is None
+        )
         assert await _employee_count(verification_session, OTHER_TENANT_ID) == 1
 
 
@@ -583,6 +612,15 @@ def _employee(
         status=EmployeeStatus.ACTIVE.value,
         employment_start_date=date(2026, 7, 1),
     )
+
+
+async def _make_employee_archivable(session: AsyncSession) -> None:
+    employee = await session.get(Employee, EMPLOYEE_ID)
+    assert employee is not None
+    employee.status = EmployeeStatus.TERMINATED.value
+    employee.employment_end_date = date(2026, 7, 31)
+    employee.termination_reason = "resignation"
+    await session.commit()
 
 
 async def _employee_by_number(

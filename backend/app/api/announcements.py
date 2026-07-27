@@ -49,9 +49,7 @@ def get_service(session: Annotated[AsyncSession, Depends(get_session)]) -> Annou
 def get_handler(
     service: Annotated[AnnouncementService, Depends(get_service)],
     unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
-    idempotency: Annotated[
-        CommandIdempotencyService, Depends(get_command_idempotency_service)
-    ],
+    idempotency: Annotated[CommandIdempotencyService, Depends(get_command_idempotency_service)],
 ) -> AnnouncementCommandHandler:
     return AnnouncementCommandHandler(service, unit_of_work, idempotency)
 
@@ -59,9 +57,7 @@ def get_handler(
 @router.get("", response_model=ListEnvelope[AnnouncementSummaryRead])
 async def list_announcements(
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(require_any_permission("announcement:read:own", "announcement:manage:tenant")),
@@ -100,9 +96,7 @@ async def list_announcements(
 async def create_announcement(
     payload: AnnouncementCreate,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("announcement:manage:tenant"))
     ],
@@ -121,18 +115,14 @@ async def create_announcement(
 @router.get("/target-options", response_model=DataEnvelope[AnnouncementTargetOptionsRead])
 async def get_announcement_target_options(
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("announcement:manage:tenant"))
     ],
     service: Annotated[AnnouncementService, Depends(get_service)],
 ) -> DataEnvelope[AnnouncementTargetOptionsRead]:
     _no_store(response)
-    result = await service.target_options(
-        tenant_id=request_context.require_tenant().tenant_id
-    )
+    result = await service.target_options(tenant_id=request_context.require_tenant().tenant_id)
     return data_envelope(result, request_context)
 
 
@@ -140,9 +130,7 @@ async def get_announcement_target_options(
 async def get_announcement(
     announcement_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(require_any_permission("announcement:read:own", "announcement:manage:tenant")),
@@ -166,9 +154,7 @@ async def update_announcement(
     announcement_id: UUID,
     payload: AnnouncementUpdate,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("announcement:manage:tenant"))
     ],
@@ -190,9 +176,7 @@ async def publish_announcement(
     announcement_id: UUID,
     payload: AnnouncementVersionAction,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("announcement:manage:tenant"))
     ],
@@ -215,9 +199,7 @@ async def archive_announcement(
     announcement_id: UUID,
     payload: AnnouncementVersionAction,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("announcement:manage:tenant"))
     ],
@@ -240,9 +222,7 @@ async def read_announcement(
     announcement_id: UUID,
     payload: AnnouncementVersionAction,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("announcement:read:own"))
     ],
@@ -265,9 +245,7 @@ async def acknowledge_announcement(
     announcement_id: UUID,
     payload: AnnouncementVersionAction,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("announcement:read:own"))
     ],
@@ -307,9 +285,7 @@ async def _action(
 
 
 def _authorize_scope(authorized: AuthenticatedSession, scope: str) -> None:
-    required = (
-        "announcement:manage:tenant" if scope == "manage" else "announcement:read:own"
-    )
+    required = "announcement:manage:tenant" if scope == "manage" else "announcement:read:own"
     if required not in authorized.user.permissions:
         raise Phase7AccessDeniedError
 

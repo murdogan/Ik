@@ -1,5 +1,7 @@
 import { expect, test, type Route } from "@playwright/test";
 
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const PAGE_LIMIT = 25;
 
 const sessionUser = {
@@ -161,6 +163,15 @@ test("HR lazily expands, creates, renames, moves, archives, and reads department
         status: 200,
         contentType: "application/json",
         body: envelope({ user: sessionUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
       });
       return;
     }

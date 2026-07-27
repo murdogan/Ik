@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.models.leave_request import LeaveRequestStatus
 from app.platform.pagination import decode_cursor, encode_cursor
+from app.schemas.date_fields import DateOnly
 
 LEAVE_LIST_DEFAULT_LIMIT = 50
 LEAVE_LIST_MAX_LIMIT = 200
@@ -113,7 +114,7 @@ class LeaveTypeRead(BaseModel):
 class HolidayEntryCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    holiday_date: date
+    holiday_date: DateOnly
     name: str = Field(min_length=1, max_length=200)
 
 
@@ -200,7 +201,7 @@ class LeavePolicyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     leave_type_id: UUID
-    effective_from: date
+    effective_from: DateOnly
     paid: bool
     document_required: bool
     negative_balance_allowed: bool = False
@@ -273,7 +274,7 @@ class LeaveAdjustmentCreate(BaseModel):
         le=Decimal("3660"),
         multiple_of=Decimal("0.01"),
     )
-    effective_date: date
+    effective_date: DateOnly
     reason: str = Field(min_length=3, max_length=500)
 
     @field_validator("amount_days")
@@ -294,8 +295,8 @@ class LeaveRequestCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     leave_type_id: UUID
-    start_date: date
-    end_date: date
+    start_date: DateOnly
+    end_date: DateOnly
     employee_note: str | None = Field(default=None, max_length=1000)
     document_id: UUID | None = None
 
@@ -449,8 +450,8 @@ class LeaveRequestListFilters(BaseModel):
     status: LeaveRequestStatus | None = None
     scope: LeaveAccessScope | None = None
     employee_id: UUID | None = None
-    start_date: date | None = None
-    end_date: date | None = None
+    start_date: DateOnly | None = None
+    end_date: DateOnly | None = None
 
     @model_validator(mode="after")
     def validate_date_order(self) -> Self:

@@ -12,7 +12,9 @@ export interface PermissionDetail {
   code: string;
   resource: string;
   action: string;
-  scope: "own" | "team" | "department" | "branch" | "tenant" | "platform";
+  target: string;
+  target_type: "scope" | "field";
+  scope: "own" | "team" | "department" | "branch" | "tenant" | "platform" | null;
   description: string;
 }
 

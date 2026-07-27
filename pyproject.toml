@@ -30,7 +30,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
-pythonpath = ["backend"]
+pythonpath = ["backend", "."]
 asyncio_mode = "auto"
 addopts = "-m 'not postgres'"
 markers = [
@@ -43,3 +43,7 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+# Applied migrations are immutable operational artifacts.
+exclude = ["backend/alembic/versions/*.py"]

@@ -1,0 +1,1 @@
+"""Reporting use-case contracts."""

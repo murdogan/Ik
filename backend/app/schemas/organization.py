@@ -200,9 +200,7 @@ class LegalEntityListCursor(BaseModel):
 
     @classmethod
     def from_token(cls, token: str) -> Self:
-        return cls.model_validate(
-            decode_cursor(token, expected_resource="legal_entities")
-        )
+        return cls.model_validate(decode_cursor(token, expected_resource="legal_entities"))
 
     def to_token(self) -> str:
         return encode_cursor("legal_entities", self.model_dump(mode="json"))
@@ -253,10 +251,10 @@ class BranchListPagination(BaseModel):
     def cursor_matches_filters(self) -> bool:
         if self.cursor is None:
             return True
-        return (
-            self.cursor.status == (self.status.value if self.status is not None else "")
-            and self.cursor.legal_entity_id
-            == (str(self.legal_entity_id) if self.legal_entity_id is not None else "")
+        return self.cursor.status == (
+            self.status.value if self.status is not None else ""
+        ) and self.cursor.legal_entity_id == (
+            str(self.legal_entity_id) if self.legal_entity_id is not None else ""
         )
 
     def next_cursor(self, *, code: str, branch_id: UUID) -> str:
@@ -264,9 +262,7 @@ class BranchListPagination(BaseModel):
             code=code,
             id=branch_id,
             status=self.status.value if self.status is not None else "",
-            legal_entity_id=(
-                str(self.legal_entity_id) if self.legal_entity_id is not None else ""
-            ),
+            legal_entity_id=(str(self.legal_entity_id) if self.legal_entity_id is not None else ""),
         ).to_token()
 
 

@@ -1,5 +1,8 @@
 import { expect, test, type Route } from "@playwright/test";
 
+import { employeeProfileInsights } from "./support/employee-profile";
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const PAGE_LIMIT = 25;
 const CREATED_EMPLOYEE_ID = "fa000000-0000-4000-8000-000000000099";
 
@@ -159,6 +162,7 @@ const createdProfile = {
     email: createdEmployee.email,
     status: createdEmployee.status,
     employee_version: createdEmployee.version,
+    archived_at: null,
   },
   personal: {
     preferred_name: null,
@@ -168,6 +172,8 @@ const createdProfile = {
   },
   employment: {
     employment_start_date: createdEmployee.employment_start_date,
+    employment_end_date: null,
+    termination_reason: null,
     contract_type: null,
     work_type: null,
     version: 1,
@@ -226,6 +232,29 @@ test("HR filters and pages the directory, creates an employee, and opens its sum
         status: 200,
         contentType: "application/json",
         body: envelope({ user: hrUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
+
+    if (
+      path ===
+        `/api/v1/employees/${CREATED_EMPLOYEE_ID}/profile/insights` &&
+      request.method() === "GET"
+    ) {
+      expect(url.searchParams.get("limit")).toBe("20");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(employeeProfileInsights()),
       });
       return;
     }
@@ -415,6 +444,14 @@ test("employee-read permission controls navigation and blocks direct directory A
         status: 200,
         contentType: "application/json",
         body: envelope({ user: employeeUser }),
+      });
+      return;
+    }
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
       });
       return;
     }

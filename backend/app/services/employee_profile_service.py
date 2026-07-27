@@ -313,7 +313,18 @@ class EmployeeProfileService:
         if lock:
             # Match lifecycle/archive lock order so an update that waited for archive rechecks
             # the archived predicate before it can mutate retained profile data.
-            for model in (EmployeePersonalProfile, EmployeeEmploymentProfile):
+            profile_models = (
+                EmployeePersonalProfile,
+                EmployeeEmploymentProfile,
+            )
+            if self._is_postgresql:
+                locked = await self.session.scalar(
+                    select(func.public.lock_employee_profile_for_command(employee_id))
+                )
+                if locked is not True:
+                    raise EmployeeProfileNotFoundError
+                profile_models = (EmployeeEmploymentProfile,)
+            for model in profile_models:
                 await self.session.scalar(
                     select(model.id)
                     .where(

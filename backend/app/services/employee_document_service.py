@@ -27,7 +27,7 @@ from app.models.employee_document import (
     EmployeeDocumentUploadIntent,
 )
 from app.models.identity import TenantMembership
-from app.modules.documents.scanning import (
+from app.modules.documents.infrastructure.scanning import (
     MalwareScanError,
     MalwareScanner,
     MalwareScanVerdict,
@@ -183,29 +183,26 @@ class EmployeeDocumentQueryService:
             ),
             else_=1,
         )
-        candidates = (
-            select(
-                EmployeeDocument.id.label("document_id"),
-                EmployeeDocument.document_type_id.label("document_type_id"),
-                EmployeeDocument.expires_on.label("expires_on"),
-                func.row_number()
-                .over(
-                    partition_by=EmployeeDocument.document_type_id,
-                    order_by=(
-                        still_current.asc(),
-                        EmployeeDocument.expires_on.desc().nulls_first(),
-                        EmployeeDocument.created_at.desc(),
-                        EmployeeDocument.id.desc(),
-                    ),
-                )
-                .label("candidate_rank"),
+        candidates = select(
+            EmployeeDocument.id.label("document_id"),
+            EmployeeDocument.document_type_id.label("document_type_id"),
+            EmployeeDocument.expires_on.label("expires_on"),
+            func.row_number()
+            .over(
+                partition_by=EmployeeDocument.document_type_id,
+                order_by=(
+                    still_current.asc(),
+                    EmployeeDocument.expires_on.desc().nulls_first(),
+                    EmployeeDocument.created_at.desc(),
+                    EmployeeDocument.id.desc(),
+                ),
             )
-            .where(
-                EmployeeDocument.tenant_id == tenant_id,
-                EmployeeDocument.employee_id == employee_id,
-                EmployeeDocument.processing_state == DocumentProcessingState.AVAILABLE.value,
-                EmployeeDocument.archived_at.is_(None),
-            )
+            .label("candidate_rank"),
+        ).where(
+            EmployeeDocument.tenant_id == tenant_id,
+            EmployeeDocument.employee_id == employee_id,
+            EmployeeDocument.processing_state == DocumentProcessingState.AVAILABLE.value,
+            EmployeeDocument.archived_at.is_(None),
         )
         if own_only:
             candidates = candidates.where(EmployeeDocument.employee_visible.is_(True))
@@ -312,8 +309,7 @@ class EmployeeDocumentService:
                             DocumentType.archived_at,
                             DocumentType.name,
                             DocumentType.id,
-                        )
-                        .limit(DOCUMENT_LIST_LIMIT)
+                        ).limit(DOCUMENT_LIST_LIMIT)
                     )
                 )
         return [_document_type_read(record) for record in records]
@@ -340,9 +336,7 @@ class EmployeeDocumentService:
                 if existing is not None:
                     raise DocumentConflictError("Document type code is already in use")
                 type_count = await session.scalar(
-                    select(func.count(DocumentType.id)).where(
-                        DocumentType.tenant_id == tenant_id
-                    )
+                    select(func.count(DocumentType.id)).where(DocumentType.tenant_id == tenant_id)
                 )
                 if int(type_count or 0) >= DOCUMENT_LIST_LIMIT:
                     raise DocumentConflictError("Tenant document type limit has been reached")
@@ -799,6 +793,7 @@ class EmployeeDocumentService:
                 )
                 session.add_all((document, intent))
                 await session.flush()
+                await session.refresh(document)
                 await self._record_user_audit(
                     session,
                     tenant_id=tenant_id,
@@ -1218,8 +1213,7 @@ class EmployeeDocumentService:
                     return _snapshot(document, intent), _document_read(document, document_type)
                 if (
                     document.archived_at is not None
-                    or document.processing_state
-                    != DocumentProcessingState.PENDING_UPLOAD.value
+                    or document.processing_state != DocumentProcessingState.PENDING_UPLOAD.value
                     or intent.status != DocumentUploadIntentStatus.ACTIVE.value
                 ):
                     raise DocumentConflictError("Upload cannot be finalized in its current state")
@@ -1477,8 +1471,7 @@ class EmployeeDocumentService:
         if _normalize_content_type(head.content_type) != snapshot.content_type:
             raise DocumentValidationError("Stored object MIME type does not match upload intent")
         if any(
-            head.metadata.get(name) != value
-            for name, value in snapshot.expected_metadata.items()
+            head.metadata.get(name) != value for name, value in snapshot.expected_metadata.items()
         ):
             raise DocumentValidationError("Stored object metadata does not match upload intent")
 
@@ -1782,8 +1775,7 @@ def summarize_checklist(
 ) -> EmployeeDocumentSummaryRead:
     return EmployeeDocumentSummaryRead(
         missing=sum(
-            item.required and item.status is DocumentChecklistStatus.MISSING
-            for item in checklist
+            item.required and item.status is DocumentChecklistStatus.MISSING for item in checklist
         ),
         available=sum(item.status is DocumentChecklistStatus.AVAILABLE for item in checklist),
         expiring=sum(item.status is DocumentChecklistStatus.EXPIRING for item in checklist),
@@ -1828,10 +1820,7 @@ def _final_object_key(
     document_id: UUID,
     object_id: UUID,
 ) -> str:
-    return (
-        f"tenants/{tenant_id}/employees/{employee_id}/documents/"
-        f"{document_id}/{object_id}"
-    )
+    return f"tenants/{tenant_id}/employees/{employee_id}/documents/{document_id}/{object_id}"
 
 
 def _snapshot(

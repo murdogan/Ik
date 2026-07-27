@@ -95,9 +95,7 @@ async def test_login_user_list_and_audit_list_stay_bounded(
                 authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
             )
             statements.clear()
-            user_page = await UserAdministrationService(
-                session_factory=session_factory
-            ).list_users(
+            user_page = await UserAdministrationService(session_factory=session_factory).list_users(
                 request_context=request_context,
                 pagination=UserListPagination(limit=25),
                 granted_permissions=("user:read:tenant",),

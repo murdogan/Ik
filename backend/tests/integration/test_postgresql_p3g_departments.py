@@ -248,16 +248,22 @@ async def _assert_security_catalog(engine: AsyncEngine) -> None:
             PLATFORM_APPLICATION_ROLE,
             AUTHENTICATION_APPLICATION_ROLE,
         ):
-            assert await _table_privileges(
-                connection,
-                table_name="departments",
-                role_name=role_name,
-            ) == set()
-            assert await _table_privileges(
-                connection,
-                table_name="department_hierarchy_write_fences",
-                role_name=role_name,
-            ) == set()
+            assert (
+                await _table_privileges(
+                    connection,
+                    table_name="departments",
+                    role_name=role_name,
+                )
+                == set()
+            )
+            assert (
+                await _table_privileges(
+                    connection,
+                    table_name="department_hierarchy_write_fences",
+                    role_name=role_name,
+                )
+                == set()
+            )
 
         for column_name in ALL_DEPARTMENT_COLUMNS:
             has_update = bool(
@@ -634,10 +640,7 @@ async def _assert_snapshot_isolation_opposing_moves_cannot_cycle(
     async with engine.begin() as reset_connection:
         await _set_local_tenant_role(reset_connection, TENANT_A_ID)
         await reset_connection.execute(
-            text(
-                "update departments set parent_id = null "
-                "where id in (:first_id, :second_id)"
-            ),
+            text("update departments set parent_id = null where id in (:first_id, :second_id)"),
             {
                 "first_id": REPEATABLE_RACE_A_ID,
                 "second_id": REPEATABLE_RACE_B_ID,
@@ -695,8 +698,7 @@ async def _assert_snapshot_isolation_opposing_moves_cannot_cycle(
             (
                 await connection.execute(
                     text(
-                        "select id, parent_id from departments "
-                        "where id in (:first_id, :second_id)"
+                        "select id, parent_id from departments where id in (:first_id, :second_id)"
                     ),
                     {
                         "first_id": REPEATABLE_RACE_A_ID,
@@ -755,10 +757,7 @@ async def _table_privileges(
         "TRIGGER",
     ):
         if await connection.scalar(
-            text(
-                "select has_table_privilege("
-                ":role_name, :qualified_table_name, :privilege)"
-            ),
+            text("select has_table_privilege(:role_name, :qualified_table_name, :privilege)"),
             {
                 "role_name": role_name,
                 "qualified_table_name": f"public.{table_name}",

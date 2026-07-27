@@ -91,13 +91,11 @@ def test_employee_has_normalized_tenant_uniqueness_for_number_and_work_email() -
     assert columns["email_normalized"].computed is not None
     assert columns["email_normalized"].nullable is True
     assert tuple(
-        column.name
-        for column in indexes["uq_employees_tenant_employee_number_normalized"].columns
+        column.name for column in indexes["uq_employees_tenant_employee_number_normalized"].columns
     ) == ("tenant_id", "employee_number_normalized")
     assert indexes["uq_employees_tenant_employee_number_normalized"].unique is True
     assert tuple(
-        column.name
-        for column in indexes["uq_employees_tenant_email_normalized"].columns
+        column.name for column in indexes["uq_employees_tenant_email_normalized"].columns
     ) == ("tenant_id", "email_normalized")
     assert indexes["uq_employees_tenant_email_normalized"].unique is True
     assert "ck_employees_employee_number_not_blank" in check_names
@@ -192,9 +190,7 @@ def test_employee_has_tenant_archive_index() -> None:
 def test_employee_has_immutable_id_partial_directory_cursor_indexes() -> None:
     indexes = {index.name: index for index in Employee.__table__.indexes}
     directory_index = indexes["ix_employees_tenant_directory_cursor"]
-    status_directory_index = indexes[
-        "ix_employees_tenant_status_directory_cursor"
-    ]
+    status_directory_index = indexes["ix_employees_tenant_status_directory_cursor"]
 
     assert tuple(column.name for column in directory_index.columns) == (
         "tenant_id",
@@ -206,9 +202,7 @@ def test_employee_has_immutable_id_partial_directory_cursor_indexes() -> None:
         "id",
     )
     for index in (directory_index, status_directory_index):
-        assert str(index.dialect_options["postgresql"]["where"]) == (
-            "archived_at IS NULL"
-        )
+        assert str(index.dialect_options["postgresql"]["where"]) == ("archived_at IS NULL")
         assert str(index.dialect_options["sqlite"]["where"]) == "archived_at IS NULL"
 
 
@@ -218,14 +212,10 @@ def test_employee_has_postgresql_search_indexes() -> None:
     assert tuple(
         column.name for column in indexes["ix_employees_employee_number_trgm"].columns
     ) == ("employee_number",)
-    assert tuple(column.name for column in indexes["ix_employees_email_trgm"].columns) == (
-        "email",
-    )
+    assert tuple(column.name for column in indexes["ix_employees_email_trgm"].columns) == ("email",)
     assert tuple(
-        column.name
-        for column in indexes["ix_employees_tenant_department_normalized"].columns
+        column.name for column in indexes["ix_employees_tenant_department_normalized"].columns
     ) == ("tenant_id", "department_normalized")
     assert (
-        indexes["ix_employees_employee_number_trgm"].dialect_options["postgresql"]["using"]
-        == "gin"
+        indexes["ix_employees_employee_number_trgm"].dialect_options["postgresql"]["using"] == "gin"
     )

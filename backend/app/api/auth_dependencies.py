@@ -109,16 +109,12 @@ def get_password_recovery_service(
     settings: Annotated[Settings, Depends(get_application_settings)],
 ) -> PasswordRecoveryService:
     delivery = (
-        LocalConsolePasswordResetDelivery()
-        if settings.environment in {"local", "dev"}
-        else None
+        LocalConsolePasswordResetDelivery() if settings.environment in {"local", "dev"} else None
     )
     return PasswordRecoveryService(
         session_factory=database_runtime.session_factory,
         password_manager=auth_runtime.password_manager,
-        reset_ttl=timedelta(
-            minutes=settings.auth_password_reset_token_ttl_minutes
-        ),
+        reset_ttl=timedelta(minutes=settings.auth_password_reset_token_ttl_minutes),
         frontend_base_url=settings.frontend_base_url,
         delivery=delivery,
     )

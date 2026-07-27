@@ -75,9 +75,7 @@ class OrgChartPagination(BaseModel):
             return True
         if self.parent_id is not None and self.cursor.node_type != "employee":
             return False
-        return self.cursor.parent_id == (
-            str(self.parent_id) if self.parent_id is not None else ""
-        )
+        return self.cursor.parent_id == (str(self.parent_id) if self.parent_id is not None else "")
 
     def next_cursor(
         self,

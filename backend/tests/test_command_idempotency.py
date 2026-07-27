@@ -1,11 +1,13 @@
 from collections.abc import AsyncIterator
-from datetime import date
-from uuid import UUID
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from uuid import UUID, uuid5
 
 import pytest
 from app.db.base import Base
 from app.models.command_idempotency import CommandIdempotency
 from app.models.employee import Employee, EmployeeStatus
+from app.models.leave import LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
@@ -42,6 +44,7 @@ REQUESTING_USER_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 APPROVER_USER_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 OTHER_USER_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
 PENDING_REQUEST_ID = UUID("aaaaaaaa-1111-4aaa-8aaa-aaaaaaaa1111")
+LEAVE_FIXTURE_NAMESPACE = UUID("a1000000-0000-4000-8000-000000000001")
 
 
 @pytest.fixture
@@ -86,11 +89,14 @@ async def idempotency_sessions() -> AsyncIterator[async_sessionmaker[AsyncSessio
                     OTHER_TENANT_ID,
                     "OT-SEED",
                 ),
+                *_leave_configuration(TENANT_ID, "annual", "wellbeing"),
                 LeaveRequest(
                     id=PENDING_REQUEST_ID,
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
                     leave_type="annual",
+                    leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                    policy_id=_leave_policy_id(TENANT_ID, "annual"),
                     start_date=date(2026, 8, 10),
                     end_date=date(2026, 8, 12),
                     status=LeaveRequestStatus.PENDING.value,
@@ -150,18 +156,24 @@ async def test_employee_create_retry_replays_same_snapshot_and_single_write(
     assert replay == first
     assert replay.id == first.id
     async with idempotency_sessions() as session:
-        assert await _count_rows(
-            session,
-            Employee,
-            Employee.tenant_id == TENANT_ID,
-            Employee.employee_number == "IDEMP-001",
-        ) == 1
-        assert await _count_rows(
-            session,
-            CommandIdempotency,
-            CommandIdempotency.tenant_id == TENANT_ID,
-            CommandIdempotency.idempotency_key == "employee-create-retry",
-        ) == 1
+        assert (
+            await _count_rows(
+                session,
+                Employee,
+                Employee.tenant_id == TENANT_ID,
+                Employee.employee_number == "IDEMP-001",
+            )
+            == 1
+        )
+        assert (
+            await _count_rows(
+                session,
+                CommandIdempotency,
+                CommandIdempotency.tenant_id == TENANT_ID,
+                CommandIdempotency.idempotency_key == "employee-create-retry",
+            )
+            == 1
+        )
 
 
 async def test_reused_key_rejects_changed_payload_or_command_without_second_write(
@@ -203,18 +215,24 @@ async def test_reused_key_rejects_changed_payload_or_command_without_second_writ
         assert [(employee.id, employee.employee_number) for employee in employees] == [
             (original.id, "IDEMP-ORIGINAL")
         ]
-        assert await _count_rows(
-            session,
-            LeaveRequest,
-            LeaveRequest.tenant_id == TENANT_ID,
-            LeaveRequest.leave_type == "wellbeing",
-        ) == 0
-        assert await _count_rows(
-            session,
-            CommandIdempotency,
-            CommandIdempotency.tenant_id == TENANT_ID,
-            CommandIdempotency.idempotency_key == idempotency_key,
-        ) == 1
+        assert (
+            await _count_rows(
+                session,
+                LeaveRequest,
+                LeaveRequest.tenant_id == TENANT_ID,
+                LeaveRequest.leave_type == "wellbeing",
+            )
+            == 0
+        )
+        assert (
+            await _count_rows(
+                session,
+                CommandIdempotency,
+                CommandIdempotency.tenant_id == TENANT_ID,
+                CommandIdempotency.idempotency_key == idempotency_key,
+            )
+            == 1
+        )
 
 
 async def test_same_key_is_independent_across_tenants(
@@ -238,16 +256,22 @@ async def test_same_key_is_independent_across_tenants(
 
     assert current_tenant.id != other_tenant.id
     async with idempotency_sessions() as session:
-        assert await _count_rows(
-            session,
-            Employee,
-            Employee.employee_number == "SHARED-001",
-        ) == 2
-        assert await _count_rows(
-            session,
-            CommandIdempotency,
-            CommandIdempotency.idempotency_key == idempotency_key,
-        ) == 2
+        assert (
+            await _count_rows(
+                session,
+                Employee,
+                Employee.employee_number == "SHARED-001",
+            )
+            == 2
+        )
+        assert (
+            await _count_rows(
+                session,
+                CommandIdempotency,
+                CommandIdempotency.idempotency_key == idempotency_key,
+            )
+            == 2
+        )
         receipt_tenants = set(
             await session.scalars(
                 select(CommandIdempotency.tenant_id).where(
@@ -280,18 +304,24 @@ async def test_keyed_leave_create_retry_writes_one_request(
     assert replay == first
     assert replay.id == first.id
     async with idempotency_sessions() as session:
-        assert await _count_rows(
-            session,
-            LeaveRequest,
-            LeaveRequest.tenant_id == TENANT_ID,
-            LeaveRequest.leave_type == "wellbeing",
-        ) == 1
-        assert await _count_rows(
-            session,
-            CommandIdempotency,
-            CommandIdempotency.tenant_id == TENANT_ID,
-            CommandIdempotency.idempotency_key == idempotency_key,
-        ) == 1
+        assert (
+            await _count_rows(
+                session,
+                LeaveRequest,
+                LeaveRequest.tenant_id == TENANT_ID,
+                LeaveRequest.leave_type == "wellbeing",
+            )
+            == 1
+        )
+        assert (
+            await _count_rows(
+                session,
+                CommandIdempotency,
+                CommandIdempotency.tenant_id == TENANT_ID,
+                CommandIdempotency.idempotency_key == idempotency_key,
+            )
+            == 1
+        )
 
 
 async def test_keyed_decision_retry_replays_successful_terminal_result(
@@ -323,12 +353,15 @@ async def test_keyed_decision_retry_replays_successful_terminal_result(
         assert persisted.status == LeaveRequestStatus.APPROVED.value
         assert persisted.decided_by_user_id == APPROVER_USER_ID
         assert persisted.decision_note == "Approved with idempotent retry"
-        assert await _count_rows(
-            session,
-            CommandIdempotency,
-            CommandIdempotency.tenant_id == TENANT_ID,
-            CommandIdempotency.idempotency_key == idempotency_key,
-        ) == 1
+        assert (
+            await _count_rows(
+                session,
+                CommandIdempotency,
+                CommandIdempotency.tenant_id == TENANT_ID,
+                CommandIdempotency.idempotency_key == idempotency_key,
+            )
+            == 1
+        )
 
 
 async def test_failed_keyed_command_rolls_back_receipt_and_can_be_retried(
@@ -352,18 +385,24 @@ async def test_failed_keyed_command_rolls_back_receipt_and_can_be_retried(
             )
 
     async with idempotency_sessions() as session:
-        assert await _count_rows(
-            session,
-            CommandIdempotency,
-            CommandIdempotency.tenant_id == TENANT_ID,
-            CommandIdempotency.idempotency_key == idempotency_key,
-        ) == 0
-        assert await _count_rows(
-            session,
-            LeaveRequest,
-            LeaveRequest.tenant_id == TENANT_ID,
-            LeaveRequest.employee_id == RECOVERABLE_EMPLOYEE_ID,
-        ) == 0
+        assert (
+            await _count_rows(
+                session,
+                CommandIdempotency,
+                CommandIdempotency.tenant_id == TENANT_ID,
+                CommandIdempotency.idempotency_key == idempotency_key,
+            )
+            == 0
+        )
+        assert (
+            await _count_rows(
+                session,
+                LeaveRequest,
+                LeaveRequest.tenant_id == TENANT_ID,
+                LeaveRequest.employee_id == RECOVERABLE_EMPLOYEE_ID,
+            )
+            == 0
+        )
 
     async with idempotency_sessions.begin() as session:
         session.add(
@@ -382,12 +421,15 @@ async def test_failed_keyed_command_rolls_back_receipt_and_can_be_retried(
     )
 
     async with idempotency_sessions() as session:
-        assert await _count_rows(
-            session,
-            CommandIdempotency,
-            CommandIdempotency.tenant_id == TENANT_ID,
-            CommandIdempotency.idempotency_key == idempotency_key,
-        ) == 1
+        assert (
+            await _count_rows(
+                session,
+                CommandIdempotency,
+                CommandIdempotency.tenant_id == TENANT_ID,
+                CommandIdempotency.idempotency_key == idempotency_key,
+            )
+            == 1
+        )
         persisted = await session.get(LeaveRequest, recovered.id)
         assert persisted is not None
         assert persisted.employee_id == RECOVERABLE_EMPLOYEE_ID
@@ -462,9 +504,7 @@ async def _count_rows(
     model: type,
     *criteria,
 ) -> int:
-    row_count = await session.scalar(
-        select(func.count()).select_from(model).where(*criteria)
-    )
+    row_count = await session.scalar(select(func.count()).select_from(model).where(*criteria))
     assert row_count is not None
     return row_count
 
@@ -525,3 +565,50 @@ def _employee(employee_id: UUID, tenant_id: UUID, employee_number: str) -> Emplo
         status=EmployeeStatus.ACTIVE.value,
         employment_start_date=date(2026, 7, 1),
     )
+
+
+def _leave_configuration(
+    tenant_id: UUID,
+    *codes: str,
+) -> list[LeaveType | LeavePolicy]:
+    rows: list[LeaveType | LeavePolicy] = []
+    for code in codes:
+        leave_type_id = _leave_type_id(tenant_id, code)
+        rows.extend(
+            (
+                LeaveType(
+                    id=leave_type_id,
+                    tenant_id=tenant_id,
+                    code=code,
+                    name=code.replace("_", " ").title(),
+                    description=None,
+                    is_active=True,
+                    version=1,
+                ),
+                LeavePolicy(
+                    id=_leave_policy_id(tenant_id, code),
+                    tenant_id=tenant_id,
+                    leave_type_id=leave_type_id,
+                    version=1,
+                    effective_from=date(1900, 1, 1),
+                    paid=False,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0.00"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=None,
+                    created_at=datetime(2026, 7, 1, 8, tzinfo=UTC),
+                ),
+            )
+        )
+    return rows
+
+
+def _leave_type_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-type:{tenant_id}:{code}")
+
+
+def _leave_policy_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-policy:{tenant_id}:{code}:1")

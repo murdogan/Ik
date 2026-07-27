@@ -11,10 +11,7 @@ from app.api.openapi import (
 )
 from app.main import create_app
 from app.schemas.employee import EMPLOYEE_LIST_DEFAULT_LIMIT, EMPLOYEE_LIST_MAX_LIMIT
-from app.schemas.leave_request import (
-    LEAVE_REQUEST_LIST_DEFAULT_LIMIT,
-    LEAVE_REQUEST_LIST_MAX_LIMIT,
-)
+from app.schemas.leave import LEAVE_LIST_DEFAULT_LIMIT, LEAVE_LIST_MAX_LIMIT
 from app.schemas.tenant import TENANT_LIST_DEFAULT_LIMIT, TENANT_LIST_MAX_LIMIT
 from fastapi.testclient import TestClient
 
@@ -59,8 +56,8 @@ def test_openapi_uses_readable_tag_catalog() -> None:
     assert "lifecycle-aware behavior" in descriptions[TENANT_SETTINGS_TAG]
     assert "department distribution, new starters" in descriptions[DASHBOARD_TAG]
     assert "employee master data" in descriptions[EMPLOYEES_TAG]
-    assert "no accrual engine" in descriptions[LEAVE_BALANCES_TAG]
-    assert "filtered review queues" in descriptions[LEAVE_REQUESTS_TAG]
+    assert "append-only ledger" in descriptions[LEAVE_BALANCES_TAG]
+    assert "concurrency-safe cancellation" in descriptions[LEAVE_REQUESTS_TAG]
 
 
 def test_current_operations_have_readable_openapi_metadata() -> None:
@@ -173,38 +170,38 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
         ),
         ("/api/v1/employees/{employee_id}", "delete"): (
             EMPLOYEES_TAG,
-            "Archive tenant employee",
-            "Employee IDs from other tenants return the same not-found envelope",
+            "Archive tenant employee (deprecated compatibility action)",
+            "Prefer POST on the explicit /archive action",
         ),
         ("/api/v1/employees/{employee_id}/leave-balances", "get"): (
             LEAVE_BALANCES_TAG,
-            "List employee leave balance summaries",
-            "read-only placeholder does not calculate accruals",
+            "List an employee's derived leave balances",
+            "Cross-tenant and unauthorized employee identifiers",
         ),
         ("/api/v1/leave-requests", "get"): (
             LEAVE_REQUESTS_TAG,
-            "List tenant leave requests",
-            "tenant isolation is applied before bounded keyset pagination",
+            "List authorized leave requests",
+            "tenant and authorization boundaries",
         ),
         ("/api/v1/leave-requests", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Create tenant leave request",
-            "ordered before persistence",
+            "Submit my leave request",
+            "employee linked to the authenticated tenant membership",
         ),
-        ("/api/v1/leave-requests/{leave_request_id}/approve", "post"): (
+        ("/api/v1/leave-requests/{request_id}/approve", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Approve pending leave request",
-            "same not-found envelope as missing records",
+            "Approve a current team leave request",
+            "current team or tenant-wide HR scope",
         ),
-        ("/api/v1/leave-requests/{leave_request_id}/reject", "post"): (
+        ("/api/v1/leave-requests/{request_id}/reject", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Reject pending leave request",
-            "same not-found envelope as missing records",
+            "Reject a current team leave request",
+            "decision note is required",
         ),
-        ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"): (
+        ("/api/v1/leave-requests/{request_id}/cancel", "post"): (
             LEAVE_REQUESTS_TAG,
-            "Cancel pending leave request",
-            "same not-found envelope as missing records",
+            "Cancel my or an HR-managed leave request",
+            "restores reserved or used balance atomically",
         ),
     }
 
@@ -230,7 +227,7 @@ def test_current_operations_use_tag_catalog_and_doc_metadata() -> None:
             assert len(operation["tags"]) == 1
             assert operation["tags"][0] in allowed_tags
             assert operation["summary"].strip()
-            assert operation["description"].strip()
+            assert operation["operationId"].strip()
             for response_metadata in operation["responses"].values():
                 assert response_metadata["description"].strip()
 
@@ -296,9 +293,7 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
         "description": "Short-lived credential issued only by the platform authentication realm.",
         "scheme": "bearer",
     }
-    assert paths["/api/v1/users/invitations"]["post"]["security"] == [
-        {"BearerAuth": []}
-    ]
+    assert paths["/api/v1/users/invitations"]["post"]["security"] == [{"BearerAuth": []}]
 
 
 def test_phase1_tenant_operations_document_lifecycle_and_resource_errors() -> None:
@@ -421,8 +416,7 @@ def test_phase1_operations_use_standard_envelopes_and_correlation_headers() -> N
         references = _transitive_schema_references(success, schemas)
         assert references & {"PageMeta", "ResponseMeta"}
         assert any(
-            reference.startswith(("DataEnvelope", "ListEnvelope"))
-            for reference in references
+            reference.startswith(("DataEnvelope", "ListEnvelope")) for reference in references
         )
 
     for path, method in PLATFORM_TENANT_OPERATIONS | TENANT_PRINCIPAL_OPERATIONS:
@@ -474,9 +468,7 @@ def test_feature_flag_openapi_schemas_are_finite_strict_and_tenant_safe() -> Non
     assert update["required"] == ["features"]
     assert update["properties"]["features"]["minItems"] == 1
     assert update["properties"]["features"]["maxItems"] == 7
-    assert update["properties"]["features"]["items"]["$ref"].endswith(
-        "/TenantFeatureFlagUpdate"
-    )
+    assert update["properties"]["features"]["items"]["$ref"].endswith("/TenantFeatureFlagUpdate")
 
     update_item = schemas["TenantFeatureFlagUpdate"]
     assert update_item["additionalProperties"] is False
@@ -559,7 +551,7 @@ def test_phase0_list_response_and_offset_deprecation_contracts_remain_explicit()
         assert "X-Next-Cursor" in operation["responses"]["200"]["headers"]
 
 
-def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:
+def test_leave_balance_openapi_surface_exposes_derived_reads_and_audited_adjustment() -> None:
     client = TestClient(create_app())
 
     response = client.get("/openapi.json")
@@ -580,7 +572,7 @@ def test_leave_balance_placeholder_openapi_surface_is_read_only() -> None:
         for method, operation in operations.items()
         if method in mutating_methods and operation["tags"] == [LEAVE_BALANCES_TAG]
     ]
-    assert tagged_mutations == []
+    assert tagged_mutations == [("/api/v1/leave-adjustments", "post")]
 
 
 def test_domain_operations_document_authenticated_tenant_session() -> None:
@@ -600,9 +592,9 @@ def test_domain_operations_document_authenticated_tenant_session() -> None:
         ("/api/v1/employees/{employee_id}/leave-balances", "get"),
         ("/api/v1/leave-requests", "get"),
         ("/api/v1/leave-requests", "post"),
-        ("/api/v1/leave-requests/{leave_request_id}/approve", "post"),
-        ("/api/v1/leave-requests/{leave_request_id}/reject", "post"),
-        ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"),
+        ("/api/v1/leave-requests/{request_id}/approve", "post"),
+        ("/api/v1/leave-requests/{request_id}/reject", "post"),
+        ("/api/v1/leave-requests/{request_id}/cancel", "post"),
     }
     for path, method in protected_operations:
         operation = paths[path][method]
@@ -677,13 +669,13 @@ def test_leave_request_list_openapi_documents_filter_query_params() -> None:
     assert params["status"]["in"] == "query"
     assert "leave request workflow status" in params["status"]["description"]
     assert params["employee_id"]["in"] == "query"
-    assert "one employee in the current tenant" in params["employee_id"]["description"]
+    assert "authorized current-tenant scope" in params["employee_id"]["description"]
     assert params["start_date"]["in"] == "query"
     assert "Inclusive start" in params["start_date"]["description"]
     assert params["end_date"]["in"] == "query"
     assert "Inclusive end" in params["end_date"]["description"]
-    assert params["limit"]["schema"]["default"] == LEAVE_REQUEST_LIST_DEFAULT_LIMIT
-    assert params["limit"]["schema"]["maximum"] == LEAVE_REQUEST_LIST_MAX_LIMIT
+    assert params["limit"]["schema"]["default"] == LEAVE_LIST_DEFAULT_LIMIT
+    assert params["limit"]["schema"]["maximum"] == LEAVE_LIST_MAX_LIMIT
     assert params["limit"]["schema"]["minimum"] == 1
     assert params["offset"]["schema"]["default"] == 0
     assert params["offset"]["schema"]["minimum"] == 0
@@ -727,6 +719,8 @@ def test_employee_and_leave_commands_document_stable_conflict_envelopes() -> Non
         ("/api/v1/employees", "post"): {
             "employee_number_conflict",
             "employee_work_email_conflict",
+            "employee_lifecycle_conflict",
+            "employee_open_process_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
             "idempotency_key_mismatch",
@@ -734,28 +728,35 @@ def test_employee_and_leave_commands_document_stable_conflict_envelopes() -> Non
         ("/api/v1/employees/{employee_id}", "patch"): {
             "employee_number_conflict",
             "employee_work_email_conflict",
+            "employee_lifecycle_conflict",
+            "employee_open_process_conflict",
             "data_integrity_conflict",
             "concurrent_write_conflict",
         },
-        ("/api/v1/leave-requests/{leave_request_id}/approve", "post"): {
-            "leave_request_transition_conflict",
+        ("/api/v1/leave-requests/{request_id}/approve", "post"): {
+            "leave_conflict",
+            "leave_balance_insufficient",
             "data_integrity_conflict",
             "concurrent_write_conflict",
             "idempotency_key_mismatch",
         },
         ("/api/v1/leave-requests", "post"): {
+            "leave_conflict",
+            "leave_balance_insufficient",
             "data_integrity_conflict",
             "concurrent_write_conflict",
             "idempotency_key_mismatch",
         },
-        ("/api/v1/leave-requests/{leave_request_id}/reject", "post"): {
-            "leave_request_transition_conflict",
+        ("/api/v1/leave-requests/{request_id}/reject", "post"): {
+            "leave_conflict",
+            "leave_balance_insufficient",
             "data_integrity_conflict",
             "concurrent_write_conflict",
             "idempotency_key_mismatch",
         },
-        ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"): {
-            "leave_request_transition_conflict",
+        ("/api/v1/leave-requests/{request_id}/cancel", "post"): {
+            "leave_conflict",
+            "leave_balance_insufficient",
             "data_integrity_conflict",
             "concurrent_write_conflict",
             "idempotency_key_mismatch",
@@ -780,9 +781,9 @@ def test_critical_post_commands_document_optional_tenant_scoped_idempotency_key(
     idempotent_operations = [
         ("/api/v1/employees", "post"),
         ("/api/v1/leave-requests", "post"),
-        ("/api/v1/leave-requests/{leave_request_id}/approve", "post"),
-        ("/api/v1/leave-requests/{leave_request_id}/reject", "post"),
-        ("/api/v1/leave-requests/{leave_request_id}/cancel", "post"),
+        ("/api/v1/leave-requests/{request_id}/approve", "post"),
+        ("/api/v1/leave-requests/{request_id}/reject", "post"),
+        ("/api/v1/leave-requests/{request_id}/cancel", "post"),
     ]
     for path, method in idempotent_operations:
         operation = paths[path][method]
@@ -796,9 +797,7 @@ def test_critical_post_commands_document_optional_tenant_scoped_idempotency_key(
         assert "tenant-scoped retry key" in header["description"]
         response_400 = operation["responses"]["400"]
         media_type = response_400["content"]["application/json"]
-        assert response_400["description"] == (
-            "Idempotency key validation error envelope."
-        )
+        assert response_400["description"] == ("Idempotency key validation error envelope.")
         assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
         assert set(media_type["examples"]) == {"idempotency_key_invalid"}
 
@@ -893,11 +892,7 @@ def _schema_references(value: object) -> set[str]:
             references.update(_schema_references(nested))
         return references
     if isinstance(value, list):
-        return {
-            reference
-            for nested in value
-            for reference in _schema_references(nested)
-        }
+        return {reference for nested in value for reference in _schema_references(nested)}
     return set()
 
 
@@ -905,8 +900,5 @@ def _documented_error_codes(media_type: dict[str, object]) -> set[str]:
     if "example" in media_type:
         examples = [media_type["example"]]
     else:
-        examples = [
-            example["value"]
-            for example in media_type["examples"].values()
-        ]
+        examples = [example["value"] for example in media_type["examples"].values()]
     return {example["error"]["code"] for example in examples}

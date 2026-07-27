@@ -39,9 +39,7 @@ class LeaveRequestCommandHandler:
             tenant_id=tenant_id,
             idempotency_key=idempotency_key,
             command_name="leave_requests.create",
-            request_fingerprint=command_fingerprint(
-                {"payload": payload.model_dump(mode="json")}
-            ),
+            request_fingerprint=command_fingerprint({"payload": payload.model_dump(mode="json")}),
             operation=lambda: self.service.create_leave_request(tenant_id, payload),
             serialize=_leave_request_response_payload,
             deserialize=LeaveRequestRead.model_validate,

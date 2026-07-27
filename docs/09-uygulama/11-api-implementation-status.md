@@ -1044,15 +1044,17 @@ PostgreSQL plan evidence was not rerun or relabeled as repair evidence.
 | GET | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:read:tenant`; active summary with additive version/current assignment and indistinguishable cross-tenant `404` |
 | PATCH | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:update:tenant`; compatible partial update plus optional optimistic version and actual-change audit |
 | DELETE | `/api/v1/employees/{employee_id}` | P4A implemented | `employee:update:tenant`; idempotent archive, retained history and first-transition audit |
+| POST | `/api/v1/employees/{employee_id}/lifecycle-transitions` | P10 verified | Explicit optimistic lifecycle transition with safe termination metadata |
+| POST | `/api/v1/employees/{employee_id}/archive` | P10 verified | Terminated-only retained-history archive |
 | GET | `/api/v1/employees/{employee_id}/profile` | P4B implemented | `employee:read:tenant`; `{data,meta}` core/personal/employment aggregate plus bounded Phase 3 current assignment/history, separate section versions and no-store response |
 | PATCH | `/api/v1/employees/{employee_id}/profile/personal` | P4B implemented | `employee:update:tenant`; mandatory personal version, conditional employee version for core fields, atomic allowlisted update/audit and stale `409` |
 | PATCH | `/api/v1/employees/{employee_id}/profile/employment` | P4B implemented | `employee:update:tenant`; mandatory employment version, conditional employee version for start date, no lifecycle or assignment mutation |
 | GET | `/api/v1/employees/{employee_id}/leave-balances` | P3K verified | `leave:read:tenant`; active-employee manual summaries and cross-tenant hiding |
 | GET | `/api/v1/leave-requests` | P3K verified | `leave:read:tenant`; tenant filters, mixed-order cursor and deprecated offset compatibility |
 | POST | `/api/v1/leave-requests` | P3K verified | HR-only `leave:manage:tenant`; pending create, tenant validation and optional replay |
-| POST | `/api/v1/leave-requests/{leave_request_id}/approve` | P3K verified | HR-only `leave:manage:tenant`; row-lock one-winner, pending-only transition and replay |
-| POST | `/api/v1/leave-requests/{leave_request_id}/reject` | P3K verified | HR-only `leave:manage:tenant`; row-lock one-winner, pending-only transition and replay |
-| POST | `/api/v1/leave-requests/{leave_request_id}/cancel` | P3K verified | HR-only `leave:manage:tenant`; row-lock one-winner, pending-only transition and replay |
+| POST | `/api/v1/leave-requests/{request_id}/approve` | P6 verified | Current-team or tenant HR scope; row lock, pending-only decision and replay |
+| POST | `/api/v1/leave-requests/{request_id}/reject` | P6 verified | Current-team or tenant HR scope; required note, row lock and replay |
+| POST | `/api/v1/leave-requests/{request_id}/cancel` | P6 verified | Own or tenant HR scope; atomic balance restoration and replay |
 
 F2D adds role, permission and exact user-role replacement operations; F2E adds tenant audit
 list/detail and the separate platform audit list. P3C adds two organization-selection operations,

@@ -53,18 +53,20 @@ def test_identity_statuses_and_global_credential_constraints_are_explicit() -> N
         "ck_identities_password_ownership",
         "ck_identities_platform_permission_version_positive",
     }
-    assert "status = 'pending' and password_hash is null" in checks[
-        "ck_identities_password_ownership"
-    ]
-    assert "status in ('active','locked') and password_hash is not null" in checks[
-        "ck_identities_password_ownership"
-    ]
+    assert (
+        "status = 'pending' and password_hash is null" in checks["ck_identities_password_ownership"]
+    )
+    assert (
+        "status in ('active','locked') and password_hash is not null"
+        in checks["ck_identities_password_ownership"]
+    )
 
 
 def test_platform_roles_are_global_identity_assignments_with_platform_scope() -> None:
-    assert tuple(
-        column.name for column in PlatformIdentityRole.__table__.primary_key.columns
-    ) == ("identity_id", "role_id")
+    assert tuple(column.name for column in PlatformIdentityRole.__table__.primary_key.columns) == (
+        "identity_id",
+        "role_id",
+    )
     assert set(_check_constraints(PlatformIdentityRole)) == {
         "ck_platform_identity_roles_platform_scope",
         "ck_platform_identity_roles_active",

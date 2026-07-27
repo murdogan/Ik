@@ -9,26 +9,16 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.models.employee_import import EmployeeImportScanResult, EmployeeImportStatus
+from app.modules.reporting.application.employee_import_contract import (
+    EMPLOYEE_IMPORT_FIELDS,
+    EMPLOYEE_IMPORT_MAX_ROWS,
+)
 
 EMPLOYEE_IMPORT_TEMPLATE_VERSION = "1"
 EMPLOYEE_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 EMPLOYEE_IMPORT_MAX_REQUEST_BYTES = EMPLOYEE_IMPORT_MAX_BYTES + 1024 * 1024
-EMPLOYEE_IMPORT_MAX_ROWS = 10_000
 EMPLOYEE_IMPORT_ISSUE_DEFAULT_LIMIT = 100
 EMPLOYEE_IMPORT_ISSUE_MAX_LIMIT = 200
-EMPLOYEE_IMPORT_FIELDS = (
-    "employee_number",
-    "first_name",
-    "last_name",
-    "work_email",
-    "status",
-    "employment_start_date",
-    "employment_end_date",
-    "legal_entity_code",
-    "branch_code",
-    "department_code",
-    "position_code",
-)
 EMPLOYEE_IMPORT_ISSUE_MESSAGES = {
     "duplicate_employee_number_file": "Employee number is duplicated in this file.",
     "duplicate_employee_number_tenant": "Employee number is already in use.",

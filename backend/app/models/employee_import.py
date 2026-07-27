@@ -173,12 +173,8 @@ class EmployeeImport(Base):
     row_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     warning_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    committed_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
-    attempt_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
+    committed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     failure_code: Mapped[str | None] = mapped_column(String(64))
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -198,9 +194,7 @@ class EmployeeImportRow(Base):
     __tablename__ = "employee_import_rows"
     __table_args__ = (
         CheckConstraint("row_number >= 2 and row_number <= 10001", name="ck_import_rows_number"),
-        CheckConstraint(
-            "status in ('active','on_leave')", name="ck_import_rows_status"
-        ),
+        CheckConstraint("status in ('active','on_leave')", name="ck_import_rows_status"),
         CheckConstraint(
             "employment_end_date is null",
             name="ck_import_rows_end_date",

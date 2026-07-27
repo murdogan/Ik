@@ -91,10 +91,10 @@ class ReportService:
         if cursor_id is not None:
             statement = statement.where(Employee.id > cursor_id)
         rows = (
-            await self.session.execute(
-                statement.order_by(Employee.id.asc()).limit(limit + 1)
-            )
-        ).mappings().all()
+            (await self.session.execute(statement.order_by(Employee.id.asc()).limit(limit + 1)))
+            .mappings()
+            .all()
+        )
         visible = rows[:limit]
         items = [EmployeeReportRow(values=_public_values(row, field_names)) for row in visible]
         next_cursor = None
@@ -145,12 +145,16 @@ class ReportService:
                 )
             )
         rows = (
-            await self.session.execute(
-                statement.order_by(LeaveRequest.created_at.desc(), LeaveRequest.id.desc()).limit(
-                    limit + 1
+            (
+                await self.session.execute(
+                    statement.order_by(
+                        LeaveRequest.created_at.desc(), LeaveRequest.id.desc()
+                    ).limit(limit + 1)
                 )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
         visible = rows[:limit]
         items = [LeaveReportRow(values=_public_values(row, field_names)) for row in visible]
         next_cursor = None
@@ -203,10 +207,14 @@ class ReportService:
                 )
             )
         rows = (
-            await self.session.execute(
-                statement.order_by(Employee.id.asc(), DocumentType.id.asc()).limit(limit + 1)
+            (
+                await self.session.execute(
+                    statement.order_by(Employee.id.asc(), DocumentType.id.asc()).limit(limit + 1)
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
         visible = rows[:limit]
         items = [DocumentReportRow(values=_public_values(row, field_names)) for row in visible]
         next_cursor = None
@@ -329,9 +337,7 @@ def _employee_statement(
     if filters.status is not None:
         statement = statement.where(Employee.status == filters.status)
     if filters.employment_start_from is not None:
-        statement = statement.where(
-            Employee.employment_start_date >= filters.employment_start_from
-        )
+        statement = statement.where(Employee.employment_start_date >= filters.employment_start_from)
     if filters.employment_start_to is not None:
         statement = statement.where(Employee.employment_start_date <= filters.employment_start_to)
     if filters.q is not None:

@@ -34,9 +34,7 @@ def get_service(session: Annotated[AsyncSession, Depends(get_session)]) -> Notif
 @router.get("", response_model=DataEnvelope[NotificationListRead])
 async def list_notifications(
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("notification:read:own"))
     ],
@@ -61,9 +59,7 @@ async def list_notifications(
 @router.post("/read-all", response_model=DataEnvelope[NotificationReadAllResult])
 async def read_all_notifications(
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("notification:read:own"))
     ],
@@ -85,9 +81,7 @@ async def read_notification(
     notification_id: UUID,
     payload: NotificationMarkRead,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("notification:read:own"))
     ],

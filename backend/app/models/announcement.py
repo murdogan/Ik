@@ -101,13 +101,9 @@ class Announcement(Base, TimestampMixin):
         Integer, nullable=False, default=1, server_default=text("1")
     )
     created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    published_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
+    published_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    archived_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
+    archived_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __mapper_args__ = {"version_id_col": version}
@@ -202,8 +198,7 @@ class AnnouncementRecipient(Base):
     __table_args__ = (
         CheckConstraint("version > 0", name="ck_announcement_recipients_version_positive"),
         CheckConstraint(
-            "acknowledged_at is null or "
-            "(read_at is not null and acknowledged_at >= read_at)",
+            "acknowledged_at is null or (read_at is not null and acknowledged_at >= read_at)",
             name="ck_announcement_recipients_ack_requires_read",
         ),
         ForeignKeyConstraint(

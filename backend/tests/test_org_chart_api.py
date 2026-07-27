@@ -161,9 +161,7 @@ async def test_org_chart_root_parent_and_cursor_pages_are_lazy_and_resolved() ->
             params={"parent_id": str(MANAGER_ID), "limit": 1},
         )
         assert first_children.status_code == 200
-        assert [node["employee_number"] for node in first_children.json()["data"]] == [
-            "ORG-001"
-        ]
+        assert [node["employee_number"] for node in first_children.json()["data"]] == ["ORG-001"]
         assert first_children.json()["meta"]["next_cursor"]
         ada = first_children.json()["data"][0]
         assert ada["user_id"] == str(TEAM_USER_ID)
@@ -187,9 +185,7 @@ async def test_org_chart_root_parent_and_cursor_pages_are_lazy_and_resolved() ->
             },
         )
         assert second_children.status_code == 200
-        assert [node["employee_number"] for node in second_children.json()["data"]] == [
-            "ORG-003"
-        ]
+        assert [node["employee_number"] for node in second_children.json()["data"]] == ["ORG-003"]
         assert second_children.json()["meta"]["next_cursor"]
 
         third_children = await harness.client.get(
@@ -202,9 +198,7 @@ async def test_org_chart_root_parent_and_cursor_pages_are_lazy_and_resolved() ->
             },
         )
         assert third_children.status_code == 200
-        assert [node["employee_number"] for node in third_children.json()["data"]] == [
-            "ORG-004"
-        ]
+        assert [node["employee_number"] for node in third_children.json()["data"]] == ["ORG-004"]
         assert third_children.json()["meta"]["next_cursor"] is None
 
         grandchildren = await harness.client.get(
@@ -213,14 +207,9 @@ async def test_org_chart_root_parent_and_cursor_pages_are_lazy_and_resolved() ->
             params={"parent": str(TEAM_USER_ID)},
         )
         assert grandchildren.status_code == 200
-        assert [node["employee_number"] for node in grandchildren.json()["data"]] == [
-            "ORG-002"
-        ]
+        assert [node["employee_number"] for node in grandchildren.json()["data"]] == ["ORG-002"]
         assert all(node["employee_number"] != "ORG-002" for node in roots.json()["data"])
-        assert all(
-            node["employee_number"] != "ORG-002"
-            for node in first_children.json()["data"]
-        )
+        assert all(node["employee_number"] != "ORG-002" for node in first_children.json()["data"])
 
         mismatched_cursor = await harness.client.get(
             "/api/v1/org-chart",

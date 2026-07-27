@@ -74,7 +74,8 @@ class PermissionCatalogRecord:
     code: str
     resource: str
     action: str
-    scope: str
+    target: str
+    target_type: str
     description: str
 
 
@@ -239,7 +240,8 @@ class AuthorizationService:
                 code=permission.code,
                 resource=permission.resource,
                 action=permission.action,
-                scope=permission.target,
+                target=permission.target,
+                target_type=permission.target_type,
                 description=permission.description,
             )
             for permission in permissions

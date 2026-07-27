@@ -778,10 +778,12 @@ async def _require_assignable_targets(
     manager_user_id: UUID | None,
 ) -> tuple[Employee, LegalEntity, Branch, Department, Position, User | None]:
     employee = await session.scalar(
-        select(Employee).where(
+        select(Employee)
+        .where(
             Employee.tenant_id == tenant_id,
             Employee.id == employee_id,
-        ).with_for_update(of=Employee)
+        )
+        .with_for_update(of=Employee)
     )
     if employee is None:
         raise EmployeeAssignmentReferenceError("Employee was not found")

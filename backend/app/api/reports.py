@@ -58,9 +58,7 @@ def get_report_service(
 async def employee_report(
     request: Request,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(require_any_permission(REPORT_READ_TENANT_PERMISSION, REPORT_READ_TEAM_PERMISSION)),
@@ -138,9 +136,7 @@ async def employee_report(
 async def leave_report(
     request: Request,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(require_any_permission(REPORT_READ_TENANT_PERMISSION, REPORT_READ_TEAM_PERMISSION)),
@@ -198,9 +194,7 @@ async def leave_report(
 async def missing_document_report(
     request: Request,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(require_any_permission(REPORT_READ_TENANT_PERMISSION, REPORT_READ_TEAM_PERMISSION)),
@@ -266,9 +260,7 @@ def _enforce_query_shape(
     repeated = repeated or set()
     if any(key not in allowed for key in request.query_params):
         raise ReportingValidationError()
-    if any(
-        len(request.query_params.getlist(key)) > 1 for key in allowed if key not in repeated
-    ):
+    if any(len(request.query_params.getlist(key)) > 1 for key in allowed if key not in repeated):
         raise ReportingValidationError()
 
 

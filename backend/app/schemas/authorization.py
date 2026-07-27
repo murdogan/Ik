@@ -29,7 +29,9 @@ class PermissionRead(BaseModel):
     code: str
     resource: str
     action: str
-    scope: Literal["own", "team", "department", "branch", "tenant", "platform"]
+    target: str
+    target_type: Literal["scope", "field"]
+    scope: Literal["own", "team", "department", "branch", "tenant", "platform"] | None
     description: str
 
 

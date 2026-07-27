@@ -151,10 +151,7 @@ class LeaveService:
                 statement.order_by(LeaveType.name, LeaveType.id).limit(min(limit, 200))
             )
         ).all()
-        return [
-            self._leave_type_read(record, policy, effective_to=None)
-            for record, policy in rows
-        ]
+        return [self._leave_type_read(record, policy, effective_to=None) for record, policy in rows]
 
     async def create_leave_type(
         self,
@@ -411,9 +408,9 @@ class LeaveService:
             )
         rows = tuple(
             await self.session.scalars(
-                statement.order_by(
-                    HolidayEntry.holiday_date.desc(), HolidayEntry.id.desc()
-                ).limit(limit + 1)
+                statement.order_by(HolidayEntry.holiday_date.desc(), HolidayEntry.id.desc()).limit(
+                    limit + 1
+                )
             )
         )
         items = [self._holiday_entry_read(item) for item in rows[:limit]]
@@ -452,9 +449,7 @@ class LeaveService:
         if record.version != payload.expected_version:
             raise LeaveVersionConflictError("Holiday calendar changed; reload before saving")
         target_active = (
-            payload.is_active
-            if "is_active" in payload.model_fields_set
-            else record.is_active
+            payload.is_active if "is_active" in payload.model_fields_set else record.is_active
         )
         target_default = (
             payload.is_default if "is_default" in payload.model_fields_set else record.is_default
@@ -487,9 +482,7 @@ class LeaveService:
         for field_name in ("name", "is_default", "is_active", "non_working_weekdays"):
             if field_name in update_fields:
                 value = (
-                    target_default
-                    if field_name == "is_default"
-                    else getattr(payload, field_name)
+                    target_default if field_name == "is_default" else getattr(payload, field_name)
                 )
                 if field_name == "non_working_weekdays":
                     value = list(value or [])
@@ -533,9 +526,7 @@ class LeaveService:
                 changed_fields=("is_default",),
             )
         entries, entries_truncated = await self._calendar_entries(tenant_id, record.id)
-        return self._holiday_calendar_read(
-            record, entries, entries_truncated=entries_truncated
-        )
+        return self._holiday_calendar_read(record, entries, entries_truncated=entries_truncated)
 
     async def create_holiday_entry(
         self,
@@ -699,9 +690,7 @@ class LeaveService:
         if leave_type is None:
             raise LeaveNotFoundError
         if leave_type.code == "medical_report" and not payload.document_required:
-            raise LeaveValidationError(
-                "Medical/report leave policies must require a document"
-            )
+            raise LeaveValidationError("Medical/report leave policies must require a document")
         policy_count = await self.session.scalar(
             select(func.count(LeavePolicy.id)).where(LeavePolicy.tenant_id == tenant_id)
         )
@@ -767,9 +756,7 @@ class LeaveService:
         employee_id: UUID,
         period_year: int,
     ) -> list[LeaveBalanceRead]:
-        await self._require_employee(
-            tenant_id, employee_id, lock=False, require_active=False
-        )
+        await self._require_employee(tenant_id, employee_id, lock=False, require_active=False)
         aggregate = (
             select(
                 LeaveBalanceLedger.leave_type_id.label("leave_type_id"),
@@ -777,8 +764,7 @@ class LeaveService:
                     func.sum(
                         case(
                             (
-                                LeaveBalanceLedger.entry_type
-                                == LeaveLedgerEntryType.EARNED.value,
+                                LeaveBalanceLedger.entry_type == LeaveLedgerEntryType.EARNED.value,
                                 LeaveBalanceLedger.amount_days,
                             ),
                             else_=0,
@@ -926,9 +912,7 @@ class LeaveService:
         cursor: LeaveLedgerListCursor | None,
         period_year: int | None = None,
     ) -> CursorPage[LeaveLedgerEntryRead]:
-        await self._require_employee(
-            tenant_id, employee_id, lock=False, require_active=False
-        )
+        await self._require_employee(tenant_id, employee_id, lock=False, require_active=False)
         statement = (
             select(LeaveBalanceLedger, LeaveType)
             .join(
@@ -1001,9 +985,7 @@ class LeaveService:
         payload: LeaveAdjustmentCreate,
     ) -> LeaveLedgerEntryRead:
         tenant_id, actor_id = _tenant_actor(request_context)
-        await self._require_employee(
-            tenant_id, payload.employee_id, lock=True, require_active=True
-        )
+        await self._require_employee(tenant_id, payload.employee_id, lock=True, require_active=True)
         leave_type = await self.session.scalar(
             select(LeaveType).where(
                 LeaveType.tenant_id == tenant_id,
@@ -1124,9 +1106,7 @@ class LeaveService:
         by_year = _counted_by_year(days)
         if policy.paid and not policy.negative_balance_allowed:
             for year, amount in by_year.items():
-                available = await self._available_days(
-                    tenant_id, employee.id, leave_type.id, year
-                )
+                available = await self._available_days(tenant_id, employee.id, leave_type.id, year)
                 if available < amount:
                     raise LeaveInsufficientBalanceError(
                         "Available leave balance is insufficient for the selected dates"
@@ -1158,6 +1138,10 @@ class LeaveService:
         # relationships. Persist the parent first so SQLAlchemy cannot schedule a
         # ledger/day insert ahead of the new request within the same atomic transaction.
         await self.session.flush()
+        # SQLite does not hydrate this server-default timestamp on every insert path.
+        # Refresh while the parent is still the only pending write so the response
+        # projection never performs implicit async I/O through an expired attribute.
+        await self.session.refresh(request)
         for leave_date, is_working, holiday_id, counted in days:
             self.session.add(
                 LeaveRequestDay(
@@ -1443,9 +1427,7 @@ class LeaveService:
         now = datetime.now(UTC)
         if previous_status == LeaveRequestStatus.PENDING.value:
             planned = [
-                item
-                for item in entries
-                if item.entry_type == LeaveLedgerEntryType.PLANNED.value
+                item for item in entries if item.entry_type == LeaveLedgerEntryType.PLANNED.value
             ]
             if not planned and _decimal(request.counted_days) > _ZERO:
                 raise LeaveConflictError("The leave reservation is unavailable")
@@ -1499,9 +1481,7 @@ class LeaveService:
                         )
                     )
         elif previous_status == LeaveRequestStatus.APPROVED.value and action == "cancel":
-            used = [
-                item for item in entries if item.entry_type == LeaveLedgerEntryType.USED.value
-            ]
+            used = [item for item in entries if item.entry_type == LeaveLedgerEntryType.USED.value]
             if not used and _decimal(request.counted_days) > _ZERO:
                 raise LeaveConflictError("The approved leave usage is unavailable")
             for entry in used:
@@ -1646,9 +1626,7 @@ class LeaveService:
             raise LeaveValidationError("Team calendar date range must be at most 367 days")
         tenant_id, actor_id = _tenant_actor(request_context)
         requested_scope = scope or (
-            LeaveAccessScope.TENANT
-            if "leave:read:tenant" in permissions
-            else LeaveAccessScope.TEAM
+            LeaveAccessScope.TENANT if "leave:read:tenant" in permissions else LeaveAccessScope.TEAM
         )
         if requested_scope is LeaveAccessScope.TENANT:
             if "leave:read:tenant" not in permissions:
@@ -1771,9 +1749,7 @@ class LeaveService:
         if require_active:
             statement = statement.where(
                 Employee.archived_at.is_(None),
-                Employee.status.in_(
-                    (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
-                ),
+                Employee.status.in_((EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)),
             )
         if lock:
             statement = statement.with_for_update(of=Employee)
@@ -1782,18 +1758,14 @@ class LeaveService:
             raise LeaveNotFoundError
         return employee
 
-    async def _validate_employee_for_approval(
-        self, tenant_id: UUID, request: LeaveRequest
-    ) -> None:
+    async def _validate_employee_for_approval(self, tenant_id: UUID, request: LeaveRequest) -> None:
         employee = await self.session.scalar(
             select(Employee)
             .where(
                 Employee.tenant_id == tenant_id,
                 Employee.id == request.employee_id,
                 Employee.archived_at.is_(None),
-                Employee.status.in_(
-                    (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
-                ),
+                Employee.status.in_((EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)),
             )
             .with_for_update(of=Employee)
         )
@@ -1801,9 +1773,7 @@ class LeaveService:
             raise LeaveConflictError("The request employee is no longer active")
         self._validate_employment_dates(employee, request.start_date, request.end_date)
 
-    async def _lock_employee_for_manager_decision(
-        self, tenant_id: UUID, employee_id: UUID
-    ) -> None:
+    async def _lock_employee_for_manager_decision(self, tenant_id: UUID, employee_id: UUID) -> None:
         employee_exists = await self.session.scalar(
             select(Employee.id)
             .where(Employee.tenant_id == tenant_id, Employee.id == employee_id)
@@ -1813,9 +1783,7 @@ class LeaveService:
             raise LeaveNotFoundError
 
     @staticmethod
-    def _validate_employment_dates(
-        employee: Employee, start_date: date, end_date: date
-    ) -> None:
+    def _validate_employment_dates(employee: Employee, start_date: date, end_date: date) -> None:
         if start_date < employee.employment_start_date:
             raise LeaveValidationError("Leave cannot start before employment")
         if employee.employment_end_date is not None and end_date > employee.employment_end_date:
@@ -1992,7 +1960,8 @@ class LeaveService:
         self, tenant_id: UUID, employee_id: UUID, effective_on: date
     ) -> UUID | None:
         return await self.session.scalar(
-            select(EmployeeAssignment.manager_user_id).where(
+            select(EmployeeAssignment.manager_user_id)
+            .where(
                 EmployeeAssignment.tenant_id == tenant_id,
                 EmployeeAssignment.employee_id == employee_id,
                 EmployeeAssignment.manager_user_id.is_not(None),
@@ -2001,7 +1970,8 @@ class LeaveService:
                     EmployeeAssignment.effective_to.is_(None),
                     EmployeeAssignment.effective_to > effective_on,
                 ),
-            ).order_by(
+            )
+            .order_by(
                 EmployeeAssignment.effective_from.desc(),
                 EmployeeAssignment.id.desc(),
             )
@@ -2088,9 +2058,7 @@ class LeaveService:
                         LeaveRequestTimeline.tenant_id == request.tenant_id,
                         LeaveRequestTimeline.request_id == request.id,
                     )
-                    .order_by(
-                        LeaveRequestTimeline.occurred_at, LeaveRequestTimeline.id
-                    )
+                    .order_by(LeaveRequestTimeline.occurred_at, LeaveRequestTimeline.id)
                     .limit(20)
                 )
             )
@@ -2184,9 +2152,7 @@ class LeaveService:
             is_active=record.is_active,
             version=record.version,
             current_policy=(
-                self._policy_read(policy, record, effective_to)
-                if policy is not None
-                else None
+                self._policy_read(policy, record, effective_to) if policy is not None else None
             ),
             created_at=record.created_at,
             updated_at=record.updated_at,
@@ -2223,9 +2189,7 @@ class LeaveService:
         )
 
     @staticmethod
-    def _ledger_read(
-        entry: LeaveBalanceLedger, leave_type: LeaveType
-    ) -> LeaveLedgerEntryRead:
+    def _ledger_read(entry: LeaveBalanceLedger, leave_type: LeaveType) -> LeaveLedgerEntryRead:
         return LeaveLedgerEntryRead(
             id=entry.id,
             employee_id=entry.employee_id,
@@ -2291,9 +2255,7 @@ class LeaveService:
         )
 
     @staticmethod
-    def _request_outbox_payload(
-        request: LeaveRequest, leave_type: LeaveType
-    ) -> dict[str, object]:
+    def _request_outbox_payload(request: LeaveRequest, leave_type: LeaveType) -> dict[str, object]:
         return {
             "request_id": str(request.id),
             "employee_id": str(request.employee_id),

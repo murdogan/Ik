@@ -142,9 +142,7 @@ def _visible_employee_predicates(
         employee.tenant_id == assignment.tenant_id,
         employee.id == assignment.employee_id,
         employee.archived_at.is_(None),
-        employee.status.in_(
-            (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
-        ),
+        employee.status.in_((EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)),
     )
 
 
@@ -176,9 +174,7 @@ def _employee_node_statement(
                 child_assignment.effective_to > today,
             ),
             child_employee.archived_at.is_(None),
-            child_employee.status.in_(
-                (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
-            ),
+            child_employee.status.in_((EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)),
         )
     )
     statement = (
@@ -248,9 +244,7 @@ def _employee_node_statement(
     if pagination.parent_id is None:
         statement = statement.where(EmployeeAssignment.manager_user_id.is_(None))
     else:
-        statement = statement.where(
-            EmployeeAssignment.manager_user_id == pagination.parent_id
-        )
+        statement = statement.where(EmployeeAssignment.manager_user_id == pagination.parent_id)
     if pagination.cursor is not None:
         statement = statement.where(
             _after_cursor(
@@ -290,9 +284,7 @@ def _manager_root_statement(
                 child_assignment.effective_to > today,
             ),
             child_employee.archived_at.is_(None),
-            child_employee.status.in_(
-                (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
-            ),
+            child_employee.status.in_((EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)),
         )
     )
     appears_as_employee = exists(
@@ -309,9 +301,7 @@ def _manager_root_statement(
             own_assignment.effective_from <= today,
             or_(own_assignment.effective_to.is_(None), own_assignment.effective_to > today),
             own_employee.archived_at.is_(None),
-            own_employee.status.in_(
-                (EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)
-            ),
+            own_employee.status.in_((EmployeeStatus.ACTIVE.value, EmployeeStatus.ON_LEAVE.value)),
             own_employee.email.is_not(None),
             func.lower(func.trim(own_employee.email)) == User.email_normalized,
         )

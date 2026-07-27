@@ -157,14 +157,10 @@ def _boundary_violations(app_root: Path) -> list[str]:
         if source.startswith("app.platform."):
             for target in imports:
                 if target == "app.platform":
-                    violations.add(
-                        f"{source}: platform code cannot import aggregate root {target}"
-                    )
+                    violations.add(f"{source}: platform code cannot import aggregate root {target}")
                 elif _matches_root(target, "app.modules"):
                     violations.add(f"{source}: platform cannot import product module {target}")
-                elif _matches_root(target, "app") and not _matches_root(
-                    target, "app.platform"
-                ):
+                elif _matches_root(target, "app") and not _matches_root(target, "app.platform"):
                     violations.add(f"{source}: target package cannot import legacy path {target}")
             continue
 
@@ -179,9 +175,7 @@ def _boundary_violations(app_root: Path) -> list[str]:
         source_module, source_layer = _source_module_parts(path, app_root)
         if source_layer is None:
             if path.name != "__init__.py":
-                violations.add(
-                    f"{source}: module code must live in an explicit architecture layer"
-                )
+                violations.add(f"{source}: module code must live in an explicit architecture layer")
             for target in imports:
                 if not _matches_root(target, "__future__"):
                     violations.add(
@@ -202,11 +196,7 @@ def _boundary_violations(app_root: Path) -> list[str]:
             root = target.split(".", maxsplit=1)[0]
             if source_layer == "domain" and root in DOMAIN_FRAMEWORK_ROOTS:
                 violations.add(f"{source}: domain cannot import framework {target}")
-            if (
-                source_layer == "domain"
-                and root != "app"
-                and root not in stdlib_module_names
-            ):
+            if source_layer == "domain" and root != "app" and root not in stdlib_module_names:
                 violations.add(f"{source}: domain cannot import third-party dependency {target}")
             if source_layer == "application" and root in APPLICATION_FRAMEWORK_ROOTS:
                 violations.add(f"{source}: application cannot import framework {target}")
@@ -232,8 +222,7 @@ def _boundary_violations(app_root: Path) -> list[str]:
                 and root not in stdlib_module_names
             ):
                 violations.add(
-                    f"{source}: presentation cannot import persistence/provider dependency "
-                    f"{target}"
+                    f"{source}: presentation cannot import persistence/provider dependency {target}"
                 )
 
             target_parts = _target_module_parts(target)
@@ -249,9 +238,7 @@ def _boundary_violations(app_root: Path) -> list[str]:
                     )
                 continue
             if target_layer is None:
-                violations.add(
-                    f"{source}: layered code cannot import module package root {target}"
-                )
+                violations.add(f"{source}: layered code cannot import module package root {target}")
                 continue
             if (
                 source_layer is not None
@@ -455,9 +442,7 @@ def test_boundary_checker_rejects_forbidden_dependencies(
     app_root = tmp_path / "app"
     _write_module(app_root, relative_path, source)
 
-    assert any(
-        expected_violation in violation for violation in _boundary_violations(app_root)
-    )
+    assert any(expected_violation in violation for violation in _boundary_violations(app_root))
 
 
 def test_boundary_checker_resolves_forbidden_relative_imports(tmp_path: Path) -> None:

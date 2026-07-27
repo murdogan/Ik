@@ -37,6 +37,7 @@ async def test_get_employee_profile_returns_the_exact_employee_360_aggregate() -
         "email": "ada@example.test",
         "status": "active",
         "employee_version": 1,
+        "archived_at": None,
     }
     assert data["personal"] == {
         "preferred_name": "Ada",
@@ -46,6 +47,8 @@ async def test_get_employee_profile_returns_the_exact_employee_360_aggregate() -
     }
     assert data["employment"] == {
         "employment_start_date": "2026-07-01",
+        "employment_end_date": None,
+        "termination_reason": None,
         "contract_type": "indefinite",
         "work_type": "full_time",
         "version": 1,

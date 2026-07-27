@@ -46,9 +46,7 @@ def get_service(session: Annotated[AsyncSession, Depends(get_session)]) -> Docum
 def get_handler(
     service: Annotated[DocumentRequestService, Depends(get_service)],
     unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
-    idempotency: Annotated[
-        CommandIdempotencyService, Depends(get_command_idempotency_service)
-    ],
+    idempotency: Annotated[CommandIdempotencyService, Depends(get_command_idempotency_service)],
 ) -> DocumentRequestCommandHandler:
     return DocumentRequestCommandHandler(service, unit_of_work, idempotency)
 
@@ -56,22 +54,16 @@ def get_handler(
 @router.get("", response_model=ListEnvelope[EmployeeDocumentRequestRead])
 async def list_document_requests(
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(
-            require_any_permission(
-                "document_request:read:own", "document_request:manage:tenant"
-            )
+            require_any_permission("document_request:read:own", "document_request:manage:tenant")
         ),
     ],
     service: Annotated[DocumentRequestService, Depends(get_service)],
     scope: Annotated[Literal["own", "hr"], Query()] = "own",
-    status_filter: Annotated[
-        EmployeeDocumentRequestStatus | None, Query(alias="status")
-    ] = None,
+    status_filter: Annotated[EmployeeDocumentRequestStatus | None, Query(alias="status")] = None,
     limit: Annotated[
         int, Query(ge=1, le=DOCUMENT_REQUEST_LIST_MAX_LIMIT)
     ] = DOCUMENT_REQUEST_LIST_DEFAULT_LIMIT,
@@ -103,9 +95,7 @@ async def list_document_requests(
 async def create_document_request(
     payload: EmployeeDocumentRequestCreate,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("document_request:create:own"))
     ],
@@ -125,15 +115,11 @@ async def create_document_request(
 async def get_document_request(
     request_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(
-            require_any_permission(
-                "document_request:read:own", "document_request:manage:tenant"
-            )
+            require_any_permission("document_request:read:own", "document_request:manage:tenant")
         ),
     ],
     service: Annotated[DocumentRequestService, Depends(get_service)],
@@ -155,9 +141,7 @@ async def resolve_document_request(
     request_id: UUID,
     payload: EmployeeDocumentRequestDecision,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("document_request:manage:tenant"))
     ],
@@ -180,9 +164,7 @@ async def reject_document_request(
     request_id: UUID,
     payload: EmployeeDocumentRequestDecision,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("document_request:manage:tenant"))
     ],

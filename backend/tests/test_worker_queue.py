@@ -67,9 +67,7 @@ async def test_recording_job_queue_preserves_tenant_and_operational_controls() -
 
     transport_payload = queue.jobs[0].payload_for_transport()
     transport_payload["employee"]["id"] = "changed-transport-copy"
-    assert queue.jobs[0].payload["employee"] == {
-        "id": "20000000-0000-4000-8000-000000000001"
-    }
+    assert queue.jobs[0].payload["employee"] == {"id": "20000000-0000-4000-8000-000000000001"}
 
 
 async def test_recording_job_queue_supports_injected_deterministic_ids() -> None:

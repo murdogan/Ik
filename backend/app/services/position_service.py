@@ -100,9 +100,7 @@ class PositionService:
                 if pagination.status is not None:
                     statement = statement.where(Position.status == pagination.status.value)
                 if pagination.search is not None:
-                    statement = statement.where(
-                        _position_search_predicate(pagination.search)
-                    )
+                    statement = statement.where(_position_search_predicate(pagination.search))
                 if pagination.cursor is not None:
                     statement = statement.where(
                         _after_cursor(

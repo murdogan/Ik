@@ -89,10 +89,7 @@ class NotificationService:
             .subquery()
         )
         unread_count = int(
-            await self.session.scalar(
-                select(func.count()).select_from(unread_rows)
-            )
-            or 0
+            await self.session.scalar(select(func.count()).select_from(unread_rows)) or 0
         )
         return NotificationListRead(
             items=[_read(record) for record in records[:limit]],

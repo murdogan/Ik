@@ -75,9 +75,7 @@ _TRANSITION_TARGETS: dict[TenantStatus, frozenset[TenantStatus]] = {
     TenantStatus.TRIAL: frozenset(
         {TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.OFFBOARDING}
     ),
-    TenantStatus.ACTIVE: frozenset(
-        {TenantStatus.SUSPENDED, TenantStatus.OFFBOARDING}
-    ),
+    TenantStatus.ACTIVE: frozenset({TenantStatus.SUSPENDED, TenantStatus.OFFBOARDING}),
     TenantStatus.SUSPENDED: frozenset(
         {TenantStatus.TRIAL, TenantStatus.ACTIVE, TenantStatus.OFFBOARDING}
     ),

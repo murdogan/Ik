@@ -28,13 +28,6 @@ from app.models.notification import (
 from app.models.tenant import Tenant
 from app.models.user import User, UserStatus
 from app.modules.core.domain.feature_flags import FeatureFlagKey
-from app.modules.notifications import (
-    EmailDeliveryError,
-    EmailMessage,
-    EmailProvider,
-    LocalCaptureEmailProvider,
-    UnavailableEmailProvider,
-)
 from app.platform.audit import (
     AuditActorType,
     AuditCategory,
@@ -55,6 +48,13 @@ from app.platform.observability.operational import (
     log_worker_stopped,
 )
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
+from app.services.notification_email_provider import (
+    EmailDeliveryError,
+    EmailMessage,
+    EmailProvider,
+    LocalCaptureEmailProvider,
+    UnavailableEmailProvider,
+)
 from app.services.phase7_access import Phase7FeatureUnavailableError, require_phase7_feature
 
 _EVENT_TYPES = (

@@ -55,9 +55,7 @@ async def probe_sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
             text("insert into p0c_uow_probe (id, value) values (1, 'persisted')")
         )
         await connection.run_sync(_probe_registry.metadata.create_all)
-        await connection.execute(
-            _commit_probe_table.insert().values(id=1, value="persisted")
-        )
+        await connection.execute(_commit_probe_table.insert().values(id=1, value="persisted"))
 
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
@@ -118,9 +116,7 @@ async def test_unit_of_work_rolls_back_and_types_orm_concurrency_failure(
         assert session.in_transaction() is False
 
     async with probe_sessions() as verification_session:
-        row_count = await verification_session.scalar(
-            text("select count(*) from p0c_uow_probe")
-        )
+        row_count = await verification_session.scalar(text("select count(*) from p0c_uow_probe"))
     assert row_count == 1
 
     api_error = application_error_to_api_error(error.value)
@@ -148,9 +144,7 @@ async def test_unit_of_work_translates_commit_time_integrity_error_and_recovers_
         await session.rollback()
 
     async with probe_sessions() as verification_session:
-        row_count = await verification_session.scalar(
-            text("select count(*) from p0c_commit_probe")
-        )
+        row_count = await verification_session.scalar(text("select count(*) from p0c_commit_probe"))
     assert row_count == 1
 
 

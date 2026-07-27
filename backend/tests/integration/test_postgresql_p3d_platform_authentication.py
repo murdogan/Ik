@@ -180,20 +180,26 @@ async def test_platform_realm_has_tenantless_persistence_narrow_acl_and_distinct
                 ),
                 {"family_id": PLATFORM_FAMILY_ID},
             )
-            assert await connection.scalar(
-                text(
-                    "select count(*) from platform_refresh_session_tokens "
-                    "where id = :token_id and consumed_at is not null"
-                ),
-                {"token_id": PLATFORM_TOKEN_ID},
-            ) == 1
-            assert await connection.scalar(
-                text(
-                    "select count(*) from platform_refresh_session_families "
-                    "where id = :family_id and revoked_at is not null"
-                ),
-                {"family_id": PLATFORM_FAMILY_ID},
-            ) == 1
+            assert (
+                await connection.scalar(
+                    text(
+                        "select count(*) from platform_refresh_session_tokens "
+                        "where id = :token_id and consumed_at is not null"
+                    ),
+                    {"token_id": PLATFORM_TOKEN_ID},
+                )
+                == 1
+            )
+            assert (
+                await connection.scalar(
+                    text(
+                        "select count(*) from platform_refresh_session_families "
+                        "where id = :family_id and revoked_at is not null"
+                    ),
+                    {"family_id": PLATFORM_FAMILY_ID},
+                )
+                == 1
+            )
 
         for role_name in (TENANT_APPLICATION_ROLE, PLATFORM_APPLICATION_ROLE):
             for table_name in PLATFORM_TABLES:
@@ -238,16 +244,22 @@ async def test_platform_realm_has_tenantless_persistence_narrow_acl_and_distinct
         assert sqlstate_from_error(tenant_shaped_audit.value) == "42501"
 
         async with engine.connect() as connection:
-            assert await connection.scalar(
-                text("select count(*) from audit_events where id = :event_id"),
-                {"event_id": valid_audit_id},
-            ) == 1
-            assert await connection.scalar(
-                text(
-                    "select count(*) from audit_events "
-                    "where event_type = 'platform.auth.login.failed' and scope_type = 'tenant'"
+            assert (
+                await connection.scalar(
+                    text("select count(*) from audit_events where id = :event_id"),
+                    {"event_id": valid_audit_id},
                 )
-            ) == 0
+                == 1
+            )
+            assert (
+                await connection.scalar(
+                    text(
+                        "select count(*) from audit_events "
+                        "where event_type = 'platform.auth.login.failed' and scope_type = 'tenant'"
+                    )
+                )
+                == 0
+            )
 
         _assert_access_token_audiences_are_mutually_exclusive()
     finally:

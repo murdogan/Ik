@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,6 +13,7 @@ from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
 from app.models.employee import Employee, EmployeeStatus
+from app.models.leave import LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import LegalEntity
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
@@ -33,6 +35,8 @@ OTHER_TENANT_ID = UUID("22222222-bbbb-4222-8222-222222222222")
 EMPLOYEE_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 USER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 LEAVE_REQUEST_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+LEAVE_TYPE_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+LEAVE_POLICY_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 
 PLATFORM_FIELDS = {
     "id",
@@ -140,11 +144,35 @@ async def _tenant_api(
                     full_name="Sensitive User Name",
                     status=UserStatus.ACTIVE.value,
                 ),
+                LeaveType(
+                    id=LEAVE_TYPE_ID,
+                    tenant_id=TENANT_ID,
+                    code="annual",
+                    name="Annual leave",
+                ),
+                LeavePolicy(
+                    id=LEAVE_POLICY_ID,
+                    tenant_id=TENANT_ID,
+                    leave_type_id=LEAVE_TYPE_ID,
+                    version=1,
+                    effective_from=date(2026, 1, 1),
+                    paid=True,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=USER_ID,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
                 LeaveRequest(
                     id=LEAVE_REQUEST_ID,
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
                     leave_type="annual",
+                    leave_type_id=LEAVE_TYPE_ID,
+                    policy_id=LEAVE_POLICY_ID,
                     start_date=date(2026, 8, 3),
                     end_date=date(2026, 8, 4),
                     status=LeaveRequestStatus.PENDING.value,
@@ -328,16 +356,12 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
         assert next_cursor is None
         assert all(set(item) == PLATFORM_FIELDS for item in listed)
 
-        detail_response = await harness.client.get(
-            f"/api/v1/platform/tenants/{created['id']}"
-        )
+        detail_response = await harness.client.get(f"/api/v1/platform/tenants/{created['id']}")
         assert detail_response.status_code == 200
         detailed = _phase1_data(detail_response, PLATFORM_FIELDS)
         assert detailed == created
 
-        serialized_platform_responses = json.dumps(
-            [created, listed, detailed]
-        )
+        serialized_platform_responses = json.dumps([created, listed, detailed])
         for forbidden_value in (
             "WF-001",
             "Ada",
@@ -398,9 +422,7 @@ async def test_platform_tenant_list_uses_bounded_deterministic_cursor_envelope()
         first, cursor = _phase1_list(first_response, expected_limit=2)
         assert cursor is not None
         assert first_response.json()["meta"]["request_id"] == "req_platform_page_001"
-        assert first_response.json()["meta"]["trace_id"] == (
-            "0123456789abcdef0123456789abcdef"
-        )
+        assert first_response.json()["meta"]["trace_id"] == ("0123456789abcdef0123456789abcdef")
 
         second_response = await harness.client.get(
             "/api/v1/platform/tenants",
@@ -446,9 +468,7 @@ async def test_platform_reads_legacy_premium_plan_but_new_writes_reject_it() -> 
             await session.commit()
         _authorize_platform(harness.app)
 
-        detail_response = await harness.client.get(
-            f"/api/v1/platform/tenants/{OTHER_TENANT_ID}"
-        )
+        detail_response = await harness.client.get(f"/api/v1/platform/tenants/{OTHER_TENANT_ID}")
         create_response = await harness.client.post(
             "/api/v1/platform/tenants",
             json={

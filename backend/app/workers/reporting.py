@@ -36,9 +36,13 @@ from app.models.position import Position, PositionStatus
 from app.models.reporting import ExportJobStatus, ReportExportJob, ReportScope, ReportType
 from app.models.tenant import Tenant
 from app.models.user import User, UserStatus
-from app.modules.documents import create_document_runtime
-from app.modules.documents.scanning import MalwareScanError, MalwareScanner, MalwareScanVerdict
-from app.modules.reporting.spreadsheets import (
+from app.modules.documents.infrastructure.runtime import create_document_runtime
+from app.modules.documents.infrastructure.scanning import (
+    MalwareScanError,
+    MalwareScanner,
+    MalwareScanVerdict,
+)
+from app.modules.reporting.infrastructure.spreadsheets import (
     SpreadsheetFileError,
     iter_import_rows,
     spreadsheet_safe,

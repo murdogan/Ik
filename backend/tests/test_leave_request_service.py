@@ -1,9 +1,11 @@
 from datetime import UTC, date, datetime, timedelta
-from uuid import UUID
+from decimal import Decimal
+from uuid import UUID, uuid5
 
 import pytest
 from app.db.base import Base
 from app.models.employee import Employee, EmployeeStatus
+from app.models.leave import LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
@@ -48,6 +50,54 @@ ORDERED_SECOND_REQUEST_ID = UUID("bcbcbcbc-8888-4bcb-8bcb-bcbcbcbc8888")
 DEFAULT_TIMESTAMP_FIRST_REQUEST_ID = UUID("cdcdcdcd-9999-4dcd-8dcd-cdcdcdcd9999")
 DEFAULT_TIMESTAMP_SECOND_REQUEST_ID = UUID("dededede-aaaa-4ede-8ede-dedededeaaaa")
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+LEAVE_FIXTURE_NAMESPACE = UUID("a1000000-0000-4000-8000-000000000005")
+
+
+def _leave_configuration(
+    tenant_id: UUID,
+    *codes: str,
+) -> list[LeaveType | LeavePolicy]:
+    rows: list[LeaveType | LeavePolicy] = []
+    for code in codes:
+        leave_type_id = _leave_type_id(tenant_id, code)
+        rows.extend(
+            (
+                LeaveType(
+                    id=leave_type_id,
+                    tenant_id=tenant_id,
+                    code=code,
+                    name=code.title(),
+                    description=None,
+                    is_active=True,
+                    version=1,
+                ),
+                LeavePolicy(
+                    id=_leave_policy_id(tenant_id, code),
+                    tenant_id=tenant_id,
+                    leave_type_id=leave_type_id,
+                    version=1,
+                    effective_from=date(1900, 1, 1),
+                    paid=False,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0.00"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=None,
+                    created_at=NOW,
+                ),
+            )
+        )
+    return rows
+
+
+def _leave_type_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-type:{tenant_id}:{code}")
+
+
+def _leave_policy_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-policy:{tenant_id}:{code}:1")
 
 
 async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
@@ -137,11 +187,15 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 status=EmployeeStatus.ACTIVE.value,
                 employment_start_date=date(2026, 7, 1),
             ),
+            *_leave_configuration(TENANT_ID, "annual", "sick", "wellbeing"),
+            *_leave_configuration(OTHER_TENANT_ID, "annual"),
             LeaveRequest(
                 id=PENDING_REQUEST_ID,
                 tenant_id=TENANT_ID,
                 employee_id=EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=date(2026, 7, 20),
                 end_date=date(2026, 7, 22),
                 status=LeaveRequestStatus.PENDING.value,
@@ -153,11 +207,14 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 tenant_id=TENANT_ID,
                 employee_id=EMPLOYEE_ID,
                 leave_type="sick",
+                leave_type_id=_leave_type_id(TENANT_ID, "sick"),
+                policy_id=_leave_policy_id(TENANT_ID, "sick"),
                 start_date=date(2026, 7, 10),
                 end_date=date(2026, 7, 10),
                 status=LeaveRequestStatus.APPROVED.value,
                 requested_by_user_id=REQUESTING_USER_ID,
                 decided_by_user_id=APPROVER_USER_ID,
+                decided_at=NOW - timedelta(hours=2, minutes=30),
                 created_at=NOW - timedelta(hours=3),
             ),
             LeaveRequest(
@@ -165,6 +222,8 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 tenant_id=TENANT_ID,
                 employee_id=SECOND_EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=date(2026, 7, 22),
                 end_date=date(2026, 7, 24),
                 status=LeaveRequestStatus.PENDING.value,
@@ -176,6 +235,8 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 tenant_id=OTHER_TENANT_ID,
                 employee_id=OTHER_EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(OTHER_TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(OTHER_TENANT_ID, "annual"),
                 start_date=date(2026, 7, 20),
                 end_date=date(2026, 7, 22),
                 status=LeaveRequestStatus.PENDING.value,
@@ -440,9 +501,7 @@ async def test_list_leave_requests_combines_status_employee_and_date_filters() -
 async def test_list_leave_requests_accepts_constructed_raw_status_filter() -> None:
     session, engine = await _session_with_seed_data()
     try:
-        filters = LeaveRequestListFilters.model_construct(
-            status=LeaveRequestStatus.APPROVED.value
-        )
+        filters = LeaveRequestListFilters.model_construct(status=LeaveRequestStatus.APPROVED.value)
 
         leave_requests = await LeaveRequestService(session).list_leave_requests(
             TENANT_ID,
@@ -506,6 +565,8 @@ async def test_list_leave_requests_orders_created_at_ties_by_start_date_then_id(
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
                     leave_type="annual",
+                    leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                    policy_id=_leave_policy_id(TENANT_ID, "annual"),
                     start_date=date(2026, 9, 10),
                     end_date=date(2026, 9, 10),
                     status=LeaveRequestStatus.PENDING.value,
@@ -517,6 +578,8 @@ async def test_list_leave_requests_orders_created_at_ties_by_start_date_then_id(
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
                     leave_type="annual",
+                    leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                    policy_id=_leave_policy_id(TENANT_ID, "annual"),
                     start_date=date(2026, 9, 1),
                     end_date=date(2026, 9, 1),
                     status=LeaveRequestStatus.PENDING.value,
@@ -570,20 +633,28 @@ async def test_leave_cursor_does_not_repeat_sqlite_server_default_timestamp_row(
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
                     leave_type="annual",
+                    leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                    policy_id=_leave_policy_id(TENANT_ID, "annual"),
                     start_date=date(2026, 10, 1),
                     end_date=date(2026, 10, 1),
                     status=LeaveRequestStatus.CANCELLED.value,
                     requested_by_user_id=REQUESTING_USER_ID,
+                    decided_by_user_id=APPROVER_USER_ID,
+                    decided_at=NOW,
                 ),
                 LeaveRequest(
                     id=DEFAULT_TIMESTAMP_SECOND_REQUEST_ID,
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
                     leave_type="annual",
+                    leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                    policy_id=_leave_policy_id(TENANT_ID, "annual"),
                     start_date=date(2026, 10, 2),
                     end_date=date(2026, 10, 2),
                     status=LeaveRequestStatus.CANCELLED.value,
                     requested_by_user_id=REQUESTING_USER_ID,
+                    decided_by_user_id=APPROVER_USER_ID,
+                    decided_at=NOW,
                 ),
             ]
         )
@@ -811,12 +882,15 @@ async def test_decide_leave_request_rejects_terminal_status_without_mutation(
                 tenant_id=TENANT_ID,
                 employee_id=EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=date(2026, 8, 10),
                 end_date=date(2026, 8, 10),
                 status=status.value,
                 requested_by_user_id=REQUESTING_USER_ID,
                 decided_by_user_id=APPROVER_USER_ID,
                 decision_note="Already decided",
+                decided_at=NOW,
                 created_at=NOW + timedelta(minutes=1),
             )
         )

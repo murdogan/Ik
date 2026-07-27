@@ -53,9 +53,7 @@ class EmployeeDocumentRequest(Base, TimestampMixin):
             "and length(trim(resolution_reason)) > 0)",
             name="ck_employee_document_requests_lifecycle",
         ),
-        UniqueConstraint(
-            "tenant_id", "id", name="uq_employee_document_requests_tenant_id_id"
-        ),
+        UniqueConstraint("tenant_id", "id", name="uq_employee_document_requests_tenant_id_id"),
         ForeignKeyConstraint(
             ("tenant_id", "employee_id"),
             ("employees.tenant_id", "employees.id"),
@@ -100,9 +98,7 @@ class EmployeeDocumentRequest(Base, TimestampMixin):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     tenant_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey(
-            "tenants.id", name="fk_employee_document_requests_tenant", ondelete="CASCADE"
-        ),
+        ForeignKey("tenants.id", name="fk_employee_document_requests_tenant", ondelete="CASCADE"),
         nullable=False,
     )
     employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
@@ -115,9 +111,7 @@ class EmployeeDocumentRequest(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default=text("1")
     )
-    decided_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
+    decided_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolution_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 

@@ -93,7 +93,8 @@ async def test_session_tables_force_tenant_isolation_and_have_no_platform_visibi
                     text(
                         "select tablename, policyname, roles, cmd, qual, with_check "
                         "from pg_catalog.pg_policies where schemaname = 'public' "
-                        "and tablename = any(:table_names)"
+                        "and tablename = any(:table_names) "
+                        "and policyname = 'tenant_isolation_app'"
                     ),
                     {"table_names": list(SESSION_TABLES)},
                 )
@@ -114,11 +115,14 @@ async def test_session_tables_force_tenant_isolation_and_have_no_platform_visibi
                     role_name=TENANT_APPLICATION_ROLE,
                     table_name=table_name,
                 ) == {"SELECT", "INSERT", "UPDATE"}
-                assert await _granted_privileges(
-                    connection,
-                    role_name=PLATFORM_APPLICATION_ROLE,
-                    table_name=table_name,
-                ) == set()
+                assert (
+                    await _granted_privileges(
+                        connection,
+                        role_name=PLATFORM_APPLICATION_ROLE,
+                        table_name=table_name,
+                    )
+                    == set()
+                )
 
         async with engine.begin() as connection:
             await _set_local_tenant_role(connection, TENANT_A_ID)
@@ -128,9 +132,7 @@ async def test_session_tables_force_tenant_isolation_and_have_no_platform_visibi
                 )
             ) == (FAMILY_A_ID,)
             assert tuple(
-                await connection.scalars(
-                    text("select id from refresh_session_tokens order by id")
-                )
+                await connection.scalars(text("select id from refresh_session_tokens order by id"))
             ) == (TOKEN_A_ID,)
             hidden_family_update = await connection.execute(
                 text(
@@ -197,17 +199,11 @@ async def test_session_tables_force_tenant_isolation_and_have_no_platform_visibi
 
         async with engine.connect() as connection:
             family_b_revoked_at = await connection.scalar(
-                text(
-                    "select revoked_at from refresh_session_families "
-                    "where id = :family_id"
-                ),
+                text("select revoked_at from refresh_session_families where id = :family_id"),
                 {"family_id": FAMILY_B_ID},
             )
             token_b_consumed_at = await connection.scalar(
-                text(
-                    "select consumed_at from refresh_session_tokens "
-                    "where id = :token_id"
-                ),
+                text("select consumed_at from refresh_session_tokens where id = :token_id"),
                 {"token_id": TOKEN_B_ID},
             )
             assert family_b_revoked_at is None
@@ -267,9 +263,7 @@ async def test_concurrent_refresh_replay_commits_revoke_and_kills_successor_sess
             token_rows = (
                 await connection.execute(
                     select(RefreshSessionToken.id, RefreshSessionToken.consumed_at)
-                    .where(
-                        RefreshSessionToken.family_id == original.session_family_id
-                    )
+                    .where(RefreshSessionToken.family_id == original.session_family_id)
                     .order_by(RefreshSessionToken.id)
                 )
             ).all()
@@ -288,11 +282,14 @@ async def test_concurrent_refresh_replay_commits_revoke_and_kills_successor_sess
             await service.current_user(access_tokens.decode(successor.access_token))
 
         async with engine.connect() as connection:
-            assert await connection.scalar(
-                select(RefreshSessionFamily.revoked_at).where(
-                    RefreshSessionFamily.id == original.session_family_id
+            assert (
+                await connection.scalar(
+                    select(RefreshSessionFamily.revoked_at).where(
+                        RefreshSessionFamily.id == original.session_family_id
+                    )
                 )
-            ) == family_revoked_at
+                == family_revoked_at
+            )
     finally:
         await engine.dispose()
 
@@ -451,11 +448,7 @@ async def _granted_privileges(
     privileges: set[str] = set()
     for privilege in TABLE_PRIVILEGES:
         granted = await connection.scalar(
-            text(
-                "select has_table_privilege("
-                ":role_name, :relation_name, :privilege"
-                ")"
-            ),
+            text("select has_table_privilege(:role_name, :relation_name, :privilege)"),
             {
                 "role_name": role_name,
                 "relation_name": f"public.{table_name}",

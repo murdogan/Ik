@@ -1,23 +1,27 @@
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from app.api.auth_dependencies import require_authenticated_session
 from app.api.dashboard import get_dashboard_service
 from app.api.dependencies import (
     get_authenticated_tenant_request_context,
-    get_phase0_tenant_request_context,
 )
 from app.db.base import Base
 from app.main import create_app
+from app.models.audit import AuditEvent
 from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.leave import LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
 from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.request_context import AuthenticationStrength, RequestContext
+from app.platform.tenancy import TenantContext
 from app.schemas.dashboard import DashboardSummary, DepartmentDistributionItem
 from app.services.dashboard_service import DashboardService
 from fastapi.testclient import TestClient
@@ -41,6 +45,122 @@ STRUCTURED_BRANCH_ID = UUID("a3000000-0000-4000-8000-000000000001")
 STRUCTURED_DEPARTMENT_ID = UUID("a3000000-0000-4000-8000-000000000002")
 EXPIRED_DEPARTMENT_ID = UUID("a3000000-0000-4000-8000-000000000003")
 STRUCTURED_POSITION_ID = UUID("a3000000-0000-4000-8000-000000000004")
+LEAVE_FIXTURE_NAMESPACE = UUID("a1000000-0000-4000-8000-000000000002")
+DASHBOARD_PERMISSIONS = ("dashboard:read:tenant",)
+
+
+async def _tenant_summary(
+    service: DashboardService,
+    tenant_id: UUID = TENANT_ID,
+) -> DashboardSummary:
+    return await service.get_summary(
+        tenant_id,
+        actor_id=USER_ID,
+        permissions=DASHBOARD_PERMISSIONS,
+    )
+
+
+def _authenticated_tenant_context() -> RequestContext:
+    return RequestContext(
+        request_id="dashboard-test-request",
+        trace_id="d4000000000040008000000000000001",
+        tenant=TenantContext(
+            tenant_id=TENANT_ID,
+            slug="wealthy-falcon",
+        ),
+        actor_id=USER_ID,
+        membership_id=USER_ID,
+        authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
+    )
+
+
+def _leave_configuration(
+    tenant_id: UUID,
+    *codes: str,
+) -> list[LeaveType | LeavePolicy]:
+    rows: list[LeaveType | LeavePolicy] = []
+    for code in codes:
+        leave_type_id = _leave_type_id(tenant_id, code)
+        rows.extend(
+            (
+                LeaveType(
+                    id=leave_type_id,
+                    tenant_id=tenant_id,
+                    code=code,
+                    name=code.replace("_", " ").title(),
+                    description=None,
+                    is_active=True,
+                    version=1,
+                ),
+                LeavePolicy(
+                    id=_leave_policy_id(tenant_id, code),
+                    tenant_id=tenant_id,
+                    leave_type_id=leave_type_id,
+                    version=1,
+                    effective_from=date(1900, 1, 1),
+                    paid=False,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0.00"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=None,
+                    created_at=NOW,
+                ),
+            )
+        )
+    return rows
+
+
+def _leave_type_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-type:{tenant_id}:{code}")
+
+
+def _leave_policy_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-policy:{tenant_id}:{code}:1")
+
+
+def _audit_event(
+    *,
+    event_id: UUID,
+    tenant_id: UUID,
+    actor_user_id: UUID,
+    event_type: str,
+    resource_type: str,
+    resource_id: UUID,
+    occurred_at: datetime,
+) -> AuditEvent:
+    return AuditEvent(
+        id=event_id,
+        occurred_at=occurred_at,
+        scope_type="tenant",
+        tenant_id=tenant_id,
+        actor_type="user",
+        actor_user_id=actor_user_id,
+        impersonator_user_id=None,
+        event_type=event_type,
+        category="employee_data",
+        severity="info",
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=event_type.rsplit(".", maxsplit=1)[-1],
+        result="success",
+        request_id=f"dashboard-{event_id.hex[:16]}",
+        trace_id=event_id.hex,
+        session_id=None,
+        ip_address=None,
+        user_agent=None,
+        reason=None,
+        support_ticket_id=None,
+        changed_fields=[],
+        before_data={},
+        after_data={},
+        metadata_={},
+        data_classification="workforce",
+        visibility_class="tenant",
+        integrity_hash=None,
+    )
 
 
 async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
@@ -164,11 +284,15 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 employment_start_date=date(2026, 7, 1),
                 created_at=NOW - timedelta(hours=1),
             ),
+            *_leave_configuration(TENANT_ID, "annual", "sick"),
+            *_leave_configuration(OTHER_TENANT_ID, "annual"),
             LeaveRequest(
                 id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
                 tenant_id=TENANT_ID,
                 employee_id=UUID("5aaaaaaa-5555-4555-8555-555555555555"),
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=date(2026, 7, 20),
                 end_date=date(2026, 7, 22),
                 status=LeaveRequestStatus.PENDING.value,
@@ -180,11 +304,14 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 tenant_id=TENANT_ID,
                 employee_id=UUID("6bbbbbbb-6666-4666-8666-666666666666"),
                 leave_type="sick",
+                leave_type_id=_leave_type_id(TENANT_ID, "sick"),
+                policy_id=_leave_policy_id(TENANT_ID, "sick"),
                 start_date=date(2026, 7, 10),
                 end_date=date(2026, 7, 10),
                 status=LeaveRequestStatus.APPROVED.value,
                 requested_by_user_id=USER_ID,
                 decided_by_user_id=USER_ID,
+                decided_at=NOW - timedelta(hours=3),
                 created_at=NOW - timedelta(hours=4),
             ),
             LeaveRequest(
@@ -192,11 +319,49 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 tenant_id=OTHER_TENANT_ID,
                 employee_id=UUID("9eeeeeee-9999-4999-8999-999999999999"),
                 leave_type="annual",
+                leave_type_id=_leave_type_id(OTHER_TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(OTHER_TENANT_ID, "annual"),
                 start_date=date(2026, 7, 20),
                 end_date=date(2026, 7, 22),
                 status=LeaveRequestStatus.PENDING.value,
                 requested_by_user_id=OTHER_USER_ID,
                 created_at=NOW - timedelta(minutes=30),
+            ),
+            _audit_event(
+                event_id=UUID("d1000000-0000-4000-8000-000000000001"),
+                tenant_id=TENANT_ID,
+                actor_user_id=USER_ID,
+                event_type="leave_request.submitted",
+                resource_type="leave_request",
+                resource_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                occurred_at=NOW - timedelta(hours=2),
+            ),
+            _audit_event(
+                event_id=UUID("d1000000-0000-4000-8000-000000000002"),
+                tenant_id=TENANT_ID,
+                actor_user_id=USER_ID,
+                event_type="leave_request.approved",
+                resource_type="leave_request",
+                resource_id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                occurred_at=NOW - timedelta(hours=3),
+            ),
+            _audit_event(
+                event_id=UUID("d1000000-0000-4000-8000-000000000003"),
+                tenant_id=TENANT_ID,
+                actor_user_id=USER_ID,
+                event_type="employee.created",
+                resource_type="employee",
+                resource_id=UUID("5aaaaaaa-5555-4555-8555-555555555555"),
+                occurred_at=NOW - timedelta(days=1),
+            ),
+            _audit_event(
+                event_id=UUID("d1000000-0000-4000-8000-000000000004"),
+                tenant_id=OTHER_TENANT_ID,
+                actor_user_id=OTHER_USER_ID,
+                event_type="leave_request.submitted",
+                resource_type="leave_request",
+                resource_id=UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+                occurred_at=NOW - timedelta(minutes=30),
             ),
         ]
     )
@@ -296,14 +461,14 @@ async def _add_structured_assignment_history(session: AsyncSession) -> None:
 async def test_dashboard_summary_counts_are_tenant_scoped_from_database() -> None:
     session, engine = await _session_with_seed_data()
 
-    summary = await DashboardService(session=session, today=TODAY).get_summary(TENANT_ID)
+    summary = await _tenant_summary(DashboardService(session=session, today=TODAY))
 
     assert summary.active_employee_count == 3
     assert summary.employee_count == 4
     assert summary.pending_leave_count == 1
     assert summary.pending_leave_requests == 1
     assert summary.new_starters_this_month == 2
-    assert summary.open_tasks == 0
+    assert summary.open_tasks == 1
     assert summary.department_distribution == [
         DepartmentDistributionItem(department="People", count=2),
         DepartmentDistributionItem(department="Engineering", count=1),
@@ -332,13 +497,15 @@ async def test_dashboard_department_distribution_prefers_current_assignment() ->
 
     event.listen(engine.sync_engine, "before_cursor_execute", count_statements)
     try:
-        summary = await DashboardService(
-            session=session,
-            today=TODAY,
-            recent_activity_limit=0,
-        ).get_summary(TENANT_ID)
+        summary = await _tenant_summary(
+            DashboardService(
+                session=session,
+                today=TODAY,
+                recent_activity_limit=0,
+            )
+        )
 
-        assert statement_count == 2
+        assert statement_count == 4
         assert summary.department_distribution == [
             DepartmentDistributionItem(department="Engineering", count=2),
             DepartmentDistributionItem(department="People", count=1),
@@ -354,17 +521,17 @@ async def test_dashboard_excludes_archived_employees_from_workforce_views() -> N
     session, engine = await _session_with_seed_data()
     archived_employee_id = UUID("5aaaaaaa-5555-4555-8555-555555555555")
     await session.execute(
-        update(Employee)
-        .where(Employee.employee_number == "WF-001")
-        .values(archived_at=NOW)
+        update(Employee).where(Employee.employee_number == "WF-001").values(archived_at=NOW)
     )
     await session.flush()
 
-    summary = await DashboardService(
-        session=session,
-        today=TODAY,
-        recent_activity_limit=20,
-    ).get_summary(TENANT_ID)
+    summary = await _tenant_summary(
+        DashboardService(
+            session=session,
+            today=TODAY,
+            recent_activity_limit=20,
+        )
+    )
 
     assert summary.active_employee_count == 2
     assert summary.employee_count == 3
@@ -374,7 +541,8 @@ async def test_dashboard_excludes_archived_employees_from_workforce_views() -> N
         DepartmentDistributionItem(department="People", count=1),
         DepartmentDistributionItem(department="Unassigned", count=1),
     ]
-    assert not any(
+    # Audit-backed history remains visible even when the current workforce row is archived.
+    assert any(
         item.entity_type == "employee" and item.entity_id == archived_employee_id
         for item in summary.recent_activity
     )
@@ -387,7 +555,7 @@ async def test_dashboard_summary_enrichment_reflects_database_changes() -> None:
     session, engine = await _session_with_seed_data()
     service = DashboardService(session=session, today=TODAY, recent_activity_limit=0)
 
-    before = await service.get_summary(TENANT_ID)
+    before = await _tenant_summary(service)
     employee_id = UUID("a2000000-0000-4000-8000-000000000001")
     session.add_all(
         [
@@ -407,6 +575,8 @@ async def test_dashboard_summary_enrichment_reflects_database_changes() -> None:
                 tenant_id=TENANT_ID,
                 employee_id=employee_id,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=TODAY + timedelta(days=10),
                 end_date=TODAY + timedelta(days=11),
                 status=LeaveRequestStatus.PENDING.value,
@@ -416,7 +586,7 @@ async def test_dashboard_summary_enrichment_reflects_database_changes() -> None:
     )
     await session.commit()
 
-    after = await service.get_summary(TENANT_ID)
+    after = await _tenant_summary(service)
 
     assert after.active_employee_count == before.active_employee_count + 1
     assert after.employee_count == before.employee_count + 1
@@ -498,11 +668,13 @@ async def test_dashboard_this_month_starters_use_calendar_month_window() -> None
     )
     await session.commit()
 
-    summary = await DashboardService(
-        session=session,
-        today=date(2026, 12, 31),
-        recent_activity_limit=0,
-    ).get_summary(TENANT_ID)
+    summary = await _tenant_summary(
+        DashboardService(
+            session=session,
+            today=date(2026, 12, 31),
+            recent_activity_limit=0,
+        )
+    )
 
     assert summary.new_starters_this_month == 2
 
@@ -513,11 +685,10 @@ async def test_dashboard_this_month_starters_use_calendar_month_window() -> None
 async def test_dashboard_recent_activity_uses_current_tenant_records_only() -> None:
     session, engine = await _session_with_seed_data()
 
-    summary = await DashboardService(session=session, today=TODAY).get_summary(TENANT_ID)
+    summary = await _tenant_summary(DashboardService(session=session, today=TODAY))
 
     assert [
-        (activity.activity_type, activity.entity_id)
-        for activity in summary.recent_activity[:3]
+        (activity.activity_type, activity.entity_id) for activity in summary.recent_activity[:3]
     ] == [
         ("leave.requested", UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")),
         ("leave.approved", UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")),
@@ -534,15 +705,16 @@ async def test_dashboard_recent_activity_uses_current_tenant_records_only() -> N
 async def test_dashboard_recent_activity_limit_is_applied_after_source_merge() -> None:
     session, engine = await _session_with_seed_data()
 
-    summary = await DashboardService(
-        session=session,
-        today=TODAY,
-        recent_activity_limit=2,
-    ).get_summary(TENANT_ID)
+    summary = await _tenant_summary(
+        DashboardService(
+            session=session,
+            today=TODAY,
+            recent_activity_limit=2,
+        )
+    )
 
     assert [
-        (activity.activity_type, activity.entity_id)
-        for activity in summary.recent_activity
+        (activity.activity_type, activity.entity_id) for activity in summary.recent_activity
     ] == [
         ("leave.requested", UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")),
         ("leave.approved", UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")),
@@ -552,7 +724,7 @@ async def test_dashboard_recent_activity_limit_is_applied_after_source_merge() -
     await engine.dispose()
 
 
-async def test_dashboard_default_summary_uses_four_select_statements() -> None:
+async def test_dashboard_default_summary_uses_five_select_statements() -> None:
     session, engine = await _session_with_seed_data()
     statements: list[str] = []
 
@@ -568,16 +740,16 @@ async def test_dashboard_default_summary_uses_four_select_statements() -> None:
 
     event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
     try:
-        await DashboardService(session=session, today=TODAY).get_summary(TENANT_ID)
+        await _tenant_summary(DashboardService(session=session, today=TODAY))
 
-        assert len(statements) == 4
+        assert len(statements) == 5
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
         await session.close()
         await engine.dispose()
 
 
-async def test_dashboard_without_activity_uses_two_select_statements() -> None:
+async def test_dashboard_without_activity_uses_four_select_statements() -> None:
     session, engine = await _session_with_seed_data()
     statement_count = 0
 
@@ -594,13 +766,15 @@ async def test_dashboard_without_activity_uses_two_select_statements() -> None:
 
     event.listen(engine.sync_engine, "before_cursor_execute", count_statements)
     try:
-        await DashboardService(
-            session=session,
-            today=TODAY,
-            recent_activity_limit=0,
-        ).get_summary(TENANT_ID)
+        await _tenant_summary(
+            DashboardService(
+                session=session,
+                today=TODAY,
+                recent_activity_limit=0,
+            )
+        )
 
-        assert statement_count == 2
+        assert statement_count == 4
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", count_statements)
         await session.close()
@@ -610,8 +784,9 @@ async def test_dashboard_without_activity_uses_two_select_statements() -> None:
 async def test_dashboard_summary_returns_zero_state_for_empty_tenant() -> None:
     session, engine = await _session_with_seed_data()
 
-    summary = await DashboardService(session=session, today=TODAY).get_summary(
-        UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+    summary = await _tenant_summary(
+        DashboardService(session=session, today=TODAY),
+        UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
     )
 
     assert summary.active_employee_count == 0
@@ -636,10 +811,10 @@ async def test_dashboard_summary_endpoint_reads_enriched_metrics_from_database()
 
     app.dependency_overrides[get_dashboard_service] = override_dashboard_service
     app.dependency_overrides[get_authenticated_tenant_request_context] = (
-        get_phase0_tenant_request_context
+        _authenticated_tenant_context
     )
     app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
-        user=SimpleNamespace(permissions=("dashboard:read:tenant",))
+        user=SimpleNamespace(permissions=DASHBOARD_PERMISSIONS)
     )
 
     try:
@@ -674,12 +849,18 @@ async def test_dashboard_summary_endpoint_reads_enriched_metrics_from_database()
         await engine.dispose()
 
 
-def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
+def test_dashboard_summary_endpoint_uses_authenticated_tenant_context() -> None:
     class FakeDashboardService:
-        tenant_ids: list[UUID] = []
+        calls: list[tuple[UUID, UUID, tuple[str, ...]]] = []
 
-        async def get_summary(self, tenant_id: UUID) -> DashboardSummary:
-            self.tenant_ids.append(tenant_id)
+        async def get_summary(
+            self,
+            tenant_id: UUID,
+            *,
+            actor_id: UUID,
+            permissions: tuple[str, ...],
+        ) -> DashboardSummary:
+            self.calls.append((tenant_id, actor_id, permissions))
             return DashboardSummary(
                 active_employee_count=6,
                 pending_leave_count=2,
@@ -687,9 +868,7 @@ def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
                 pending_leave_requests=2,
                 new_starters_this_month=1,
                 open_tasks=0,
-                department_distribution=[
-                    DepartmentDistributionItem(department="People", count=7)
-                ],
+                department_distribution=[DepartmentDistributionItem(department="People", count=7)],
                 recent_activity=[],
             )
 
@@ -701,20 +880,23 @@ def test_dashboard_summary_endpoint_uses_tenant_header() -> None:
     app = create_app()
     app.dependency_overrides[get_dashboard_service] = override_dashboard_service
     app.dependency_overrides[get_authenticated_tenant_request_context] = (
-        get_phase0_tenant_request_context
+        _authenticated_tenant_context
     )
     app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
-        user=SimpleNamespace(permissions=("dashboard:read:tenant",))
+        user=SimpleNamespace(permissions=DASHBOARD_PERMISSIONS)
     )
     client = TestClient(app)
 
     response = client.get(
         "/api/v1/dashboard/summary",
-        headers={"X-Tenant-Id": str(TENANT_ID), "X-Tenant-Slug": "wealthy-falcon"},
+        headers={
+            "X-Tenant-Id": str(OTHER_TENANT_ID),
+            "X-Tenant-Slug": "other",
+        },
     )
 
     assert response.status_code == 200
-    assert fake_service.tenant_ids == [TENANT_ID]
+    assert fake_service.calls == [(TENANT_ID, USER_ID, DASHBOARD_PERMISSIONS)]
     assert response.json()["active_employee_count"] == 6
     assert response.json()["employee_count"] == 7
     assert response.json()["pending_leave_count"] == 2

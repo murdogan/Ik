@@ -1,5 +1,7 @@
 import { expect, test, type Route } from "@playwright/test";
 
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const PAGE_LIMIT = 25;
 
 const tenantAdminRole = {
@@ -184,6 +186,15 @@ test("tenant admin edits the legal entity and creates, updates, pages, and archi
         status: 200,
         contentType: "application/json",
         body: envelope({ user: sessionUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
       });
       return;
     }
@@ -499,6 +510,14 @@ test("a user without organization permission is redirected before organization A
       });
       return;
     }
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
     if (
       path.startsWith("/api/v1/legal-entities") ||
       path.startsWith("/api/v1/branches") ||
@@ -526,7 +545,7 @@ test("a user without organization permission is redirected before organization A
   expect(organizationRequests).toBe(0);
 });
 
-test("a disabled organization feature redirects after an authoritative availability probe", async ({
+test("a disabled organization feature redirects without probing organization APIs", async ({
   context,
   page,
 }) => {
@@ -571,12 +590,12 @@ test("a disabled organization feature redirects after an authoritative availabil
       });
       return;
     }
-    if (path === "/api/v1/legal-entities" && request.method() === "GET") {
+    if (path === "/api/v1/tenant/features") {
       featureRequests += 1;
       await route.fulfill({
-        status: 404,
+        status: 200,
         contentType: "application/json",
-        body: errorEnvelope("organization_feature_unavailable"),
+        body: envelope(tenantFeatureCatalog({ organization: false })),
       });
       return;
     }

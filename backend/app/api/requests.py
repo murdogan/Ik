@@ -33,23 +33,17 @@ def get_service(
 @router.get("", response_model=ListEnvelope[UnifiedRequestRead])
 async def list_requests(
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(
-            require_any_permission(
-                "request:read:own", "request:read:team", "request:read:tenant"
-            )
+            require_any_permission("request:read:own", "request:read:team", "request:read:tenant")
         ),
     ],
     service: Annotated[RequestProjectionService, Depends(get_service)],
     kind: Annotated[UnifiedRequestKind | None, Query()] = None,
     status_filter: Annotated[str | None, Query(alias="status", max_length=32)] = None,
-    limit: Annotated[
-        int, Query(ge=1, le=REQUEST_LIST_MAX_LIMIT)
-    ] = REQUEST_LIST_DEFAULT_LIMIT,
+    limit: Annotated[int, Query(ge=1, le=REQUEST_LIST_MAX_LIMIT)] = REQUEST_LIST_DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query(max_length=MAX_CURSOR_LENGTH)] = None,
 ) -> ListEnvelope[UnifiedRequestRead]:
     _no_store(response)
@@ -75,15 +69,11 @@ async def list_requests(
 async def get_request(
     request_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     authorized: Annotated[
         AuthenticatedSession,
         Depends(
-            require_any_permission(
-                "request:read:own", "request:read:team", "request:read:tenant"
-            )
+            require_any_permission("request:read:own", "request:read:team", "request:read:tenant")
         ),
     ],
     service: Annotated[RequestProjectionService, Depends(get_service)],

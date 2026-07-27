@@ -411,10 +411,7 @@ async def _assert_branch_create_and_parent_deactivation_serialize(
             {"id": CONCURRENT_ENTITY_ID},
         )
         active_branch_count = await connection.scalar(
-            text(
-                "select count(*) from branches "
-                "where legal_entity_id = :id and status = 'active'"
-            ),
+            text("select count(*) from branches where legal_entity_id = :id and status = 'active'"),
             {"id": CONCURRENT_ENTITY_ID},
         )
     assert (entity_status, active_branch_count) in {("active", 1), ("inactive", 0)}

@@ -1,4 +1,4 @@
-"""Malware scanning port plus ClamAV and controlled local adapters."""
+"""Infrastructure malware-scanning adapters and their narrow runtime contract."""
 
 from __future__ import annotations
 

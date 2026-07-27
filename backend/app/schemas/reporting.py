@@ -59,14 +59,7 @@ class DocumentChecklistReportStatus(StrEnum):
     EXPIRED = "expired"
 
 
-ReportValue = (
-    Annotated[str, Field(max_length=32_767)]
-    | int
-    | Decimal
-    | date
-    | datetime
-    | None
-)
+ReportValue = Annotated[str, Field(max_length=32_767)] | int | Decimal | date | datetime | None
 
 
 class EmployeeReportRow(BaseModel):

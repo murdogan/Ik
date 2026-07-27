@@ -4,7 +4,8 @@ import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
 from app.models.employee import Employee, EmployeeStatus
+from app.models.leave import LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
@@ -47,6 +49,8 @@ EMPLOYEE_B_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 USER_A_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 USER_B_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 LEAVE_REQUEST_A_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+LEAVE_TYPE_A_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
+LEAVE_POLICY_A_ID = UUID("99999999-9999-4999-8999-999999999999")
 
 FEATURE_CATALOG = (
     "organization",
@@ -62,9 +66,9 @@ FEATURE_DEFAULTS = {
     "employees": True,
     "documents": False,
     "leave": True,
-    "self_service": False,
+    "self_service": True,
     "reporting": True,
-    "notifications": False,
+    "notifications": True,
 }
 FEATURE_ITEM_FIELDS = {"key", "enabled", "source"}
 FEATURE_RESPONSE_FIELDS = {"features"}
@@ -223,11 +227,35 @@ async def _tenant_api(
                     full_name="Other Sensitive HR User Sentinel",
                     status=UserStatus.ACTIVE.value,
                 ),
+                LeaveType(
+                    id=LEAVE_TYPE_A_ID,
+                    tenant_id=TENANT_A_ID,
+                    code="annual-sensitive-sentinel",
+                    name="Annual sensitive sentinel",
+                ),
+                LeavePolicy(
+                    id=LEAVE_POLICY_A_ID,
+                    tenant_id=TENANT_A_ID,
+                    leave_type_id=LEAVE_TYPE_A_ID,
+                    version=1,
+                    effective_from=date(2026, 1, 1),
+                    paid=True,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=USER_A_ID,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
                 LeaveRequest(
                     id=LEAVE_REQUEST_A_ID,
                     tenant_id=TENANT_A_ID,
                     employee_id=EMPLOYEE_A_ID,
                     leave_type="annual-sensitive-sentinel",
+                    leave_type_id=LEAVE_TYPE_A_ID,
+                    policy_id=LEAVE_POLICY_A_ID,
                     start_date=date(2026, 8, 3),
                     end_date=date(2026, 8, 4),
                     status=LeaveRequestStatus.PENDING.value,
@@ -394,9 +422,7 @@ async def test_platform_patch_returns_full_effective_catalog_and_derived_sources
             )
         }
 
-        get_response = await harness.client.get(
-            f"/api/v1/platform/tenants/{TENANT_A_ID}/features"
-        )
+        get_response = await harness.client.get(f"/api/v1/platform/tenants/{TENANT_A_ID}/features")
         assert get_response.status_code == 200
         assert _feature_data(get_response) == patched
 
@@ -406,9 +432,7 @@ async def test_platform_patch_returns_full_effective_catalog_and_derived_sources
         )
         assert reset_response.status_code == 200
 
-    assert _feature_data(reset_response) == {
-        "features": _expected_features({"employees": False})
-    }
+    assert _feature_data(reset_response) == {"features": _expected_features({"employees": False})}
 
 
 @pytest.mark.parametrize(
@@ -426,16 +450,8 @@ async def test_platform_patch_returns_full_effective_catalog_and_derived_sources
                 {"key": "organization", "enabled": False},
             ]
         },
-        {
-            "features": [
-                {"key": "organization", "enabled": True, "source": "override"}
-            ]
-        },
-        {
-            "features": [
-                {"key": "organization", "enabled": True, "token": "must-be-rejected"}
-            ]
-        },
+        {"features": [{"key": "organization", "enabled": True, "source": "override"}]},
+        {"features": [{"key": "organization", "enabled": True, "token": "must-be-rejected"}]},
         {
             "features": [{"key": "organization", "enabled": True}],
             "tenant_id": str(TENANT_B_ID),
@@ -481,9 +497,7 @@ async def test_tenant_feature_scope_ignores_spoofed_headers_and_isolates_tenants
         )
         assert tenant_b_response.status_code == 200
 
-    assert _feature_data(tenant_a_response) == {
-        "features": _expected_features({"documents": True})
-    }
+    assert _feature_data(tenant_a_response) == {"features": _expected_features({"documents": True})}
     assert _feature_data(tenant_b_response) == {"features": _expected_features()}
 
 
@@ -637,9 +651,7 @@ async def test_platform_list_and_detail_expose_configured_limits_without_hr_data
         assert update_response.status_code == 200
         updated = _phase1_data(update_response, PLATFORM_TENANT_FIELDS)
 
-        detail_response = await harness.client.get(
-            f"/api/v1/platform/tenants/{TENANT_A_ID}"
-        )
+        detail_response = await harness.client.get(f"/api/v1/platform/tenants/{TENANT_A_ID}")
         assert detail_response.status_code == 200
         detailed = _phase1_data(detail_response, PLATFORM_TENANT_FIELDS)
 

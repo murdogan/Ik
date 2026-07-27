@@ -123,15 +123,19 @@ async def _assert_p4a_catalog_and_integrity(database_url: URL) -> None:
         await _assert_catalog(engine)
         async with engine.connect() as connection:
             normalized = (
-                await connection.execute(
-                    text(
-                        "select employee_number_normalized, email_normalized, "
-                        "full_name_normalized, version from employees "
-                        "where tenant_id = :tenant_id order by employee_number_normalized"
-                    ),
-                    {"tenant_id": TENANT_A_ID},
+                (
+                    await connection.execute(
+                        text(
+                            "select employee_number_normalized, email_normalized, "
+                            "full_name_normalized, version from employees "
+                            "where tenant_id = :tenant_id order by employee_number_normalized"
+                        ),
+                        {"tenant_id": TENANT_A_ID},
+                    )
                 )
-            ).tuples().all()
+                .tuples()
+                .all()
+            )
         assert normalized == [
             ("wf-001", "ada@example.test", "ada employee", 1),
             ("wf-002", None, "ada employee", 1),
@@ -239,9 +243,7 @@ async def _assert_catalog(engine: AsyncEngine) -> None:
             "ix_employee_assignments_tenant_legal_entity_effective",
             "ix_employee_assignments_tenant_position_effective",
         }
-        assert "UNIQUE INDEX" in indexes[
-            "uq_employees_tenant_employee_number_normalized"
-        ]
+        assert "UNIQUE INDEX" in indexes["uq_employees_tenant_employee_number_normalized"]
         assert indexes["ix_employees_tenant_directory_cursor"] == (
             "CREATE INDEX ix_employees_tenant_directory_cursor ON public.employees "
             "USING btree (tenant_id, id) WHERE (archived_at IS NULL)"
@@ -251,21 +253,25 @@ async def _assert_catalog(engine: AsyncEngine) -> None:
             "public.employees USING btree (tenant_id, status, id) "
             "WHERE (archived_at IS NULL)"
         )
-        assert "USING gin (full_name_normalized gin_trgm_ops)" in indexes[
-            "ix_employees_full_name_normalized_trgm"
-        ]
+        assert (
+            "USING gin (full_name_normalized gin_trgm_ops)"
+            in indexes["ix_employees_full_name_normalized_trgm"]
+        )
         for privilege in ("SELECT", "INSERT", "UPDATE"):
-            assert await connection.scalar(
-                text(
-                    "select has_table_privilege("
-                    ":role, 'public.employees', :privilege)"
-                ),
-                {"role": TENANT_APPLICATION_ROLE, "privilege": privilege},
-            ) is True
-        assert await connection.scalar(
-            text("select has_table_privilege(:role, 'public.employees', 'DELETE')"),
-            {"role": TENANT_APPLICATION_ROLE},
-        ) is False
+            assert (
+                await connection.scalar(
+                    text("select has_table_privilege(:role, 'public.employees', :privilege)"),
+                    {"role": TENANT_APPLICATION_ROLE, "privilege": privilege},
+                )
+                is True
+            )
+        assert (
+            await connection.scalar(
+                text("select has_table_privilege(:role, 'public.employees', 'DELETE')"),
+                {"role": TENANT_APPLICATION_ROLE},
+            )
+            is False
+        )
 
 
 async def _assert_rejected_employee(

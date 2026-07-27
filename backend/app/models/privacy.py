@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
     true,
 )
@@ -187,12 +188,8 @@ class PrivacyNotice(Base, TimestampMixin):
         server_default=PrivacyNoticeStatus.DRAFT.value,
     )
     created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    published_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    published_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __mapper_args__ = {"version_id_col": revision}
 
@@ -215,8 +212,7 @@ class PrivacyNoticeAcknowledgement(Base):
             name="ck_privacy_notice_acknowledgements_request_hash",
         ),
         _postgresql_regex_check(
-            "evidence_session_sha256 is null or "
-            "evidence_session_sha256 ~ '^[0-9a-f]{64}$'",
+            "evidence_session_sha256 is null or evidence_session_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_privacy_notice_acknowledgements_session_hash",
         ),
         UniqueConstraint(
@@ -365,7 +361,11 @@ class PrivacyConsentPurpose(Base):
         default=True,
         server_default=true(),
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
 
 
 class PrivacyConsentState(Base, TimestampMixin):

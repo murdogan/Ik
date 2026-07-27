@@ -116,9 +116,7 @@ class PrivacyService:
         return EmployeePrivacyNoticeRead(
             notice=_employee_notice_detail(notice),
             acknowledged_at=(
-                _aware(acknowledgement.acknowledged_at)
-                if acknowledgement is not None
-                else None
+                _aware(acknowledgement.acknowledged_at) if acknowledgement is not None else None
             ),
         )
 
@@ -228,8 +226,7 @@ class PrivacyService:
                         PrivacyConsentState.id.is_not(None),
                         exists(
                             select(PrivacyConsentEvent.id).where(
-                                PrivacyConsentEvent.tenant_id
-                                == PrivacyConsentPurpose.tenant_id,
+                                PrivacyConsentEvent.tenant_id == PrivacyConsentPurpose.tenant_id,
                                 PrivacyConsentEvent.purpose_id == PrivacyConsentPurpose.id,
                                 PrivacyConsentEvent.user_id == actor_id,
                                 PrivacyConsentEvent.membership_id == membership_id,
@@ -297,11 +294,7 @@ class PrivacyService:
             .execution_options(populate_existing=True)
         )
         desired_granted = action is PrivacyConsentAction.GRANT
-        if (
-            desired_granted
-            and not purpose.is_active
-            and (state is None or not state.granted)
-        ):
+        if desired_granted and not purpose.is_active and (state is None or not state.granted):
             raise Phase7NotFoundError
         changed = state is None and desired_granted
         changed = changed or (state is not None and state.granted != desired_granted)
@@ -311,8 +304,7 @@ class PrivacyService:
                 state = PrivacyConsentState(
                     id=uuid5(
                         NAMESPACE_URL,
-                        f"wealthy-falcon:privacy-consent-state:{tenant_id}:"
-                        f"{purpose.id}:{actor_id}",
+                        f"wealthy-falcon:privacy-consent-state:{tenant_id}:{purpose.id}:{actor_id}",
                     ),
                     tenant_id=tenant_id,
                     purpose_id=purpose.id,
@@ -787,9 +779,7 @@ class PrivacyService:
                 await self.session.execute(
                     select(
                         PrivacyNoticeAcknowledgement.notice_id,
-                        func.count(
-                            func.distinct(PrivacyNoticeAcknowledgement.membership_id)
-                        ),
+                        func.count(func.distinct(PrivacyNoticeAcknowledgement.membership_id)),
                     )
                     .join(
                         User,
@@ -801,12 +791,9 @@ class PrivacyService:
                     .join(
                         TenantMembership,
                         and_(
-                            TenantMembership.tenant_id
-                            == PrivacyNoticeAcknowledgement.tenant_id,
-                            TenantMembership.id
-                            == PrivacyNoticeAcknowledgement.membership_id,
-                            TenantMembership.legacy_user_id
-                            == PrivacyNoticeAcknowledgement.user_id,
+                            TenantMembership.tenant_id == PrivacyNoticeAcknowledgement.tenant_id,
+                            TenantMembership.id == PrivacyNoticeAcknowledgement.membership_id,
+                            TenantMembership.legacy_user_id == PrivacyNoticeAcknowledgement.user_id,
                         ),
                     )
                     .where(
@@ -874,13 +861,17 @@ class PrivacyService:
     ) -> dict[UUID, list[ConsentEventRead]]:
         if not purpose_ids:
             return {}
-        rank = func.row_number().over(
-            partition_by=PrivacyConsentEvent.purpose_id,
-            order_by=(
-                PrivacyConsentEvent.occurred_at.desc(),
-                PrivacyConsentEvent.id.desc(),
-            ),
-        ).label("history_rank")
+        rank = (
+            func.row_number()
+            .over(
+                partition_by=PrivacyConsentEvent.purpose_id,
+                order_by=(
+                    PrivacyConsentEvent.occurred_at.desc(),
+                    PrivacyConsentEvent.id.desc(),
+                ),
+            )
+            .label("history_rank")
+        )
         ranked = (
             select(
                 PrivacyConsentEvent.id.label("id"),
@@ -1009,9 +1000,7 @@ class PrivacyService:
             AuditEventDraft(
                 scope_type=AuditScopeType.TENANT,
                 tenant_id=request_context.require_tenant().tenant_id,
-                actor_type=(
-                    AuditActorType.SYSTEM if anonymize_actor else AuditActorType.USER
-                ),
+                actor_type=(AuditActorType.SYSTEM if anonymize_actor else AuditActorType.USER),
                 actor_user_id=None if anonymize_actor else request_context.actor_id,
                 session_id=None if anonymize_actor else request_context.session_id,
                 event_type=event_type,
@@ -1079,9 +1068,7 @@ def _notice_version_values(notice: PrivacyNotice) -> dict[str, object]:
         "title": notice.title,
         "content_hash": notice.content_hash,
         "status": notice.status,
-        "published_at": (
-            _aware(notice.published_at) if notice.published_at is not None else None
-        ),
+        "published_at": (_aware(notice.published_at) if notice.published_at is not None else None),
         "created_at": _aware(notice.created_at),
         "updated_at": _aware(notice.updated_at),
     }

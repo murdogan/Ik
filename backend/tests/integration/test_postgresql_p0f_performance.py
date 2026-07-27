@@ -34,6 +34,10 @@ ALEMBIC_INI = ROOT / "alembic.ini"
 TENANT_ID = UUID("10000000-0000-4000-8000-000000000000")
 OTHER_TENANT_ID = UUID("10000000-0000-4000-8000-000000000001")
 USER_ID = UUID("20000000-0000-4000-8000-000000000000")
+ANNUAL_LEAVE_TYPE_ID = UUID("21000000-0000-4000-8000-000000000001")
+SICK_LEAVE_TYPE_ID = UUID("21000000-0000-4000-8000-000000000002")
+ANNUAL_LEAVE_POLICY_ID = UUID("22000000-0000-4000-8000-000000000001")
+SICK_LEAVE_POLICY_ID = UUID("22000000-0000-4000-8000-000000000002")
 EMPLOYEE_COUNT = 10_000
 
 
@@ -58,14 +62,8 @@ def test_representative_10k_queries_capture_index_and_buffer_evidence(
         "ix_employees_email_trgm",
         "ix_employees_employee_number_trgm",
     } <= set(evidence["employee_search"]["indexes"])
-    assert (
-        "ix_employees_tenant_directory_cursor"
-        in evidence["employee_cursor"]["indexes"]
-    )
-    assert (
-        "ix_leave_requests_tenant_created_cursor"
-        in evidence["leave_request_cursor"]["indexes"]
-    )
+    assert "ix_employees_tenant_directory_cursor" in evidence["employee_cursor"]["indexes"]
+    assert "ix_leave_requests_tenant_created_cursor" in evidence["leave_request_cursor"]["indexes"]
     assert evidence["employee_search"]["actual_rows"] == 1
     assert evidence["employee_cursor"]["actual_rows"] == 51
     assert evidence["leave_request_cursor"]["actual_rows"] == 51
@@ -73,8 +71,7 @@ def test_representative_10k_queries_capture_index_and_buffer_evidence(
     assert evidence["leave_request_cursor"]["rows_removed_by_filter"] <= 1
     assert evidence["dashboard_counts"]["actual_rows"] == 1
     assert all(
-        query_evidence["execution_time_ms"] >= 0
-        and query_evidence["shared_hit_blocks"] >= 0
+        query_evidence["execution_time_ms"] >= 0 and query_evidence["shared_hit_blocks"] >= 0
         for query_evidence in evidence.values()
         if isinstance(query_evidence, dict)
     )
@@ -211,6 +208,46 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
         ),
         {"user_id": USER_ID, "tenant_id": TENANT_ID},
     )
+    await connection.execute(
+        text(
+            """
+            insert into leave_types (id, tenant_id, code, name) values
+                (:annual_type_id, :tenant_id, 'annual', 'Annual leave'),
+                (:sick_type_id, :tenant_id, 'sick', 'Sick leave')
+            """
+        ),
+        {
+            "annual_type_id": ANNUAL_LEAVE_TYPE_ID,
+            "sick_type_id": SICK_LEAVE_TYPE_ID,
+            "tenant_id": TENANT_ID,
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            insert into leave_policies (
+                id, tenant_id, leave_type_id, version, effective_from, paid,
+                document_required, negative_balance_allowed, accrual_enabled,
+                accrual_days_per_month, carryover_enabled
+            ) values
+                (
+                    :annual_policy_id, :tenant_id, :annual_type_id, 1,
+                    date '2026-01-01', true, false, false, false, 0, false
+                ),
+                (
+                    :sick_policy_id, :tenant_id, :sick_type_id, 1,
+                    date '2026-01-01', true, false, false, false, 0, false
+                )
+            """
+        ),
+        {
+            "annual_policy_id": ANNUAL_LEAVE_POLICY_ID,
+            "sick_policy_id": SICK_LEAVE_POLICY_ID,
+            "tenant_id": TENANT_ID,
+            "annual_type_id": ANNUAL_LEAVE_TYPE_ID,
+            "sick_type_id": SICK_LEAVE_TYPE_ID,
+        },
+    )
     # Interleaving archived even IDs makes the non-archived partial cursor index
     # observably preferable to the primary-key and tenant/id unique indexes.
     await connection.execute(
@@ -284,18 +321,33 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
         text(
             """
             insert into leave_requests (
-                id, tenant_id, employee_id, leave_type, start_date, end_date, status,
-                requested_by_user_id, created_at, updated_at
+                id, tenant_id, employee_id, leave_type, leave_type_id, policy_id,
+                start_date, end_date, status, requested_by_user_id,
+                decided_by_user_id, decided_at, created_at, updated_at
             )
             select
                 ('30000000-0000-4000-8000-' || lpad(gs::text, 12, '0'))::uuid,
                 :tenant_id,
                 ('10000000-0000-4000-8000-' || lpad((gs * 2 - 1)::text, 12, '0'))::uuid,
                 case when gs % 5 = 0 then 'sick' else 'annual' end,
+                case
+                    when gs % 5 = 0 then cast(:sick_type_id as uuid)
+                    else cast(:annual_type_id as uuid)
+                end,
+                case
+                    when gs % 5 = 0 then cast(:sick_policy_id as uuid)
+                    else cast(:annual_policy_id as uuid)
+                end,
                 date '2026-08-01' + (gs % 90),
                 date '2026-08-03' + (gs % 90),
                 case when gs % 4 = 0 then 'approved' else 'pending' end,
                 :user_id,
+                case when gs % 4 = 0 then cast(:user_id as uuid) else null end,
+                case
+                    when gs % 4 = 0
+                    then timestamptz '2026-07-01 00:00:00+00' - gs * interval '1 minute'
+                    else null
+                end,
                 timestamptz '2026-07-01 00:00:00+00' - gs * interval '1 minute',
                 timestamptz '2026-07-01 00:00:00+00' - gs * interval '1 minute'
             from generate_series(1, :leave_request_count) as gs
@@ -304,6 +356,10 @@ async def _seed_representative_data(connection: AsyncConnection) -> None:
         {
             "tenant_id": TENANT_ID,
             "user_id": USER_ID,
+            "annual_type_id": ANNUAL_LEAVE_TYPE_ID,
+            "sick_type_id": SICK_LEAVE_TYPE_ID,
+            "annual_policy_id": ANNUAL_LEAVE_POLICY_ID,
+            "sick_policy_id": SICK_LEAVE_POLICY_ID,
             "leave_request_count": EMPLOYEE_COUNT // 2,
         },
     )

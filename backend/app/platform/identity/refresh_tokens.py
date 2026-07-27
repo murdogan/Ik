@@ -24,9 +24,7 @@ def issue_refresh_token(tenant_id: UUID) -> RefreshTokenMaterial:
     if not isinstance(tenant_id, UUID) or tenant_id.int == 0:
         raise ValueError("A non-zero tenant ID is required")
     token_id = uuid4()
-    raw_token = (
-        f"{REFRESH_TOKEN_VERSION}.{tenant_id}.{token_id}.{token_urlsafe(48)}"
-    )
+    raw_token = f"{REFRESH_TOKEN_VERSION}.{tenant_id}.{token_id}.{token_urlsafe(48)}"
     return RefreshTokenMaterial(
         raw_token=raw_token,
         token_hash=hash_refresh_token(raw_token),

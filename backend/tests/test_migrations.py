@@ -1,32 +1,59 @@
-import importlib
-import pkgutil
 import subprocess
 import sys
 from pathlib import Path
 
-import app.models as model_package
 import pytest
 from alembic import command as alembic_command
-from alembic.autogenerate import compare_metadata
 from alembic.config import Config
-from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from app.db.base import Base
-from app.platform.authorization import PERMISSIONS, ROLE_PERMISSION_CODES, ROLES
-from sqlalchemy import (
-    CheckConstraint,
-    ForeignKeyConstraint,
-    Table,
-    UniqueConstraint,
-    create_engine,
-    inspect,
-    text,
-)
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from app.platform.authorization import PERMISSIONS, ROLES
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = Path("alembic.ini")
+# P4F and later revisions use PostgreSQL-native DDL and data migrations. Current-head upgrade,
+# round-trip, and model-drift claims live in integration/test_postgresql_baseline.py.
+_SQLITE_COMPATIBILITY_REVISION = "0035_p4e_employee_change_requests"
+_SQLITE_COMPATIBILITY_TABLES = {
+    "alembic_version",
+    "audit_events",
+    "authentication_rate_limit_buckets",
+    "branches",
+    "command_idempotency",
+    "department_hierarchy_write_fences",
+    "departments",
+    "employee_account_links",
+    "employee_assignments",
+    "employee_employments",
+    "employee_profile_change_requests",
+    "employee_profiles",
+    "employees",
+    "identities",
+    "leave_balance_summaries",
+    "leave_requests",
+    "legal_entities",
+    "membership_roles",
+    "organization_selection_choices",
+    "organization_selection_transactions",
+    "password_reset_tokens",
+    "permissions",
+    "platform_identity_roles",
+    "platform_refresh_session_families",
+    "platform_refresh_session_tokens",
+    "positions",
+    "refresh_session_families",
+    "refresh_session_tokens",
+    "role_permissions",
+    "roles",
+    "tenant_feature_flags",
+    "tenant_memberships",
+    "tenant_settings",
+    "tenants",
+    "user_activation_tokens",
+    "user_roles",
+    "users",
+}
 
 _P3A_TENANT_A_ID = "a1000000000040008000000000000001"
 _P3A_TENANT_B_ID = "a1000000000040008000000000000002"
@@ -34,9 +61,7 @@ _P3A_CANONICAL_USER_ID = "a2000000000040008000000000000001"
 _P3A_SECOND_USER_ID = "a2000000000040008000000000000002"
 _P3A_SHARED_EMAIL_NORMALIZED = "shared.identity@p3a.test"
 _P3A_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$cDNhLXRlc3Q$credential-a"
-_P3A_OTHER_PASSWORD_HASH = (
-    "$argon2id$v=19$m=65536,t=3,p=4$cDNhLXRlc3Q$credential-b"
-)
+_P3A_OTHER_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$cDNhLXRlc3Q$credential-b"
 
 
 def _alembic_config(database_url: str | None = None) -> Config:
@@ -50,185 +75,21 @@ def _script_directory() -> ScriptDirectory:
     return ScriptDirectory.from_config(_alembic_config())
 
 
-def _import_all_model_modules() -> None:
-    for module in pkgutil.iter_modules(
-        model_package.__path__, f"{model_package.__name__}."
-    ):
-        importlib.import_module(module.name)
-
-
-def _current_model_tables() -> dict[str, Table]:
-    _import_all_model_modules()
-    return {
-        mapper.local_table.name: mapper.local_table
-        for mapper in Base.registry.mappers
-    }
-
-
-def _model_column_signatures(table: Table) -> dict[str, tuple[bool, bool, bool]]:
-    return {
-        column.name: (
-            column.nullable,
-            column.primary_key,
-            column.server_default is not None,
-        )
-        for column in table.columns
-    }
-
-
-def _database_column_signatures(
-    columns: list[dict[str, object]],
-) -> dict[str, tuple[bool, bool, bool]]:
-    return {
-        str(column["name"]): (
-            bool(column["nullable"]),
-            bool(column["primary_key"]),
-            column["default"] is not None or column.get("computed") is not None,
-        )
-        for column in columns
-    }
-
-
-def _model_index_signatures(table: Table) -> set[tuple[str | None, tuple[str, ...], bool]]:
-    return {
-        (
-            index.name,
-            tuple(column.name for column in index.columns),
-            bool(index.unique),
-        )
-        for index in table.indexes
-    }
-
-
-def _database_index_signatures(
-    indexes: list[dict[str, object]],
-) -> set[tuple[str | None, tuple[str, ...], bool]]:
-    return {
-        (
-            index["name"] if index["name"] is None else str(index["name"]),
-            tuple(str(column_name) for column_name in index["column_names"]),
-            bool(index["unique"]),
-        )
-        for index in indexes
-    }
-
-
-def _model_unique_constraint_signatures(
-    table: Table,
-) -> set[tuple[str | None, tuple[str, ...]]]:
-    return {
-        (
-            constraint.name,
-            tuple(column.name for column in constraint.columns),
-        )
-        for constraint in table.constraints
-        if isinstance(constraint, UniqueConstraint)
-    }
-
-
-def _database_unique_constraint_signatures(
-    constraints: list[dict[str, object]],
-) -> set[tuple[str | None, tuple[str, ...]]]:
-    return {
-        (
-            constraint["name"] if constraint["name"] is None else str(constraint["name"]),
-            tuple(str(column_name) for column_name in constraint["column_names"]),
-        )
-        for constraint in constraints
-    }
-
-
-def _model_foreign_key_signatures(
-    table: Table,
-) -> set[tuple[tuple[str, ...], str, tuple[str, ...], str | None]]:
-    return {
-        (
-            tuple(element.parent.name for element in constraint.elements),
-            constraint.referred_table.name,
-            tuple(element.column.name for element in constraint.elements),
-            constraint.ondelete,
-        )
-        for constraint in table.constraints
-        if isinstance(constraint, ForeignKeyConstraint)
-    }
-
-
-def _database_foreign_key_signatures(
-    foreign_keys: list[dict[str, object]],
-) -> set[tuple[tuple[str, ...], str, tuple[str, ...], str | None]]:
-    return {
-        (
-            tuple(str(column_name) for column_name in foreign_key["constrained_columns"]),
-            str(foreign_key["referred_table"]),
-            tuple(str(column_name) for column_name in foreign_key["referred_columns"]),
-            foreign_key["options"].get("ondelete"),
-        )
-        for foreign_key in foreign_keys
-    }
-
-
-def _model_check_constraint_names(table: Table) -> set[str | None]:
-    return {
-        constraint.name
-        for constraint in table.constraints
-        if isinstance(constraint, CheckConstraint)
-    }
-
-
-def _database_check_constraint_names(
-    constraints: list[dict[str, object]],
-) -> set[str | None]:
-    return {
-        constraint["name"] if constraint["name"] is None else str(constraint["name"])
-        for constraint in constraints
-    }
-
-
-def _compare_type(context, _inspected_column, _metadata_column, _inspected_type, metadata_type):
-    if context.dialect.name == "sqlite" and isinstance(metadata_type, PG_UUID):
-        return False
-    return None
-
-
-def _assert_database_matches_current_model_schema(database_path: Path) -> None:
-    model_tables = _current_model_tables()
-
+def _assert_sqlite_compatibility_schema(database_path: Path) -> None:
     engine = create_engine(f"sqlite:///{database_path}")
     try:
         inspector = inspect(engine)
-        migrated_tables = set(inspector.get_table_names())
-
-        assert set(Base.metadata.tables) == set(model_tables)
-        assert migrated_tables == set(model_tables) | {"alembic_version"}
-
-        for table in model_tables.values():
-            assert _database_column_signatures(
-                inspector.get_columns(table.name)
-            ) == _model_column_signatures(table)
-            assert _database_index_signatures(
-                inspector.get_indexes(table.name)
-            ) == _model_index_signatures(table)
-            assert _database_unique_constraint_signatures(
-                inspector.get_unique_constraints(table.name)
-            ) == _model_unique_constraint_signatures(table)
-            assert _database_foreign_key_signatures(
-                inspector.get_foreign_keys(table.name)
-            ) == _model_foreign_key_signatures(table)
-            assert _database_check_constraint_names(
-                inspector.get_check_constraints(table.name)
-            ) == _model_check_constraint_names(table)
-
+        assert set(inspector.get_table_names()) == _SQLITE_COMPATIBILITY_TABLES
         with engine.connect() as connection:
             current_revision = connection.execute(
                 text("select version_num from alembic_version")
             ).scalar_one()
-
-        assert current_revision == _script_directory().get_current_head()
+        assert current_revision == _SQLITE_COMPATIBILITY_REVISION
     finally:
         engine.dispose()
 
 
-def _run_alembic_upgrade_head_subprocess(
+def _run_alembic_upgrade_sqlite_compatibility_subprocess(
     database_url: str,
 ) -> subprocess.CompletedProcess[str]:
     command = (
@@ -237,7 +98,7 @@ def _run_alembic_upgrade_head_subprocess(
         "from sys import argv\n"
         "config = Config('alembic.ini')\n"
         "config.set_main_option('sqlalchemy.url', argv[1])\n"
-        "command.upgrade(config, 'head')\n"
+        f"command.upgrade(config, '{_SQLITE_COMPATIBILITY_REVISION}')\n"
     )
     return subprocess.run(
         [sys.executable, "-c", command, database_url],
@@ -248,9 +109,16 @@ def _run_alembic_upgrade_head_subprocess(
     )
 
 
-def _run_alembic_upgrade_head_offline_subprocess() -> subprocess.CompletedProcess[str]:
+def _run_alembic_f2d_upgrade_offline_subprocess() -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head", "--sql"],
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "0019_f2d_rbac",
+            "--sql",
+        ],
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -265,10 +133,7 @@ def _run_alembic_p0e_downgrade_offline_subprocess() -> subprocess.CompletedProce
             "-m",
             "alembic",
             "downgrade",
-            (
-                "0011_p0e_concurrency_idempotency_archive:"
-                "0010_contract_tenant_relational_integrity"
-            ),
+            ("0011_p0e_concurrency_idempotency_archive:0010_contract_tenant_relational_integrity"),
             "--sql",
         ],
         cwd=ROOT,
@@ -690,9 +555,7 @@ def test_core_migration_chain_is_linear() -> None:
     employee_date_order_revision = script.get_revision("0005_employee_date_order")
     leave_balance_revision = script.get_revision("0006_create_leave_balance_summaries")
     timestamp_revision = script.get_revision("0007_enforce_timestamp_not_null")
-    employee_lifecycle_revision = script.get_revision(
-        "0008_employee_lifecycle_status_dates"
-    )
+    employee_lifecycle_revision = script.get_revision("0008_employee_lifecycle_status_dates")
     tenant_integrity_expand_revision = script.get_revision(
         "0009_expand_tenant_relational_integrity"
     )
@@ -706,52 +569,34 @@ def test_core_migration_chain_is_linear() -> None:
     f1d_feature_revision = script.get_revision("0015_f1d_feature_flags")
     f2a_identity_revision = script.get_revision("0016_f2a_identity_activation")
     f2b_session_revision = script.get_revision("0017_f2b_secure_sessions")
-    f2c_user_administration_revision = script.get_revision(
-        "0018_f2c_user_administration"
-    )
+    f2c_user_administration_revision = script.get_revision("0018_f2c_user_administration")
     f2d_rbac_revision = script.get_revision("0019_f2d_rbac")
     f2e_audit_revision = script.get_revision("0020_f2e_audit_events")
-    f2f_user_insert_grant_revision = script.get_revision(
-        "0021_f2f_user_insert_grant"
-    )
-    p3a_identity_memberships_revision = script.get_revision(
-        "0022_p3a_identity_memberships"
-    )
-    p3b_email_first_login_revision = script.get_revision(
-        "0023_p3b_email_first_login"
-    )
-    p3c_organization_selection_revision = script.get_revision(
-        "0024_p3c_organization_selection"
-    )
-    p3d_platform_authentication_revision = script.get_revision(
-        "0025_p3d_platform_authentication"
-    )
-    p3e_identity_checkpoint_revision = script.get_revision(
-        "0026_p3e_identity_checkpoint"
-    )
-    p3f_organization_revision = script.get_revision(
-        "0027_p3f_legal_entities_branches"
-    )
-    p3g_department_revision = script.get_revision(
-        "0028_p3g_department_hierarchy"
-    )
+    f2f_user_insert_grant_revision = script.get_revision("0021_f2f_user_insert_grant")
+    p3a_identity_memberships_revision = script.get_revision("0022_p3a_identity_memberships")
+    p3b_email_first_login_revision = script.get_revision("0023_p3b_email_first_login")
+    p3c_organization_selection_revision = script.get_revision("0024_p3c_organization_selection")
+    p3d_platform_authentication_revision = script.get_revision("0025_p3d_platform_authentication")
+    p3e_identity_checkpoint_revision = script.get_revision("0026_p3e_identity_checkpoint")
+    p3f_organization_revision = script.get_revision("0027_p3f_legal_entities_branches")
+    p3g_department_revision = script.get_revision("0028_p3g_department_hierarchy")
     p3h_position_revision = script.get_revision("0029_p3h_position_catalog")
     p3i_assignment_revision = script.get_revision("0030_p3i_employee_assignments")
-    p3k_auth_boundary_revision = script.get_revision(
-        "0031_p3k_legacy_tenant_auth_boundary"
-    )
+    p3k_auth_boundary_revision = script.get_revision("0031_p3k_legacy_tenant_auth_boundary")
     p4a_employee_master_revision = script.get_revision("0032_p4a_employee_directory")
-    p4b_employee_profiles_revision = script.get_revision(
-        "0033_p4b_employee_profiles"
-    )
-    p4c_employee_account_links_revision = script.get_revision(
-        "0034_p4c_employee_account_links"
-    )
-    p4e_employee_change_requests_revision = script.get_revision(
-        "0035_p4e_employee_change_requests"
-    )
+    p4b_employee_profiles_revision = script.get_revision("0033_p4b_employee_profiles")
+    p4c_employee_account_links_revision = script.get_revision("0034_p4c_employee_account_links")
+    p4e_employee_change_requests_revision = script.get_revision("0035_p4e_employee_change_requests")
+    p4f_employee_lifecycle_revision = script.get_revision("0036_p4f_employee_lifecycle")
+    p5_employee_documents_revision = script.get_revision("0037_p5_employee_documents")
+    p6_leave_workflow_revision = script.get_revision("0038_p6_leave_workflow")
+    p7_self_service_revision = script.get_revision("0039_p7_self_service_notifications")
+    p8_reports_revision = script.get_revision("0040_p8_reports_exports_imports")
+    p9_privacy_revision = script.get_revision("0041_p9_privacy_compliance")
+    p9_privacy_hardening_revision = script.get_revision("0042_p9_privacy_evidence_hardening")
+    p11_lifecycle_lock_revision = script.get_revision("0043_p11_employee_lifecycle_profile_lock")
 
-    assert script.get_heads() == ["0035_p4e_employee_change_requests"]
+    assert script.get_heads() == ["0043_p11_employee_lifecycle_profile_lock"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -799,33 +644,19 @@ def test_core_migration_chain_is_linear() -> None:
     assert f2f_user_insert_grant_revision is not None
     assert f2f_user_insert_grant_revision.down_revision == "0020_f2e_audit_events"
     assert p3a_identity_memberships_revision is not None
-    assert p3a_identity_memberships_revision.down_revision == (
-        "0021_f2f_user_insert_grant"
-    )
+    assert p3a_identity_memberships_revision.down_revision == ("0021_f2f_user_insert_grant")
     assert p3b_email_first_login_revision is not None
-    assert p3b_email_first_login_revision.down_revision == (
-        "0022_p3a_identity_memberships"
-    )
+    assert p3b_email_first_login_revision.down_revision == ("0022_p3a_identity_memberships")
     assert p3c_organization_selection_revision is not None
-    assert p3c_organization_selection_revision.down_revision == (
-        "0023_p3b_email_first_login"
-    )
+    assert p3c_organization_selection_revision.down_revision == ("0023_p3b_email_first_login")
     assert p3d_platform_authentication_revision is not None
-    assert p3d_platform_authentication_revision.down_revision == (
-        "0024_p3c_organization_selection"
-    )
+    assert p3d_platform_authentication_revision.down_revision == ("0024_p3c_organization_selection")
     assert p3e_identity_checkpoint_revision is not None
-    assert p3e_identity_checkpoint_revision.down_revision == (
-        "0025_p3d_platform_authentication"
-    )
+    assert p3e_identity_checkpoint_revision.down_revision == ("0025_p3d_platform_authentication")
     assert p3f_organization_revision is not None
-    assert p3f_organization_revision.down_revision == (
-        "0026_p3e_identity_checkpoint"
-    )
+    assert p3f_organization_revision.down_revision == ("0026_p3e_identity_checkpoint")
     assert p3g_department_revision is not None
-    assert p3g_department_revision.down_revision == (
-        "0027_p3f_legal_entities_branches"
-    )
+    assert p3g_department_revision.down_revision == ("0027_p3f_legal_entities_branches")
     assert p3h_position_revision is not None
     assert p3h_position_revision.down_revision == "0028_p3g_department_hierarchy"
     assert p3i_assignment_revision is not None
@@ -833,43 +664,53 @@ def test_core_migration_chain_is_linear() -> None:
     assert p3k_auth_boundary_revision is not None
     assert p3k_auth_boundary_revision.down_revision == "0030_p3i_employee_assignments"
     assert p4a_employee_master_revision is not None
-    assert p4a_employee_master_revision.down_revision == (
-        "0031_p3k_legacy_tenant_auth_boundary"
-    )
+    assert p4a_employee_master_revision.down_revision == ("0031_p3k_legacy_tenant_auth_boundary")
     assert p4b_employee_profiles_revision is not None
-    assert p4b_employee_profiles_revision.down_revision == (
-        "0032_p4a_employee_directory"
-    )
+    assert p4b_employee_profiles_revision.down_revision == ("0032_p4a_employee_directory")
     assert p4c_employee_account_links_revision is not None
-    assert p4c_employee_account_links_revision.down_revision == (
-        "0033_p4b_employee_profiles"
-    )
+    assert p4c_employee_account_links_revision.down_revision == ("0033_p4b_employee_profiles")
     assert p4e_employee_change_requests_revision is not None
     assert p4e_employee_change_requests_revision.down_revision == (
         "0034_p4c_employee_account_links"
     )
+    assert p4f_employee_lifecycle_revision is not None
+    assert p4f_employee_lifecycle_revision.down_revision == ("0035_p4e_employee_change_requests")
+    assert p5_employee_documents_revision is not None
+    assert p5_employee_documents_revision.down_revision == "0036_p4f_employee_lifecycle"
+    assert p6_leave_workflow_revision is not None
+    assert p6_leave_workflow_revision.down_revision == "0037_p5_employee_documents"
+    assert p7_self_service_revision is not None
+    assert p7_self_service_revision.down_revision == "0038_p6_leave_workflow"
+    assert p8_reports_revision is not None
+    assert p8_reports_revision.down_revision == "0039_p7_self_service_notifications"
+    assert p9_privacy_revision is not None
+    assert p9_privacy_revision.down_revision == "0040_p8_reports_exports_imports"
+    assert p9_privacy_hardening_revision is not None
+    assert p9_privacy_hardening_revision.down_revision == "0041_p9_privacy_compliance"
+    assert p11_lifecycle_lock_revision is not None
+    assert p11_lifecycle_lock_revision.down_revision == ("0042_p9_privacy_evidence_hardening")
 
 
-def test_alembic_upgrade_head_creates_current_model_schema(tmp_path: Path) -> None:
+def test_alembic_upgrade_reaches_sqlite_compatibility_schema(tmp_path: Path) -> None:
     database_path = tmp_path / "migration-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
 
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
-    _assert_database_matches_current_model_schema(database_path)
+    _assert_sqlite_compatibility_schema(database_path)
 
 
-def test_alembic_upgrade_head_subprocess_creates_current_model_schema(
+def test_alembic_subprocess_upgrade_reaches_sqlite_compatibility_schema(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "migration-subprocess-smoke.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
 
-    result = _run_alembic_upgrade_head_subprocess(database_url)
+    result = _run_alembic_upgrade_sqlite_compatibility_subprocess(database_url)
 
     assert result.returncode == 0, result.stderr or result.stdout
-    _assert_database_matches_current_model_schema(database_path)
+    _assert_sqlite_compatibility_schema(database_path)
 
 
 def test_sqlite_p4a_normalized_identifier_collisions_refuse_atomically(
@@ -907,7 +748,7 @@ def test_sqlite_p4a_normalized_identifier_collisions_refuse_atomically(
                 "normalized_email_collisions=1, blank_work_emails=0"
             ),
         ):
-            alembic_command.upgrade(config, "head")
+            alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
         with engine.connect() as connection:
             revision = connection.scalar(text("select version_num from alembic_version"))
@@ -946,16 +787,20 @@ def test_sqlite_p4a_upgrade_enforces_normalized_keys_and_round_trips(
                 email=None,
             )
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
-            normalized = connection.execute(
-                text(
-                    "select employee_number, employee_number_normalized, email, "
-                    "email_normalized, full_name_normalized, version from employees "
-                    "where tenant_id = :tenant_id order by employee_number"
-                ),
-                {"tenant_id": tenant_id},
-            ).tuples().all()
+            normalized = (
+                connection.execute(
+                    text(
+                        "select employee_number, employee_number_normalized, email, "
+                        "email_normalized, full_name_normalized, version from employees "
+                        "where tenant_id = :tenant_id order by employee_number"
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+                .tuples()
+                .all()
+            )
             directory_indexes = {
                 row.name: row.sql
                 for row in connection.execute(
@@ -1016,19 +861,23 @@ def test_sqlite_p4a_upgrade_enforces_normalized_keys_and_round_trips(
 
         alembic_command.downgrade(config, "0031_p3k_legacy_tenant_auth_boundary")
         with engine.connect() as connection:
-            raw_values = connection.execute(
-                text(
-                    "select employee_number, email from employees "
-                    "where tenant_id = :tenant_id order by employee_number"
-                ),
-                {"tenant_id": tenant_id},
-            ).tuples().all()
+            raw_values = (
+                connection.execute(
+                    text(
+                        "select employee_number, email from employees "
+                        "where tenant_id = :tenant_id order by employee_number"
+                    ),
+                    {"tenant_id": tenant_id},
+                )
+                .tuples()
+                .all()
+            )
         assert raw_values == [
             (" WF-001 ", " Ada@Example.test "),
             ("WF-002", None),
         ]
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             assert connection.scalar(text("select version_num from alembic_version")) == (
                 "0035_p4e_employee_change_requests"
@@ -1043,7 +892,7 @@ def test_sqlite_p4a_downgrade_refuses_to_rebaseline_changed_versions(
     database_path = tmp_path / "migration-p4a-version-downgrade.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
     engine = create_engine(f"sqlite:///{database_path}")
     tenant_id = "a1000000000040008000000000000032"
     try:
@@ -1071,10 +920,13 @@ def test_sqlite_p4a_downgrade_refuses_to_rebaseline_changed_versions(
             assert connection.scalar(text("select version_num from alembic_version")) == (
                 "0032_p4a_employee_directory"
             )
-            assert connection.scalar(
-                text("select version from employees where tenant_id = :tenant_id"),
-                {"tenant_id": tenant_id},
-            ) == 2
+            assert (
+                connection.scalar(
+                    text("select version from employees where tenant_id = :tenant_id"),
+                    {"tenant_id": tenant_id},
+                )
+                == 2
+            )
     finally:
         engine.dispose()
 
@@ -1224,12 +1076,16 @@ def test_sqlite_p4b_backfills_every_employee_and_enforces_profile_integrity(
             profile_counts = dict(
                 connection.execute(
                     text("select tenant_id, count(*) from employee_profiles group by tenant_id")
-                ).tuples().all()
+                )
+                .tuples()
+                .all()
             )
             employment_counts = dict(
                 connection.execute(
                     text("select tenant_id, count(*) from employee_employments group by tenant_id")
-                ).tuples().all()
+                )
+                .tuples()
+                .all()
             )
             backfilled = (
                 connection.execute(
@@ -1524,9 +1380,7 @@ def test_sqlite_p3i_backfills_legacy_employee_strings_without_contracting_them(
     tenant_id = "d1000000000040008000000000000001"
     department_id = "d2000000000040008000000000000001"
     position_id = "d3000000000040008000000000000001"
-    employee_ids = tuple(
-        f"d400000000004000800000000000000{suffix}" for suffix in range(1, 5)
-    )
+    employee_ids = tuple(f"d400000000004000800000000000000{suffix}" for suffix in range(1, 5))
     try:
         with engine.begin() as connection:
             connection.execute(
@@ -1605,7 +1459,7 @@ def test_sqlite_p3i_backfills_legacy_employee_strings_without_contracting_them(
                 },
             )
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
         with engine.connect() as connection:
             assignments = connection.execute(
@@ -1654,8 +1508,8 @@ def test_sqlite_p3i_backfills_legacy_employee_strings_without_contracting_them(
         engine.dispose()
 
 
-def test_alembic_offline_sql_renders_p0d_preflight_and_expand_contract() -> None:
-    result = _run_alembic_upgrade_head_offline_subprocess()
+def test_alembic_offline_sql_renders_p0d_and_f2d_security_sequences() -> None:
+    result = _run_alembic_f2d_upgrade_offline_subprocess()
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert "tenant relational integrity preflight failed" in result.stdout
@@ -1663,15 +1517,21 @@ def test_alembic_offline_sql_renders_p0d_preflight_and_expand_contract() -> None
     assert "NOT VALID" in result.stdout
     assert "VALIDATE CONSTRAINT" in result.stdout
     f2d_backfill = result.stdout.index("insert into user_roles")
-    assert result.stdout.rfind(
-        'ALTER TABLE "users" NO FORCE ROW LEVEL SECURITY',
-        0,
-        f2d_backfill,
-    ) >= 0
-    assert result.stdout.index(
-        'ALTER TABLE "users" FORCE ROW LEVEL SECURITY',
-        f2d_backfill,
-    ) > f2d_backfill
+    assert (
+        result.stdout.rfind(
+            'ALTER TABLE "users" NO FORCE ROW LEVEL SECURITY',
+            0,
+            f2d_backfill,
+        )
+        >= 0
+    )
+    assert (
+        result.stdout.index(
+            'ALTER TABLE "users" FORCE ROW LEVEL SECURITY',
+            f2d_backfill,
+        )
+        > f2d_backfill
+    )
 
 
 def test_alembic_offline_p0e_downgrade_renders_retention_preflight() -> None:
@@ -1699,10 +1559,7 @@ def test_alembic_offline_f1c_upgrade_renders_roles_rls_policies_and_grants() -> 
         assert f'ALTER ROLE "{role_name}"' in result.stdout
         assert "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE" in result.stdout
         assert "NOINHERIT NOBYPASSRLS" in result.stdout
-        assert (
-            f"F1C role membership preflight failed: capability role {role_name}"
-            in result.stdout
-        )
+        assert f"F1C role membership preflight failed: capability role {role_name}" in result.stdout
     for table_name in (
         "tenants",
         "users",
@@ -1725,10 +1582,7 @@ def test_alembic_offline_f1c_upgrade_renders_roles_rls_policies_and_grants() -> 
     assert 'REVOKE ALL PRIVILEGES ON TABLE "employees" FROM "wealthy_falcon_platform"' in (
         result.stdout
     )
-    assert (
-        'REVOKE ALL PRIVILEGES ("id", "tenant_id", "employee_number"'
-        in result.stdout
-    )
+    assert 'REVOKE ALL PRIVILEGES ("id", "tenant_id", "employee_number"' in result.stdout
     assert 'REVOKE ALL PRIVILEGES ON SCHEMA "public" FROM "wealthy_falcon_app"' in result.stdout
     assert 'GRANT SELECT, INSERT, UPDATE ON TABLE "employees"' in result.stdout
     assert 'GRANT SELECT ON TABLE "tenants" TO "wealthy_falcon_app"' in result.stdout
@@ -1736,10 +1590,7 @@ def test_alembic_offline_f1c_upgrade_renders_roles_rls_policies_and_grants() -> 
         'GRANT UPDATE ("locale", "timezone", "updated_at") ON TABLE "tenants" '
         'TO "wealthy_falcon_app"'
     ) in result.stdout
-    assert (
-        'GRANT INSERT ON TABLE "tenant_settings" TO "wealthy_falcon_platform"'
-        in result.stdout
-    )
+    assert 'GRANT INSERT ON TABLE "tenant_settings" TO "wealthy_falcon_platform"' in result.stdout
     assert "GRANT DELETE" not in result.stdout
 
 
@@ -1767,17 +1618,12 @@ def test_alembic_offline_f1d_upgrade_renders_feature_rls_and_narrow_grants() -> 
     assert "ck_tenant_feature_flags_key" in result.stdout
     assert "ck_tenant_feature_flags_enabled" in result.stdout
     assert result.stdout.count("insert into tenant_feature_flags") == 7
+    assert 'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" FROM PUBLIC' in result.stdout
     assert (
-        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" FROM PUBLIC'
-        in result.stdout
-    )
-    assert (
-        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" '
-        'FROM "wealthy_falcon_app"'
+        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" FROM "wealthy_falcon_app"'
     ) in result.stdout
     assert (
-        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" '
-        'FROM "wealthy_falcon_platform"'
+        'REVOKE ALL PRIVILEGES ON TABLE "tenant_feature_flags" FROM "wealthy_falcon_platform"'
     ) in result.stdout
     assert 'ALTER TABLE "tenants" NO FORCE ROW LEVEL SECURITY' in result.stdout
     assert 'ALTER TABLE "tenants" DISABLE ROW LEVEL SECURITY' in result.stdout
@@ -1786,20 +1632,12 @@ def test_alembic_offline_f1d_upgrade_renders_feature_rls_and_narrow_grants() -> 
     assert 'ALTER TABLE "tenant_feature_flags" ENABLE ROW LEVEL SECURITY' in result.stdout
     assert 'ALTER TABLE "tenant_feature_flags" FORCE ROW LEVEL SECURITY' in result.stdout
     assert (
-        'ON "tenant_feature_flags" AS PERMISSIVE FOR ALL TO "wealthy_falcon_app"'
-        in result.stdout
+        'ON "tenant_feature_flags" AS PERMISSIVE FOR ALL TO "wealthy_falcon_app"' in result.stdout
     )
+    assert 'CREATE POLICY "platform_feature_operations" ON "tenant_feature_flags"' in result.stdout
+    assert 'GRANT SELECT ON TABLE "tenant_feature_flags" TO "wealthy_falcon_app"' in result.stdout
     assert (
-        'CREATE POLICY "platform_feature_operations" ON "tenant_feature_flags"'
-        in result.stdout
-    )
-    assert (
-        'GRANT SELECT ON TABLE "tenant_feature_flags" TO "wealthy_falcon_app"'
-        in result.stdout
-    )
-    assert (
-        'GRANT SELECT, INSERT, UPDATE ON TABLE "tenant_feature_flags" '
-        'TO "wealthy_falcon_platform"'
+        'GRANT SELECT, INSERT, UPDATE ON TABLE "tenant_feature_flags" TO "wealthy_falcon_platform"'
     ) in result.stdout
     assert "GRANT DELETE" not in result.stdout
 
@@ -1840,18 +1678,13 @@ def test_alembic_offline_p3a_upgrade_renders_backfill_guards_before_writes() -> 
     assert result.returncode == 0, result.stderr or result.stdout
     assert "DO $p3a_identity_backfill_preflight$" in result.stdout
     assert "P3A identity backfill preflight failed" in result.stdout
-    assert (
-        "conflicting_password_identities=%, blank_normalized_emails=%"
-        in result.stdout
-    )
+    assert "conflicting_password_identities=%, blank_normalized_emails=%" in result.stdout
     assert "DO $p3a_identity_backfill_verification$" in result.stdout
     assert "P3A identity backfill verification failed" in result.stdout
     preflight_position = result.stdout.index("DO $p3a_identity_backfill_preflight$")
     identity_table_position = result.stdout.index("CREATE TABLE identities")
     identity_backfill_position = result.stdout.index("insert into identities")
-    verification_position = result.stdout.index(
-        "DO $p3a_identity_backfill_verification$"
-    )
+    verification_position = result.stdout.index("DO $p3a_identity_backfill_verification$")
     assert preflight_position < identity_table_position < identity_backfill_position
     assert identity_backfill_position < verification_position
     assert "insert into tenant_memberships" in result.stdout
@@ -1863,9 +1696,7 @@ def test_alembic_offline_p3a_downgrade_guards_projection_before_drops() -> None:
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert "DO $p3a_downgrade_preflight$" in result.stdout
-    assert (
-        "P3A downgrade preflight failed: identity_drift=%," in result.stdout
-    )
+    assert "P3A downgrade preflight failed: identity_drift=%," in result.stdout
     preflight_position = result.stdout.index("DO $p3a_downgrade_preflight$")
     first_drop_position = result.stdout.index("DROP TABLE membership_roles")
     assert preflight_position < first_drop_position
@@ -1884,23 +1715,18 @@ def test_alembic_offline_p3b_renders_narrow_authentication_boundary() -> None:
     assert 'CREATE POLICY "authentication_identity_read"' in result.stdout
     assert (
         'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "public" '
-        'FROM "wealthy_falcon_authentication"'
-        in result.stdout
+        'FROM "wealthy_falcon_authentication"' in result.stdout
     )
     assert "DO $p3b_revoke_stale_authentication_columns$" in result.stdout
     assert (
         'GRANT SELECT ("id", "email_normalized", "status", "password_hash") '
-        'ON TABLE "identities" TO "wealthy_falcon_authentication"'
-        in result.stdout
+        'ON TABLE "identities" TO "wealthy_falcon_authentication"' in result.stdout
     )
     assert (
         'GRANT SELECT ("id", "tenant_id", "identity_id", "legacy_user_id", "status") '
-        'ON TABLE "tenant_memberships" TO "wealthy_falcon_authentication"'
-        in result.stdout
+        'ON TABLE "tenant_memberships" TO "wealthy_falcon_authentication"' in result.stdout
     )
-    assert "metadata = '{\"failure_reason\":\"authentication_failed\"}'::jsonb" in (
-        result.stdout
-    )
+    assert 'metadata = \'{"failure_reason":"authentication_failed"}\'::jsonb' in (result.stdout)
     assert (
         'GRANT INSERT ON TABLE "organization_selection_transactions" '
         'TO "wealthy_falcon_authentication"'
@@ -1921,16 +1747,13 @@ def test_alembic_offline_p3g_renders_department_integrity_rls_and_acl() -> None:
     assert "CREATE TABLE department_hierarchy_write_fences" in result.stdout
     assert "ck_department_hierarchy_write_fences_version" in result.stdout
     assert (
-        'ALTER TABLE "department_hierarchy_write_fences" ENABLE ROW LEVEL SECURITY'
-        in result.stdout
+        'ALTER TABLE "department_hierarchy_write_fences" ENABLE ROW LEVEL SECURITY' in result.stdout
     )
     assert (
-        'ALTER TABLE "department_hierarchy_write_fences" FORCE ROW LEVEL SECURITY'
-        in result.stdout
+        'ALTER TABLE "department_hierarchy_write_fences" FORCE ROW LEVEL SECURITY' in result.stdout
     )
     assert (
-        'GRANT SELECT, INSERT ON TABLE "department_hierarchy_write_fences" '
-        'TO "wealthy_falcon_app"'
+        'GRANT SELECT, INSERT ON TABLE "department_hierarchy_write_fences" TO "wealthy_falcon_app"'
     ) in result.stdout
     assert (
         'GRANT UPDATE ("version") ON TABLE "department_hierarchy_write_fences" '
@@ -1951,25 +1774,18 @@ def test_alembic_offline_p3g_renders_department_integrity_rls_and_acl() -> None:
         'CREATE POLICY "tenant_isolation_app" ON "departments" '
         'AS PERMISSIVE FOR ALL TO "wealthy_falcon_app"'
     ) in result.stdout
-    assert (
-        'GRANT SELECT, INSERT ON TABLE "departments" TO "wealthy_falcon_app"'
-        in result.stdout
-    )
+    assert 'GRANT SELECT, INSERT ON TABLE "departments" TO "wealthy_falcon_app"' in result.stdout
     assert (
         'GRANT UPDATE ("name", "parent_id", "status", "archived_at", "updated_at") '
         'ON TABLE "departments" TO "wealthy_falcon_app"'
     ) in result.stdout
-    assert "CREATE FUNCTION public.enforce_department_hierarchy_integrity()" in (
-        result.stdout
-    )
+    assert "CREATE FUNCTION public.enforce_department_hierarchy_integrity()" in (result.stdout)
     assert "SELECT tenants.id INTO locked_tenant_id" in result.stdout
     assert "INSERT INTO public.department_hierarchy_write_fences AS fence" in result.stdout
     assert "DO UPDATE SET version = fence.version + 1" in result.stdout
     assert "WITH RECURSIVE ancestors(id, parent_id)" in result.stdout
     assert "CONSTRAINT = 'ck_departments_acyclic'" in result.stdout
-    assert "CREATE FUNCTION public.validate_department_hierarchy_acyclic()" in (
-        result.stdout
-    )
+    assert "CREATE FUNCTION public.validate_department_hierarchy_acyclic()" in (result.stdout)
     assert result.stdout.count("REFERENCING NEW TABLE AS new_departments") == 2
     assert "WITH RECURSIVE hierarchy_walk(" in result.stdout
     assert "GRANT DELETE" not in result.stdout
@@ -2022,17 +1838,12 @@ def test_alembic_offline_p3h_renders_position_indexes_rls_acl_and_trigger() -> N
         'CREATE POLICY "tenant_isolation_app" ON "positions" '
         'AS PERMISSIVE FOR ALL TO "wealthy_falcon_app"'
     ) in result.stdout
-    assert (
-        'GRANT SELECT, INSERT ON TABLE "positions" TO "wealthy_falcon_app"'
-        in result.stdout
-    )
+    assert 'GRANT SELECT, INSERT ON TABLE "positions" TO "wealthy_falcon_app"' in result.stdout
     assert (
         'GRANT UPDATE ("title", "status", "archived_at", "updated_at") '
         'ON TABLE "positions" TO "wealthy_falcon_app"'
     ) in result.stdout
-    assert "CREATE FUNCTION public.enforce_position_catalog_integrity()" in (
-        result.stdout
-    )
+    assert "CREATE FUNCTION public.enforce_position_catalog_integrity()" in (result.stdout)
     assert "CONSTRAINT = 'ck_positions_immutable_identity_code'" in result.stdout
     assert "CONSTRAINT = 'ck_positions_archived_terminal'" in result.stdout
     assert "GRANT DELETE" not in result.stdout
@@ -2049,9 +1860,7 @@ def test_alembic_offline_p3h_downgrade_guards_retained_position_history() -> Non
         "DROP TRIGGER IF EXISTS trg_positions_catalog_integrity"
     )
     assert preflight_position < trigger_drop_position
-    assert "DROP FUNCTION IF EXISTS public.enforce_position_catalog_integrity()" in (
-        result.stdout
-    )
+    assert "DROP FUNCTION IF EXISTS public.enforce_position_catalog_integrity()" in (result.stdout)
     assert "DROP TABLE positions" in result.stdout
 
 
@@ -2072,29 +1881,18 @@ def test_alembic_offline_p3i_renders_assignment_backfill_rls_acl_and_trigger() -
         assert constraint_name in result.stdout
     assert "INSERT INTO public.employee_assignments" in result.stdout
     assert "P3I legacy employee backfill" in result.stdout
+    assert 'ALTER TABLE "employee_assignments" ENABLE ROW LEVEL SECURITY' in result.stdout
+    assert 'ALTER TABLE "employee_assignments" FORCE ROW LEVEL SECURITY' in result.stdout
     assert (
-        'ALTER TABLE "employee_assignments" ENABLE ROW LEVEL SECURITY'
-        in result.stdout
-    )
-    assert (
-        'ALTER TABLE "employee_assignments" FORCE ROW LEVEL SECURITY'
-        in result.stdout
-    )
-    assert (
-        'GRANT SELECT, INSERT ON TABLE "employee_assignments" '
-        'TO "wealthy_falcon_app"'
+        'GRANT SELECT, INSERT ON TABLE "employee_assignments" TO "wealthy_falcon_app"'
     ) in result.stdout
     assert (
         'GRANT UPDATE ("effective_to", "updated_at") '
         'ON TABLE "employee_assignments" TO "wealthy_falcon_app"'
     ) in result.stdout
-    assert "CREATE FUNCTION public.enforce_employee_assignment_integrity()" in (
-        result.stdout
-    )
+    assert "CREATE FUNCTION public.enforce_employee_assignment_integrity()" in (result.stdout)
     assert "current_user <> 'wealthy_falcon_app'" in result.stdout
-    assert "CONSTRAINT = 'ck_employee_assignments_runtime_insert_open'" in (
-        result.stdout
-    )
+    assert "CONSTRAINT = 'ck_employee_assignments_runtime_insert_open'" in (result.stdout)
     assert "GRANT DELETE" not in result.stdout
 
 
@@ -2109,10 +1907,7 @@ def test_alembic_offline_p3i_downgrade_guards_retained_assignment_history() -> N
         "DROP TRIGGER IF EXISTS trg_employee_assignments_integrity"
     )
     assert preflight_position < trigger_drop_position
-    assert (
-        "DROP FUNCTION IF EXISTS public.enforce_employee_assignment_integrity()"
-        in result.stdout
-    )
+    assert "DROP FUNCTION IF EXISTS public.enforce_employee_assignment_integrity()" in result.stdout
     assert "DROP TABLE employee_assignments" in result.stdout
 
 
@@ -2145,13 +1940,11 @@ def test_alembic_offline_p4a_renders_preflight_generated_keys_and_indexes() -> N
         assert index_name in result.stdout
     assert (
         "CREATE INDEX ix_employees_tenant_directory_cursor ON employees "
-        "(tenant_id, id) WHERE archived_at IS NULL;"
-        in result.stdout
+        "(tenant_id, id) WHERE archived_at IS NULL;" in result.stdout
     )
     assert (
         "CREATE INDEX ix_employees_tenant_status_directory_cursor ON employees "
-        "(tenant_id, status, id) WHERE archived_at IS NULL;"
-        in result.stdout
+        "(tenant_id, status, id) WHERE archived_at IS NULL;" in result.stdout
     )
 
 
@@ -2161,12 +1954,8 @@ def test_alembic_offline_p4a_downgrade_guards_changed_versions_before_drops() ->
     assert result.returncode == 0, result.stderr or result.stdout
     assert "DO $p4a_employee_version_downgrade_preflight$" in result.stdout
     assert "P4A employee downgrade refused" in result.stdout
-    preflight_position = result.stdout.index(
-        "DO $p4a_employee_version_downgrade_preflight$"
-    )
-    first_drop_position = result.stdout.index(
-        "ix_employee_assignments_tenant_position_effective"
-    )
+    preflight_position = result.stdout.index("DO $p4a_employee_version_downgrade_preflight$")
+    first_drop_position = result.stdout.index("ix_employee_assignments_tenant_position_effective")
     assert preflight_position < first_drop_position
     assert 'ALTER TABLE "employees" NO FORCE ROW LEVEL SECURITY' in result.stdout
     assert 'ALTER TABLE "employees" FORCE ROW LEVEL SECURITY' in result.stdout
@@ -2181,15 +1970,13 @@ def test_alembic_offline_p4b_renders_profiles_backfill_rls_acl_and_constraints()
     assert result.stdout.index("DO $p4b_employee_profile_id_preflight$") < result.stdout.index(
         "CREATE TABLE employee_profiles"
     )
-    employee_no_force = result.stdout.index(
-        'ALTER TABLE "employees" NO FORCE ROW LEVEL SECURITY'
+    employee_no_force = result.stdout.index('ALTER TABLE "employees" NO FORCE ROW LEVEL SECURITY')
+    employee_force = result.stdout.rindex('ALTER TABLE "employees" FORCE ROW LEVEL SECURITY')
+    assert (
+        employee_no_force
+        < result.stdout.index("DO $p4b_employee_profile_id_preflight$")
+        < employee_force
     )
-    employee_force = result.stdout.rindex(
-        'ALTER TABLE "employees" FORCE ROW LEVEL SECURITY'
-    )
-    assert employee_no_force < result.stdout.index(
-        "DO $p4b_employee_profile_id_preflight$"
-    ) < employee_force
     for table_name in ("employee_profiles", "employee_employments"):
         assert f"CREATE TABLE {table_name}" in result.stdout
         assert f"ck_{table_name}_version_positive" in result.stdout
@@ -2208,13 +1995,10 @@ def test_alembic_offline_p4b_renders_profiles_backfill_rls_acl_and_constraints()
             "employee_profiles": (
                 '"preferred_name", "birth_date", "phone", "version", "updated_at"'
             ),
-            "employee_employments": (
-                '"contract_type", "work_type", "version", "updated_at"'
-            ),
+            "employee_employments": ('"contract_type", "work_type", "version", "updated_at"'),
         }[table_name]
         assert (
-            f'GRANT UPDATE ({update_columns}) ON TABLE "{table_name}" '
-            'TO "wealthy_falcon_app"'
+            f'GRANT UPDATE ({update_columns}) ON TABLE "{table_name}" TO "wealthy_falcon_app"'
         ) in result.stdout
     assert "preferred_name" in result.stdout
     assert "birth_date" in result.stdout
@@ -2260,37 +2044,24 @@ def test_alembic_offline_p4c_renders_account_links_rls_acl_and_eligibility() -> 
         assert constraint_name in result.stdout
     assert "INSERT INTO employee_account_links" not in result.stdout
     assert "email" not in result.stdout.lower()
-    assert 'ALTER TABLE "employee_account_links" ENABLE ROW LEVEL SECURITY' in (
-        result.stdout
-    )
-    assert 'ALTER TABLE "employee_account_links" FORCE ROW LEVEL SECURITY' in (
-        result.stdout
-    )
+    assert 'ALTER TABLE "employee_account_links" ENABLE ROW LEVEL SECURITY' in (result.stdout)
+    assert 'ALTER TABLE "employee_account_links" FORCE ROW LEVEL SECURITY' in (result.stdout)
+    assert 'CREATE POLICY "tenant_isolation_app" ON "employee_account_links"' in result.stdout
     assert (
-        'CREATE POLICY "tenant_isolation_app" ON "employee_account_links"'
-        in result.stdout
-    )
-    assert (
-        'GRANT SELECT, INSERT, DELETE ON TABLE "employee_account_links" '
-        'TO "wealthy_falcon_app"'
+        'GRANT SELECT, INSERT, DELETE ON TABLE "employee_account_links" TO "wealthy_falcon_app"'
     ) in result.stdout
     assert (
         'GRANT UPDATE ("membership_id", "version", "updated_at") '
         'ON TABLE "employee_account_links" TO "wealthy_falcon_app"'
     ) in result.stdout
     assert "DO $p4c_employee_link_owner_preflight$" in result.stdout
-    assert "CREATE FUNCTION public.is_current_tenant_membership_link_eligible" in (
-        result.stdout
-    )
+    assert "CREATE FUNCTION public.is_current_tenant_membership_link_eligible" in (result.stdout)
     assert "SECURITY DEFINER" in result.stdout
     assert "SET search_path = pg_catalog, public" in result.stdout
     assert "membership.tenant_id = nullif(" in result.stdout
     assert "membership.id = requested_membership_id" in result.stdout
     assert "canonical_identity.status = 'active'" in result.stdout
-    assert (
-        "membership.permission_version = legacy_user.permission_version"
-        in result.stdout
-    )
+    assert "membership.permission_version = legacy_user.permission_version" in result.stdout
     assert (
         "GRANT EXECUTE ON FUNCTION "
         "public.is_current_tenant_membership_link_eligible(uuid) "
@@ -2303,12 +2074,8 @@ def test_alembic_offline_p4c_downgrade_guards_links_before_drops() -> None:
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert "DO $p4c_employee_account_link_downgrade_preflight$" in result.stdout
-    assert "P4C employee account link downgrade refused: current_links=%" in (
-        result.stdout
-    )
-    preflight_position = result.stdout.index(
-        "DO $p4c_employee_account_link_downgrade_preflight$"
-    )
+    assert "P4C employee account link downgrade refused: current_links=%" in (result.stdout)
+    preflight_position = result.stdout.index("DO $p4c_employee_account_link_downgrade_preflight$")
     function_drop_position = result.stdout.index(
         "DROP FUNCTION IF EXISTS public.is_current_tenant_membership_link_eligible(uuid)"
     )
@@ -2399,28 +2166,6 @@ def test_alembic_offline_p4e_downgrade_guards_history_and_restores_p4b_acl() -> 
     ) in result.stdout
 
 
-def test_alembic_upgrade_head_has_no_current_model_drift(tmp_path: Path) -> None:
-    database_path = tmp_path / "migration-metadata-smoke.sqlite3"
-    database_url = f"sqlite+aiosqlite:///{database_path}"
-    config = _alembic_config(database_url)
-    _current_model_tables()
-
-    alembic_command.upgrade(config, "head")
-
-    engine = create_engine(f"sqlite:///{database_path}")
-    try:
-        with engine.connect() as connection:
-            migration_context = MigrationContext.configure(
-                connection,
-                opts={"compare_type": _compare_type, "target_metadata": Base.metadata},
-            )
-            schema_diffs = compare_metadata(migration_context, Base.metadata)
-
-        assert schema_diffs == []
-    finally:
-        engine.dispose()
-
-
 def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
     tmp_path: Path,
 ) -> None:
@@ -2467,15 +2212,13 @@ def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
                 },
             )
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, "0019_f2d_rbac")
 
         with engine.connect() as connection:
             persisted_roles = set(
                 connection.execute(text("select code, scope_type from roles")).tuples()
             )
-            persisted_permissions = set(
-                connection.scalars(text("select code from permissions"))
-            )
+            persisted_permissions = set(connection.scalars(text("select code from permissions")))
             persisted_grants: dict[str, set[str]] = {}
             for role_code, permission_code in connection.execute(
                 text(
@@ -2503,13 +2246,76 @@ def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
                 connection.scalars(text("select permission_version from users"))
             )
 
-        assert persisted_roles == {
-            (role.code, role.scope_type.value) for role in ROLES
-        }
-        assert persisted_permissions == {permission.code for permission in PERMISSIONS}
+        assert persisted_roles == {(role.code, role.scope_type.value) for role in ROLES}
+        assert persisted_permissions == {permission.code for permission in PERMISSIONS[:29]}
         assert persisted_grants == {
-            role_code: set(permission_codes)
-            for role_code, permission_codes in ROLE_PERMISSION_CODES.items()
+            "super_admin": {
+                "tenant:read:platform",
+                "tenant:create:platform",
+                "tenant:update:platform",
+                "feature:read:platform",
+                "feature:update:platform",
+            },
+            "tenant_admin": {
+                "tenant:read:tenant",
+                "tenant:update:tenant",
+                "dashboard:read:tenant",
+                "dashboard:read:own",
+                "user:read:tenant",
+                "user:update:tenant",
+                "user:invite:tenant",
+                "role:read:tenant",
+                "role:assign:tenant",
+                "permission:read:tenant",
+            },
+            "hr_director": {
+                "dashboard:read:tenant",
+                "dashboard:read:own",
+                "employee:read:own",
+                "employee:read:team",
+                "employee:read:department",
+                "employee:read:branch",
+                "employee:read:tenant",
+                "employee:update:tenant",
+                "leave:read:own",
+                "leave:read:team",
+                "leave:read:department",
+                "leave:read:branch",
+                "leave:read:tenant",
+                "audit:read:tenant",
+            },
+            "hr_specialist": {
+                "dashboard:read:tenant",
+                "dashboard:read:own",
+                "employee:read:own",
+                "employee:read:department",
+                "employee:read:branch",
+                "employee:read:tenant",
+                "employee:update:tenant",
+                "leave:read:own",
+                "leave:read:department",
+                "leave:read:branch",
+                "leave:read:tenant",
+            },
+            "it_admin": {
+                "dashboard:read:own",
+                "user:read:tenant",
+                "session:manage:tenant",
+            },
+            "auditor": {"dashboard:read:own", "audit:read:tenant"},
+            "manager": {
+                "dashboard:read:own",
+                "employee:read:own",
+                "employee:read:team",
+                "leave:read:own",
+                "leave:read:team",
+                "leave:approve:team",
+            },
+            "employee": {
+                "dashboard:read:own",
+                "employee:read:own",
+                "leave:read:own",
+            },
         }
         assert assignments == {
             "admin@f2d.test": "tenant_admin",
@@ -2517,20 +2323,13 @@ def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
         }
         assert permission_versions == {1}
 
-        # Return to F2D while the P3A projection is still reproducible. The assertions below
-        # intentionally create legacy authorization drift and exercise F2D's own downgrade guard.
-        alembic_command.downgrade(config, "0019_f2d_rbac")
-
         with pytest.raises(IntegrityError):
             with engine.begin() as connection:
                 connection.execute(text("update users set permission_version = 0"))
 
         with engine.begin() as connection:
             connection.execute(
-                text(
-                    "update users set permission_version = 2 "
-                    "where email = 'employee@f2d.test'"
-                )
+                text("update users set permission_version = 2 where email = 'employee@f2d.test'")
             )
         with pytest.raises(
             RuntimeError,
@@ -2544,10 +2343,7 @@ def test_sqlite_f2d_seeds_catalog_and_backfills_legacy_user_roles(
 
         with engine.begin() as connection:
             connection.execute(
-                text(
-                    "update users set permission_version = 1 "
-                    "where email = 'employee@f2d.test'"
-                )
+                text("update users set permission_version = 1 where email = 'employee@f2d.test'")
             )
         alembic_command.downgrade(config, "0018_f2c_user_administration")
         assert "user_roles" not in inspect(engine).get_table_names()
@@ -2607,10 +2403,7 @@ def _seed_p3a_legacy_multi_membership_fixture(
         role_ids = dict(
             list(
                 connection.execute(
-                    text(
-                        "select code, id from roles "
-                        "where code in ('tenant_admin', 'employee')"
-                    )
+                    text("select code, id from roles where code in ('tenant_admin', 'employee')")
                 ).tuples()
             )
         )
@@ -2682,7 +2475,7 @@ def test_sqlite_p3a_backfills_one_identity_two_memberships_and_copies_roles(
     try:
         _seed_p3a_legacy_multi_membership_fixture(engine)
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
         with engine.connect() as connection:
             snapshot = _p3a_projection_snapshot(connection)
@@ -2786,13 +2579,12 @@ def test_sqlite_p3a_demo_admin_legacy_id_survives_as_identity_and_membership(
                 {"admin_id": demo_admin_id, "tenant_id": demo_tenant_id},
             )
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
         with engine.connect() as connection:
             identity = connection.execute(
                 text(
-                    "select id, email, status, password_hash from identities "
-                    "where id = :admin_id"
+                    "select id, email, status, password_hash from identities where id = :admin_id"
                 ),
                 {"admin_id": demo_admin_id},
             ).one()
@@ -2837,7 +2629,7 @@ def test_sqlite_p3a_enforces_global_identity_and_tenant_membership_uniqueness(
     engine = create_engine(f"sqlite:///{database_path}")
     try:
         _seed_p3a_legacy_multi_membership_fixture(engine)
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
         fresh_engine = create_engine(f"sqlite:///{database_path}")
         try:
@@ -2848,9 +2640,7 @@ def test_sqlite_p3a_enforces_global_identity_and_tenant_membership_uniqueness(
             }
             membership_unique_constraints = {
                 constraint["name"]
-                for constraint in fresh_inspector.get_unique_constraints(
-                    "tenant_memberships"
-                )
+                for constraint in fresh_inspector.get_unique_constraints("tenant_memberships")
             }
         finally:
             fresh_engine.dispose()
@@ -2862,10 +2652,8 @@ def test_sqlite_p3a_enforces_global_identity_and_tenant_membership_uniqueness(
         }
 
         for invalid_identity_update in (
-            "update identities set password_hash = null "
-            "where id = :identity_id",
-            "update identities set status = 'pending' "
-            "where id = :identity_id",
+            "update identities set password_hash = null where id = :identity_id",
+            "update identities set status = 'pending' where id = :identity_id",
         ):
             with pytest.raises(IntegrityError):
                 with engine.begin() as connection:
@@ -2875,10 +2663,8 @@ def test_sqlite_p3a_enforces_global_identity_and_tenant_membership_uniqueness(
                     )
 
         for invalid_membership_update in (
-            "update tenant_memberships set permission_version = 0 "
-            "where id = :membership_id",
-            "update tenant_memberships set status = 'suspended' "
-            "where id = :membership_id",
+            "update tenant_memberships set permission_version = 0 where id = :membership_id",
+            "update tenant_memberships set status = 'suspended' where id = :membership_id",
         ):
             with pytest.raises(IntegrityError):
                 with engine.begin() as connection:
@@ -2956,13 +2742,11 @@ def test_sqlite_p3a_conflicting_passwords_refuse_atomically(tmp_path: Path) -> N
                 "conflicting_password_identities=1, blank_normalized_emails=0"
             ),
         ):
-            alembic_command.upgrade(config, "head")
+            alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
         with engine.connect() as connection:
             revision = connection.scalar(text("select version_num from alembic_version"))
-            hashes = tuple(
-                connection.scalars(text("select password_hash from users order by id"))
-            )
+            hashes = tuple(connection.scalars(text("select password_hash from users order by id")))
         assert revision == "0021_f2f_user_insert_grant"
         assert not {
             "identities",
@@ -2984,13 +2768,10 @@ def test_sqlite_p3a_downgrade_refuses_new_legacy_password_conflict(
     engine = create_engine(f"sqlite:///{database_path}")
     try:
         _seed_p3a_legacy_multi_membership_fixture(engine)
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.begin() as connection:
             connection.execute(
-                text(
-                    "update users set password_hash = :password_hash "
-                    "where id = :user_id"
-                ),
+                text("update users set password_hash = :password_hash where id = :user_id"),
                 {
                     "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$000$lower",
                     "user_id": _P3A_SECOND_USER_ID,
@@ -3030,7 +2811,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
     engine = create_engine(f"sqlite:///{database_path}")
     try:
         _seed_p3a_legacy_multi_membership_fixture(engine)
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             first_projection = _p3a_projection_snapshot(connection)
 
@@ -3044,7 +2825,7 @@ def test_sqlite_p3a_safe_downgrade_reupgrade_is_deterministic(tmp_path: Path) ->
             assert connection.scalar(text("select count(*) from users")) == 2
             assert connection.scalar(text("select count(*) from user_roles")) == 2
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             second_projection = _p3a_projection_snapshot(connection)
             revision = connection.scalar(text("select version_num from alembic_version"))
@@ -3065,7 +2846,7 @@ def test_sqlite_p3a_downgrade_refuses_drift_until_projection_is_repaired(
     engine = create_engine(f"sqlite:///{database_path}")
     try:
         _seed_p3a_legacy_multi_membership_fixture(engine)
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -3078,8 +2859,7 @@ def test_sqlite_p3a_downgrade_refuses_drift_until_projection_is_repaired(
         with pytest.raises(
             RuntimeError,
             match=(
-                "P3A downgrade preflight failed: identity_drift=0, "
-                "membership_drift=1, role_drift=0"
+                "P3A downgrade preflight failed: identity_drift=0, membership_drift=1, role_drift=0"
             ),
         ):
             alembic_command.downgrade(config, "0021_f2f_user_insert_grant")
@@ -3088,12 +2868,13 @@ def test_sqlite_p3a_downgrade_refuses_drift_until_projection_is_repaired(
             assert connection.scalar(text("select version_num from alembic_version")) == (
                 "0022_p3a_identity_memberships"
             )
-            assert connection.scalar(
-                text(
-                    "select full_name from tenant_memberships where id = :membership_id"
-                ),
-                {"membership_id": _P3A_CANONICAL_USER_ID},
-            ) == "Canonical Membership Drift"
+            assert (
+                connection.scalar(
+                    text("select full_name from tenant_memberships where id = :membership_id"),
+                    {"membership_id": _P3A_CANONICAL_USER_ID},
+                )
+                == "Canonical Membership Drift"
+            )
 
         with engine.begin() as connection:
             connection.execute(
@@ -3162,7 +2943,7 @@ def test_sqlite_f1d_feature_defaults_limits_and_constraints_round_trip(
                 {"id": tenant_id},
             )
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             feature_rows = dict(
                 list(
@@ -3176,9 +2957,7 @@ def test_sqlite_f1d_feature_defaults_limits_and_constraints_round_trip(
                 )
             )
             configured_limit = connection.scalar(
-                text(
-                    "select active_employee_limit from tenants where id = :tenant_id"
-                ),
+                text("select active_employee_limit from tenants where id = :tenant_id"),
                 {"tenant_id": tenant_id},
             )
 
@@ -3235,13 +3014,10 @@ def test_sqlite_f1d_feature_defaults_limits_and_constraints_round_trip(
             column["name"] for column in inspect(engine).get_columns("tenants")
         }
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             assert connection.scalar(
-                text(
-                    "select count(*) from tenant_feature_flags "
-                    "where tenant_id = :tenant_id"
-                ),
+                text("select count(*) from tenant_feature_flags where tenant_id = :tenant_id"),
                 {"tenant_id": tenant_id},
             ) == len(feature_rows)
     finally:
@@ -3252,11 +3028,9 @@ def test_sqlite_f1d_feature_defaults_limits_and_constraints_round_trip(
     ("retained_write", "expected_counts", "remediation"),
     [
         (
-            "update tenant_feature_flags set enabled = true "
-            "where key = 'organization'",
+            "update tenant_feature_flags set enabled = true where key = 'organization'",
             "feature_overrides=1, configured_active_employee_limits=0",
-            "update tenant_feature_flags set enabled = false "
-            "where key = 'organization'",
+            "update tenant_feature_flags set enabled = false where key = 'organization'",
         ),
         (
             "update tenants set active_employee_limit = 250",
@@ -3292,7 +3066,7 @@ def test_sqlite_f1d_downgrade_refuses_rollout_or_limit_state(
                 ),
                 {"id": tenant_id},
             )
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.begin() as connection:
             connection.execute(text(retained_write))
 
@@ -3306,9 +3080,7 @@ def test_sqlite_f1d_downgrade_refuses_rollout_or_limit_state(
             assert connection.scalar(text("select version_num from alembic_version")) == (
                 "0015_f1d_feature_flags"
             )
-            assert connection.scalar(
-                text("select count(*) from tenant_feature_flags")
-            ) == 7
+            assert connection.scalar(text("select count(*) from tenant_feature_flags")) == 7
 
         with engine.begin() as connection:
             connection.execute(text(remediation))
@@ -3318,16 +3090,18 @@ def test_sqlite_f1d_downgrade_refuses_rollout_or_limit_state(
         engine.dispose()
 
 
-def test_sqlite_p0d_downgrade_reupgrade_preserves_head_schema(tmp_path: Path) -> None:
+def test_sqlite_p0d_downgrade_reupgrade_preserves_compatibility_schema(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "migration-p0d-round-trip.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
 
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
     alembic_command.downgrade(config, "0008_employee_lifecycle_status_dates")
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
-    _assert_database_matches_current_model_schema(database_path)
+    _assert_sqlite_compatibility_schema(database_path)
 
 
 def test_sqlite_tenant_settings_migration_backfills_and_round_trips(
@@ -3356,7 +3130,7 @@ def test_sqlite_tenant_settings_migration_backfills_and_round_trips(
                 {"id": tenant_id},
             )
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             settings = connection.execute(
                 text(
@@ -3370,13 +3144,10 @@ def test_sqlite_tenant_settings_migration_backfills_and_round_trips(
         alembic_command.downgrade(config, "0012_p0f_query_performance")
         assert "tenant_settings" not in inspect(engine).get_table_names()
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             settings_count = connection.scalar(
-                text(
-                    "select count(*) from tenant_settings "
-                    "where tenant_id = :tenant_id"
-                ),
+                text("select count(*) from tenant_settings where tenant_id = :tenant_id"),
                 {"tenant_id": tenant_id},
             )
         assert settings_count == 1
@@ -3389,7 +3160,7 @@ def test_tenant_settings_downgrade_refuses_custom_values(tmp_path: Path) -> None
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
     tenant_id = "11111111aaaa41118111111111111111"
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
     engine = create_engine(f"sqlite:///{database_path}")
     try:
@@ -3441,10 +3212,7 @@ def test_tenant_settings_downgrade_refuses_custom_values(tmp_path: Path) -> None
         with engine.connect() as connection:
             revision = connection.scalar(text("select version_num from alembic_version"))
             week_start_day = connection.scalar(
-                text(
-                    "select week_start_day from tenant_settings "
-                    "where tenant_id = :tenant_id"
-                ),
+                text("select week_start_day from tenant_settings where tenant_id = :tenant_id"),
                 {"tenant_id": tenant_id},
             )
         assert revision == "0013_tenant_settings"
@@ -3457,7 +3225,7 @@ def test_p0e_downgrade_refuses_to_discard_retained_state(tmp_path: Path) -> None
     database_path = tmp_path / "migration-p0e-retention-guard.sqlite3"
     database_url = f"sqlite+aiosqlite:///{database_path}"
     config = _alembic_config(database_url)
-    alembic_command.upgrade(config, "head")
+    alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
 
     engine = create_engine(f"sqlite:///{database_path}")
     tenant_id = "11111111aaaa41118111111111111111"
@@ -3521,10 +3289,7 @@ def test_p0e_downgrade_refuses_to_discard_retained_state(tmp_path: Path) -> None
 
         with pytest.raises(
             RuntimeError,
-            match=(
-                "P0E downgrade preflight failed.*archived_employees=1, "
-                "command_idempotency=1"
-            ),
+            match=("P0E downgrade preflight failed.*archived_employees=1, command_idempotency=1"),
         ):
             alembic_command.downgrade(
                 config,
@@ -3537,9 +3302,7 @@ def test_p0e_downgrade_refuses_to_discard_retained_state(tmp_path: Path) -> None
                 text("select archived_at from employees where id = :id"),
                 {"id": employee_id},
             )
-            receipt_count = connection.scalar(
-                text("select count(*) from command_idempotency")
-            )
+            receipt_count = connection.scalar(text("select count(*) from command_idempotency"))
         assert revision == "0011_p0e_concurrency_idempotency_archive"
         assert archived_at is not None
         assert receipt_count == 1
@@ -3585,7 +3348,7 @@ def test_sqlite_p3f_backfill_preserves_historical_unbounded_tenant_name(
                 {"id": tenant_id, "name": tenant_name},
             )
 
-        alembic_command.upgrade(config, "head")
+        alembic_command.upgrade(config, _SQLITE_COMPATIBILITY_REVISION)
         with engine.connect() as connection:
             default_entity = connection.execute(
                 text(
@@ -3677,9 +3440,7 @@ def test_timestamp_not_null_migration_exists() -> None:
 
 
 def test_employee_lifecycle_status_dates_migration_exists() -> None:
-    migration = Path(
-        "backend/alembic/versions/0008_employee_lifecycle_status_dates.py"
-    )
+    migration = Path("backend/alembic/versions/0008_employee_lifecycle_status_dates.py")
 
     assert migration.exists()
     text = migration.read_text()
@@ -3689,9 +3450,7 @@ def test_employee_lifecycle_status_dates_migration_exists() -> None:
 
 
 def test_tenant_relational_integrity_migrations_use_expand_contract_sequence() -> None:
-    expand_migration = Path(
-        "backend/alembic/versions/0009_expand_tenant_relational_integrity.py"
-    )
+    expand_migration = Path("backend/alembic/versions/0009_expand_tenant_relational_integrity.py")
     contract_migration = Path(
         "backend/alembic/versions/0010_contract_tenant_relational_integrity.py"
     )
@@ -3708,9 +3467,7 @@ def test_tenant_relational_integrity_migrations_use_expand_contract_sequence() -
 
 
 def test_p0e_concurrency_idempotency_archive_migration_exists() -> None:
-    migration = Path(
-        "backend/alembic/versions/0011_p0e_concurrency_idempotency_archive.py"
-    )
+    migration = Path("backend/alembic/versions/0011_p0e_concurrency_idempotency_archive.py")
 
     assert migration.exists()
     text = migration.read_text()

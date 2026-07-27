@@ -71,16 +71,11 @@ async def test_activation_token_rows_are_hidden_and_cross_tenant_writes_are_bloc
         async with engine.begin() as connection:
             await _set_local_tenant_role(connection, TENANT_A_ID)
             assert tuple(
-                await connection.scalars(
-                    text("select id from user_activation_tokens order by id")
-                )
+                await connection.scalars(text("select id from user_activation_tokens order by id"))
             ) == (TOKEN_A_ID,)
             assert (
                 await connection.scalar(
-                    text(
-                        "select id from user_activation_tokens "
-                        "where token_hash = :token_hash"
-                    ),
+                    text("select id from user_activation_tokens where token_hash = :token_hash"),
                     {"token_hash": token_b.token_hash},
                 )
                 is None
@@ -118,9 +113,7 @@ async def test_activation_token_rows_are_hidden_and_cross_tenant_writes_are_bloc
         async with engine.begin() as connection:
             await _set_local_tenant_role(connection, TENANT_B_ID)
             assert tuple(
-                await connection.scalars(
-                    text("select id from user_activation_tokens order by id")
-                )
+                await connection.scalars(text("select id from user_activation_tokens order by id"))
             ) == (TOKEN_B_ID,)
 
         async with engine.connect() as connection:
@@ -186,9 +179,7 @@ async def test_two_concurrent_activations_have_exactly_one_winner(
                 )
             ).one()
             consumed_at = await connection.scalar(
-                select(UserActivationToken.consumed_at).where(
-                    UserActivationToken.id == TOKEN_A_ID
-                )
+                select(UserActivationToken.consumed_at).where(UserActivationToken.id == TOKEN_A_ID)
             )
 
         assert user_row.status == UserStatus.ACTIVE.value

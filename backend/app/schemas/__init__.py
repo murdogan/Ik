@@ -1,4 +1,5 @@
 """Pydantic response and request schemas."""
+
 from app.schemas.auth import (
     ActivationRead,
     ActivationRequest,

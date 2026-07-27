@@ -45,6 +45,25 @@ def test_demo_seed_command_runs_twice_against_local_db(tmp_path: Path) -> None:
             assert _count_table(connection, "users") == 5
             assert _count_table(connection, "employees") == 8
             assert _count_table(connection, "leave_requests") == 5
+            assert _count_table(connection, "leave_types") == 10
+            assert _count_table(connection, "leave_policies") == 10
+            assert _count_table(connection, "holiday_calendars") == 2
+            assert _count_table(connection, "leave_request_days") == 14
+            assert _count_table(connection, "leave_request_timeline") == 8
+            assert _count_table(connection, "leave_balance_ledger") == 3
+            assert (
+                connection.scalar(
+                    text(
+                        "select count(*) from leave_requests "
+                        "where leave_type_id is null or policy_id is null "
+                        "or (status = 'pending' and "
+                        "(decided_by_user_id is not null or decided_at is not null)) "
+                        "or (status <> 'pending' and "
+                        "(decided_by_user_id is null or decided_at is null))"
+                    )
+                )
+                == 0
+            )
     finally:
         engine.dispose()
 
@@ -54,10 +73,7 @@ def test_demo_seed_command_refuses_staging_environment() -> None:
 
     assert result.returncode == 2
     assert result.stdout == ""
-    assert (
-        "DEMO_SEED_REFUSED environment='staging' allowed_environments=local,dev"
-        in result.stderr
-    )
+    assert "DEMO_SEED_REFUSED environment='staging' allowed_environments=local,dev" in result.stderr
 
 
 def test_demo_seed_command_prints_labeled_hashed_local_activation_paths(
@@ -75,19 +91,15 @@ def test_demo_seed_command_prints_labeled_hashed_local_activation_paths(
 
     assert result.returncode == 0
     activation_lines = [
-        line
-        for line in result.stdout.splitlines()
-        if line.startswith("DEMO_AUTH_ACTIVATION_URL ")
+        line for line in result.stdout.splitlines() if line.startswith("DEMO_AUTH_ACTIVATION_URL ")
     ]
     assert len(activation_lines) == 2
     activation_urls: dict[str, str] = {}
     for line in activation_lines:
-        user_field, url_field = line.removeprefix(
-            "DEMO_AUTH_ACTIVATION_URL "
-        ).split(" ", maxsplit=1)
-        activation_urls[user_field.removeprefix("user=")] = url_field.removeprefix(
-            "url="
+        user_field, url_field = line.removeprefix("DEMO_AUTH_ACTIVATION_URL ").split(
+            " ", maxsplit=1
         )
+        activation_urls[user_field.removeprefix("user=")] = url_field.removeprefix("url=")
     assert tuple(activation_urls) == ("wf_admin", "wf_manager")
     tokens = {
         user_key: parse_qs(urlsplit(activation_url).fragment)["token"][0]
@@ -220,6 +232,9 @@ def _run_seed_command(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["IK_ENVIRONMENT"] = environment
+    if environment in {"staging", "prod"}:
+        env["IK_RELEASE_COMMIT_SHA"] = "0" * 40
+        env["IK_RELEASE_BUILD_TIMESTAMP"] = "2026-07-27T00:00:00Z"
 
     arguments = [
         sys.executable,

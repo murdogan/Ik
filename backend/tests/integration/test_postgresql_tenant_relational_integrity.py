@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -25,20 +25,16 @@ EXPAND_REVISION = "0009_expand_tenant_relational_integrity"
 RELATIONAL_CONTRACT_REVISION = "0011_p0e_concurrency_idempotency_archive"
 COMPOSITE_CONSTRAINTS = {
     "fk_leave_requests_tenant_employee_id_employees": (
-        "FOREIGN KEY (tenant_id, employee_id) "
-        "REFERENCES employees(tenant_id, id) ON DELETE CASCADE"
+        "FOREIGN KEY (tenant_id, employee_id) REFERENCES employees(tenant_id, id) ON DELETE CASCADE"
     ),
     "fk_leave_requests_tenant_requested_by_user_id_users": (
-        "FOREIGN KEY (tenant_id, requested_by_user_id) "
-        "REFERENCES users(tenant_id, id)"
+        "FOREIGN KEY (tenant_id, requested_by_user_id) REFERENCES users(tenant_id, id)"
     ),
     "fk_leave_requests_tenant_decided_by_user_id_users": (
-        "FOREIGN KEY (tenant_id, decided_by_user_id) "
-        "REFERENCES users(tenant_id, id)"
+        "FOREIGN KEY (tenant_id, decided_by_user_id) REFERENCES users(tenant_id, id)"
     ),
     "fk_leave_balance_summaries_tenant_employee_id_employees": (
-        "FOREIGN KEY (tenant_id, employee_id) "
-        "REFERENCES employees(tenant_id, id) ON DELETE CASCADE"
+        "FOREIGN KEY (tenant_id, employee_id) REFERENCES employees(tenant_id, id) ON DELETE CASCADE"
     ),
 }
 HEAD_COMPOSITE_CONSTRAINTS = {
@@ -84,17 +80,11 @@ def test_preflight_query_detects_cross_tenant_and_orphan_rows(
 ) -> None:
     config = _alembic_config(p0d_postgres_database)
     alembic_command.downgrade(config, PRE_P0D_REVISION)
-    valid_pending_request_id = asyncio.run(
-        _seed_preflight_violations(p0d_postgres_database)
-    )
+    valid_pending_request_id = asyncio.run(_seed_preflight_violations(p0d_postgres_database))
 
     preflight_sql = _preflight_sql(config)
-    violations = asyncio.run(
-        _fetch_preflight_violations(p0d_postgres_database, preflight_sql)
-    )
-    violation_signatures = {
-        (row["relationship_name"], row["violation_type"]) for row in violations
-    }
+    violations = asyncio.run(_fetch_preflight_violations(p0d_postgres_database, preflight_sql))
+    violation_signatures = {(row["relationship_name"], row["violation_type"]) for row in violations}
 
     assert all(row["child_id"] != valid_pending_request_id for row in violations)
     assert len(violations) == 12
@@ -125,20 +115,13 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
     config = _alembic_config(p0d_postgres_database)
     alembic_command.downgrade(config, PRE_P0D_REVISION)
     fixture_ids = asyncio.run(_seed_valid_relationships(p0d_postgres_database))
-    fixture_snapshot = asyncio.run(
-        _relationship_snapshot(p0d_postgres_database, fixture_ids)
-    )
+    fixture_snapshot = asyncio.run(_relationship_snapshot(p0d_postgres_database, fixture_ids))
 
     alembic_command.upgrade(config, EXPAND_REVISION)
 
-    expanded_constraints = asyncio.run(
-        _named_constraint_definitions(p0d_postgres_database)
-    )
-    assert {
-        name: expanded_constraints[name] for name in COMPOSITE_CONSTRAINTS
-    } == {
-        name: f"{definition} NOT VALID"
-        for name, definition in COMPOSITE_CONSTRAINTS.items()
+    expanded_constraints = asyncio.run(_named_constraint_definitions(p0d_postgres_database))
+    assert {name: expanded_constraints[name] for name in COMPOSITE_CONSTRAINTS} == {
+        name: f"{definition} NOT VALID" for name, definition in COMPOSITE_CONSTRAINTS.items()
     }
     assert {
         name: expanded_constraints[name] for name in CANDIDATE_KEY_CONSTRAINTS
@@ -154,9 +137,7 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
         **{name: False for name in COMPOSITE_CONSTRAINTS},
         **{name: True for name in CANDIDATE_KEY_CONSTRAINTS},
     }
-    expanded_parent_ids = asyncio.run(
-        _seed_two_tenant_parents(p0d_postgres_database)
-    )
+    expanded_parent_ids = asyncio.run(_seed_two_tenant_parents(p0d_postgres_database))
     asyncio.run(
         _assert_cross_tenant_writes_rejected(
             p0d_postgres_database,
@@ -168,9 +149,9 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
     # intentionally retained organization-assignment history.
     alembic_command.upgrade(config, RELATIONAL_CONTRACT_REVISION)
 
-    assert asyncio.run(
-        _relationship_snapshot(p0d_postgres_database, fixture_ids)
-    ) == fixture_snapshot
+    assert (
+        asyncio.run(_relationship_snapshot(p0d_postgres_database, fixture_ids)) == fixture_snapshot
+    )
     head_constraints = asyncio.run(_named_constraint_definitions(p0d_postgres_database))
     assert {
         name: head_constraints[name] for name in HEAD_COMPOSITE_CONSTRAINTS
@@ -184,22 +165,16 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
             p0d_postgres_database,
             set(COMPOSITE_CONSTRAINTS) | set(CANDIDATE_KEY_CONSTRAINTS),
         )
-    ) == {
-        name: True
-        for name in set(COMPOSITE_CONSTRAINTS) | set(CANDIDATE_KEY_CONSTRAINTS)
-    }
+    ) == {name: True for name in set(COMPOSITE_CONSTRAINTS) | set(CANDIDATE_KEY_CONSTRAINTS)}
 
     alembic_command.downgrade(config, PRE_P0D_REVISION)
 
-    assert asyncio.run(
-        _relationship_snapshot(p0d_postgres_database, fixture_ids)
-    ) == fixture_snapshot
-    downgraded_constraints = asyncio.run(
-        _named_constraint_definitions(p0d_postgres_database)
+    assert (
+        asyncio.run(_relationship_snapshot(p0d_postgres_database, fixture_ids)) == fixture_snapshot
     )
+    downgraded_constraints = asyncio.run(_named_constraint_definitions(p0d_postgres_database))
     assert {
-        name: downgraded_constraints[name]
-        for name in LEGACY_TENANT_OWNED_CONSTRAINTS
+        name: downgraded_constraints[name] for name in LEGACY_TENANT_OWNED_CONSTRAINTS
     } == LEGACY_TENANT_OWNED_CONSTRAINTS
     assert asyncio.run(
         _constraint_validation_state(
@@ -213,9 +188,9 @@ def test_expand_contract_round_trip_preserves_valid_data_and_constraint_state(
     # Current-head compatibility remains part of this gate. P3I's guarded
     # downgrade correctly prevents discarding the backfilled history after this point.
     alembic_command.upgrade(config, "head")
-    assert asyncio.run(
-        _relationship_snapshot(p0d_postgres_database, fixture_ids)
-    ) == fixture_snapshot
+    assert (
+        asyncio.run(_relationship_snapshot(p0d_postgres_database, fixture_ids)) == fixture_snapshot
+    )
 
 
 def test_postgresql_direct_writes_reject_every_cross_tenant_relationship(
@@ -231,21 +206,18 @@ def test_expand_reuses_candidate_index_left_by_an_interrupted_attempt(
 ) -> None:
     config = _alembic_config(p0d_postgres_database)
     alembic_command.downgrade(config, PRE_P0D_REVISION)
-    candidate_index_oid = asyncio.run(
-        _create_interrupted_attempt_index(p0d_postgres_database)
-    )
+    candidate_index_oid = asyncio.run(_create_interrupted_attempt_index(p0d_postgres_database))
 
     alembic_command.upgrade(config, EXPAND_REVISION)
 
-    expanded_constraints = asyncio.run(
-        _named_constraint_definitions(p0d_postgres_database)
-    )
+    expanded_constraints = asyncio.run(_named_constraint_definitions(p0d_postgres_database))
     assert {
         name: expanded_constraints[name] for name in CANDIDATE_KEY_CONSTRAINTS
     } == CANDIDATE_KEY_CONSTRAINTS
-    assert asyncio.run(
-        _index_oid(p0d_postgres_database, "uq_employees_tenant_id_id")
-    ) == candidate_index_oid
+    assert (
+        asyncio.run(_index_oid(p0d_postgres_database, "uq_employees_tenant_id_id"))
+        == candidate_index_oid
+    )
     assert asyncio.run(_current_revision(p0d_postgres_database)) == EXPAND_REVISION
 
     alembic_command.upgrade(config, "head")
@@ -258,20 +230,14 @@ def test_contract_validation_failure_keeps_committed_expanded_revision(
     alembic_command.downgrade(config, "base")
     alembic_command.upgrade(config, EXPAND_REVISION)
     parent_ids = asyncio.run(_seed_two_tenant_parents(p0d_postgres_database))
-    asyncio.run(
-        _inject_existing_invalid_balance(p0d_postgres_database, parent_ids)
-    )
+    asyncio.run(_inject_existing_invalid_balance(p0d_postgres_database, parent_ids))
 
     with pytest.raises(IntegrityError) as error:
         alembic_command.upgrade(config, "head")
 
-    assert "fk_leave_balance_summaries_tenant_employee_id_employees" in str(
-        error.value
-    )
+    assert "fk_leave_balance_summaries_tenant_employee_id_employees" in str(error.value)
     assert asyncio.run(_current_revision(p0d_postgres_database)) == EXPAND_REVISION
-    constraint_definitions = asyncio.run(
-        _named_constraint_definitions(p0d_postgres_database)
-    )
+    constraint_definitions = asyncio.run(_named_constraint_definitions(p0d_postgres_database))
     assert LEGACY_TENANT_OWNED_CONSTRAINTS.keys() <= constraint_definitions.keys()
     assert set(COMPOSITE_CONSTRAINTS) <= constraint_definitions.keys()
     assert asyncio.run(
@@ -626,7 +592,7 @@ async def _seed_valid_relationships(database_url: URL) -> tuple[UUID, UUID]:
                         id, tenant_id, employee_id, leave_type, period_year,
                         opening_balance_days, used_days, planned_days
                     ) values (
-                        :id, :tenant_id, :employee_id, 'annual', 2026, 14, 1, 2
+                        :id, :tenant_id, :employee_id, 'annual', 2026, 14, 2, 2
                     )
                     """
                 ),
@@ -650,33 +616,41 @@ async def _relationship_snapshot(
     try:
         async with engine.connect() as connection:
             leave_request = (
-                await connection.execute(
-                    text(
-                        """
+                (
+                    await connection.execute(
+                        text(
+                            """
                         select
                             id, tenant_id, employee_id, leave_type, start_date, end_date,
                             status, requested_by_user_id, decided_by_user_id, decision_note
                         from leave_requests
                         where id = :id
                         """
-                    ),
-                    {"id": leave_request_id},
+                        ),
+                        {"id": leave_request_id},
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             leave_balance = (
-                await connection.execute(
-                    text(
-                        """
+                (
+                    await connection.execute(
+                        text(
+                            """
                         select
                             id, tenant_id, employee_id, leave_type, period_year,
                             opening_balance_days, used_days, planned_days
                         from leave_balance_summaries
                         where id = :id
                         """
-                    ),
-                    {"id": leave_balance_id},
+                        ),
+                        {"id": leave_balance_id},
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             return dict(leave_request), dict(leave_balance)
     finally:
         await engine.dispose()
@@ -737,14 +711,33 @@ async def _seed_two_tenant_parents(database_url: URL) -> dict[str, UUID]:
         async with engine.begin() as connection:
             await _insert_tenant(connection, ids["tenant_a"], "direct-a")
             await _insert_tenant(connection, ids["tenant_b"], "direct-b")
-            await _insert_employee(
-                connection, ids["employee_a"], ids["tenant_a"], "DIRECT-A"
-            )
-            await _insert_employee(
-                connection, ids["employee_b"], ids["tenant_b"], "DIRECT-B"
-            )
+            await _insert_employee(connection, ids["employee_a"], ids["tenant_a"], "DIRECT-A")
+            await _insert_employee(connection, ids["employee_b"], ids["tenant_b"], "DIRECT-B")
             await _insert_user(connection, ids["user_a"], ids["tenant_a"], "direct-a")
             await _insert_user(connection, ids["user_b"], ids["tenant_b"], "direct-b")
+            if await connection.scalar(
+                text("select to_regclass('public.leave_types') is not null")
+            ):
+                ids.update(
+                    {
+                        "leave_type_a": uuid4(),
+                        "leave_type_b": uuid4(),
+                        "leave_policy_a": uuid4(),
+                        "leave_policy_b": uuid4(),
+                    }
+                )
+                await _insert_leave_configuration(
+                    connection,
+                    tenant_id=ids["tenant_a"],
+                    leave_type_id=ids["leave_type_a"],
+                    policy_id=ids["leave_policy_a"],
+                )
+                await _insert_leave_configuration(
+                    connection,
+                    tenant_id=ids["tenant_b"],
+                    leave_type_id=ids["leave_type_b"],
+                    policy_id=ids["leave_policy_b"],
+                )
     finally:
         await engine.dispose()
     return ids
@@ -756,11 +749,44 @@ async def _assert_cross_tenant_writes_rejected(
 ) -> None:
     engine = create_async_engine(database_url, poolclass=NullPool)
     try:
+        uses_current_leave_contract = "leave_type_a" in ids
+        leave_request_sql = (
+            _current_leave_request_insert_sql()
+            if uses_current_leave_contract
+            else _leave_request_insert_sql()
+        )
+
+        def leave_request_parameters(
+            *,
+            employee_id: UUID,
+            requested_by_user_id: UUID,
+            decided_by_user_id: UUID | None = None,
+        ) -> dict[str, object]:
+            parameters = _leave_request_parameters(
+                tenant_id=ids["tenant_a"],
+                employee_id=employee_id,
+                requested_by_user_id=requested_by_user_id,
+                decided_by_user_id=decided_by_user_id,
+            )
+            if uses_current_leave_contract:
+                parameters.update(
+                    {
+                        "leave_type_id": ids["leave_type_a"],
+                        "policy_id": ids["leave_policy_a"],
+                        "status": ("approved" if decided_by_user_id is not None else "pending"),
+                        "decided_at": (
+                            datetime(2026, 9, 2, 12, tzinfo=UTC)
+                            if decided_by_user_id is not None
+                            else None
+                        ),
+                    }
+                )
+            return parameters
+
         await _expect_constraint_error(
             engine,
-            _leave_request_insert_sql(),
-            _leave_request_parameters(
-                tenant_id=ids["tenant_a"],
+            leave_request_sql,
+            leave_request_parameters(
                 employee_id=ids["employee_b"],
                 requested_by_user_id=ids["user_a"],
             ),
@@ -768,9 +794,8 @@ async def _assert_cross_tenant_writes_rejected(
         )
         await _expect_constraint_error(
             engine,
-            _leave_request_insert_sql(),
-            _leave_request_parameters(
-                tenant_id=ids["tenant_a"],
+            leave_request_sql,
+            leave_request_parameters(
                 employee_id=ids["employee_a"],
                 requested_by_user_id=ids["user_b"],
             ),
@@ -778,9 +803,8 @@ async def _assert_cross_tenant_writes_rejected(
         )
         await _expect_constraint_error(
             engine,
-            _leave_request_insert_sql(),
-            _leave_request_parameters(
-                tenant_id=ids["tenant_a"],
+            leave_request_sql,
+            leave_request_parameters(
                 employee_id=ids["employee_a"],
                 requested_by_user_id=ids["user_a"],
                 decided_by_user_id=ids["user_b"],
@@ -805,9 +829,8 @@ async def _assert_cross_tenant_writes_rejected(
 
         async with engine.begin() as connection:
             await connection.execute(
-                text(_leave_request_insert_sql()),
-                _leave_request_parameters(
-                    tenant_id=ids["tenant_a"],
+                text(leave_request_sql),
+                leave_request_parameters(
                     employee_id=ids["employee_a"],
                     requested_by_user_id=ids["user_a"],
                 ),
@@ -842,6 +865,20 @@ def _leave_request_insert_sql() -> str:
     """
 
 
+def _current_leave_request_insert_sql() -> str:
+    return """
+        insert into leave_requests (
+            id, tenant_id, employee_id, leave_type, leave_type_id, policy_id,
+            start_date, end_date, status, requested_by_user_id,
+            decided_by_user_id, decided_at
+        ) values (
+            :id, :tenant_id, :employee_id, 'annual', :leave_type_id, :policy_id,
+            :start_date, :end_date, :status, :requested_by_user_id,
+            :decided_by_user_id, :decided_at
+        )
+    """
+
+
 def _leave_request_parameters(
     *,
     tenant_id: UUID,
@@ -858,6 +895,44 @@ def _leave_request_parameters(
         "requested_by_user_id": requested_by_user_id,
         "decided_by_user_id": decided_by_user_id,
     }
+
+
+async def _insert_leave_configuration(
+    connection,
+    *,
+    tenant_id: UUID,
+    leave_type_id: UUID,
+    policy_id: UUID,
+) -> None:
+    await connection.execute(
+        text(
+            """
+            insert into leave_types (id, tenant_id, code, name)
+            values (:id, :tenant_id, 'annual', 'Annual')
+            """
+        ),
+        {"id": leave_type_id, "tenant_id": tenant_id},
+    )
+    await connection.execute(
+        text(
+            """
+            insert into leave_policies (
+                id, tenant_id, leave_type_id, version, effective_from, paid,
+                document_required, negative_balance_allowed, accrual_enabled,
+                accrual_days_per_month, carryover_enabled, carryover_limit_days
+            ) values (
+                :id, :tenant_id, :leave_type_id, 1, :effective_from, true,
+                false, false, false, 0, false, null
+            )
+            """
+        ),
+        {
+            "id": policy_id,
+            "tenant_id": tenant_id,
+            "leave_type_id": leave_type_id,
+            "effective_from": date(2026, 1, 1),
+        },
+    )
 
 
 async def _insert_tenant(connection, tenant_id: UUID, slug_prefix: str) -> None:

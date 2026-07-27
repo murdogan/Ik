@@ -60,11 +60,13 @@ router = APIRouter(
     prefix="/api/v1/platform/tenants",
     tags=[PLATFORM_TENANTS_TAG],
     dependencies=[Depends(get_platform_request_context)],
-    responses=with_correlation_response_headers({
-        **PLATFORM_AUTHORIZATION_RESPONSES,
-        **PLATFORM_TENANT_VALIDATION_RESPONSES,
-        **UNEXPECTED_ERROR_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            **PLATFORM_AUTHORIZATION_RESPONSES,
+            **PLATFORM_TENANT_VALIDATION_RESPONSES,
+            **UNEXPECTED_ERROR_RESPONSES,
+        }
+    ),
 )
 
 
@@ -81,10 +83,12 @@ router = APIRouter(
         "headers or payload IDs never grant platform authority."
     ),
     response_description="Provisioned tenant data with safe request metadata.",
-    responses=with_correlation_response_headers({
-        status.HTTP_201_CREATED: {},
-        **TENANT_CREATE_CONFLICT_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_201_CREATED: {},
+            **TENANT_CREATE_CONFLICT_RESPONSES,
+        }
+    ),
 )
 async def create_platform_tenant(
     payload: TenantPlatformCreate,
@@ -179,10 +183,12 @@ async def list_platform_tenants(
         "customer HR payloads or HR-derived usage counts."
     ),
     response_description="Platform-safe tenant data with safe request metadata.",
-    responses=with_correlation_response_headers({
-        status.HTTP_200_OK: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_200_OK: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+        }
+    ),
 )
 async def get_platform_tenant(
     tenant_id: UUID,
@@ -211,11 +217,13 @@ async def get_platform_tenant(
         "client-controlled update fields."
     ),
     response_description="Updated tenant data with safe request metadata.",
-    responses=with_correlation_response_headers({
-        status.HTTP_200_OK: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-        **TENANT_UPDATE_CONFLICT_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_200_OK: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+            **TENANT_UPDATE_CONFLICT_RESPONSES,
+        }
+    ),
 )
 async def update_platform_tenant(
     tenant_id: UUID,
@@ -245,10 +253,12 @@ async def update_platform_tenant(
         "usage data is queried or returned."
     ),
     response_description="Effective allowlisted feature flags with safe request metadata.",
-    responses=with_correlation_response_headers({
-        status.HTTP_200_OK: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_200_OK: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+        }
+    ),
 )
 async def get_platform_tenant_features(
     tenant_id: UUID,
@@ -276,11 +286,13 @@ async def get_platform_tenant_features(
         "flag values are rejected; closed and offboarding tenants are immutable."
     ),
     response_description="Updated effective feature flags with safe request metadata.",
-    responses=with_correlation_response_headers({
-        status.HTTP_200_OK: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-        **TENANT_UPDATE_CONFLICT_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_200_OK: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+            **TENANT_UPDATE_CONFLICT_RESPONSES,
+        }
+    ),
 )
 async def update_platform_tenant_features(
     tenant_id: UUID,

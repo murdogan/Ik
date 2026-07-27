@@ -57,9 +57,7 @@ async def list_roles(
     service: Annotated[AuthorizationService, Depends(get_authorization_service)],
 ) -> DataEnvelope[list[RoleRead]]:
     _prevent_storage(response)
-    roles = await service.list_tenant_roles(
-        tenant_id=request_context.require_tenant().tenant_id
-    )
+    roles = await service.list_tenant_roles(tenant_id=request_context.require_tenant().tenant_id)
     return data_envelope(
         [
             RoleRead(
@@ -106,7 +104,9 @@ async def list_permissions(
                 code=permission.code,
                 resource=permission.resource,
                 action=permission.action,
-                scope=permission.scope,
+                target=permission.target,
+                target_type=permission.target_type,
+                scope=(permission.target if permission.target_type == "scope" else None),
                 description=permission.description,
             )
             for permission in permissions

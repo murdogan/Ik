@@ -141,9 +141,7 @@ async def test_missing_invalid_duplicate_or_conflicting_ids_generate(
         else GENERATED_REQUEST_ID
     )
     expected_trace_id = (
-        CLIENT_TRACE_ID
-        if supplied_trace_ids == [CLIENT_TRACE_ID]
-        else GENERATED_TRACE_ID
+        CLIENT_TRACE_ID if supplied_trace_ids == [CLIENT_TRACE_ID] else GENERATED_TRACE_ID
     )
     assert response.headers[REQUEST_ID_HEADER] == expected_request_id
     assert response.headers[TRACE_ID_HEADER] == expected_trace_id
@@ -200,9 +198,11 @@ async def test_completion_log_is_allowlisted_and_omits_path_query_and_auth(
     record = next(record for record in caplog.records if record.message == "http.request.completed")
     assert record.request_id == CLIENT_REQUEST_ID
     assert record.trace_id == CLIENT_TRACE_ID
-    assert record.authentication_strength == "unauthenticated"
     assert record.http_method == "GET"
+    assert record.http_route == "/context"
     assert record.http_status_code == 200
+    assert record.duration_ms >= 0
+    assert not hasattr(record, "authentication_strength")
     serialized_record = repr(record.__dict__)
     assert "ada@example.test" not in serialized_record
     assert "raw-secret-material" not in serialized_record
@@ -227,11 +227,11 @@ def test_replace_context_only_accepts_correlation_preserving_enrichment() -> Non
 
 async def test_phase1_error_and_log_use_generated_safe_metadata_only(
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    caplog.set_level(
-        logging.INFO,
-        logger="app.platform.observability.correlation",
-    )
+    logger = logging.getLogger("tests.phase1.correlation")
+    caplog.set_level(logging.INFO, logger=logger.name)
+    monkeypatch.setattr("app.main.configure_operational_logger", lambda: logger)
     unsafe_values = {
         "ada@example.test",
         "eyJhbGciOi.none.signature",

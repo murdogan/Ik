@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ from app.core.error_messages import (
     LEAVE_START_DATE_REQUIRED_MESSAGE,
 )
 from app.models.employee import Employee
+from app.models.leave import LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.user import User
 from app.platform.errors.application import ApplicationError
@@ -25,6 +27,8 @@ from app.schemas.leave_request import (
     LeaveRequestListFilters,
     LeaveRequestListPagination,
 )
+
+_CANONICAL_LEAVE_TYPE_CODES = frozenset({"annual", "excuse", "medical_report", "unpaid"})
 
 
 class LeaveRequestNotFoundError(ApplicationError):
@@ -98,12 +102,19 @@ class LeaveRequestService:
         _validate_date_order(payload.start_date, payload.end_date)
         await self._ensure_employee_in_tenant(tenant_id, payload.employee_id)
         await self._ensure_user_in_tenant(tenant_id, payload.requested_by_user_id)
+        leave_type, policy = await self._resolve_leave_configuration(
+            tenant_id,
+            payload.leave_type,
+            payload.start_date,
+        )
 
         leave_request = LeaveRequest(
             id=uuid4(),
             tenant_id=tenant_id,
             employee_id=payload.employee_id,
             leave_type=payload.leave_type,
+            leave_type_id=leave_type.id,
+            policy_id=policy.id,
             start_date=payload.start_date,
             end_date=payload.end_date,
             status=LeaveRequestStatus.PENDING.value,
@@ -168,6 +179,7 @@ class LeaveRequestService:
         leave_request.status = target_status.value
         leave_request.decided_by_user_id = payload.decided_by_user_id
         leave_request.decision_note = payload.decision_note
+        leave_request.decided_at = datetime.now(UTC)
 
         await self.session.flush()
         await self.session.refresh(leave_request)
@@ -200,6 +212,47 @@ class LeaveRequestService:
         statement = select(User.id).where(User.tenant_id == tenant_id).where(User.id == user_id)
         if await self.session.scalar(statement) is None:
             raise LeaveRequestUserNotFoundError
+
+    async def _resolve_leave_configuration(
+        self,
+        tenant_id: UUID,
+        leave_type_code: str,
+        effective_on: date,
+    ) -> tuple[LeaveType, LeavePolicy]:
+        leave_type = await self.session.scalar(
+            select(LeaveType).where(
+                LeaveType.tenant_id == tenant_id,
+                or_(
+                    LeaveType.code == leave_type_code,
+                    LeaveType.id == _deterministic_leave_type_id(tenant_id, leave_type_code),
+                ),
+            )
+        )
+        if leave_type is None:
+            raise LeaveRequestNotFoundError
+        policy = await self.session.scalar(
+            select(LeavePolicy)
+            .where(
+                LeavePolicy.tenant_id == tenant_id,
+                LeavePolicy.leave_type_id == leave_type.id,
+                LeavePolicy.effective_from <= effective_on,
+            )
+            .order_by(LeavePolicy.effective_from.desc(), LeavePolicy.version.desc())
+            .limit(1)
+        )
+        if policy is None:
+            raise LeaveRequestNotFoundError
+        return leave_type, policy
+
+
+def _deterministic_leave_type_id(tenant_id: UUID, leave_type_code: str) -> UUID:
+    namespace = (
+        f"p6:leave-type:{tenant_id}:{leave_type_code}"
+        if leave_type_code in _CANONICAL_LEAVE_TYPE_CODES
+        else f"p6:legacy-leave-type:{tenant_id}:{leave_type_code}"
+    )
+    digest = hashlib.md5(namespace.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return UUID(digest, version=4)
 
 
 def _leave_request_list_statement(

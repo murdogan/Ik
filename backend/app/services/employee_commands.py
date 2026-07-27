@@ -67,9 +67,7 @@ class EmployeeCommandHandler:
             tenant_id=tenant_id,
             idempotency_key=idempotency_key,
             command_name="employees.create",
-            request_fingerprint=command_fingerprint(
-                {"payload": payload.model_dump(mode="json")}
-            ),
+            request_fingerprint=command_fingerprint({"payload": payload.model_dump(mode="json")}),
             operation=operation,
             serialize=_employee_response_payload,
             deserialize=EmployeeRead.model_validate,
@@ -89,10 +87,7 @@ class EmployeeCommandHandler:
                 for field_name in EmployeeUpdate.model_fields
                 if field_name in payload.model_fields_set and field_name != "version"
             )
-            before = {
-                field_name: getattr(employee, field_name)
-                for field_name in candidate_fields
-            }
+            before = {field_name: getattr(employee, field_name) for field_name in candidate_fields}
             employee = await self.service.update_employee(tenant_id, employee_id, payload)
             changed_fields = tuple(
                 sorted(

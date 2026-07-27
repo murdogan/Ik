@@ -171,18 +171,14 @@ class Employee(Base, TimestampMixin):
     full_name_normalized: Mapped[str] = mapped_column(
         Text,
         Computed(
-            f"{_normalized_text_sql('first_name')} || ' ' || "
-            f"{_normalized_text_sql('last_name')}"
+            f"{_normalized_text_sql('first_name')} || ' ' || {_normalized_text_sql('last_name')}"
         ),
         nullable=False,
     )
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     email_normalized: Mapped[str | None] = mapped_column(
         String(320),
-        Computed(
-            "case when email is null then null else "
-            f"{_normalized_text_sql('email')} end"
-        ),
+        Computed(f"case when email is null then null else {_normalized_text_sql('email')} end"),
         nullable=True,
     )
     department: Mapped[str | None] = mapped_column(Text, nullable=True)

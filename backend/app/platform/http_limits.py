@@ -44,9 +44,8 @@ class RequestBodyLimitMiddleware:
             return
 
         declared, valid_declaration = _content_length(scope)
-        if (
-            not valid_declaration
-            or (declared is not None and (declared < 1 or declared > self._maximum_bytes))
+        if not valid_declaration or (
+            declared is not None and (declared < 1 or declared > self._maximum_bytes)
         ):
             await self._reject(scope, receive, send)
             return

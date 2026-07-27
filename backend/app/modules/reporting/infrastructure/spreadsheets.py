@@ -16,7 +16,10 @@ from xml.etree.ElementTree import ParseError
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
-from app.schemas.employee_import import EMPLOYEE_IMPORT_FIELDS, EMPLOYEE_IMPORT_MAX_ROWS
+from app.modules.reporting.application.employee_import_contract import (
+    EMPLOYEE_IMPORT_FIELDS,
+    EMPLOYEE_IMPORT_MAX_ROWS,
+)
 
 _FORMULA_PREFIXES = frozenset({"=", "+", "-", "@", "\t", "\r", "\n"})
 _ILLEGAL_SPREADSHEET_CONTROLS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")

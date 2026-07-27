@@ -17,13 +17,7 @@ from app.platform.request_context import (
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type FrozenJsonValue = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | tuple[FrozenJsonValue, ...]
-    | Mapping[str, FrozenJsonValue]
+    None | bool | int | float | str | tuple[FrozenJsonValue, ...] | Mapping[str, FrozenJsonValue]
 )
 
 

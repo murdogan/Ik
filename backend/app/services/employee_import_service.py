@@ -332,7 +332,7 @@ class EmployeeImportService:
                         id=record.id,
                         status=EmployeeImportStatus.SUCCEEDED,
                         committed_count=record.committed_count,
-                        committed_at=record.committed_at,
+                        committed_at=_aware(record.committed_at),
                     )
                 now = datetime.now(UTC)
                 if (
@@ -340,7 +340,7 @@ class EmployeeImportService:
                     or record.scan_result != EmployeeImportScanResult.CLEAN.value
                     or record.error_count != 0
                     or record.validation_fingerprint is None
-                    or record.expires_at <= now
+                    or _aware(record.expires_at) <= now
                 ):
                     raise ReportingConflictError()
                 if await _has_import_errors(session, tenant_id=tenant_id, import_id=import_id):
@@ -827,7 +827,7 @@ def _import_read(
 ) -> EmployeeImportRead:
     status = EmployeeImportStatus(record.status)
     if status not in {EmployeeImportStatus.SUCCEEDED, EmployeeImportStatus.EXPIRED}:
-        if record.expires_at <= datetime.now(UTC):
+        if _aware(record.expires_at) <= datetime.now(UTC):
             status = EmployeeImportStatus.EXPIRED
     return EmployeeImportRead(
         id=record.id,
@@ -842,12 +842,18 @@ def _import_read(
         failure_code=record.failure_code,
         issues=issues,
         issues_next_cursor=next_cursor,
-        validated_at=record.validated_at,
-        committed_at=record.committed_at,
-        expires_at=record.expires_at,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+        validated_at=_aware(record.validated_at) if record.validated_at is not None else None,
+        committed_at=_aware(record.committed_at) if record.committed_at is not None else None,
+        expires_at=_aware(record.expires_at),
+        created_at=_aware(record.created_at),
+        updated_at=_aware(record.updated_at),
     )
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _issue_read(issue: EmployeeImportIssue) -> EmployeeImportIssueRead:

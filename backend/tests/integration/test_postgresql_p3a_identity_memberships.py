@@ -312,8 +312,7 @@ def test_p3a_downgrade_refuses_canonical_drift_and_preserves_legacy_repair_path(
     with pytest.raises(
         RuntimeError,
         match=(
-            "P3A downgrade preflight failed: identity_drift=0, "
-            "membership_drift=1, role_drift=0"
+            "P3A downgrade preflight failed: identity_drift=0, membership_drift=1, role_drift=0"
         ),
     ):
         alembic_command.downgrade(config, PRE_P3A_REVISION)
@@ -354,10 +353,7 @@ async def _assert_runtime_visibility_and_denials(engine: AsyncEngine) -> None:
         assert set(
             (
                 await connection.execute(
-                    text(
-                        "select id, tenant_id, identity_id from tenant_memberships "
-                        "order by id"
-                    )
+                    text("select id, tenant_id, identity_id from tenant_memberships order by id")
                 )
             ).tuples()
         ) == {
@@ -376,10 +372,7 @@ async def _assert_runtime_visibility_and_denials(engine: AsyncEngine) -> None:
         }
         assert (
             await connection.scalar(
-                text(
-                    "select id from tenant_memberships "
-                    "where tenant_id = :tenant_id"
-                ),
+                text("select id from tenant_memberships where tenant_id = :tenant_id"),
                 {"tenant_id": TENANT_B_ID},
             )
             is None
@@ -388,9 +381,7 @@ async def _assert_runtime_visibility_and_denials(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await _set_local_tenant_role(connection, TENANT_B_ID)
         assert tuple(
-            await connection.scalars(
-                text("select id from tenant_memberships order by id")
-            )
+            await connection.scalars(text("select id from tenant_memberships order by id"))
         ) == (SHARED_CANONICAL_USER_ID,)
         assert tuple(
             await connection.scalars(
@@ -409,8 +400,7 @@ async def _assert_runtime_visibility_and_denials(engine: AsyncEngine) -> None:
             await _set_local_tenant_role(connection, TENANT_A_ID)
             await connection.execute(
                 text(
-                    "update tenant_memberships set full_name = full_name "
-                    "where id = :membership_id"
+                    "update tenant_memberships set full_name = full_name where id = :membership_id"
                 ),
                 {"membership_id": DEMO_ADMIN_ID},
             )
@@ -748,8 +738,7 @@ async def _membership_count(database_url: URL) -> int:
     try:
         async with engine.connect() as connection:
             return int(
-                await connection.scalar(text("select count(*) from tenant_memberships"))
-                or 0
+                await connection.scalar(text("select count(*) from tenant_memberships")) or 0
             )
     finally:
         await engine.dispose()

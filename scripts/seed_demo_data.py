@@ -85,11 +85,7 @@ def main() -> int:
 
     print(_format_success(result))
     for user_key, activation_url in activation_urls:
-        print(
-            "DEMO_AUTH_ACTIVATION_URL "
-            f"user={user_key} "
-            f"url={activation_url}"
-        )
+        print(f"DEMO_AUTH_ACTIVATION_URL user={user_key} url={activation_url}")
     return 0
 
 
@@ -189,16 +185,12 @@ async def _reset_demo_user_activation(
         raise DemoSeedConflictError("Wealthy Falcon demo identity was not seeded")
     identity.status = IdentityStatus.PENDING.value
     identity.password_hash = None
-    membership_ids = select(TenantMembership.id).where(
-        TenantMembership.identity_id == identity.id
-    )
+    membership_ids = select(TenantMembership.id).where(TenantMembership.identity_id == identity.id)
     legacy_user_ids = select(TenantMembership.legacy_user_id).where(
         TenantMembership.identity_id == identity.id
     )
     await session.execute(
-        update(User)
-        .where(User.id.in_(legacy_user_ids))
-        .values(password_hash=None)
+        update(User).where(User.id.in_(legacy_user_ids)).values(password_hash=None)
     )
     await session.execute(
         update(TenantMembership)

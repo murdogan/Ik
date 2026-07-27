@@ -142,8 +142,7 @@ class TenantCommandHandler:
                             actor_type=PlatformEventActorType.USER,
                         ),
                         changed_fields=tuple(
-                            TenantSettingField(field_name)
-                            for field_name in mutation.changed_fields
+                            TenantSettingField(field_name) for field_name in mutation.changed_fields
                         ),
                     )
                 )
