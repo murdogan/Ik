@@ -1,7 +1,7 @@
 # Phase 11 Work Log
 
-Status: complete — all required local Phase 11 gates have current green
-evidence; staging acceptance and merge remain supervisor-owned
+Status: complete — all required local and staging Phase 11 gates have current
+green evidence; PR merge remains supervisor-owned
 Started: 2026-07-27T13:03:41Z
 Finished: 2026-07-27T15:54:19Z
 Starting plan SHA: `37150c8e8a8afb6459a74a2dfbf5166431ec3353`
@@ -594,11 +594,38 @@ remains.
 - Query-plan evidence is representative synthetic evidence, not a fabricated
   production SLO.
 
-### Environment-owned acceptance
+### Supervisor staging acceptance
 
-- The repository Quality workflow runs on pull requests, `main`, or manual
-  dispatch, not an ordinary branch push. No branch CI run is expected without a
-  supervisor-owned PR/manual dispatch.
-- Staging deployment, four-process staging identity, staging smoke, lock
-  release, immutable staging manifest verification, merge, and production
-  deployment remain supervisor-owned and were not performed.
+- Draft PR #2 was opened against exact base
+  `160aa8aa30836642ee00d9fadad6a62dcdee079b`; its exact runtime head was
+  `565983fcb35a61ce7484a75c49500dd50560a053`.
+- GitHub Actions Quality run `30282603776` completed successfully on that exact
+  runtime head.
+- Before migration, the staging PostgreSQL database and private object store
+  were captured under a private `0700` recovery root. `verify-backup` passed;
+  the manifest records source revision `0042_p9_privacy_evidence_hardening`, a
+  552,507-byte PostgreSQL custom dump, and one 77-byte private object.
+- Candidate Alembic upgraded staging transactionally to the single current head
+  `0043_p11_employee_lifecycle_profile_lock`.
+- Hardened staging deployment completed for exact runtime head
+  `565983fcb35a61ce7484a75c49500dd50560a053` and replaced Phase 10 head
+  `75baff18a0a1e62ea8ce4c1af39e0f41742e3e7f`.
+- Independent read-back verified ready release identity, database readiness,
+  API/frontend/PWA routes and headers, anonymous smoke, public web/API tunnels,
+  the deployment lock release, and exact PID/start-time/cwd/environment identity
+  for API, web, notification, and reporting processes. Restricted staging logs
+  contained no traceback/error/critical/fatal marker.
+- Immutable staging manifest:
+  `/opt/data/staging/ik-releases/565983fcb35a61ce7484a75c49500dd50560a053-20260727T160738Z-1027388/release-manifest.json`;
+  210 bytes; SHA-256
+  `88ea881fc903255af88ad566fe5f31e58cc9596c26d68515e438e268d3b7e4ce`;
+  checksum and exact commit/migration identity passed.
+- An independent exact-diff review worker timed out after ten minutes without a
+  verdict or finding; this is not represented as independent approval. The
+  bounded supervisor closeout instead verified clean diff mechanics, zero
+  conflict/debug markers, migration `0043` ACL/search-path/owner-transfer and
+  downgrade structure, plus the already-green exact PostgreSQL security,
+  concurrency, non-super migration-owner, CI, and staging gates. No new blocker
+  was demonstrated.
+- Production deployment was not performed. PR merge remains the only open
+  supervisor action.
