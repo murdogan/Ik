@@ -251,9 +251,7 @@ async def test_platform_login_me_refresh_logout_and_realm_audiences_are_separate
         assert revoked_me.status_code == 401
         tenant_me = await harness.client.get(
             "/api/v1/me",
-            headers={
-                "Authorization": f"Bearer {tenant_refresh.json()['data']['access_token']}"
-            },
+            headers={"Authorization": f"Bearer {tenant_refresh.json()['data']['access_token']}"},
         )
         assert tenant_me.status_code == 200
 
@@ -280,8 +278,7 @@ async def test_platform_login_me_refresh_logout_and_realm_audiences_are_separate
         assert "token" not in serialized
 
 
-async def test_platform_role_is_checked_after_credentials_without_org_selection(
-) -> None:
+async def test_platform_role_is_checked_after_credentials_without_org_selection() -> None:
     async with _platform_auth_api() as harness:
         denied = await harness.client.post(
             "/api/v1/platform/auth/login",
@@ -408,9 +405,7 @@ async def test_platform_refresh_reuse_revokes_only_the_platform_family() -> None
 
         async with harness.session_factory() as session:
             reuse_event = await session.scalar(
-                select(AuditEvent).where(
-                    AuditEvent.event_type == "platform.session.reuse_detected"
-                )
+                select(AuditEvent).where(AuditEvent.event_type == "platform.session.reuse_detected")
             )
         assert reuse_event is not None
         assert reuse_event.result == "denied"

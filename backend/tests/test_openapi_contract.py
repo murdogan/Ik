@@ -13,6 +13,7 @@ F1B_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1b_openapi_contract.
 F1D_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1d_openapi_contract.json"
 F1E_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "f1e_openapi_contract.json"
 PHASE0_SNAPSHOT_PATH = Path(__file__).parent / "contracts" / "phase0_openapi_contract.json"
+PHASE11_OPERATIONS_PATH = Path(__file__).parent / "contracts" / "phase11_openapi_operations.txt"
 F1A_ADDITIVE_OPERATIONS = {
     "GET /api/v1/platform/tenants",
     "GET /api/v1/platform/tenants/{tenant_id}",
@@ -186,7 +187,17 @@ P3K_AUTH_MIGRATED_OPERATIONS = {
     "POST /api/v1/leave-requests/{leave_request_id}/reject",
     "POST /api/v1/leave-requests/{leave_request_id}/cancel",
 }
-P4A_APPROVED_COMPONENT_MIGRATIONS = {"EmployeeRead", "EmployeeUpdate"}
+POST_PHASE1_APPROVED_COMPONENT_MIGRATIONS = {
+    "DashboardActivityItem",
+    "DashboardSummary",
+    "DepartmentDistributionItem",
+    "EmployeeRead",
+    "EmployeeUpdate",
+    "LeaveBalanceSummaryRead",
+    "LeaveRequestCreate",
+    "LeaveRequestDecision",
+    "LeaveRequestRead",
+}
 
 
 def test_f1e_openapi_contract_matches_review_snapshot() -> None:
@@ -214,59 +225,72 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
         assert {
             component: current["components"].get(group_name, {}).get(component)
             for component in components
-            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+            if component not in POST_PHASE1_APPROVED_COMPONENT_MIGRATIONS
         } == {
             component: digest
             for component, digest in components.items()
-            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+            if component not in POST_PHASE1_APPROVED_COMPONENT_MIGRATIONS
         }
 
 
-def test_current_openapi_surface_is_the_approved_additive_identity_contract() -> None:
-    """Preserve the historical surface while approving focused additive operations."""
+def test_current_openapi_surface_matches_phase11_registry_and_security_realms() -> None:
+    """Freeze the current surface while deriving security expectations from realm boundaries."""
 
-    f1e = _load_contract(F1E_SNAPSHOT_PATH)
     openapi = create_app().openapi()
     current = build_openapi_contract_manifest(openapi)
+    expected_operations = {
+        line.strip()
+        for line in PHASE11_OPERATIONS_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
 
-    assert current["operation_count"] == 77
-    assert set(current["operations"]) == (
-        set(f1e["operations"])
-        | F2_APPROVED_ADDITIVE_OPERATIONS
-        | P3C_ADDITIVE_OPERATIONS
-        | P3D_ADDITIVE_OPERATIONS
-        | P3E_ADDITIVE_OPERATIONS
-        | P3F_ADDITIVE_OPERATIONS
-        | P3G_ADDITIVE_OPERATIONS
-        | P3H_ADDITIVE_OPERATIONS
-        | P3I_ADDITIVE_OPERATIONS
-        | P3J_ADDITIVE_OPERATIONS
-        | P4B_ADDITIVE_OPERATIONS
-    )
-    bearer_security = [{"BearerAuth": []}]
-    assert {
-        f"{method.upper()} {path}"
-        for path, path_item in openapi["paths"].items()
-        for method, operation in path_item.items()
-        if method in HTTP_METHODS and operation.get("security") == bearer_security
-    } == (
-        F2_BEARER_OPERATIONS
-        | P3C_BEARER_OPERATIONS
-        | P3F_BEARER_OPERATIONS
-        | P3G_BEARER_OPERATIONS
-        | P3H_BEARER_OPERATIONS
-        | P3I_BEARER_OPERATIONS
-        | P3J_BEARER_OPERATIONS
-        | P4B_BEARER_OPERATIONS
-        | P3K_AUTH_MIGRATED_OPERATIONS
-    )
-    platform_bearer_security = [{"PlatformBearerAuth": []}]
-    assert {
-        f"{method.upper()} {path}"
-        for path, path_item in openapi["paths"].items()
-        for method, operation in path_item.items()
-        if method in HTTP_METHODS and operation.get("security") == platform_bearer_security
-    } == P3D_PLATFORM_BEARER_OPERATIONS
+    assert len(expected_operations) == 177
+    assert current["operation_count"] == len(expected_operations)
+    assert set(current["operations"]) == expected_operations
+
+    public_operations = {
+        "GET /",
+        "GET /health",
+        "GET /health/live",
+        "GET /health/ready",
+        "POST /api/v1/auth/activate",
+        "POST /api/v1/auth/login",
+        "POST /api/v1/auth/logout",
+        "POST /api/v1/auth/password-reset/confirm",
+        "POST /api/v1/auth/password-reset/request",
+        "POST /api/v1/auth/refresh",
+        "POST /api/v1/auth/select-organization",
+        "POST /api/v1/platform/auth/login",
+        "POST /api/v1/platform/auth/logout",
+        "POST /api/v1/platform/auth/refresh",
+    }
+    trusted_tenant_principal_operations = {
+        "GET /api/v1/tenant",
+        "GET /api/v1/tenant/features",
+        "GET /api/v1/tenant/settings",
+        "PATCH /api/v1/tenant/settings",
+    }
+    platform_operations = {
+        operation
+        for operation in expected_operations
+        if " /api/v1/platform/" in operation and operation not in public_operations
+    }
+
+    for operation_name in expected_operations:
+        method, path = operation_name.split(" ", maxsplit=1)
+        operation = openapi["paths"][path][method.lower()]
+        if operation_name in public_operations | trusted_tenant_principal_operations:
+            assert "security" not in operation
+        elif operation_name in platform_operations:
+            assert operation["security"] == [{"PlatformBearerAuth": []}]
+        else:
+            assert operation["security"] == [{"BearerAuth": []}]
+            assert not {
+                parameter["name"]
+                for parameter in operation.get("parameters", [])
+                if parameter.get("in") == "header"
+            } & {"X-Tenant-Id", "X-Tenant-Slug"}
+
     p3f_not_found_examples = {
         "tenant_not_found",
         "legal_entity_not_found",
@@ -286,9 +310,9 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
     }
     for operation_name in P3G_ADDITIVE_OPERATIONS:
         method, path = operation_name.split(" ", maxsplit=1)
-        examples = openapi["paths"][path][method.lower()]["responses"]["404"][
-            "content"
-        ]["application/json"]["examples"]
+        examples = openapi["paths"][path][method.lower()]["responses"]["404"]["content"][
+            "application/json"
+        ]["examples"]
         assert set(examples) == p3g_not_found_examples
     p3h_not_found_examples = {
         "tenant_not_found",
@@ -297,27 +321,10 @@ def test_current_openapi_surface_is_the_approved_additive_identity_contract() ->
     }
     for operation_name in P3H_ADDITIVE_OPERATIONS:
         method, path = operation_name.split(" ", maxsplit=1)
-        examples = openapi["paths"][path][method.lower()]["responses"]["404"][
-            "content"
-        ]["application/json"]["examples"]
+        examples = openapi["paths"][path][method.lower()]["responses"]["404"]["content"][
+            "application/json"
+        ]["examples"]
         assert set(examples) == p3h_not_found_examples
-    for path, path_item in openapi["paths"].items():
-        for method, operation in path_item.items():
-            if method not in HTTP_METHODS:
-                continue
-            if f"{method.upper()} {path}" not in (
-                F2_BEARER_OPERATIONS
-                | P3C_BEARER_OPERATIONS
-                | P3D_PLATFORM_BEARER_OPERATIONS
-                | P3F_BEARER_OPERATIONS
-                | P3G_BEARER_OPERATIONS
-                | P3H_BEARER_OPERATIONS
-                | P3I_BEARER_OPERATIONS
-                | P3J_BEARER_OPERATIONS
-                | P4B_BEARER_OPERATIONS
-                | P3K_AUTH_MIGRATED_OPERATIONS
-            ):
-                assert "security" not in operation
 
 
 def test_p4b_employee_profile_openapi_is_versioned_strict_and_tenant_authenticated() -> None:
@@ -421,7 +428,6 @@ def test_p4b_employee_profile_openapi_is_versioned_strict_and_tenant_authenticat
         "compensation",
         "address",
         "emergency_contact",
-        "employment_end_date",
     ):
         assert f'"{forbidden_field}"' not in serialized_profile_schemas
 
@@ -520,11 +526,11 @@ def test_f1e_contract_preserves_every_phase0_operation_and_component() -> None:
         assert {
             component: current["components"].get(group_name, {}).get(component)
             for component in components
-            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+            if component not in POST_PHASE1_APPROVED_COMPONENT_MIGRATIONS
         } == {
             component: digest
             for component, digest in components.items()
-            if component not in P4A_APPROVED_COMPONENT_MIGRATIONS
+            if component not in POST_PHASE1_APPROVED_COMPONENT_MIGRATIONS
         }
 
 

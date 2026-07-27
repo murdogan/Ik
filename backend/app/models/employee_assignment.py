@@ -158,18 +158,14 @@ class EmployeeAssignment(Base, TimestampMixin):
     branch_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     department_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     position_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    manager_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
+    manager_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     supersedes_assignment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
     )
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     change_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    created_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
+    created_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
 
 
 __all__ = ["EmployeeAssignment"]

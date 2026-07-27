@@ -1,5 +1,7 @@
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID, uuid5
 
 from sqlalchemy import func, select
@@ -19,6 +21,14 @@ from app.models.identity import (
     MembershipRole,
     PlatformIdentityRole,
     TenantMembership,
+)
+from app.models.leave import (
+    HolidayCalendar,
+    LeaveBalanceLedger,
+    LeavePolicy,
+    LeaveRequestDay,
+    LeaveRequestTimeline,
+    LeaveType,
 )
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import (
@@ -114,6 +124,18 @@ _DEMO_MANAGER_USER_KEY_BY_TENANT = {
     "atlas": "atlas_manager",
 }
 _DEMO_BRANCH_NAME = "Demo Main Branch"
+_LEAVE_POLICY_EFFECTIVE_FROM = date(1900, 1, 1)
+_DEMO_LEAVE_CONFIGURATION_CREATED_AT = datetime(2026, 7, 1, 8, tzinfo=UTC)
+_STARTER_LEAVE_TYPES = (
+    ("annual", "Annual leave", True, False),
+    ("excuse", "Excuse leave", True, False),
+    ("unpaid", "Unpaid leave", False, False),
+    ("medical_report", "Medical/report leave", True, True),
+)
+_STARTER_LEAVE_TYPE_BY_CODE = {
+    code: (name, paid, document_required)
+    for code, name, paid, document_required in _STARTER_LEAVE_TYPES
+}
 
 
 DEMO_TENANTS: tuple[DemoTenantFixture, ...] = (
@@ -348,6 +370,8 @@ async def seed_demo_data(session: AsyncSession) -> DemoSeedResult:
     await session.flush()
     await _ensure_tenant_settings(session, tenants)
     await session.flush()
+    await _ensure_demo_leave_configuration(session, tenants)
+    await session.flush()
     await _ensure_privacy_consent_purposes(session, tenants)
     await session.flush()
     await _ensure_organization_feature(session, tenants)
@@ -422,6 +446,213 @@ async def _ensure_tenant_settings(
             session.add(TenantSettings(tenant_id=tenant.id))
 
 
+async def _ensure_demo_leave_configuration(
+    session: AsyncSession,
+    tenants: dict[str, Tenant],
+) -> None:
+    leave_codes_by_tenant = {
+        tenant_key: {code for code, *_ in _STARTER_LEAVE_TYPES} for tenant_key in tenants
+    }
+    for fixture in DEMO_LEAVE_REQUESTS:
+        leave_codes_by_tenant[fixture.tenant_key].add(fixture.leave_type)
+
+    for tenant_key, tenant in tenants.items():
+        for raw_leave_type in sorted(leave_codes_by_tenant[tenant_key]):
+            await _ensure_demo_leave_type_and_policy(
+                session,
+                tenant_id=tenant.id,
+                raw_leave_type=raw_leave_type,
+            )
+        await _ensure_demo_default_calendar(session, tenant.id)
+
+
+async def _ensure_demo_leave_type_and_policy(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    raw_leave_type: str,
+) -> None:
+    (
+        leave_type_id,
+        code,
+        name,
+        description,
+        is_active,
+        paid,
+        document_required,
+    ) = _demo_leave_type_seed(tenant_id, raw_leave_type)
+    leave_type = await session.get(LeaveType, leave_type_id)
+    leave_type_with_code = await session.scalar(
+        select(LeaveType).where(
+            LeaveType.tenant_id == tenant_id,
+            LeaveType.code == code,
+        )
+    )
+    if leave_type is None:
+        if leave_type_with_code is not None:
+            raise DemoSeedConflictError(f"Demo leave type code {code!r} is already in use")
+        leave_type = LeaveType(
+            id=leave_type_id,
+            tenant_id=tenant_id,
+            code=code,
+            name=name,
+            description=description,
+            is_active=is_active,
+            version=1,
+            created_at=_DEMO_LEAVE_CONFIGURATION_CREATED_AT,
+            updated_at=_DEMO_LEAVE_CONFIGURATION_CREATED_AT,
+        )
+        session.add(leave_type)
+        await session.flush()
+    else:
+        _ensure_same_tenant(
+            leave_type.tenant_id,
+            tenant_id,
+            f"leave type {leave_type_id}",
+        )
+        if leave_type.code != code:
+            raise DemoSeedConflictError(f"Demo leave type id {leave_type_id} is already in use")
+
+    policy_id = _demo_leave_policy_id(tenant_id, leave_type_id)
+    policy = await session.get(LeavePolicy, policy_id)
+    policy_with_version = await session.scalar(
+        select(LeavePolicy).where(
+            LeavePolicy.tenant_id == tenant_id,
+            LeavePolicy.leave_type_id == leave_type_id,
+            LeavePolicy.version == 1,
+        )
+    )
+    if policy is None:
+        if policy_with_version is not None:
+            raise DemoSeedConflictError(
+                f"Demo leave policy version for type {leave_type_id} is already in use"
+            )
+        session.add(
+            LeavePolicy(
+                id=policy_id,
+                tenant_id=tenant_id,
+                leave_type_id=leave_type_id,
+                version=1,
+                effective_from=_LEAVE_POLICY_EFFECTIVE_FROM,
+                paid=paid,
+                document_required=document_required,
+                negative_balance_allowed=False,
+                accrual_enabled=False,
+                accrual_days_per_month=Decimal("0.00"),
+                carryover_enabled=False,
+                carryover_limit_days=None,
+                created_by_user_id=None,
+                created_at=_DEMO_LEAVE_CONFIGURATION_CREATED_AT,
+            )
+        )
+        await session.flush()
+        return
+
+    _ensure_same_tenant(policy.tenant_id, tenant_id, f"leave policy {policy_id}")
+    expected_policy_values = (
+        leave_type_id,
+        1,
+        _LEAVE_POLICY_EFFECTIVE_FROM,
+        paid,
+        document_required,
+        False,
+        False,
+        Decimal("0.00"),
+        False,
+        None,
+        None,
+    )
+    actual_policy_values = (
+        policy.leave_type_id,
+        policy.version,
+        policy.effective_from,
+        policy.paid,
+        policy.document_required,
+        policy.negative_balance_allowed,
+        policy.accrual_enabled,
+        policy.accrual_days_per_month,
+        policy.carryover_enabled,
+        policy.carryover_limit_days,
+        policy.created_by_user_id,
+    )
+    if actual_policy_values != expected_policy_values:
+        raise DemoSeedConflictError(f"Demo leave policy id {policy_id} is already in use")
+
+
+async def _ensure_demo_default_calendar(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> None:
+    calendar_id = _deterministic_uuid(f"p6:holiday-calendar:{tenant_id}:default")
+    calendar = await session.get(HolidayCalendar, calendar_id)
+    active_default = await session.scalar(
+        select(HolidayCalendar).where(
+            HolidayCalendar.tenant_id == tenant_id,
+            HolidayCalendar.is_active.is_(True),
+            HolidayCalendar.is_default.is_(True),
+        )
+    )
+    if active_default is not None:
+        return
+    if calendar is not None:
+        _ensure_same_tenant(
+            calendar.tenant_id,
+            tenant_id,
+            f"holiday calendar {calendar_id}",
+        )
+        raise DemoSeedConflictError(f"Demo holiday calendar {calendar_id} is not an active default")
+    session.add(
+        HolidayCalendar(
+            id=calendar_id,
+            tenant_id=tenant_id,
+            name="Default work calendar",
+            is_default=True,
+            is_active=True,
+            non_working_weekdays=[5, 6],
+            version=1,
+            created_at=_DEMO_LEAVE_CONFIGURATION_CREATED_AT,
+            updated_at=_DEMO_LEAVE_CONFIGURATION_CREATED_AT,
+        )
+    )
+
+
+def _demo_leave_type_seed(
+    tenant_id: UUID,
+    raw_leave_type: str,
+) -> tuple[UUID, str, str, str | None, bool, bool, bool]:
+    starter = _STARTER_LEAVE_TYPE_BY_CODE.get(raw_leave_type)
+    if starter is not None:
+        name, paid, document_required = starter
+        return (
+            _deterministic_uuid(f"p6:leave-type:{tenant_id}:{raw_leave_type}"),
+            raw_leave_type,
+            name,
+            None,
+            True,
+            paid,
+            document_required,
+        )
+
+    digest = hashlib.md5(
+        raw_leave_type.encode("utf-8"),
+        usedforsecurity=False,
+    ).hexdigest()
+    display_name = raw_leave_type.strip() or "Legacy unclassified leave"
+    return (
+        _deterministic_uuid(f"p6:legacy-leave-type:{tenant_id}:{raw_leave_type}"),
+        f"legacy_{digest}",
+        display_name[:200],
+        "Imported legacy leave type; inactive for new requests.",
+        False,
+        False,
+        False,
+    )
+
+
+def _demo_leave_policy_id(tenant_id: UUID, leave_type_id: UUID) -> UUID:
+    return _deterministic_uuid(f"p6:leave-policy:{tenant_id}:{leave_type_id}:1")
+
+
 async def _ensure_privacy_consent_purposes(
     session: AsyncSession,
     tenants: dict[str, Tenant],
@@ -447,9 +678,7 @@ async def _ensure_privacy_consent_purposes(
                 code="optional_communications",
                 version=1,
                 title="İsteğe bağlı iletişimler",
-                description=(
-                    "Zorunlu olmayan çalışan iletişimleri için isteğe bağlı onay."
-                ),
+                description=("Zorunlu olmayan çalışan iletişimleri için isteğe bağlı onay."),
                 is_active=True,
                 created_at=datetime.now(UTC),
             )
@@ -569,9 +798,7 @@ async def _ensure_shared_admin_platform_role(
             )
         )
         if membership is None:  # pragma: no cover - demo projection invariant
-            raise DemoSeedConflictError(
-                f"Demo shared admin membership {user_key!r} was not seeded"
-            )
+            raise DemoSeedConflictError(f"Demo shared admin membership {user_key!r} was not seeded")
         identity_ids.add(membership.identity_id)
 
     if len(identity_ids) != 1:
@@ -615,9 +842,7 @@ async def _upsert_identity_membership_projection(
     previous_identity = None
     if stable_membership is not None:
         previous_identity = await session.scalar(
-            select(Identity)
-            .where(Identity.id == stable_membership.identity_id)
-            .with_for_update()
+            select(Identity).where(Identity.id == stable_membership.identity_id).with_for_update()
         )
 
     identity = await session.scalar(
@@ -649,10 +874,7 @@ async def _upsert_identity_membership_projection(
         identity=identity,
         previous_identity=previous_identity,
     )
-    if (
-        identity.status == IdentityStatus.PENDING.value
-        and user.password_hash is not None
-    ):
+    if identity.status == IdentityStatus.PENDING.value and user.password_hash is not None:
         identity.email = user.email
         identity.status = IdentityStatus.ACTIVE.value
         identity.password_hash = user.password_hash
@@ -666,13 +888,9 @@ async def _upsert_identity_membership_projection(
         .with_for_update()
     )
     if stable_membership is not None:
-        if (
-            canonical_membership is not None
-            and canonical_membership.id != stable_membership.id
-        ):
+        if canonical_membership is not None and canonical_membership.id != stable_membership.id:
             raise DemoSeedConflictError(
-                "Demo identity already has a different membership in tenant "
-                f"{user.tenant_id}"
+                f"Demo identity already has a different membership in tenant {user.tenant_id}"
             )
         membership = stable_membership
         membership.identity_id = identity.id
@@ -921,9 +1139,7 @@ async def _ensure_structured_employee_assignments(
             f"assignment manager {manager.id}",
         )
         if manager.status != UserStatus.ACTIVE.value:
-            raise DemoSeedConflictError(
-                f"Demo assignment manager {manager.id} is not active"
-            )
+            raise DemoSeedConflictError(f"Demo assignment manager {manager.id} is not active")
 
         assignment_id = _demo_structure_id(
             "assignment",
@@ -932,9 +1148,7 @@ async def _ensure_structured_employee_assignments(
         )
         conflicting_assignment = await session.get(EmployeeAssignment, assignment_id)
         if conflicting_assignment is not None:
-            raise DemoSeedConflictError(
-                f"Demo assignment id {assignment_id} is already in use"
-            )
+            raise DemoSeedConflictError(f"Demo assignment id {assignment_id} is already in use")
 
         effective_to = None
         if fixture.status is EmployeeStatus.TERMINATED:
@@ -978,13 +1192,9 @@ async def _active_default_legal_entity(
         )
     )
     if legal_entity is None:
-        raise DemoSeedConflictError(
-            f"Demo tenant {tenant.id} has no default legal entity"
-        )
+        raise DemoSeedConflictError(f"Demo tenant {tenant.id} has no default legal entity")
     if legal_entity.status != LegalEntityStatus.ACTIVE.value:
-        raise DemoSeedConflictError(
-            f"Demo tenant {tenant.id} default legal entity is not active"
-        )
+        raise DemoSeedConflictError(f"Demo tenant {tenant.id} default legal entity is not active")
     return legal_entity
 
 
@@ -1006,10 +1216,7 @@ async def _ensure_demo_branch(
         .order_by(Branch.id)
     )
     if branch is not None:
-        if (
-            branch.status != BranchStatus.ACTIVE.value
-            or branch.archived_at is not None
-        ):
+        if branch.status != BranchStatus.ACTIVE.value or branch.archived_at is not None:
             raise DemoSeedConflictError(
                 f"Demo branch code {code!r} is retained by an archived branch"
             )
@@ -1133,9 +1340,7 @@ async def _ensure_demo_catalog_identity_available(
     resource_name: str,
 ) -> None:
     if await session.get(model, resource_id) is not None:
-        raise DemoSeedConflictError(
-            f"Demo {resource_name} id {resource_id} is already in use"
-        )
+        raise DemoSeedConflictError(f"Demo {resource_name} id {resource_id} is already in use")
     code_column = model.code
     conflicting_code_id = await session.scalar(
         select(model.id).where(
@@ -1144,9 +1349,7 @@ async def _ensure_demo_catalog_identity_available(
         )
     )
     if conflicting_code_id is not None:
-        raise DemoSeedConflictError(
-            f"Demo {resource_name} code {code!r} is already in use"
-        )
+        raise DemoSeedConflictError(f"Demo {resource_name} code {code!r} is already in use")
 
 
 def _normalized_demo_label(value: str) -> str:
@@ -1155,6 +1358,11 @@ def _normalized_demo_label(value: str) -> str:
 
 def _demo_structure_id(resource: str, tenant_id: UUID, key: str) -> UUID:
     return uuid5(_DEMO_STRUCTURE_NAMESPACE, f"{resource}:{tenant_id}:{key}")
+
+
+def _deterministic_uuid(value: str) -> UUID:
+    digest = hashlib.md5(value.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return UUID(digest, version=4)
 
 
 def _demo_catalog_code(resource: str, resource_id: UUID) -> str:
@@ -1187,6 +1395,13 @@ async def _upsert_leave_requests(
                 f"leave decided_by user {decided_by_user.id}",
             )
 
+        leave_type_id, *_ = _demo_leave_type_seed(
+            tenant.id,
+            fixture.leave_type,
+        )
+        policy_id = _demo_leave_policy_id(tenant.id, leave_type_id)
+        submitted_at = _demo_leave_submitted_at(fixture)
+        decided_at = _demo_leave_decided_at(fixture)
         leave_request = await session.get(LeaveRequest, fixture.id)
         if leave_request is not None:
             _ensure_same_tenant(
@@ -1195,19 +1410,278 @@ async def _upsert_leave_requests(
                 f"leave request {fixture.id}",
             )
         else:
-            leave_request = LeaveRequest(id=fixture.id, tenant_id=tenant.id)
+            leave_request = LeaveRequest(
+                id=fixture.id,
+                tenant_id=tenant.id,
+                created_at=submitted_at,
+                updated_at=decided_at or submitted_at,
+            )
             session.add(leave_request)
 
         leave_request.employee_id = employee.id
         leave_request.leave_type = fixture.leave_type
+        leave_request.leave_type_id = leave_type_id
+        leave_request.policy_id = policy_id
         leave_request.start_date = fixture.start_date
         leave_request.end_date = fixture.end_date
         leave_request.status = fixture.status.value
         leave_request.requested_by_user_id = requested_by_user.id
+        # These are intentionally null for the pre-P6 demo history, matching the P6
+        # migration when a legacy requester has no employee-account link.
+        leave_request.requested_by_membership_id = None
+        leave_request.routed_manager_user_id = None
+        leave_request.document_id = None
+        leave_request.employee_note = None
+        leave_request.counted_days = _demo_counted_days(fixture)
         leave_request.decided_by_user_id = (
             decided_by_user.id if decided_by_user is not None else None
         )
         leave_request.decision_note = fixture.decision_note
+        leave_request.decided_at = decided_at
+
+    # The fact rows use scalar composite foreign keys rather than ORM relationships.
+    # Persist every parent before scheduling its immutable child history.
+    await session.flush()
+    for fixture in DEMO_LEAVE_REQUESTS:
+        await _ensure_demo_leave_request_facts(
+            session,
+            fixture=fixture,
+            tenant=tenants[fixture.tenant_key],
+            employee=employees[fixture.employee_key],
+            requested_by_user=users[fixture.requested_by_user_key],
+            decided_by_user=(
+                users[fixture.decided_by_user_key]
+                if fixture.decided_by_user_key is not None
+                else None
+            ),
+        )
+
+
+async def _ensure_demo_leave_request_facts(
+    session: AsyncSession,
+    *,
+    fixture: DemoLeaveRequestFixture,
+    tenant: Tenant,
+    employee: Employee,
+    requested_by_user: User,
+    decided_by_user: User | None,
+) -> None:
+    day_values = _demo_leave_request_day_values(fixture)
+    submitted_at = _demo_leave_submitted_at(fixture)
+    decided_at = _demo_leave_decided_at(fixture)
+    for leave_date, is_working_day, counted_days in day_values:
+        day_id = _deterministic_uuid(
+            f"p6:leave-request-day:{tenant.id}:{fixture.id}:{leave_date.isoformat()}"
+        )
+        day = await session.get(LeaveRequestDay, day_id)
+        natural_day = await session.scalar(
+            select(LeaveRequestDay).where(
+                LeaveRequestDay.tenant_id == tenant.id,
+                LeaveRequestDay.request_id == fixture.id,
+                LeaveRequestDay.leave_date == leave_date,
+            )
+        )
+        if day is None:
+            if natural_day is not None:
+                raise DemoSeedConflictError(
+                    f"Demo leave request day {fixture.id}/{leave_date} is already in use"
+                )
+            session.add(
+                LeaveRequestDay(
+                    id=day_id,
+                    tenant_id=tenant.id,
+                    request_id=fixture.id,
+                    leave_date=leave_date,
+                    is_working_day=is_working_day,
+                    is_holiday=False,
+                    counted_days=counted_days,
+                    holiday_entry_id=None,
+                    created_at=submitted_at,
+                )
+            )
+        elif (
+            day.tenant_id != tenant.id
+            or day.request_id != fixture.id
+            or day.leave_date != leave_date
+        ):
+            raise DemoSeedConflictError(f"Demo leave request day id {day_id} is already in use")
+
+    await _ensure_demo_leave_timeline_event(
+        session,
+        tenant_id=tenant.id,
+        request_id=fixture.id,
+        event_type="submitted",
+        status=LeaveRequestStatus.PENDING.value,
+        actor_user_id=requested_by_user.id,
+        occurred_at=submitted_at,
+    )
+    if fixture.status is not LeaveRequestStatus.PENDING:
+        if decided_by_user is None or decided_at is None:
+            raise DemoSeedConflictError(
+                f"Terminal demo leave request {fixture.id} has no decision actor"
+            )
+        await _ensure_demo_leave_timeline_event(
+            session,
+            tenant_id=tenant.id,
+            request_id=fixture.id,
+            event_type=fixture.status.value,
+            status=fixture.status.value,
+            actor_user_id=decided_by_user.id,
+            occurred_at=decided_at,
+        )
+
+    ledger_entry_type = {
+        LeaveRequestStatus.PENDING: "planned",
+        LeaveRequestStatus.APPROVED: "used",
+    }.get(fixture.status)
+    if ledger_entry_type is None:
+        return
+    leave_type_id, *_ = _demo_leave_type_seed(tenant.id, fixture.leave_type)
+    counted_by_year: dict[int, tuple[Decimal, date]] = {}
+    for leave_date, _is_working_day, counted_days in day_values:
+        if not counted_days:
+            continue
+        current_amount, first_counted_date = counted_by_year.get(
+            leave_date.year,
+            (Decimal("0.00"), leave_date),
+        )
+        counted_by_year[leave_date.year] = (
+            current_amount + counted_days,
+            first_counted_date,
+        )
+    for period_year, (amount_days, effective_date) in counted_by_year.items():
+        source_key = f"legacy-request:{fixture.id}:{ledger_entry_type}:{period_year}"
+        ledger_id = _deterministic_uuid(f"p6:leave-ledger:{tenant.id}:{source_key}")
+        ledger = await session.get(LeaveBalanceLedger, ledger_id)
+        natural_ledger = await session.scalar(
+            select(LeaveBalanceLedger).where(
+                LeaveBalanceLedger.tenant_id == tenant.id,
+                LeaveBalanceLedger.source_key == source_key,
+            )
+        )
+        if ledger is None:
+            if natural_ledger is not None:
+                raise DemoSeedConflictError(
+                    f"Demo leave ledger source {source_key!r} is already in use"
+                )
+            session.add(
+                LeaveBalanceLedger(
+                    id=ledger_id,
+                    tenant_id=tenant.id,
+                    employee_id=employee.id,
+                    leave_type_id=leave_type_id,
+                    period_year=period_year,
+                    entry_type=ledger_entry_type,
+                    amount_days=amount_days,
+                    effective_date=effective_date,
+                    reason=None,
+                    request_id=fixture.id,
+                    source_type="legacy_request",
+                    source_id=fixture.id,
+                    source_key=source_key,
+                    reversal_of_entry_id=None,
+                    created_by_user_id=None,
+                    created_at=submitted_at,
+                )
+            )
+        elif (
+            ledger.tenant_id != tenant.id
+            or ledger.employee_id != employee.id
+            or ledger.leave_type_id != leave_type_id
+            or ledger.request_id != fixture.id
+            or ledger.source_key != source_key
+        ):
+            raise DemoSeedConflictError(f"Demo leave ledger id {ledger_id} is already in use")
+
+
+async def _ensure_demo_leave_timeline_event(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    request_id: UUID,
+    event_type: str,
+    status: str,
+    actor_user_id: UUID,
+    occurred_at: datetime,
+) -> None:
+    source_key = f"legacy-request:{request_id}:{event_type}"
+    event_id = _deterministic_uuid(
+        f"p6:leave-request-timeline:{tenant_id}:{request_id}:{event_type}"
+    )
+    event = await session.get(LeaveRequestTimeline, event_id)
+    natural_event = await session.scalar(
+        select(LeaveRequestTimeline).where(
+            LeaveRequestTimeline.tenant_id == tenant_id,
+            LeaveRequestTimeline.source_key == source_key,
+        )
+    )
+    if event is None:
+        if natural_event is not None:
+            raise DemoSeedConflictError(
+                f"Demo leave timeline source {source_key!r} is already in use"
+            )
+        session.add(
+            LeaveRequestTimeline(
+                id=event_id,
+                tenant_id=tenant_id,
+                request_id=request_id,
+                event_type=event_type,
+                status=status,
+                actor_user_id=actor_user_id,
+                source_key=source_key,
+                occurred_at=occurred_at,
+            )
+        )
+    elif (
+        event.tenant_id != tenant_id
+        or event.request_id != request_id
+        or event.source_key != source_key
+    ):
+        raise DemoSeedConflictError(f"Demo leave timeline id {event_id} is already in use")
+
+
+def _demo_leave_request_day_values(
+    fixture: DemoLeaveRequestFixture,
+) -> tuple[tuple[date, bool, Decimal], ...]:
+    values: list[tuple[date, bool, Decimal]] = []
+    leave_date = fixture.start_date
+    while leave_date <= fixture.end_date:
+        is_working_day = leave_date.weekday() not in {5, 6}
+        values.append(
+            (
+                leave_date,
+                is_working_day,
+                Decimal("1.00") if is_working_day else Decimal("0.00"),
+            )
+        )
+        leave_date += timedelta(days=1)
+    return tuple(values)
+
+
+def _demo_counted_days(fixture: DemoLeaveRequestFixture) -> Decimal:
+    return sum(
+        (counted_days for _, _, counted_days in _demo_leave_request_day_values(fixture)),
+        Decimal("0.00"),
+    )
+
+
+def _demo_leave_submitted_at(fixture: DemoLeaveRequestFixture) -> datetime:
+    submitted_date = fixture.start_date - timedelta(days=7)
+    return datetime(
+        submitted_date.year,
+        submitted_date.month,
+        submitted_date.day,
+        9,
+        tzinfo=UTC,
+    )
+
+
+def _demo_leave_decided_at(
+    fixture: DemoLeaveRequestFixture,
+) -> datetime | None:
+    if fixture.status is LeaveRequestStatus.PENDING:
+        return None
+    return _demo_leave_submitted_at(fixture) + timedelta(days=1, hours=3)
 
 
 def _ensure_same_tenant(actual_tenant_id: UUID, expected_tenant_id: UUID, label: str) -> None:

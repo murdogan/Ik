@@ -13,6 +13,10 @@ from app.db.session import get_session
 from app.main import create_app
 from app.models.command_idempotency import CommandIdempotency
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.tenant import Tenant, TenantStatus
 from app.platform.pagination import encode_cursor
 from httpx import ASGITransport, AsyncClient
@@ -113,6 +117,7 @@ async def _client_with_database(
                 status=EmployeeStatus.TERMINATED.value,
                 employment_start_date=date(2026, 7, 3),
                 employment_end_date=date(2026, 7, 31),
+                termination_reason="resignation",
                 created_at=LATER_CREATED_AT,
             ),
             Employee(
@@ -139,6 +144,27 @@ async def _client_with_database(
                 employment_start_date=date(2026, 7, 4),
             )
             for index in range(extra_current_employee_count)
+        )
+        records.extend(
+            profile
+            for tenant_id, employee_id in (
+                (TENANT_ID, EMPLOYEE_ID),
+                (TENANT_ID, ON_LEAVE_EMPLOYEE_ID),
+                (TENANT_ID, TERMINATED_EMPLOYEE_ID),
+                (OTHER_TENANT_ID, OTHER_EMPLOYEE_ID),
+            )
+            for profile in (
+                EmployeePersonalProfile(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    employee_id=employee_id,
+                ),
+                EmployeeEmploymentProfile(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    employee_id=employee_id,
+                ),
+            )
         )
         session.add_all(records)
         await session.commit()
@@ -226,9 +252,7 @@ async def test_create_employee_uses_tenant_header_and_server_generated_id() -> N
 
 
 async def test_employee_api_enforces_read_and_update_permissions_independently() -> None:
-    read_client, read_engine = await _client_with_database(
-        permissions=("employee:read:tenant",)
-    )
+    read_client, read_engine = await _client_with_database(permissions=("employee:read:tenant",))
     denied_client, denied_engine = await _client_with_database(permissions=())
     try:
         assert (
@@ -247,9 +271,7 @@ async def test_employee_api_enforces_read_and_update_permissions_independently()
         assert read_only_create.status_code == 403
         assert read_only_create.json()["error"]["code"] == "authorization_denied"
 
-        denied_read = await denied_client.get(
-            "/api/v1/employees", headers=_tenant_headers()
-        )
+        denied_read = await denied_client.get("/api/v1/employees", headers=_tenant_headers())
         denied_create = await denied_client.post(
             "/api/v1/employees",
             headers=_tenant_headers(),
@@ -269,7 +291,7 @@ async def test_employee_api_enforces_read_and_update_permissions_independently()
         await denied_engine.dispose()
 
 
-async def test_create_employee_accepts_terminated_lifecycle_with_end_date() -> None:
+async def test_create_employee_rejects_direct_terminated_lifecycle() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.post(
@@ -285,10 +307,12 @@ async def test_create_employee_accepts_terminated_lifecycle_with_end_date() -> N
             },
         )
 
-        assert response.status_code == 201
-        body = response.json()
-        assert body["status"] == EmployeeStatus.TERMINATED.value
-        assert body["employment_end_date"] == "2026-07-31"
+        _assert_error_response(
+            response,
+            status_code=422,
+            code="employee_validation_error",
+            message="Employee request validation failed",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -312,8 +336,8 @@ async def test_create_employee_rejects_terminated_lifecycle_without_end_date() -
         _assert_error_response(
             response,
             status_code=422,
-            code="employee_invalid_lifecycle",
-            message="Terminated employees must have an employment end date",
+            code="employee_validation_error",
+            message="Employee request validation failed",
         )
     finally:
         await client.aclose()
@@ -645,9 +669,7 @@ async def test_employee_cursor_does_not_skip_unseen_employee_after_number_update
             params={"limit": 1},
         )
         assert first_response.status_code == 200
-        assert [employee["id"] for employee in first_response.json()] == [
-            str(EMPLOYEE_ID)
-        ]
+        assert [employee["id"] for employee in first_response.json()] == [str(EMPLOYEE_ID)]
         first_cursor = first_response.headers["X-Next-Cursor"]
 
         update_response = await client.patch(
@@ -693,9 +715,7 @@ async def test_employee_cursor_does_not_duplicate_seen_employee_after_number_upd
             params={"limit": 1},
         )
         assert first_response.status_code == 200
-        assert [employee["id"] for employee in first_response.json()] == [
-            str(EMPLOYEE_ID)
-        ]
+        assert [employee["id"] for employee in first_response.json()] == [str(EMPLOYEE_ID)]
         first_cursor = first_response.headers["X-Next-Cursor"]
 
         update_response = await client.patch(
@@ -836,12 +856,8 @@ async def test_list_employees_cursor_is_applied_after_tenant_filters() -> None:
             },
         )
 
-        assert [employee["employee_number"] for employee in first_response.json()] == [
-            "WF-001"
-        ]
-        assert [employee["employee_number"] for employee in second_response.json()] == [
-            "WF-010"
-        ]
+        assert [employee["employee_number"] for employee in first_response.json()] == ["WF-001"]
+        assert [employee["employee_number"] for employee in second_response.json()] == ["WF-010"]
         assert "X-Next-Cursor" not in second_response.headers
     finally:
         await client.aclose()
@@ -1168,13 +1184,18 @@ async def test_update_employee_rejects_stale_version_with_stable_conflict() -> N
         await engine.dispose()
 
 
-async def test_update_employee_rejects_invalid_existing_date_order_with_error_envelope() -> None:
+async def test_lifecycle_transition_rejects_effective_date_before_start_date() -> None:
     client, engine = await _client_with_database()
     try:
-        response = await client.patch(
-            f"/api/v1/employees/{EMPLOYEE_ID}",
+        response = await client.post(
+            f"/api/v1/employees/{EMPLOYEE_ID}/lifecycle-transitions",
             headers=_tenant_headers(),
-            json={"employment_end_date": "2026-06-30"},
+            json={
+                "target_status": EmployeeStatus.TERMINATED.value,
+                "expected_version": 1,
+                "effective_date": "2026-06-30",
+                "termination_reason": "resignation",
+            },
         )
 
         _assert_error_response(
@@ -1228,7 +1249,7 @@ async def test_update_employee_rejects_null_start_date() -> None:
         await engine.dispose()
 
 
-async def test_update_employee_rejects_null_status_with_lifecycle_error_envelope() -> None:
+async def test_update_employee_rejects_direct_lifecycle_field_with_error_envelope() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.patch(
@@ -1243,8 +1264,8 @@ async def test_update_employee_rejects_null_status_with_lifecycle_error_envelope
         _assert_error_response(
             response,
             status_code=422,
-            code="employee_invalid_lifecycle",
-            message="Status must not be null",
+            code="employee_validation_error",
+            message="Employee request validation failed",
             correlation_id="w4a6-employee-null-status",
         )
     finally:
@@ -1252,15 +1273,17 @@ async def test_update_employee_rejects_null_status_with_lifecycle_error_envelope
         await engine.dispose()
 
 
-async def test_update_employee_terminates_when_status_and_end_date_are_provided() -> None:
+async def test_lifecycle_transition_terminates_employee() -> None:
     client, engine = await _client_with_database()
     try:
-        response = await client.patch(
-            f"/api/v1/employees/{EMPLOYEE_ID}",
+        response = await client.post(
+            f"/api/v1/employees/{EMPLOYEE_ID}/lifecycle-transitions",
             headers=_tenant_headers(),
             json={
-                "status": EmployeeStatus.TERMINATED.value,
-                "employment_end_date": "2026-07-31",
+                "target_status": EmployeeStatus.TERMINATED.value,
+                "expected_version": 1,
+                "effective_date": "2026-07-31",
+                "termination_reason": "resignation",
             },
         )
 
@@ -1268,18 +1291,22 @@ async def test_update_employee_terminates_when_status_and_end_date_are_provided(
         body = response.json()
         assert body["status"] == EmployeeStatus.TERMINATED.value
         assert body["employment_end_date"] == "2026-07-31"
+        assert body["termination_reason"] == "resignation"
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_update_employee_changes_active_employee_to_on_leave() -> None:
+async def test_lifecycle_transition_changes_active_employee_to_on_leave() -> None:
     client, engine = await _client_with_database()
     try:
-        response = await client.patch(
-            f"/api/v1/employees/{EMPLOYEE_ID}",
+        response = await client.post(
+            f"/api/v1/employees/{EMPLOYEE_ID}/lifecycle-transitions",
             headers=_tenant_headers(),
-            json={"status": EmployeeStatus.ON_LEAVE.value},
+            json={
+                "target_status": EmployeeStatus.ON_LEAVE.value,
+                "expected_version": 1,
+            },
         )
 
         assert response.status_code == 200
@@ -1302,8 +1329,8 @@ async def test_update_employee_rejects_terminated_status_without_end_date() -> N
         _assert_error_response(
             response,
             status_code=422,
-            code="employee_invalid_lifecycle",
-            message="Terminated employees must have an employment end date",
+            code="employee_validation_error",
+            message="Employee request validation failed",
         )
     finally:
         await client.aclose()
@@ -1322,46 +1349,54 @@ async def test_update_employee_rejects_end_date_without_terminated_status() -> N
         _assert_error_response(
             response,
             status_code=422,
-            code="employee_invalid_lifecycle",
-            message="Employment end date is only allowed when status is terminated",
+            code="employee_validation_error",
+            message="Employee request validation failed",
         )
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_update_employee_rejects_reactivation_without_clearing_end_date() -> None:
+async def test_lifecycle_transition_rejects_terminal_reactivation() -> None:
     client, engine = await _client_with_database()
     try:
-        response = await client.patch(
-            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}",
+        response = await client.post(
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}/lifecycle-transitions",
             headers=_tenant_headers(),
-            json={"status": EmployeeStatus.ON_LEAVE.value},
+            json={
+                "target_status": EmployeeStatus.ON_LEAVE.value,
+                "expected_version": 1,
+            },
         )
 
         _assert_error_response(
             response,
-            status_code=422,
-            code="employee_invalid_lifecycle",
-            message="Employment end date is only allowed when status is terminated",
+            status_code=409,
+            code="employee_lifecycle_conflict",
+            message="Termination is terminal; reactivation is not available",
         )
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_update_employee_allows_reactivation_when_end_date_is_cleared() -> None:
+async def test_lifecycle_transition_is_idempotent_for_matching_termination_data() -> None:
     client, engine = await _client_with_database()
     try:
-        response = await client.patch(
-            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}",
+        response = await client.post(
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}/lifecycle-transitions",
             headers=_tenant_headers(),
-            json={"status": EmployeeStatus.ACTIVE.value, "employment_end_date": None},
+            json={
+                "target_status": EmployeeStatus.TERMINATED.value,
+                "expected_version": 1,
+                "effective_date": "2026-07-31",
+                "termination_reason": "resignation",
+            },
         )
 
         assert response.status_code == 200
-        assert response.json()["status"] == EmployeeStatus.ACTIVE.value
-        assert response.json()["employment_end_date"] is None
+        assert response.json()["status"] == EmployeeStatus.TERMINATED.value
+        assert response.json()["employment_end_date"] == "2026-07-31"
     finally:
         await client.aclose()
         await engine.dispose()
@@ -1476,9 +1511,7 @@ async def test_create_employee_idempotency_replays_and_rejects_changed_payload()
             mismatch_response,
             status_code=409,
             code="idempotency_key_mismatch",
-            message=(
-                "X-Idempotency-Key was already used for a different request in this tenant"
-            ),
+            message=("X-Idempotency-Key was already used for a different request in this tenant"),
             correlation_id="p0e-employee-idempotency",
         )
 
@@ -1493,10 +1526,7 @@ async def test_create_employee_idempotency_replays_and_rejects_changed_payload()
                 select(func.count())
                 .select_from(CommandIdempotency)
                 .where(CommandIdempotency.tenant_id == TENANT_ID)
-                .where(
-                    CommandIdempotency.idempotency_key
-                    == "employee-create-retry-001"
-                )
+                .where(CommandIdempotency.idempotency_key == "employee-create-retry-001")
             )
         assert employee_count == 1
         assert receipt_count == 1
@@ -1563,28 +1593,31 @@ async def test_create_employee_rejects_repeated_idempotency_header() -> None:
         await engine.dispose()
 
 
-async def test_delete_employee_archives_current_tenant_record_idempotently() -> None:
+async def test_archive_employee_is_tenant_scoped_and_idempotent() -> None:
     client, engine = await _client_with_database()
     try:
-        response = await client.delete(
-            f"/api/v1/employees/{EMPLOYEE_ID}",
+        response = await client.post(
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}/archive",
             headers=_tenant_headers(),
+            json={"expected_version": 1},
         )
         get_response = await client.get(
-            f"/api/v1/employees/{EMPLOYEE_ID}",
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}",
             headers=_tenant_headers(),
         )
-        cross_tenant_response = await client.delete(
-            f"/api/v1/employees/{OTHER_EMPLOYEE_ID}",
+        cross_tenant_response = await client.post(
+            f"/api/v1/employees/{OTHER_EMPLOYEE_ID}/archive",
             headers=_tenant_headers(),
+            json={"expected_version": 1},
         )
-        repeated_response = await client.delete(
-            f"/api/v1/employees/{EMPLOYEE_ID}",
+        repeated_response = await client.post(
+            f"/api/v1/employees/{TERMINATED_EMPLOYEE_ID}/archive",
             headers=_tenant_headers(),
+            json={"expected_version": 1},
         )
 
-        assert response.status_code == 204
-        assert repeated_response.status_code == 204
+        assert response.status_code == 200
+        assert repeated_response.status_code == 200
         _assert_error_response(
             get_response,
             status_code=404,
@@ -1592,11 +1625,11 @@ async def test_delete_employee_archives_current_tenant_record_idempotently() -> 
             message="Employee not found",
         )
         async with AsyncSession(engine, expire_on_commit=False) as session:
-            archived_employee = await session.get(Employee, EMPLOYEE_ID)
+            archived_employee = await session.get(Employee, TERMINATED_EMPLOYEE_ID)
             other_employee = await session.get(Employee, OTHER_EMPLOYEE_ID)
         assert archived_employee is not None
         assert archived_employee.archived_at is not None
-        assert archived_employee.status == EmployeeStatus.ACTIVE.value
+        assert archived_employee.status == EmployeeStatus.TERMINATED.value
         assert other_employee is not None
         assert other_employee.archived_at is None
         _assert_error_response(
@@ -1697,9 +1730,7 @@ async def test_employee_routes_are_exposed_in_openapi() -> None:
             "limit",
             "offset",
             "cursor",
-        }.issubset(
-            employee_list_parameters
-        )
+        }.issubset(employee_list_parameters)
     finally:
         await client.aclose()
         await engine.dispose()

@@ -1,16 +1,21 @@
 from datetime import UTC, date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from app.db.base import Base
 from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
 from app.models.employee_assignment import EmployeeAssignment
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
 from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
 from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.schemas.employee import (
     EmployeeCreate,
+    EmployeeLifecycleTransition,
     EmployeeListCursor,
     EmployeeListFilters,
     EmployeeListPagination,
@@ -20,6 +25,7 @@ from app.services.employee_service import (
     DuplicateEmployeeNumberError,
     DuplicateWorkEmailError,
     EmployeeDateRangeError,
+    EmployeeLifecycleConflictError,
     EmployeeLifecycleError,
     EmployeeNotFoundError,
     EmployeeService,
@@ -130,7 +136,29 @@ async def _session_with_seed_data() -> tuple[AsyncSession, AsyncEngine]:
                 status=EmployeeStatus.TERMINATED.value,
                 employment_start_date=date(2026, 7, 1),
                 employment_end_date=date(2026, 7, 31),
+                termination_reason="resignation",
                 created_at=LATER_CREATED_AT,
+            ),
+            *(
+                profile
+                for tenant_id, employee_id in (
+                    (TENANT_ID, EMPLOYEE_ID),
+                    (TENANT_ID, SECOND_EMPLOYEE_ID),
+                    (OTHER_TENANT_ID, OTHER_EMPLOYEE_ID),
+                    (TENANT_ID, TERMINATED_EMPLOYEE_ID),
+                )
+                for profile in (
+                    EmployeePersonalProfile(
+                        id=uuid4(),
+                        tenant_id=tenant_id,
+                        employee_id=employee_id,
+                    ),
+                    EmployeeEmploymentProfile(
+                        id=uuid4(),
+                        tenant_id=tenant_id,
+                        employee_id=employee_id,
+                    ),
+                )
             ),
         ]
     )
@@ -397,8 +425,9 @@ async def test_list_employees_paginates_after_tenant_scope() -> None:
         await engine.dispose()
 
 
-async def test_employee_cursor_does_not_skip_unseen_employee_when_number_moves_before_cursor(
-) -> None:
+async def test_employee_cursor_does_not_skip_unseen_employee_when_number_moves_before_cursor() -> (
+    None
+):
     session, engine = await _session_with_seed_data()
     try:
         service = EmployeeService(session)
@@ -431,17 +460,14 @@ async def test_employee_cursor_does_not_skip_unseen_employee_when_number_moves_b
                 cursor=EmployeeListCursor.from_token(second_page.next_cursor),
             ),
         )
-        assert [employee.id for employee in final_page.items] == [
-            TERMINATED_EMPLOYEE_ID
-        ]
+        assert [employee.id for employee in final_page.items] == [TERMINATED_EMPLOYEE_ID]
         assert final_page.next_cursor is None
     finally:
         await session.close()
         await engine.dispose()
 
 
-async def test_employee_cursor_does_not_duplicate_seen_employee_when_number_moves_after_cursor(
-) -> None:
+async def test_employee_cursor_does_not_duplicate_seen_after_number_moves() -> None:
     session, engine = await _session_with_seed_data()
     try:
         service = EmployeeService(session)
@@ -565,9 +591,7 @@ async def test_employee_id_cursor_ignores_created_at_microsecond_rounding() -> N
             filters=EmployeeListFilters(department="microseconds"),
             pagination=EmployeeListPagination(limit=1),
         )
-        assert [employee.id for employee in first_page.items] == [
-            MICROSECOND_LATER_LOW_ID
-        ]
+        assert [employee.id for employee in first_page.items] == [MICROSECOND_LATER_LOW_ID]
         assert first_page.next_cursor is not None
 
         second_page = await service.list_employee_page(
@@ -578,9 +602,7 @@ async def test_employee_id_cursor_ignores_created_at_microsecond_rounding() -> N
                 cursor=EmployeeListCursor.from_token(first_page.next_cursor),
             ),
         )
-        assert [employee.id for employee in second_page.items] == [
-            MICROSECOND_EARLIER_HIGH_ID
-        ]
+        assert [employee.id for employee in second_page.items] == [MICROSECOND_EARLIER_HIGH_ID]
         assert second_page.next_cursor is None
     finally:
         await session.close()
@@ -884,23 +906,27 @@ async def test_update_employee_rejects_start_after_existing_end_without_mutation
         await engine.dispose()
 
 
-async def test_update_employee_allows_reactivation_when_end_date_is_cleared() -> None:
+async def test_lifecycle_transition_rejects_reactivation_after_termination() -> None:
     session, engine = await _session_with_seed_data()
     try:
-        employee = await EmployeeService(session).update_employee(
-            TENANT_ID,
-            TERMINATED_EMPLOYEE_ID,
-            EmployeeUpdate(status=EmployeeStatus.ACTIVE, employment_end_date=None),
-        )
-
-        assert employee.status == EmployeeStatus.ACTIVE.value
-        assert employee.employment_end_date is None
+        with pytest.raises(
+            EmployeeLifecycleConflictError,
+            match="Termination is terminal",
+        ):
+            await EmployeeService(session).transition_employee_lifecycle(
+                TENANT_ID,
+                TERMINATED_EMPLOYEE_ID,
+                EmployeeLifecycleTransition(
+                    target_status=EmployeeStatus.ACTIVE,
+                    expected_version=1,
+                ),
+            )
     finally:
         await session.close()
         await engine.dispose()
 
 
-async def test_delete_employee_archives_idempotently_without_cross_tenant_mutation() -> None:
+async def test_archive_employee_is_idempotent_without_cross_tenant_mutation() -> None:
     session, engine = await _session_with_seed_data()
     try:
         with pytest.raises(EmployeeNotFoundError):
@@ -912,25 +938,24 @@ async def test_delete_employee_archives_idempotently_without_cross_tenant_mutati
         assert other_employee is not None
         assert other_employee.tenant_id == OTHER_TENANT_ID
 
-        await EmployeeService(session).delete_employee(TENANT_ID, EMPLOYEE_ID)
+        await EmployeeService(session).delete_employee(TENANT_ID, TERMINATED_EMPLOYEE_ID)
 
         archived_employee = await session.scalar(
-            select(Employee).where(Employee.id == EMPLOYEE_ID)
+            select(Employee).where(Employee.id == TERMINATED_EMPLOYEE_ID)
         )
         assert archived_employee is not None
         assert archived_employee.archived_at is not None
         archived_at = archived_employee.archived_at
 
-        await EmployeeService(session).delete_employee(TENANT_ID, EMPLOYEE_ID)
+        await EmployeeService(session).delete_employee(TENANT_ID, TERMINATED_EMPLOYEE_ID)
 
         assert archived_employee.archived_at == archived_at
         with pytest.raises(EmployeeNotFoundError):
-            await EmployeeService(session).get_employee(TENANT_ID, EMPLOYEE_ID)
+            await EmployeeService(session).get_employee(TENANT_ID, TERMINATED_EMPLOYEE_ID)
         listed_ids = {
-            employee.id
-            for employee in await EmployeeService(session).list_employees(TENANT_ID)
+            employee.id for employee in await EmployeeService(session).list_employees(TENANT_ID)
         }
-        assert EMPLOYEE_ID not in listed_ids
+        assert TERMINATED_EMPLOYEE_ID not in listed_ids
         with pytest.raises(DuplicateEmployeeNumberError):
             await EmployeeService(session).create_employee(
                 TENANT_ID,

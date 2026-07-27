@@ -71,9 +71,7 @@ class PlatformTenantQueryService:
 
     async def get_tenant(self, tenant_id: UUID) -> PlatformTenantMetadata:
         row = (
-            await self.session.execute(
-                _metadata_statement().where(Tenant.id == tenant_id)
-            )
+            await self.session.execute(_metadata_statement().where(Tenant.id == tenant_id))
         ).one_or_none()
         if row is None:
             raise TenantNotFoundError
@@ -98,9 +96,7 @@ def _metadata_statement():
 
 def _tenant_ordering(dialect_name: str):
     created_at_key = (
-        func.julianday(Tenant.created_at)
-        if dialect_name == "sqlite"
-        else Tenant.created_at
+        func.julianday(Tenant.created_at) if dialect_name == "sqlite" else Tenant.created_at
     )
     return created_at_key.asc(), Tenant.id.asc()
 

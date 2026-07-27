@@ -336,18 +336,23 @@ async def _assert_catalog_and_acl(engine: AsyncEngine) -> None:
             assert await _direct_update_columns(connection, role_name=role_name) == set()
 
         function = (
-            await connection.execute(
-                text(
-                    "select procedure.prosecdef, procedure.provolatile::text as provolatile, "
-                    "procedure.proconfig, "
-                    "owner.rolname as owner_name, pg_get_functiondef(procedure.oid) as definition "
-                    "from pg_catalog.pg_proc as procedure "
-                    "join pg_catalog.pg_roles as owner on owner.oid = procedure.proowner "
-                    "where procedure.oid = "
-                    "'public.is_current_tenant_membership_link_eligible(uuid)'::regprocedure"
+            (
+                await connection.execute(
+                    text(
+                        "select procedure.prosecdef, procedure.provolatile::text as provolatile, "
+                        "procedure.proconfig, "
+                        "owner.rolname as owner_name, "
+                        "pg_get_functiondef(procedure.oid) as definition "
+                        "from pg_catalog.pg_proc as procedure "
+                        "join pg_catalog.pg_roles as owner on owner.oid = procedure.proowner "
+                        "where procedure.oid = "
+                        "'public.is_current_tenant_membership_link_eligible(uuid)'::regprocedure"
+                    )
                 )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         assert function["prosecdef"] is True
         assert function["provolatile"] == "s"
         assert function["owner_name"] == ELIGIBILITY_OWNER_ROLE
@@ -745,9 +750,7 @@ async def _membership_is_eligible(
 ) -> bool:
     return bool(
         await connection.scalar(
-            text(
-                "select public.is_current_tenant_membership_link_eligible(:membership_id)"
-            ),
+            text("select public.is_current_tenant_membership_link_eligible(:membership_id)"),
             {"membership_id": membership_id},
         )
     )
@@ -1020,10 +1023,7 @@ async def _has_function_execute(
 ) -> bool:
     return bool(
         await connection.scalar(
-            text(
-                "select has_function_privilege("
-                ":role_name, :function_signature, 'EXECUTE')"
-            ),
+            text("select has_function_privilege(:role_name, :function_signature, 'EXECUTE')"),
             {
                 "role_name": role_name,
                 "function_signature": ELIGIBILITY_FUNCTION,

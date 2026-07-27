@@ -26,9 +26,7 @@ def get_service(
 @router.get("/home", response_model=DataEnvelope[SelfServiceHomeRead])
 async def get_self_service_home(
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission("self_service:read:own"))
     ],

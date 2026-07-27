@@ -42,16 +42,12 @@ def test_employee_account_link_has_tenant_qualified_restrictive_foreign_keys() -
         if isinstance(constraint, ForeignKeyConstraint)
     }
 
-    assert foreign_keys[
-        "fk_employee_account_links_tenant_employee_id_employees"
-    ] == (
+    assert foreign_keys["fk_employee_account_links_tenant_employee_id_employees"] == (
         ("tenant_id", "employee_id"),
         ("employees.tenant_id", "employees.id"),
         "RESTRICT",
     )
-    assert foreign_keys[
-        "fk_employee_account_links_tenant_membership_id_memberships"
-    ] == (
+    assert foreign_keys["fk_employee_account_links_tenant_membership_id_memberships"] == (
         ("tenant_id", "membership_id"),
         ("tenant_memberships.tenant_id", "tenant_memberships.id"),
         "RESTRICT",

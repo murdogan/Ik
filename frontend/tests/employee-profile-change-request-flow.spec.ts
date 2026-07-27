@@ -1,5 +1,8 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { employeeProfileInsights } from "./support/employee-profile";
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const EMPLOYEE_ID = "e5000000-0000-4000-8000-000000000001";
 const STALE_EMPLOYEE_ID = "e5000000-0000-4000-8000-000000000002";
 const CANCELLED_REQUEST_ID = "e5100000-0000-4000-8000-000000000001";
@@ -392,7 +395,11 @@ test("employee request and HR decision remain tenant-safe across session rotatio
 
   function employee360Profile() {
     return {
-      core: { ...primaryEmployee, employee_version: 5 },
+      core: {
+        ...primaryEmployee,
+        employee_version: 5,
+        archived_at: null,
+      },
       personal: {
         preferred_name: approvedPreferredName,
         phone: approvedPhone,
@@ -401,6 +408,8 @@ test("employee request and HR decision remain tenant-safe across session rotatio
       },
       employment: {
         employment_start_date: "2025-02-03",
+        employment_end_date: null,
+        termination_reason: null,
         contract_type: "indefinite",
         work_type: "full_time",
         version: 7,
@@ -469,6 +478,28 @@ test("employee request and HR decision remain tenant-safe across session rotatio
         status: 200,
         contentType: "application/json",
         body: envelope({ user: activeUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
+
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/insights` &&
+      request.method() === "GET"
+    ) {
+      expect(url.searchParams.get("limit")).toBe("20");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(employeeProfileInsights()),
       });
       return;
     }

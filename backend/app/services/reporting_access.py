@@ -179,9 +179,7 @@ async def require_reporting_feature(
         )
     )
     enabled = (
-        default_feature_flag_enabled(FeatureFlagKey.REPORTING)
-        if override is None
-        else override
+        default_feature_flag_enabled(FeatureFlagKey.REPORTING) if override is None else override
     )
     if not enabled:
         raise ReportingFeatureUnavailableError()

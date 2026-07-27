@@ -43,11 +43,13 @@ router = APIRouter(
     prefix="/api/v1/tenant",
     tags=[TENANT_SETTINGS_TAG],
     dependencies=[Depends(get_tenant_principal_request_context)],
-    responses=with_correlation_response_headers({
-        **TENANT_AUTHORIZATION_RESPONSES,
-        **TENANT_SETTINGS_VALIDATION_RESPONSES,
-        **UNEXPECTED_ERROR_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            **TENANT_AUTHORIZATION_RESPONSES,
+            **TENANT_SETTINGS_VALIDATION_RESPONSES,
+            **UNEXPECTED_ERROR_RESPONSES,
+        }
+    ),
 )
 
 
@@ -63,12 +65,14 @@ router = APIRouter(
         "tenants retain read-only metadata access."
     ),
     response_description="Current tenant data with safe request metadata.",
-    responses=with_correlation_response_headers({
-        200: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-        **TENANT_CLOSED_RESPONSES,
-        **TENANT_NOT_READY_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            200: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+            **TENANT_CLOSED_RESPONSES,
+            **TENANT_NOT_READY_RESPONSES,
+        }
+    ),
 )
 async def get_current_tenant(
     request_context: Annotated[
@@ -92,12 +96,14 @@ async def get_current_tenant(
         "settings; provisioning and closed tenants cannot use the tenant surface."
     ),
     response_description="Current typed settings with safe request metadata.",
-    responses=with_correlation_response_headers({
-        200: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-        **TENANT_CLOSED_RESPONSES,
-        **TENANT_NOT_READY_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            200: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+            **TENANT_CLOSED_RESPONSES,
+            **TENANT_NOT_READY_RESPONSES,
+        }
+    ),
 )
 async def get_current_tenant_settings(
     request_context: Annotated[
@@ -106,9 +112,7 @@ async def get_current_tenant_settings(
     ],
     service: Annotated[TenantService, Depends(get_tenant_service)],
 ) -> DataEnvelope[TenantSettingsRead]:
-    snapshot = await service.get_tenant_settings(
-        request_context.require_tenant().tenant_id
-    )
+    snapshot = await service.get_tenant_settings(request_context.require_tenant().tenant_id)
     return data_envelope(_tenant_settings_read(snapshot), request_context)
 
 
@@ -123,12 +127,14 @@ async def get_current_tenant_settings(
         "Only trial or active tenants may write; suspended and offboarding tenants are read-only."
     ),
     response_description="Updated typed settings with safe request metadata.",
-    responses=with_correlation_response_headers({
-        200: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-        **TENANT_CLOSED_RESPONSES,
-        **TENANT_SETTINGS_WRITE_LOCKED_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            200: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+            **TENANT_CLOSED_RESPONSES,
+            **TENANT_SETTINGS_WRITE_LOCKED_RESPONSES,
+        }
+    ),
 )
 async def update_current_tenant_settings(
     payload: TenantSettingsUpdate,
@@ -161,12 +167,14 @@ async def update_current_tenant_settings(
         "unavailable; suspended and offboarding tenants retain read-only visibility."
     ),
     response_description="Effective allowlisted feature flags with safe request metadata.",
-    responses=with_correlation_response_headers({
-        200: {},
-        **TENANT_NOT_FOUND_RESPONSES,
-        **TENANT_CLOSED_RESPONSES,
-        **TENANT_NOT_READY_RESPONSES,
-    }),
+    responses=with_correlation_response_headers(
+        {
+            200: {},
+            **TENANT_NOT_FOUND_RESPONSES,
+            **TENANT_CLOSED_RESPONSES,
+            **TENANT_NOT_READY_RESPONSES,
+        }
+    ),
 )
 async def get_current_tenant_features(
     request_context: Annotated[

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
-from app.core.config import Settings
-from app.modules.documents.scanning import (
+from app.modules.documents.infrastructure.scanning import (
     ClamAVMalwareScanner,
     LocalCleanMalwareScanner,
     MalwareScanner,
@@ -17,6 +17,31 @@ from app.platform.storage import (
 )
 
 DOCUMENT_RUNTIME_STATE_KEY = "document_runtime"
+
+
+class _SecretValue(Protocol):
+    def get_secret_value(self) -> str: ...
+
+
+class _DocumentRuntimeSettings(Protocol):
+    environment: str
+    document_storage_backend: str
+    document_scanner_backend: str
+    s3_internal_endpoint_url: str | None
+    s3_presign_endpoint_url: str | None
+    s3_region: str
+    s3_bucket: str
+    s3_access_key_id: _SecretValue | None
+    s3_secret_access_key: _SecretValue | None
+    s3_session_token: _SecretValue | None
+    s3_addressing_style: str
+    s3_connect_timeout_seconds: float
+    s3_read_timeout_seconds: float
+    s3_create_bucket: bool
+    clamav_host: str | None
+    clamav_port: int
+    clamav_connect_timeout_seconds: float
+    clamav_scan_timeout_seconds: float
 
 
 @dataclass(slots=True)
@@ -31,7 +56,7 @@ class DocumentRuntime:
         await self.storage.close()
 
 
-def create_document_runtime(settings: Settings) -> DocumentRuntime:
+def create_document_runtime(settings: _DocumentRuntimeSettings) -> DocumentRuntime:
     _validate_configuration(settings)
     if settings.document_storage_backend == "s3":
         access_key = settings.s3_access_key_id
@@ -73,7 +98,7 @@ def create_document_runtime(settings: Settings) -> DocumentRuntime:
     return DocumentRuntime(storage=storage, scanner=scanner)
 
 
-def _validate_configuration(settings: Settings) -> None:
+def _validate_configuration(settings: _DocumentRuntimeSettings) -> None:
     protected_environment = settings.environment in {"staging", "prod"}
     if protected_environment and settings.document_storage_backend != "s3":
         raise ValueError("Staging and production require S3 employee document storage")

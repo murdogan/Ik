@@ -117,9 +117,7 @@ class EmployeeProfileInsightsService:
                     func.sum(
                         case(
                             (
-                                LeaveBalanceLedger.entry_type.in_(
-                                    ("earned", "adjustment")
-                                ),
+                                LeaveBalanceLedger.entry_type.in_(("earned", "adjustment")),
                                 LeaveBalanceLedger.amount_days,
                             ),
                             else_=-LeaveBalanceLedger.amount_days,
@@ -192,9 +190,7 @@ class EmployeeProfileInsightsService:
             )
         ).one()
         latest_submitted_at = (
-            _as_utc(row.latest_submitted_at)
-            if row.latest_submitted_at is not None
-            else None
+            _as_utc(row.latest_submitted_at) if row.latest_submitted_at is not None else None
         )
         return (
             EmployeeLeaveSummaryRead(
@@ -258,9 +254,7 @@ class EmployeeProfileInsightsService:
         occurred_at_key = self._occurred_at_key()
         if cursor is not None:
             cursor_key = (
-                func.julianday(cursor.occurred_at)
-                if self._is_sqlite
-                else cursor.occurred_at
+                func.julianday(cursor.occurred_at) if self._is_sqlite else cursor.occurred_at
             )
             statement = statement.where(
                 or_(

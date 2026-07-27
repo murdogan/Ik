@@ -20,7 +20,7 @@ from app.models.organization import LegalEntity, LegalEntityStatus
 from app.models.position import Position, PositionStatus
 from app.models.privacy import PrivacyNotice, PrivacyNoticeKind, PrivacyNoticeStatus
 from app.modules.core.domain.feature_flags import FeatureFlagKey
-from app.modules.documents import DocumentRuntime
+from app.modules.documents.infrastructure.runtime import DocumentRuntime
 from app.platform.authorization import RoleScopeType
 from app.platform.request_context import RequestContext
 from app.schemas.tenant_readiness import (

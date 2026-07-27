@@ -123,9 +123,7 @@ class PlatformAuthSessionService:
                 )
                 if not credential_current:
                     raise InvalidPlatformSessionError()
-                identity = await session.scalar(
-                    select(Identity).where(Identity.id == identity_id)
-                )
+                identity = await session.scalar(select(Identity).where(Identity.id == identity_id))
                 if identity is None or identity.status != IdentityStatus.ACTIVE.value:
                     return None
                 authorization = await load_platform_authorization_snapshot(
@@ -358,8 +356,7 @@ class PlatformAuthSessionService:
                     or identity.status != IdentityStatus.ACTIVE.value
                     or identity.platform_permission_version != principal.permission_version
                     or family.permission_version != principal.permission_version
-                    or family.authentication_strength
-                    != principal.authentication_strength.value
+                    or family.authentication_strength != principal.authentication_strength.value
                     or not authorization.roles
                 ):
                     raise InvalidPlatformSessionError()
@@ -407,8 +404,7 @@ class PlatformAuthSessionService:
                     select(PlatformRefreshSessionFamily)
                     .join(
                         PlatformRefreshSessionToken,
-                        PlatformRefreshSessionToken.family_id
-                        == PlatformRefreshSessionFamily.id,
+                        PlatformRefreshSessionToken.family_id == PlatformRefreshSessionFamily.id,
                     )
                     .where(
                         PlatformRefreshSessionToken.id == presented.token_id,

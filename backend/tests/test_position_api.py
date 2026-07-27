@@ -401,9 +401,7 @@ async def test_position_search_uses_database_normalization_and_unicode_safe_curs
                 code.upper()
             ]
 
-        exact_code_predicate = _position_search_predicate("i").compile(
-            dialect=postgresql.dialect()
-        )
+        exact_code_predicate = _position_search_predicate("i").compile(dialect=postgresql.dialect())
         assert set(exact_code_predicate.params.values()) == {"I"}
         contains_predicate = _position_search_predicate("ikman").compile(
             dialect=postgresql.dialect()
@@ -430,9 +428,7 @@ async def test_position_search_uses_database_normalization_and_unicode_safe_curs
             code="ık-uzmanı",
             id=UUID(created.json()["data"]["id"]),
         )
-        assert PositionListCursor.from_token(
-            turkish_collation_code.to_token()
-        ).code == "ık-uzmanı"
+        assert PositionListCursor.from_token(turkish_collation_code.to_token()).code == "ık-uzmanı"
 
 
 async def test_position_write_rolls_back_when_audit_fails() -> None:

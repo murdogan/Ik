@@ -398,10 +398,7 @@ async def test_tenant_admin_lists_details_and_pages_only_own_redacted_events() -
         )
         assert second.status_code == 200
         assert second.json()["data"]
-        assert all(
-            event["tenant_id"] == str(TENANT_A_ID)
-            for event in second.json()["data"]
-        )
+        assert all(event["tenant_id"] == str(TENANT_A_ID) for event in second.json()["data"])
 
         detail = await harness.client.get(
             f"/api/v1/audit-events/{TENANT_ADMIN_EVENT_ID}",
@@ -440,9 +437,7 @@ async def test_f2f_role_scope_endpoint_security_matrix() -> None:
         employee_role_id = str(ROLES_BY_CODE["employee"].id)
         tenant_admins = frozenset({"tenant_admin"})
         user_readers = frozenset({"tenant_admin", "it_admin"})
-        audit_readers = frozenset(
-            {"tenant_admin", "it_admin", "hr_director", "auditor"}
-        )
+        audit_readers = frozenset({"tenant_admin", "it_admin", "hr_director", "auditor"})
         endpoint_cases = (
             EndpointCase(
                 "user list",
@@ -520,9 +515,7 @@ async def test_f2f_role_scope_endpoint_security_matrix() -> None:
         }
 
         audit_visibility = {
-            "tenant_admin": frozenset(
-                {AuditCategory.TENANT_ADMIN, AuditCategory.TENANT_SECURITY}
-            ),
+            "tenant_admin": frozenset({AuditCategory.TENANT_ADMIN, AuditCategory.TENANT_SECURITY}),
             "it_admin": frozenset({AuditCategory.TENANT_SECURITY}),
             "auditor": frozenset(
                 {
@@ -572,13 +565,10 @@ async def test_f2f_role_scope_endpoint_security_matrix() -> None:
                     assert response.json()["error"]["code"] == "audit_event_not_found"
 
         admin_responses = role_responses["tenant_admin"]
-        listed_user_ids = {
-            user["id"] for user in admin_responses["user list"].json()["data"]
-        }
+        listed_user_ids = {user["id"] for user in admin_responses["user list"].json()["data"]}
         assert str(OTHER_TENANT_USER_ID) not in listed_user_ids
         listed_audit_ids = {
-            event["id"]
-            for event in admin_responses["tenant audit list"].json()["data"]
+            event["id"] for event in admin_responses["tenant audit list"].json()["data"]
         }
         assert str(TENANT_B_EVENT_ID) not in listed_audit_ids
         assert str(PLATFORM_EVENT_ID) not in listed_audit_ids
@@ -666,9 +656,7 @@ async def test_f2f_role_scope_endpoint_security_matrix() -> None:
             assert principal == super_admin_principal
             return AuthenticatedSession(principal=principal, user=super_admin_user)
 
-        harness.app.dependency_overrides[
-            require_authenticated_session
-        ] = resolve_super_admin_bearer
+        harness.app.dependency_overrides[require_authenticated_session] = resolve_super_admin_bearer
         super_admin_token = auth_runtime.access_tokens.issue(super_admin_principal).token
         super_admin_headers = _authorization(super_admin_token)
         super_admin_tenant_denied = await harness.client.get(
@@ -676,19 +664,13 @@ async def test_f2f_role_scope_endpoint_security_matrix() -> None:
             headers=super_admin_headers,
         )
         assert super_admin_tenant_denied.status_code == 403
-        assert (
-            super_admin_tenant_denied.json()["error"]["code"]
-            == "authorization_denied"
-        )
+        assert super_admin_tenant_denied.json()["error"]["code"] == "authorization_denied"
         super_admin_platform_denied = await harness.client.get(
             "/api/v1/platform/audit-events",
             headers=super_admin_headers,
         )
         assert super_admin_platform_denied.status_code == 403
-        assert (
-            super_admin_platform_denied.json()["error"]["code"]
-            == "platform_access_denied"
-        )
+        assert super_admin_platform_denied.json()["error"]["code"] == "platform_access_denied"
         harness.app.dependency_overrides.pop(require_authenticated_session)
 
         harness.app.dependency_overrides[get_platform_principal] = lambda: PlatformPrincipal(

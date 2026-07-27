@@ -77,9 +77,7 @@ def test_tenant_settings_model_is_registered_with_fixed_columns() -> None:
         "created_at",
         "updated_at",
     ]
-    assert [column.name for column in TenantSettings.__table__.primary_key.columns] == [
-        "tenant_id"
-    ]
+    assert [column.name for column in TenantSettings.__table__.primary_key.columns] == ["tenant_id"]
 
 
 def test_tenant_settings_defaults_match_typed_catalog() -> None:
@@ -114,6 +112,4 @@ def test_tenant_settings_constraints_are_named_and_tenant_rooted() -> None:
     assert len(foreign_keys) == 1
     assert foreign_keys[0].name == "fk_tenant_settings_tenant_id_tenants"
     assert foreign_keys[0].ondelete == "CASCADE"
-    assert [element.target_fullname for element in foreign_keys[0].elements] == [
-        "tenants.id"
-    ]
+    assert [element.target_fullname for element in foreign_keys[0].elements] == ["tenants.id"]

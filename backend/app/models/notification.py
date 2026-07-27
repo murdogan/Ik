@@ -126,9 +126,7 @@ class OutboxEventConsumption(Base):
             name="fk_outbox_event_consumptions_tenant_event",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint(
-            "tenant_id", "source_event_id", name="uq_outbox_event_consumptions_event"
-        ),
+        UniqueConstraint("tenant_id", "source_event_id", name="uq_outbox_event_consumptions_event"),
         Index(
             "ix_outbox_event_consumptions_tenant_created",
             "tenant_id",
@@ -140,9 +138,7 @@ class OutboxEventConsumption(Base):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     tenant_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey(
-            "tenants.id", name="fk_outbox_event_consumptions_tenant", ondelete="CASCADE"
-        ),
+        ForeignKey("tenants.id", name="fk_outbox_event_consumptions_tenant", ondelete="CASCADE"),
         nullable=False,
     )
     source_event_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
@@ -228,9 +224,7 @@ class NotificationDelivery(Base):
     attempt_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
-    next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     terminal_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     terminal_error_message: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -267,9 +261,7 @@ class EmailCapture(Base):
         ),
         UniqueConstraint("tenant_id", "delivery_id", name="uq_email_captures_delivery"),
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_email_captures_idempotency"),
-        Index(
-            "ix_email_captures_tenant_created", "tenant_id", "created_at", "id"
-        ),
+        Index("ix_email_captures_tenant_created", "tenant_id", "created_at", "id"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)

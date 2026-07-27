@@ -42,8 +42,7 @@ async def sync_identity_membership_projection(
         try:
             await session.execute(
                 text(
-                    f"select public.{_POSTGRES_SYNC_FUNCTION}("
-                    ":user_id, :require_pending_identity)"
+                    f"select public.{_POSTGRES_SYNC_FUNCTION}(:user_id, :require_pending_identity)"
                 ),
                 {
                     "user_id": user.id,
@@ -60,9 +59,7 @@ async def sync_identity_membership_projection(
         return
 
     identity = await session.scalar(
-        select(Identity).where(
-            Identity.email_normalized == user.email.strip().lower()
-        )
+        select(Identity).where(Identity.email_normalized == user.email.strip().lower())
     )
     if identity is None:
         identity = Identity(

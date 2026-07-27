@@ -21,8 +21,6 @@ class RecordingJobQueue:
             raise TypeError("RecordingJobQueue accepts only a validated JobSpec")
         self._jobs.append(job)
         job_id = (
-            self._id_factory()
-            if self._id_factory is not None
-            else f"fake-job-{len(self._jobs)}"
+            self._id_factory() if self._id_factory is not None else f"fake-job-{len(self._jobs)}"
         )
         return QueuedJob(id=job_id, queue=job.queue)

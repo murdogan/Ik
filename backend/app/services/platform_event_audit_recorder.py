@@ -73,14 +73,10 @@ class PlatformEventAuditRecorder:
             AuditEventDraft(
                 id=event.id,
                 occurred_at=event.occurred_at,
-                scope_type=(
-                    AuditScopeType.TENANT if is_tenant_actor else AuditScopeType.PLATFORM
-                ),
+                scope_type=(AuditScopeType.TENANT if is_tenant_actor else AuditScopeType.PLATFORM),
                 tenant_id=event.tenant_id if is_tenant_actor else None,
                 actor_type=(
-                    AuditActorType.USER
-                    if is_tenant_actor
-                    else AuditActorType.PLATFORM_ADMIN
+                    AuditActorType.USER if is_tenant_actor else AuditActorType.PLATFORM_ADMIN
                 ),
                 actor_user_id=event.actor_user_id,
                 session_id=event.session_id,

@@ -244,9 +244,7 @@ class ReportExportDownloadIntent(Base):
             name="fk_report_export_download_intents_user",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint(
-            "tenant_id", "id", name="uq_report_export_download_intents_tenant_id_id"
-        ),
+        UniqueConstraint("tenant_id", "id", name="uq_report_export_download_intents_tenant_id_id"),
         Index(
             "ix_report_export_download_intents_job_created",
             "tenant_id",

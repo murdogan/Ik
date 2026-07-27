@@ -82,8 +82,7 @@ async def test_recorder_stores_only_allowlisted_redacted_metadata(
                         trace_id="0123456789abcdef0123456789abcdef",
                         ip_address="203.0.113.77",
                         user_agent=(
-                            "Mozilla/5.0 sensitive fingerprint Chrome/140.0.0.0 "
-                            "Cookie/private"
+                            "Mozilla/5.0 sensitive fingerprint Chrome/140.0.0.0 Cookie/private"
                         ),
                     ),
                     changed_fields=("roles", "permission_version", "password_hash"),

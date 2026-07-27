@@ -43,9 +43,7 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
     configured_key = settings.auth_signing_key
     if configured_key is None:
         if settings.environment in {"staging", "prod"}:
-            raise RuntimeError(
-                "IK_AUTH_SIGNING_KEY is required in staging and production"
-            )
+            raise RuntimeError("IK_AUTH_SIGNING_KEY is required in staging and production")
         signing_key = token_bytes(48)
     else:
         signing_key = configured_key.get_secret_value().encode("utf-8")
@@ -76,9 +74,7 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
             signing_key + b"/authentication-rate-limit"
         ),
         rate_limit_policy=AuthenticationRateLimitPolicy(
-            window=timedelta(
-                seconds=settings.auth_login_rate_limit_window_seconds
-            ),
+            window=timedelta(seconds=settings.auth_login_rate_limit_window_seconds),
             source_attempts=settings.auth_login_rate_limit_source_attempts,
             identity_attempts=settings.auth_login_rate_limit_identity_attempts,
         ),
@@ -87,11 +83,7 @@ def create_auth_runtime(settings: Settings) -> AuthRuntime:
             secure=secure_cookie,
         ),
         platform_refresh_cookie=RefreshCookiePolicy(
-            name=(
-                "__Host-wf_platform_refresh"
-                if secure_cookie
-                else "wf_platform_refresh"
-            ),
+            name=("__Host-wf_platform_refresh" if secure_cookie else "wf_platform_refresh"),
             secure=secure_cookie,
         ),
     )

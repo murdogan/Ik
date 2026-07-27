@@ -31,8 +31,11 @@ from app.api.errors import (
 )
 from app.api.openapi import IMPORTS_TAG, with_correlation_response_headers
 from app.db.session import DatabaseRuntime, get_session
-from app.modules.documents import DOCUMENT_RUNTIME_STATE_KEY, DocumentRuntime
-from app.modules.reporting.spreadsheets import (
+from app.modules.documents.infrastructure.runtime import (
+    DOCUMENT_RUNTIME_STATE_KEY,
+    DocumentRuntime,
+)
+from app.modules.reporting.infrastructure.spreadsheets import (
     employee_import_template_csv,
     employee_import_template_xlsx,
 )
@@ -83,9 +86,7 @@ def get_employee_import_service(
 
 @router.get("/template")
 async def download_employee_import_template(
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission(EMPLOYEE_IMPORT_PERMISSION))
     ],
@@ -137,9 +138,7 @@ async def download_employee_import_template(
 async def upload_employee_import(
     request: Request,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission(EMPLOYEE_IMPORT_PERMISSION))
     ],
@@ -188,9 +187,7 @@ async def upload_employee_import(
 async def get_employee_import(
     import_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission(EMPLOYEE_IMPORT_PERMISSION))
     ],
@@ -198,9 +195,7 @@ async def get_employee_import(
     issue_limit: Annotated[
         int, Query(ge=1, le=EMPLOYEE_IMPORT_ISSUE_MAX_LIMIT)
     ] = EMPLOYEE_IMPORT_ISSUE_DEFAULT_LIMIT,
-    issue_cursor: Annotated[
-        str | None, Query(min_length=1, max_length=MAX_CURSOR_LENGTH)
-    ] = None,
+    issue_cursor: Annotated[str | None, Query(min_length=1, max_length=MAX_CURSOR_LENGTH)] = None,
 ) -> DataEnvelope[EmployeeImportRead]:
     _prevent_storage(response)
     record = await service.get_import(
@@ -219,9 +214,7 @@ async def get_employee_import(
 async def commit_employee_import(
     import_id: UUID,
     response: Response,
-    request_context: Annotated[
-        RequestContext, Depends(get_authenticated_tenant_request_context)
-    ],
+    request_context: Annotated[RequestContext, Depends(get_authenticated_tenant_request_context)],
     _authorized: Annotated[
         AuthenticatedSession, Depends(require_permission(EMPLOYEE_IMPORT_PERMISSION))
     ],

@@ -20,8 +20,7 @@ from app.platform.idempotency import (
 
 IDEMPOTENCY_KEY_UNIQUE_CONSTRAINT = "uq_command_idempotency_tenant_key"
 _SQLITE_IDEMPOTENCY_UNIQUE_SIGNATURE = (
-    "UNIQUE constraint failed: command_idempotency.tenant_id, "
-    "command_idempotency.idempotency_key"
+    "UNIQUE constraint failed: command_idempotency.tenant_id, command_idempotency.idempotency_key"
 )
 
 
@@ -197,10 +196,7 @@ def _validated_replay(
     command_name: str,
     request_fingerprint: str,
 ) -> IdempotencyReplay:
-    if (
-        receipt.command_name != command_name
-        or receipt.request_fingerprint != request_fingerprint
-    ):
+    if receipt.command_name != command_name or receipt.request_fingerprint != request_fingerprint:
         raise IdempotencyKeyMismatchError
     if (
         receipt.resource_id is None

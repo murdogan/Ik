@@ -507,6 +507,75 @@ def _error_example(code: str, message: str) -> dict[str, Any]:
     }
 
 
+LEAVE_DOMAIN_VALIDATION_RESPONSES = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Leave endpoint validation error envelope.",
+        "content": {
+            "application/json": {
+                "examples": {
+                    LEAVE_VALIDATION_ERROR_CODE: _error_example(
+                        LEAVE_VALIDATION_ERROR_CODE,
+                        LEAVE_VALIDATION_ERROR_MESSAGE,
+                    )
+                }
+            }
+        },
+    }
+}
+LEAVE_DOMAIN_NOT_FOUND_RESPONSES = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": ApiErrorResponse,
+        "description": (
+            "The leave resource is absent, unauthorized, or outside the authenticated tenant."
+        ),
+        "content": {
+            "application/json": {
+                "examples": {
+                    LEAVE_NOT_FOUND_ERROR_CODE: _error_example(
+                        LEAVE_NOT_FOUND_ERROR_CODE,
+                        LEAVE_NOT_FOUND_ERROR_MESSAGE,
+                    )
+                }
+            }
+        },
+    }
+}
+LEAVE_DOMAIN_CONFLICT_RESPONSES = _conflict_response(
+    description="Leave command conflict envelope.",
+    examples={
+        LEAVE_CONFLICT_ERROR_CODE: _error_example(
+            LEAVE_CONFLICT_ERROR_CODE,
+            "The requested leave operation conflicts with current state",
+        ),
+        LEAVE_INSUFFICIENT_BALANCE_ERROR_CODE: _error_example(
+            LEAVE_INSUFFICIENT_BALANCE_ERROR_CODE,
+            "Available leave balance is insufficient",
+        ),
+        DATA_INTEGRITY_CONFLICT_ERROR_CODE: _error_example(
+            DATA_INTEGRITY_CONFLICT_ERROR_CODE,
+            DATA_INTEGRITY_CONFLICT_MESSAGE,
+        ),
+        CONCURRENT_WRITE_CONFLICT_ERROR_CODE: _error_example(
+            CONCURRENT_WRITE_CONFLICT_ERROR_CODE,
+            CONCURRENT_WRITE_CONFLICT_MESSAGE,
+        ),
+    },
+)
+IDEMPOTENT_LEAVE_DOMAIN_CONFLICT_RESPONSES = _conflict_response(
+    description="Idempotent leave command conflict envelope.",
+    examples={
+        **LEAVE_DOMAIN_CONFLICT_RESPONSES[status.HTTP_409_CONFLICT]["content"]["application/json"][
+            "examples"
+        ],
+        IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE: _error_example(
+            IDEMPOTENCY_KEY_MISMATCH_ERROR_CODE,
+            IDEMPOTENCY_KEY_MISMATCH_MESSAGE,
+        ),
+    },
+)
+
+
 EMPLOYEE_PROFILE_CHANGE_REQUEST_VALIDATION_RESPONSES = {
     status.HTTP_422_UNPROCESSABLE_CONTENT: {
         "model": ApiErrorResponse,
@@ -2141,10 +2210,7 @@ def _domain_request_validation_error(
     if (
         _matches_api_prefix(path, DOCUMENT_TYPE_API_PREFIX)
         or _matches_api_prefix(path, OWN_DOCUMENT_API_PREFIX)
-        or (
-            _matches_api_prefix(path, EMPLOYEE_API_PREFIX)
-            and "/documents" in path
-        )
+        or (_matches_api_prefix(path, EMPLOYEE_API_PREFIX) and "/documents" in path)
     ):
         return document_validation_error()
     if _matches_api_prefix(path, EMPLOYEE_API_PREFIX):

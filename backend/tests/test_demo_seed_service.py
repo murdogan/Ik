@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -18,7 +19,15 @@ from app.models.identity import (
     PlatformIdentityRole,
     TenantMembership,
 )
-from app.models.leave_request import LeaveRequest
+from app.models.leave import (
+    HolidayCalendar,
+    LeaveBalanceLedger,
+    LeavePolicy,
+    LeaveRequestDay,
+    LeaveRequestTimeline,
+    LeaveType,
+)
+from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import Branch, BranchStatus, LegalEntity
 from app.models.position import Position
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
@@ -67,9 +76,7 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         default_entity.name = "Preserved legal entity name"
 
         shared_identity = await session.scalar(
-            select(Identity).where(
-                Identity.email_normalized == "admin@wealthyfalcon.demo"
-            )
+            select(Identity).where(Identity.email_normalized == "admin@wealthyfalcon.demo")
         )
         assert shared_identity is not None
         super_admin_role = ROLES_BY_CODE["super_admin"]
@@ -81,9 +88,7 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert platform_assignment.active is True
         platform_assignment.active = False
 
-        wf_admin_fixture = next(
-            fixture for fixture in DEMO_USERS if fixture.key == "wf_admin"
-        )
+        wf_admin_fixture = next(fixture for fixture in DEMO_USERS if fixture.key == "wf_admin")
         hr_specialist_role = ROLES_BY_CODE["hr_specialist"]
         tenant_admin_role = ROLES_BY_CODE["tenant_admin"]
         wf_hr_assignment = await session.get(
@@ -152,17 +157,14 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert second_result == first_result
         assert await _count(session, Tenant) == len(DEMO_TENANTS)
         assert await _count(session, TenantSettings) == len(DEMO_TENANTS)
-        assert (
-            await session.scalar(
-                select(func.count())
-                .select_from(TenantFeatureFlag)
-                .where(
-                    TenantFeatureFlag.key == FeatureFlagKey.ORGANIZATION.value,
-                    TenantFeatureFlag.enabled.is_(True),
-                )
+        assert await session.scalar(
+            select(func.count())
+            .select_from(TenantFeatureFlag)
+            .where(
+                TenantFeatureFlag.key == FeatureFlagKey.ORGANIZATION.value,
+                TenantFeatureFlag.enabled.is_(True),
             )
-            == len(DEMO_TENANTS)
-        )
+        ) == len(DEMO_TENANTS)
         assert await _count(session, LegalEntity) == len(DEMO_TENANTS)
         assert await _count(session, Branch) == len(DEMO_TENANTS)
         assert await _count(session, Department) == len(
@@ -191,11 +193,38 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert await _count(session, EmployeePersonalProfile) == len(DEMO_EMPLOYEES)
         assert await _count(session, EmployeeEmploymentProfile) == len(DEMO_EMPLOYEES)
         assert await _count(session, LeaveRequest) == len(DEMO_LEAVE_REQUESTS)
+        expected_leave_type_count = sum(
+            len(
+                {
+                    "annual",
+                    "excuse",
+                    "unpaid",
+                    "medical_report",
+                    *(
+                        fixture.leave_type
+                        for fixture in DEMO_LEAVE_REQUESTS
+                        if fixture.tenant_key == tenant.key
+                    ),
+                }
+            )
+            for tenant in DEMO_TENANTS
+        )
+        assert await _count(session, LeaveType) == expected_leave_type_count
+        assert await _count(session, LeavePolicy) == expected_leave_type_count
+        assert await _count(session, HolidayCalendar) == len(DEMO_TENANTS)
+        assert await _count(session, LeaveRequestDay) == sum(
+            (fixture.end_date - fixture.start_date).days + 1 for fixture in DEMO_LEAVE_REQUESTS
+        )
+        assert await _count(session, LeaveRequestTimeline) == len(DEMO_LEAVE_REQUESTS) + sum(
+            fixture.status is not LeaveRequestStatus.PENDING for fixture in DEMO_LEAVE_REQUESTS
+        )
+        assert await _count(session, LeaveBalanceLedger) == sum(
+            fixture.status in (LeaveRequestStatus.PENDING, LeaveRequestStatus.APPROVED)
+            for fixture in DEMO_LEAVE_REQUESTS
+        )
         assert set(second_result.tenant_ids) == {tenant.id for tenant in DEMO_TENANTS}
         shared_identity = await session.scalar(
-            select(Identity).where(
-                Identity.email_normalized == "admin@wealthyfalcon.demo"
-            )
+            select(Identity).where(Identity.email_normalized == "admin@wealthyfalcon.demo")
         )
         assert shared_identity is not None
         platform_assignment = await session.get(
@@ -206,9 +235,7 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert platform_assignment.active is True
         shared_memberships = tuple(
             await session.scalars(
-                select(TenantMembership).where(
-                    TenantMembership.identity_id == shared_identity.id
-                )
+                select(TenantMembership).where(TenantMembership.identity_id == shared_identity.id)
             )
         )
         assert {membership.tenant_id for membership in shared_memberships} == {
@@ -268,9 +295,7 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         assert preserved_history is not None
         assert preserved_history.change_reason == "Preserved assignment history"
 
-        fixtures_by_employee_id = {
-            fixture.id: fixture for fixture in DEMO_EMPLOYEES
-        }
+        fixtures_by_employee_id = {fixture.id: fixture for fixture in DEMO_EMPLOYEES}
         manager_ids_by_tenant_key = {
             fixture.tenant_key: fixture.id
             for fixture in DEMO_USERS
@@ -278,11 +303,7 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         }
         for assignment in assignments:
             fixture = fixtures_by_employee_id[assignment.employee_id]
-            tenant = next(
-                tenant
-                for tenant in DEMO_TENANTS
-                if tenant.key == fixture.tenant_key
-            )
+            tenant = next(tenant for tenant in DEMO_TENANTS if tenant.key == fixture.tenant_key)
             structured_employee = await session.get(Employee, assignment.employee_id)
             branch = await session.get(Branch, assignment.branch_id)
             department = await session.get(Department, assignment.department_id)
@@ -303,9 +324,7 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
             assert position.title.strip().casefold() == fixture.position.casefold()
             assert department.code.startswith("DEMO-D-")
             assert position.code.startswith("DEMO-P-")
-            assert assignment.manager_user_id == manager_ids_by_tenant_key[
-                fixture.tenant_key
-            ]
+            assert assignment.manager_user_id == manager_ids_by_tenant_key[fixture.tenant_key]
             assert assignment.created_by_user_id is None
             assert assignment.supersedes_assignment_id is None
             assert assignment.effective_from == fixture.employment_start_date
@@ -322,10 +341,7 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
             tenant_key: sum(
                 assignment.manager_user_id == manager_id
                 and assignment.effective_from <= team_scope_day
-                and (
-                    assignment.effective_to is None
-                    or assignment.effective_to > team_scope_day
-                )
+                and (assignment.effective_to is None or assignment.effective_to > team_scope_day)
                 for assignment in assignments
             )
             for tenant_key, manager_id in manager_ids_by_tenant_key.items()
@@ -337,16 +353,56 @@ async def test_demo_seed_is_idempotent_and_tenant_scoped() -> None:
         for leave_request in leave_requests:
             employee = await session.get(Employee, leave_request.employee_id)
             requested_by_user = await session.get(User, leave_request.requested_by_user_id)
+            leave_type = await session.get(LeaveType, leave_request.leave_type_id)
+            leave_policy = await session.get(LeavePolicy, leave_request.policy_id)
             decided_by_user = (
                 await session.get(User, leave_request.decided_by_user_id)
                 if leave_request.decided_by_user_id is not None
                 else None
             )
+            request_days = tuple(
+                await session.scalars(
+                    select(LeaveRequestDay).where(
+                        LeaveRequestDay.tenant_id == leave_request.tenant_id,
+                        LeaveRequestDay.request_id == leave_request.id,
+                    )
+                )
+            )
+            timeline = tuple(
+                await session.scalars(
+                    select(LeaveRequestTimeline).where(
+                        LeaveRequestTimeline.tenant_id == leave_request.tenant_id,
+                        LeaveRequestTimeline.request_id == leave_request.id,
+                    )
+                )
+            )
 
             assert employee is not None
             assert requested_by_user is not None
+            assert leave_type is not None
+            assert leave_policy is not None
             assert employee.tenant_id == leave_request.tenant_id
             assert requested_by_user.tenant_id == leave_request.tenant_id
+            assert leave_type.tenant_id == leave_request.tenant_id
+            assert leave_policy.tenant_id == leave_request.tenant_id
+            assert leave_policy.leave_type_id == leave_type.id
+            assert leave_request.requested_by_membership_id is None
+            assert leave_request.routed_manager_user_id is None
+            assert leave_request.counted_days == sum(
+                (day.counted_days for day in request_days),
+                Decimal("0.00"),
+            )
+            assert {event.event_type for event in timeline} == {
+                "submitted",
+                *(
+                    ()
+                    if leave_request.status == LeaveRequestStatus.PENDING.value
+                    else (leave_request.status,)
+                ),
+            }
+            assert (leave_request.decided_at is None) == (
+                leave_request.status == LeaveRequestStatus.PENDING.value
+            )
             if decided_by_user is not None:
                 assert decided_by_user.tenant_id == leave_request.tenant_id
     finally:
@@ -387,9 +443,7 @@ async def test_demo_seed_repoints_legacy_membership_and_preserves_old_identity()
         )
         assert await _count(session, Identity) == 5
         assert (
-            await session.scalar(
-                select(func.count(func.distinct(TenantMembership.identity_id)))
-            )
+            await session.scalar(select(func.count(func.distinct(TenantMembership.identity_id))))
             == 4
         )
         assert (
@@ -410,11 +464,9 @@ async def test_demo_seed_refuses_to_merge_different_identity_password_hashes() -
     try:
         await seed_demo_data(session)
         await session.commit()
-        atlas_user, shared_identity, _atlas_membership = (
-            await _restore_legacy_atlas_projection(
-                session,
-                legacy_password_hash="legacy-atlas-password-hash",
-            )
+        atlas_user, shared_identity, _atlas_membership = await _restore_legacy_atlas_projection(
+            session,
+            legacy_password_hash="legacy-atlas-password-hash",
         )
         shared_identity.status = IdentityStatus.ACTIVE.value
         shared_identity.password_hash = "shared-admin-password-hash"
@@ -461,11 +513,7 @@ async def test_demo_seed_does_not_rewrite_existing_assignment_history() -> None:
         assignment = await session.scalar(
             select(EmployeeAssignment).where(
                 EmployeeAssignment.tenant_id
-                == next(
-                    tenant.id
-                    for tenant in DEMO_TENANTS
-                    if tenant.key == fixture.tenant_key
-                ),
+                == next(tenant.id for tenant in DEMO_TENANTS if tenant.key == fixture.tenant_key),
                 EmployeeAssignment.employee_id == fixture.id,
             )
         )
@@ -536,9 +584,7 @@ async def _restore_legacy_atlas_projection(
     atlas_user = await session.get(User, atlas_fixture.id)
     assert atlas_user is not None
     shared_identity = await session.scalar(
-        select(Identity).where(
-            Identity.email_normalized == "admin@wealthyfalcon.demo"
-        )
+        select(Identity).where(Identity.email_normalized == "admin@wealthyfalcon.demo")
     )
     assert shared_identity is not None
     atlas_membership = await session.scalar(

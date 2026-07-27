@@ -63,9 +63,7 @@ def test_command_handler_dependencies_share_one_request_session() -> None:
         ],
     ) -> dict[str, bool]:
         return {
-            "same_session": (
-                handler.service.session is handler.unit_of_work.session is session
-            )
+            "same_session": (handler.service.session is handler.unit_of_work.session is session)
         }
 
     app.dependency_overrides[get_session] = override_session

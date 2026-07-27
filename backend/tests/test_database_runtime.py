@@ -138,18 +138,14 @@ async def test_session_dependency_rolls_back_after_endpoint_error(monkeypatch) -
 
 
 async def test_database_runtime_can_be_disposed_more_than_once_safely() -> None:
-    runtime = create_database_runtime(
-        _settings(database_url="sqlite+aiosqlite:///:memory:")
-    )
+    runtime = create_database_runtime(_settings(database_url="sqlite+aiosqlite:///:memory:"))
 
     await runtime.dispose()
     await runtime.dispose()
 
 
 async def test_runtime_sessions_are_marked_for_fail_closed_database_access() -> None:
-    runtime = create_database_runtime(
-        _settings(database_url="sqlite+aiosqlite:///:memory:")
-    )
+    runtime = create_database_runtime(_settings(database_url="sqlite+aiosqlite:///:memory:"))
     try:
         async with runtime.session_factory() as session:
             assert session.sync_session.info[MANAGED_DATABASE_SESSION_KEY] is True

@@ -1,21 +1,25 @@
 from collections.abc import AsyncIterator
-from datetime import date
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.api.auth_dependencies import require_authenticated_session
-from app.api.dependencies import (
-    get_authenticated_tenant_request_context,
-    get_phase0_tenant_request_context,
-)
+from app.api.dependencies import get_authenticated_tenant_request_context
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
 from app.models.employee import Employee, EmployeeStatus
-from app.models.leave_balance_summary import LeaveBalanceSummary
+from app.models.employee_profile import (
+    EmployeeEmploymentProfile,
+    EmployeePersonalProfile,
+)
+from app.models.leave import LeaveBalanceLedger, LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.request_context import AuthenticationStrength, RequestContext
+from app.platform.tenancy import TenantContext
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
@@ -37,6 +41,113 @@ ANNUAL_2026_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 SICK_2026_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 ANNUAL_2025_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
 OTHER_BALANCE_ID = UUID("99999999-9999-4999-8999-999999999999")
+LEAVE_FIXTURE_NAMESPACE = UUID("a1000000-0000-4000-8000-000000000003")
+LEAVE_LEDGER_CREATED_AT = datetime(2026, 7, 1, 8, tzinfo=UTC)
+LEAVE_READ_PERMISSIONS = ("leave:read:tenant", "employee:update:tenant")
+
+
+def _leave_configuration(
+    tenant_id: UUID,
+    *codes: str,
+) -> list[LeaveType | LeavePolicy]:
+    rows: list[LeaveType | LeavePolicy] = []
+    for code in codes:
+        leave_type_id = _leave_type_id(tenant_id, code)
+        rows.extend(
+            (
+                LeaveType(
+                    id=leave_type_id,
+                    tenant_id=tenant_id,
+                    code=code,
+                    name=code.title(),
+                    description=None,
+                    is_active=True,
+                    version=1,
+                ),
+                LeavePolicy(
+                    id=_leave_policy_id(tenant_id, code),
+                    tenant_id=tenant_id,
+                    leave_type_id=leave_type_id,
+                    version=1,
+                    effective_from=date(1900, 1, 1),
+                    paid=False,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0.00"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=None,
+                    created_at=datetime(2026, 7, 1, 8, tzinfo=UTC),
+                ),
+            )
+        )
+    return rows
+
+
+def _leave_type_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-type:{tenant_id}:{code}")
+
+
+def _leave_policy_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-policy:{tenant_id}:{code}:1")
+
+
+def _leave_balance_id(
+    tenant_id: UUID,
+    employee_id: UUID,
+    leave_type_code: str,
+    period_year: int,
+) -> UUID:
+    return uuid5(
+        NAMESPACE_URL,
+        f"wealthy-falcon:leave-balance:{tenant_id}:{employee_id}:"
+        f"{_leave_type_id(tenant_id, leave_type_code)}:{period_year}",
+    )
+
+
+def _ledger_entry(
+    *,
+    entry_id: UUID,
+    tenant_id: UUID,
+    employee_id: UUID,
+    leave_type_code: str,
+    period_year: int,
+    entry_type: str,
+    amount_days: str,
+) -> LeaveBalanceLedger:
+    return LeaveBalanceLedger(
+        id=entry_id,
+        tenant_id=tenant_id,
+        employee_id=employee_id,
+        leave_type_id=_leave_type_id(tenant_id, leave_type_code),
+        period_year=period_year,
+        entry_type=entry_type,
+        amount_days=Decimal(amount_days),
+        effective_date=date(period_year, 1, 1),
+        reason=None,
+        request_id=None,
+        source_type="test_fixture",
+        source_id=entry_id,
+        source_key=f"test-fixture:{entry_id}",
+        reversal_of_entry_id=None,
+        created_by_user_id=None,
+        created_at=LEAVE_LEDGER_CREATED_AT,
+    )
+
+
+def _authenticated_tenant_context() -> RequestContext:
+    return RequestContext(
+        request_id="leave-balance-test",
+        trace_id="b4000000000040008000000000000001",
+        tenant=TenantContext(
+            tenant_id=TENANT_ID,
+            slug="wealthy-falcon",
+        ),
+        actor_id=REQUESTING_USER_ID,
+        membership_id=REQUESTING_USER_ID,
+        authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
+    )
 
 
 async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
@@ -96,8 +207,9 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
                     email="ada@wealthyfalcon.test",
                     department="People",
                     position="HR Specialist",
-                    status=EmployeeStatus.ACTIVE.value,
+                    status=EmployeeStatus.TERMINATED.value,
                     employment_start_date=date(2026, 1, 1),
+                    employment_end_date=date(2026, 6, 30),
                 ),
                 Employee(
                     id=EMPTY_EMPLOYEE_ID,
@@ -117,55 +229,117 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
                     status=EmployeeStatus.ACTIVE.value,
                     employment_start_date=date(2026, 1, 1),
                 ),
-                LeaveBalanceSummary(
-                    id=ANNUAL_2026_ID,
+                EmployeePersonalProfile(
+                    id=UUID("a5000000-0000-4000-8000-000000000001"),
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
-                    leave_type="annual",
-                    period_year=2026,
-                    opening_balance_days=20.0,
-                    used_days=5.0,
-                    planned_days=2.0,
+                    preferred_name="Ada",
+                    birth_date=None,
+                    phone=None,
                 ),
-                LeaveBalanceSummary(
-                    id=SICK_2026_ID,
+                EmployeeEmploymentProfile(
+                    id=UUID("a5000000-0000-4000-8000-000000000002"),
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
-                    leave_type="sick",
-                    period_year=2026,
-                    opening_balance_days=8.0,
-                    used_days=1.5,
-                    planned_days=0.5,
+                    contract_type=None,
+                    work_type=None,
                 ),
-                LeaveBalanceSummary(
-                    id=ANNUAL_2025_ID,
+                *_leave_configuration(TENANT_ID, "annual", "sick"),
+                *_leave_configuration(OTHER_TENANT_ID, "annual"),
+                _ledger_entry(
+                    entry_id=ANNUAL_2026_ID,
                     tenant_id=TENANT_ID,
                     employee_id=EMPLOYEE_ID,
-                    leave_type="annual",
+                    leave_type_code="annual",
+                    period_year=2026,
+                    entry_type="earned",
+                    amount_days="20.00",
+                ),
+                _ledger_entry(
+                    entry_id=UUID("d6000000-0000-4000-8000-000000000001"),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type_code="annual",
+                    period_year=2026,
+                    entry_type="used",
+                    amount_days="5.00",
+                ),
+                _ledger_entry(
+                    entry_id=UUID("d6000000-0000-4000-8000-000000000002"),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type_code="annual",
+                    period_year=2026,
+                    entry_type="planned",
+                    amount_days="2.00",
+                ),
+                _ledger_entry(
+                    entry_id=SICK_2026_ID,
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type_code="sick",
+                    period_year=2026,
+                    entry_type="earned",
+                    amount_days="8.00",
+                ),
+                _ledger_entry(
+                    entry_id=UUID("d6000000-0000-4000-8000-000000000003"),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type_code="sick",
+                    period_year=2026,
+                    entry_type="used",
+                    amount_days="1.50",
+                ),
+                _ledger_entry(
+                    entry_id=UUID("d6000000-0000-4000-8000-000000000004"),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type_code="sick",
+                    period_year=2026,
+                    entry_type="planned",
+                    amount_days="0.50",
+                ),
+                _ledger_entry(
+                    entry_id=ANNUAL_2025_ID,
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type_code="annual",
                     period_year=2025,
-                    opening_balance_days=10.0,
-                    used_days=4.0,
-                    planned_days=0.0,
+                    entry_type="earned",
+                    amount_days="10.00",
                 ),
-                LeaveBalanceSummary(
-                    id=OTHER_BALANCE_ID,
+                _ledger_entry(
+                    entry_id=UUID("d6000000-0000-4000-8000-000000000005"),
+                    tenant_id=TENANT_ID,
+                    employee_id=EMPLOYEE_ID,
+                    leave_type_code="annual",
+                    period_year=2025,
+                    entry_type="used",
+                    amount_days="4.00",
+                ),
+                _ledger_entry(
+                    entry_id=OTHER_BALANCE_ID,
                     tenant_id=OTHER_TENANT_ID,
                     employee_id=OTHER_EMPLOYEE_ID,
-                    leave_type="annual",
+                    leave_type_code="annual",
                     period_year=2026,
-                    opening_balance_days=99.0,
-                    used_days=0.0,
-                    planned_days=0.0,
+                    entry_type="earned",
+                    amount_days="99.00",
                 ),
                 LeaveRequest(
                     id=UUID("12121212-1212-4121-8121-121212121212"),
                     tenant_id=TENANT_ID,
                     employee_id=EMPTY_EMPLOYEE_ID,
                     leave_type="annual",
+                    leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                    policy_id=_leave_policy_id(TENANT_ID, "annual"),
                     start_date=date(2026, 7, 20),
                     end_date=date(2026, 7, 22),
                     status=LeaveRequestStatus.APPROVED.value,
                     requested_by_user_id=REQUESTING_USER_ID,
+                    decided_by_user_id=REQUESTING_USER_ID,
+                    decided_at=datetime(2026, 7, 19, 12, 0, tzinfo=UTC),
                 ),
             ]
         )
@@ -178,12 +352,10 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
     app = create_app()
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_authenticated_tenant_request_context] = (
-        get_phase0_tenant_request_context
+        _authenticated_tenant_context
     )
     app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
-        user=SimpleNamespace(
-            permissions=("leave:read:tenant", "employee:update:tenant")
-        )
+        user=SimpleNamespace(permissions=LEAVE_READ_PERMISSIONS)
     )
 
     return (
@@ -195,8 +367,8 @@ async def _client_with_database() -> tuple[AsyncClient, AsyncEngine]:
     )
 
 
-def _tenant_headers(tenant_id: UUID = TENANT_ID) -> dict[str, str]:
-    return {"X-Tenant-Id": str(tenant_id)}
+def _tenant_headers() -> dict[str, str]:
+    return {}
 
 
 def _assert_error_response(
@@ -218,7 +390,7 @@ def _assert_error_response(
     }
 
 
-async def test_list_employee_leave_balances_returns_manual_placeholder_summaries() -> None:
+async def test_list_employee_leave_balances_returns_derived_ledger_balances() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get(
@@ -229,22 +401,26 @@ async def test_list_employee_leave_balances_returns_manual_placeholder_summaries
         assert response.status_code == 200
         body = response.json()
         assert [item["id"] for item in body] == [
-            str(ANNUAL_2026_ID),
-            str(SICK_2026_ID),
-            str(ANNUAL_2025_ID),
+            str(_leave_balance_id(TENANT_ID, EMPLOYEE_ID, "annual", 2026)),
+            str(_leave_balance_id(TENANT_ID, EMPLOYEE_ID, "sick", 2026)),
         ]
-        assert body[0] == {
-            "id": str(ANNUAL_2026_ID),
-            "employee_id": str(EMPLOYEE_ID),
-            "leave_type": "annual",
-            "period_year": 2026,
-            "opening_balance_days": 20.0,
-            "used_days": 5.0,
-            "planned_days": 2.0,
-            "remaining_days": 13.0,
-            "calculation_mode": "manual_placeholder",
-            "external_integration_enabled": False,
-        }
+        annual = body[0]
+        assert annual["employee_id"] == str(EMPLOYEE_ID)
+        assert annual["leave_type_id"] == str(_leave_type_id(TENANT_ID, "annual"))
+        assert annual["leave_type_code"] == "annual"
+        assert annual["leave_type_name"] == "Annual"
+        assert annual["leave_type"] == "annual"
+        assert annual["period_year"] == 2026
+        assert Decimal(str(annual["earned_days"])) == Decimal("20.00")
+        assert Decimal(str(annual["adjusted_days"])) == Decimal("0.00")
+        assert Decimal(str(annual["used_days"])) == Decimal("5.00")
+        assert Decimal(str(annual["planned_days"])) == Decimal("2.00")
+        assert Decimal(str(annual["available_days"])) == Decimal("13.00")
+        assert Decimal(str(annual["opening_balance_days"])) == Decimal("20.00")
+        assert Decimal(str(annual["remaining_days"])) == Decimal("13.00")
+        assert annual["negative_balance_allowed"] is False
+        assert annual["calculation_mode"] == "ledger"
+        assert annual["external_integration_enabled"] is False
         assert "tenant_id" not in body[0]
         assert str(OTHER_BALANCE_ID) not in {item["id"] for item in body}
     finally:
@@ -263,13 +439,17 @@ async def test_list_employee_leave_balances_filters_by_period_year() -> None:
 
         assert response.status_code == 200
         body = response.json()
-        assert [item["id"] for item in body] == [str(ANNUAL_2025_ID)]
+        assert [item["leave_type_code"] for item in body] == ["annual", "sick"]
+        assert Decimal(str(body[0]["earned_days"])) == Decimal("10.00")
+        assert Decimal(str(body[0]["used_days"])) == Decimal("4.00")
+        assert Decimal(str(body[0]["available_days"])) == Decimal("6.00")
+        assert Decimal(str(body[1]["available_days"])) == Decimal("0.00")
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_list_employee_leave_balances_does_not_synthesize_rows_from_leave_requests() -> None:
+async def test_list_employee_leave_balances_does_not_derive_usage_from_request_rows() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get(
@@ -278,7 +458,15 @@ async def test_list_employee_leave_balances_does_not_synthesize_rows_from_leave_
         )
 
         assert response.status_code == 200
-        assert response.json() == []
+        body = response.json()
+        assert [item["leave_type_code"] for item in body] == ["annual", "sick"]
+        assert all(
+            Decimal(str(item["earned_days"])) == Decimal("0.00")
+            and Decimal(str(item["used_days"])) == Decimal("0.00")
+            and Decimal(str(item["planned_days"])) == Decimal("0.00")
+            and Decimal(str(item["available_days"])) == Decimal("0.00")
+            for item in body
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -295,8 +483,8 @@ async def test_list_employee_leave_balances_rejects_cross_tenant_employee() -> N
         _assert_error_response(
             response,
             status_code=404,
-            code="employee_not_found",
-            message="Employee not found",
+            code="leave_not_found",
+            message="The leave resource was not found",
         )
     finally:
         await client.aclose()
@@ -350,46 +538,39 @@ async def test_leave_balance_path_validation_uses_standard_error_envelope() -> N
         await engine.dispose()
 
 
-async def test_leave_balance_routes_require_tenant_header() -> None:
+async def test_leave_balance_routes_use_authenticated_tenant_without_header() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get(
             f"/api/v1/employees/{EMPLOYEE_ID}/leave-balances",
             headers={"X-Correlation-Id": "w4a6-leave-balance-tenant"},
-            params={"period_year": 1800},
+            params={"period_year": 2026},
         )
 
-        _assert_error_response(
-            response,
-            status_code=400,
-            code="tenant_header_missing",
-            message="X-Tenant-Id header is required",
-            correlation_id="w4a6-leave-balance-tenant",
-        )
+        assert response.status_code == 200
+        assert [item["leave_type_code"] for item in response.json()] == [
+            "annual",
+            "sick",
+        ]
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_leave_balance_routes_reject_invalid_tenant_header_before_query_validation() -> None:
+async def test_leave_balance_routes_ignore_spoofed_tenant_header() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get(
             f"/api/v1/employees/{EMPLOYEE_ID}/leave-balances",
             headers={
-                "X-Tenant-Id": f"urn:uuid:{TENANT_ID}",
+                "X-Tenant-Id": str(OTHER_TENANT_ID),
                 "X-Correlation-Id": "w4b4-leave-balance-tenant-invalid",
             },
-            params={"period_year": 1800},
+            params={"period_year": 2026},
         )
 
-        _assert_error_response(
-            response,
-            status_code=400,
-            code="tenant_header_invalid",
-            message="X-Tenant-Id header must be a single canonical hyphenated UUID",
-            correlation_id="w4b4-leave-balance-tenant-invalid",
-        )
+        assert response.status_code == 200
+        assert all(item["employee_id"] == str(EMPLOYEE_ID) for item in response.json())
     finally:
         await client.aclose()
         await engine.dispose()
@@ -412,7 +593,7 @@ async def test_leave_balance_route_is_exposed_in_openapi() -> None:
         await engine.dispose()
 
 
-async def test_employee_archive_hides_but_preserves_leave_balance_history() -> None:
+async def test_employee_archive_preserves_leave_balance_and_ledger_history() -> None:
     client, engine = await _client_with_database()
     try:
         archive_response = await client.delete(
@@ -425,24 +606,23 @@ async def test_employee_archive_hides_but_preserves_leave_balance_history() -> N
         )
 
         assert archive_response.status_code == 204
-        _assert_error_response(
-            balance_response,
-            status_code=404,
-            code="employee_not_found",
-            message="Employee not found",
-        )
+        assert balance_response.status_code == 200
+        assert [item["leave_type_code"] for item in balance_response.json()] == [
+            "annual",
+            "sick",
+        ]
 
         async with AsyncSession(engine, expire_on_commit=False) as session:
             employee = await session.get(Employee, EMPLOYEE_ID)
             balance_count = await session.scalar(
                 select(func.count())
-                .select_from(LeaveBalanceSummary)
-                .where(LeaveBalanceSummary.tenant_id == TENANT_ID)
-                .where(LeaveBalanceSummary.employee_id == EMPLOYEE_ID)
+                .select_from(LeaveBalanceLedger)
+                .where(LeaveBalanceLedger.tenant_id == TENANT_ID)
+                .where(LeaveBalanceLedger.employee_id == EMPLOYEE_ID)
             )
         assert employee is not None
         assert employee.archived_at is not None
-        assert balance_count == 3
+        assert balance_count == 8
     finally:
         await client.aclose()
         await engine.dispose()

@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     false,
+    func,
     text,
     true,
 )
@@ -561,7 +562,7 @@ class OutboxEvent(Base):
     source_key: Mapped[str] = mapped_column(String(160), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

@@ -197,8 +197,7 @@ async def test_tenant_admin_reads_only_tenant_role_and_permission_catalogs() -> 
             "permission:read:tenant",
         } <= set(tenant_admin["permissions"])
         assert not any(
-            permission.startswith(("employee:", "leave:"))
-            or permission.endswith(":platform")
+            permission.startswith(("employee:", "leave:")) or permission.endswith(":platform")
             for permission in tenant_admin["permissions"]
         )
 
@@ -213,11 +212,17 @@ async def test_tenant_admin_reads_only_tenant_role_and_permission_catalogs() -> 
         assert permissions_response.headers["Cache-Control"] == "no-store"
         permissions = permissions_response.json()["data"]
         assert {permission["code"] for permission in permissions} == {
-            permission.code
-            for permission in PERMISSIONS
-            if permission.name.target != "platform"
+            permission.code for permission in PERMISSIONS if permission.name.target != "platform"
         }
         assert all(permission["scope"] != "platform" for permission in permissions)
+        field_permission = next(
+            permission
+            for permission in permissions
+            if permission["code"] == "report_field:read:work_email"
+        )
+        assert field_permission["target_type"] == "field"
+        assert field_permission["target"] == "work_email"
+        assert field_permission["scope"] is None
 
 
 async def test_reinvitation_preserves_an_exact_role_replacement() -> None:
@@ -243,9 +248,7 @@ async def test_reinvitation_preserves_an_exact_role_replacement() -> None:
             json={"role_ids": [str(ROLES_BY_CODE["auditor"].id)]},
         )
         assert replaced.status_code == 200
-        assert [role["code"] for role in replaced.json()["data"]["roles"]] == [
-            "auditor"
-        ]
+        assert [role["code"] for role in replaced.json()["data"]["roles"]] == ["auditor"]
 
         reinvited = await harness.client.post(
             "/api/v1/users/invitations",
@@ -313,9 +316,7 @@ async def test_role_replacement_is_exact_idempotent_isolated_and_invalidates_acc
                 json={"role_ids": [str(tenant_admin_role_id)]},
             )
             assert idempotent.status_code == 200
-            assert [role["code"] for role in idempotent.json()["data"]["roles"]] == [
-                "tenant_admin"
-            ]
+            assert [role["code"] for role in idempotent.json()["data"]["roles"]] == ["tenant_admin"]
             assert idempotent.json()["data"]["permission_version"] == 2
 
             async with harness.session_factory() as session:
@@ -361,6 +362,4 @@ async def test_role_replacement_is_exact_idempotent_isolated_and_invalidates_acc
             assert refreshed_me.json()["data"]["user"] == refreshed_user
 
             # Exact replacement deactivated rather than retained the previous employee role.
-            assert employee_role_id not in {
-                role.id for role in employee_authorization.roles
-            }
+            assert employee_role_id not in {role.id for role in employee_authorization.roles}

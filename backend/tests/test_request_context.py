@@ -178,17 +178,21 @@ def test_worker_serialization_is_tenant_required_and_strictly_allowlisted() -> N
         ),
     )
 
-    assert scoped.serialize_for_worker() == scoped.to_worker_context() == {
-        "request_id": REQUEST_ID,
-        "trace_id": TRACE_ID,
-        "tenant_id": str(TENANT_ID),
-        "actor_id": str(ACTOR_ID),
-        "membership_id": str(MEMBERSHIP_ID),
-        "session_id": str(SESSION_ID),
-        "authentication_strength": "single_factor",
-        "support_session_id": str(SUPPORT_SESSION_ID),
-        "support_operator_actor_id": str(SUPPORT_OPERATOR_ID),
-    }
+    assert (
+        scoped.serialize_for_worker()
+        == scoped.to_worker_context()
+        == {
+            "request_id": REQUEST_ID,
+            "trace_id": TRACE_ID,
+            "tenant_id": str(TENANT_ID),
+            "actor_id": str(ACTOR_ID),
+            "membership_id": str(MEMBERSHIP_ID),
+            "session_id": str(SESSION_ID),
+            "authentication_strength": "single_factor",
+            "support_session_id": str(SUPPORT_SESSION_ID),
+            "support_operator_actor_id": str(SUPPORT_OPERATOR_ID),
+        }
+    )
     assert "never-serialized" not in repr(scoped.serialize_for_worker())
 
 

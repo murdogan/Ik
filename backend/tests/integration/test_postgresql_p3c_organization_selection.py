@@ -222,21 +222,15 @@ async def _seed_multi_membership_selection(
         (TENANT_B_ID, USER_B_ID),
     ):
         async with engine.begin() as connection:
-            await connection.exec_driver_sql(
-                f'SET LOCAL ROLE "{TENANT_APPLICATION_ROLE}"'
-            )
-            await connection.exec_driver_sql(
-                f"SET LOCAL app.tenant_id = '{tenant_id}'"
-            )
+            await connection.exec_driver_sql(f'SET LOCAL ROLE "{TENANT_APPLICATION_ROLE}"')
+            await connection.exec_driver_sql(f"SET LOCAL app.tenant_id = '{tenant_id}'")
             await connection.execute(
                 text("select public.sync_current_tenant_identity_membership(:user_id)"),
                 {"user_id": user_id},
             )
 
     async with engine.begin() as connection:
-        await connection.exec_driver_sql(
-            f'SET LOCAL ROLE "{AUTHENTICATION_APPLICATION_ROLE}"'
-        )
+        await connection.exec_driver_sql(f'SET LOCAL ROLE "{AUTHENTICATION_APPLICATION_ROLE}"')
         await connection.execute(
             text(
                 "insert into organization_selection_transactions ("

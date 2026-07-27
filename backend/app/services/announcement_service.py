@@ -441,12 +441,9 @@ class AnnouncementService:
         return AnnouncementTargetOptionsRead(
             roles=[AnnouncementTargetOption(id=item.id, label=item.name) for item in roles],
             departments=[
-                AnnouncementTargetOption(id=item.id, label=item.name)
-                for item in departments
+                AnnouncementTargetOption(id=item.id, label=item.name) for item in departments
             ],
-            branches=[
-                AnnouncementTargetOption(id=item.id, label=item.name) for item in branches
-            ],
+            branches=[AnnouncementTargetOption(id=item.id, label=item.name) for item in branches],
         )
 
     async def mark_read(
@@ -458,9 +455,7 @@ class AnnouncementService:
     ) -> AnnouncementDetailRead:
         tenant_id, actor_id = _tenant_actor(request_context)
         await self._require_feature(tenant_id)
-        announcement, recipient = await self._locked_recipient(
-            tenant_id, actor_id, announcement_id
-        )
+        announcement, recipient = await self._locked_recipient(tenant_id, actor_id, announcement_id)
         if recipient.read_at is None:
             if recipient.version != expected_version:
                 raise Phase7VersionConflictError
@@ -477,9 +472,7 @@ class AnnouncementService:
     ) -> AnnouncementDetailRead:
         tenant_id, actor_id = _tenant_actor(request_context)
         await self._require_feature(tenant_id)
-        announcement, recipient = await self._locked_recipient(
-            tenant_id, actor_id, announcement_id
-        )
+        announcement, recipient = await self._locked_recipient(tenant_id, actor_id, announcement_id)
         if not announcement.is_critical:
             raise Phase7ConflictError
         if recipient.acknowledged_at is None:
@@ -659,9 +652,7 @@ class AnnouncementService:
             branch_ids=branch_ids,
         )
 
-    async def _recipient_ids(
-        self, tenant_id: UUID, targets: AnnouncementTargets
-    ) -> list[UUID]:
+    async def _recipient_ids(self, tenant_id: UUID, targets: AnnouncementTargets) -> list[UUID]:
         today = date.today()
         statement = (
             select(User.id)
@@ -734,9 +725,7 @@ class AnnouncementService:
         if targets.branch_ids:
             statement = statement.where(
                 exists(
-                    employee_assignment.where(
-                        EmployeeAssignment.branch_id.in_(targets.branch_ids)
-                    )
+                    employee_assignment.where(EmployeeAssignment.branch_id.in_(targets.branch_ids))
                 )
             )
         return list(
@@ -773,14 +762,10 @@ class AnnouncementService:
             status=announcement.status,
             version=recipient.version if recipient is not None else announcement.version,
             published_at=(
-                _aware(announcement.published_at)
-                if announcement.published_at is not None
-                else None
+                _aware(announcement.published_at) if announcement.published_at is not None else None
             ),
             archived_at=(
-                _aware(announcement.archived_at)
-                if announcement.archived_at is not None
-                else None
+                _aware(announcement.archived_at) if announcement.archived_at is not None else None
             ),
             read_at=(
                 _aware(recipient.read_at)

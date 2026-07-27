@@ -1,5 +1,7 @@
 import { expect, test, type Route } from "@playwright/test";
 
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const tenant = {
   slug: "wealthy-falcon-demo",
   name: "Wealthy Falcon HR Demo",
@@ -282,6 +284,15 @@ test("HR creates and effective-dates a structural employee assignment", async ({
         status: 200,
         contentType: "application/json",
         body: envelope({ user: hrUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
       });
       return;
     }
@@ -603,6 +614,14 @@ test("manager dashboard renders only the team derived by teams me", async ({
         status: 200,
         contentType: "application/json",
         body: envelope({ user: managerUser }),
+      });
+      return;
+    }
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
       });
       return;
     }

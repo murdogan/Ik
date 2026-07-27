@@ -409,15 +409,10 @@ async def _assert_tenant_isolation(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await _set_local_tenant_role(connection, TENANT_A_ID)
         assert tuple(
-            await connection.scalars(
-                text("select id from employee_assignments order by id")
-            )
+            await connection.scalars(text("select id from employee_assignments order by id"))
         ) == (ASSIGNMENT_A_ID,)
         cross_tenant_update = await connection.execute(
-            text(
-                "update employee_assignments set effective_to = DATE '2026-08-01' "
-                "where id = :id"
-            ),
+            text("update employee_assignments set effective_to = DATE '2026-08-01' where id = :id"),
             {"id": ASSIGNMENT_B_ID},
         )
         assert cross_tenant_update.rowcount == 0
@@ -425,9 +420,7 @@ async def _assert_tenant_isolation(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await _set_local_tenant_role(connection, TENANT_B_ID)
         assert tuple(
-            await connection.scalars(
-                text("select id from employee_assignments order by id")
-            )
+            await connection.scalars(text("select id from employee_assignments order by id"))
         ) == (ASSIGNMENT_B_ID,)
 
 
@@ -537,8 +530,7 @@ async def _assert_terminated_history_bootstrap_is_owner_only(
         stored_interval = (
             await connection.execute(
                 text(
-                    "select effective_from, effective_to "
-                    "from employee_assignments where id = :id"
+                    "select effective_from, effective_to from employee_assignments where id = :id"
                 ),
                 {"id": TERMINATED_ASSIGNMENT_A_ID},
             )
@@ -566,10 +558,7 @@ async def _assert_history_is_immutable(engine: AsyncEngine) -> None:
     with pytest.raises(DBAPIError) as owner_structural_mutation:
         async with engine.begin() as connection:
             await connection.execute(
-                text(
-                    "update employee_assignments set position_id = :position_id "
-                    "where id = :id"
-                ),
+                text("update employee_assignments set position_id = :position_id where id = :id"),
                 {
                     "id": ASSIGNMENT_A_ID,
                     "position_id": ARCHIVED_POSITION_A_ID,
@@ -584,10 +573,7 @@ async def _assert_history_is_immutable(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await _set_local_tenant_role(connection, TENANT_A_ID)
         closed = await connection.execute(
-            text(
-                "update employee_assignments set effective_to = DATE '2026-08-01' "
-                "where id = :id"
-            ),
+            text("update employee_assignments set effective_to = DATE '2026-08-01' where id = :id"),
             {"id": ASSIGNMENT_A_ID},
         )
         assert closed.rowcount == 1
@@ -626,8 +612,7 @@ async def _table_privileges(
     ):
         if await connection.scalar(
             text(
-                "select has_table_privilege("
-                ":role_name, 'public.employee_assignments', :privilege)"
+                "select has_table_privilege(:role_name, 'public.employee_assignments', :privilege)"
             ),
             {"role_name": role_name, "privilege": privilege},
         ):

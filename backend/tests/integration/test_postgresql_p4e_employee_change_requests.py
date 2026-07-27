@@ -14,11 +14,18 @@ from app.platform.db.tenant_access import (
     AUTHENTICATION_APPLICATION_ROLE,
     PLATFORM_APPLICATION_ROLE,
     TENANT_APPLICATION_ROLE,
+    configure_tenant_database_access,
 )
+from app.services.employee_service import EmployeeService
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
 
 pytestmark = pytest.mark.postgres
@@ -229,6 +236,15 @@ def test_p4e_postgresql_submit_and_transition_races_have_one_winner(
 ) -> None:
     _prepare_populated_database(postgres_database_url)
     asyncio.run(_assert_races(postgres_database_url))
+
+
+def test_p11_postgresql_archive_serializes_with_own_profile_submission(
+    postgres_database_url: URL,
+) -> None:
+    config = _prepare_populated_database(postgres_database_url)
+    alembic_command.upgrade(config, "head")
+
+    asyncio.run(_assert_canonical_archive_submit_serialization(postgres_database_url))
 
 
 def test_p4e_postgresql_downgrade_refuses_history_without_collateral_damage(
@@ -1984,6 +2000,173 @@ async def _assert_races(database_url: URL) -> None:
             )
             == "cancelled"
         )
+
+
+async def _assert_canonical_archive_submit_serialization(database_url: URL) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    coordinator_connection = await engine.connect()
+    coordinator_transaction = await coordinator_connection.begin()
+    archive_task: asyncio.Task[bool] | None = None
+    submit_task: asyncio.Task[str] | None = None
+    try:
+        await coordinator_connection.execute(
+            text(
+                "update employees set status = 'terminated', "
+                "employment_end_date = DATE '2026-07-27', "
+                "termination_reason = 'contract_end' "
+                "where tenant_id = :tenant_id and id = :employee_id"
+            ),
+            {"tenant_id": TENANT_A_ID, "employee_id": EMPLOYEE_A_ID},
+        )
+        await coordinator_transaction.commit()
+
+        coordinator_transaction = await coordinator_connection.begin()
+        assert (
+            await coordinator_connection.scalar(
+                text(
+                    "select id from employee_profiles "
+                    "where tenant_id = :tenant_id and employee_id = :employee_id "
+                    "for update"
+                ),
+                {"tenant_id": TENANT_A_ID, "employee_id": EMPLOYEE_A_ID},
+            )
+            == PROFILE_A_ID
+        )
+
+        archive_backend_pid: asyncio.Queue[int] = asyncio.Queue(maxsize=1)
+
+        async def archive_after_profile_lock() -> bool:
+            async with session_factory() as session:
+                configure_tenant_database_access(
+                    session,
+                    TENANT_A_ID,
+                    actor_id=HR_A_USER_ID,
+                    membership_id=HR_A_MEMBERSHIP_ID,
+                )
+                async with session.begin():
+                    await archive_backend_pid.put(
+                        int(await session.scalar(text("select pg_backend_pid()")))
+                    )
+                    mutation = await EmployeeService(session).archive_employee(
+                        TENANT_A_ID,
+                        EMPLOYEE_A_ID,
+                    )
+                    return mutation.archived
+
+        archive_task = asyncio.create_task(archive_after_profile_lock())
+        queued_archive_pid = await asyncio.wait_for(archive_backend_pid.get(), timeout=5)
+        async with engine.connect() as monitor_connection:
+            assert await _wait_for_backend_lock(
+                monitor_connection,
+                backend_pid=queued_archive_pid,
+                task=archive_task,
+            ), "archive did not queue behind the coordinator's personal-profile lock"
+
+        request_id = uuid4()
+        submit_backend_pid: asyncio.Queue[int] = asyncio.Queue(maxsize=1)
+
+        async def submit_after_profile_lock() -> str:
+            async with engine.begin() as connection:
+                await _bind_database_command(
+                    connection,
+                    tenant_id=TENANT_A_ID,
+                    actor_id=EMPLOYEE_A_USER_ID,
+                    membership_id=EMPLOYEE_A_MEMBERSHIP_ID,
+                    intent="p4e_submit",
+                    target_id=request_id,
+                )
+                await submit_backend_pid.put(
+                    int(await connection.scalar(text("select pg_backend_pid()")))
+                )
+                await _set_local_role(connection, TENANT_APPLICATION_ROLE)
+                return str(
+                    await connection.scalar(
+                        SUBMIT_SQL,
+                        {
+                            "request_id": request_id,
+                            "preferred_changed": True,
+                            "preferred_value": "Archive Race",
+                            "phone_changed": False,
+                            "phone_value": None,
+                            "birth_changed": False,
+                            "birth_value": None,
+                        },
+                    )
+                )
+
+        submit_task = asyncio.create_task(submit_after_profile_lock())
+        queued_submit_pid = await asyncio.wait_for(submit_backend_pid.get(), timeout=5)
+        async with engine.connect() as monitor_connection:
+            assert await _wait_for_backend_lock(
+                monitor_connection,
+                backend_pid=queued_submit_pid,
+                task=submit_task,
+            ), "profile submission did not queue behind the coordinator's personal-profile lock"
+
+        await coordinator_transaction.commit()
+
+        assert await asyncio.wait_for(archive_task, timeout=5) is True
+        assert await asyncio.wait_for(submit_task, timeout=5) == "active_request_exists"
+
+        async with engine.connect() as verification_connection:
+            employee_is_archived = await verification_connection.scalar(
+                text(
+                    "select archived_at is not null from employees "
+                    "where tenant_id = :tenant_id and id = :employee_id"
+                ),
+                {"tenant_id": TENANT_A_ID, "employee_id": EMPLOYEE_A_ID},
+            )
+            request_count = await verification_connection.scalar(
+                text(
+                    "select count(*) from employee_profile_change_requests where id = :request_id"
+                ),
+                {"request_id": request_id},
+            )
+            audit_count = await verification_connection.scalar(
+                text(
+                    "select count(*) from audit_events "
+                    "where resource_type = 'employee_profile_change_request' "
+                    "and resource_id = :request_id"
+                ),
+                {"request_id": request_id},
+            )
+        assert employee_is_archived is True
+        assert int(request_count) == 0
+        assert int(audit_count) == 0
+    finally:
+        if coordinator_transaction.is_active:
+            await coordinator_transaction.rollback()
+        for task in (archive_task, submit_task):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (archive_task, submit_task) if task is not None),
+            return_exceptions=True,
+        )
+        await coordinator_connection.close()
+        await engine.dispose()
+
+
+async def _wait_for_backend_lock(
+    monitor_connection: AsyncConnection,
+    *,
+    backend_pid: int,
+    task: asyncio.Task[object],
+) -> bool:
+    for _ in range(100):
+        if task.done():
+            return False
+        wait_event_type = await monitor_connection.scalar(
+            text(
+                "select wait_event_type from pg_catalog.pg_stat_activity where pid = :backend_pid"
+            ),
+            {"backend_pid": backend_pid},
+        )
+        if wait_event_type == "Lock":
+            return True
+        await asyncio.sleep(0.02)
+    return False
 
 
 async def _race_submits(

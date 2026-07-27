@@ -9,7 +9,12 @@ from uuid import UUID, uuid4
 
 import pytest
 from app.api.auth_dependencies import get_password_recovery_service
-from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, AuthRuntime
+from app.core.auth_runtime import (
+    AUTH_RUNTIME_STATE_KEY,
+    AuthRuntime,
+    RefreshCookiePolicy,
+    create_auth_runtime,
+)
 from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
@@ -616,9 +621,7 @@ async def test_multi_membership_selection_binds_session_and_rejects_replay_or_wr
                 await session.scalars(
                     select(AuditEvent).where(
                         AuditEvent.session_id == principal.session_family_id,
-                        AuditEvent.event_type.in_(
-                            ("auth.login.succeeded", "session.started")
-                        ),
+                        AuditEvent.event_type.in_(("auth.login.succeeded", "session.started")),
                     )
                 )
             )
@@ -1809,20 +1812,27 @@ async def test_cross_site_refresh_is_rejected_without_consuming_cookie() -> None
 
 
 async def test_staging_refresh_cookie_forces_secure_host_only_policy() -> None:
-    async with _auth_api(
-        environment="staging",
-        frontend_base_url="https://staging.wealthy-falcon.test",
-    ) as harness:
-        _access_token, response = await _login(
-            harness.client,
-            email=ADMIN_EMAIL,
-            password=ADMIN_PASSWORD,
+    runtime = create_auth_runtime(
+        Settings(
+            _env_file=None,
+            environment="staging",
+            database_url="sqlite+aiosqlite:///:memory:",
+            auth_signing_key="f2a-test-signing-key-material-that-is-not-a-real-secret",
+            frontend_base_url="https://staging.wealthy-falcon.test",
+            release_commit_sha="a" * 40,
+            release_build_timestamp=datetime(2026, 7, 27, tzinfo=UTC),
         )
+    )
 
-        set_cookie = response.headers["set-cookie"]
-        assert set_cookie.startswith("__Host-wf_refresh=")
-        assert "HttpOnly" in set_cookie
-        assert "Secure" in set_cookie
-        assert "SameSite=lax" in set_cookie
-        assert "Path=/" in set_cookie
-        assert "Domain=" not in set_cookie
+    assert runtime.refresh_cookie == RefreshCookiePolicy(
+        name="__Host-wf_refresh",
+        secure=True,
+        path="/",
+        same_site="lax",
+    )
+    assert runtime.platform_refresh_cookie == RefreshCookiePolicy(
+        name="__Host-wf_platform_refresh",
+        secure=True,
+        path="/",
+        same_site="lax",
+    )

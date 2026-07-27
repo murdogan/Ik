@@ -71,12 +71,14 @@ class PlatformEventContract:
     visibility_class: PlatformEventVisibilityClass
 
 
-_CLOSED_EVENT_IDENTITIES = frozenset({
-    ("app.modules.core.application.events", "TenantCreatedEvent"),
-    ("app.modules.core.application.events", "TenantStatusChangedEvent"),
-    ("app.modules.core.application.events", "TenantSettingChangedEvent"),
-    ("app.modules.core.application.events", "FeatureFlagChangedEvent"),
-})
+_CLOSED_EVENT_IDENTITIES = frozenset(
+    {
+        ("app.modules.core.application.events", "TenantCreatedEvent"),
+        ("app.modules.core.application.events", "TenantStatusChangedEvent"),
+        ("app.modules.core.application.events", "TenantSettingChangedEvent"),
+        ("app.modules.core.application.events", "FeatureFlagChangedEvent"),
+    }
+)
 _registered_event_types: dict[
     tuple[str, str],
     type[PlatformEventContract],

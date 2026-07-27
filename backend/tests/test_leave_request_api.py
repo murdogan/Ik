@@ -1,37 +1,42 @@
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from app.api.auth_dependencies import require_authenticated_session
-from app.api.dependencies import (
-    get_authenticated_tenant_request_context,
-    get_phase0_tenant_request_context,
-)
-from app.api.leave_requests import (
-    get_leave_request_command_handler,
-    get_leave_request_service,
-)
+from app.api.dependencies import get_authenticated_tenant_request_context
+from app.api.leave import get_leave_command_handler, get_leave_service
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
 from app.models.command_idempotency import CommandIdempotency
+from app.models.department import Department, DepartmentStatus
 from app.models.employee import Employee, EmployeeStatus
+from app.models.employee_account_link import EmployeeAccountLink
+from app.models.employee_assignment import EmployeeAssignment
+from app.models.identity import (
+    Identity,
+    IdentityStatus,
+    MembershipStatus,
+    TenantMembership,
+)
+from app.models.leave import LeavePolicy, LeaveType
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
+from app.models.organization import Branch, BranchStatus, LegalEntity, LegalEntityStatus
+from app.models.position import Position, PositionStatus
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.db import PersistenceConcurrencyError, PersistenceIntegrityError
-from app.schemas.leave_request import LEAVE_REQUEST_LIST_DEFAULT_LIMIT
-from app.services.leave_request_service import (
-    LeaveRequestNotFoundError,
-    LeaveRequestService,
-    LeaveRequestUserNotFoundError,
-)
+from app.platform.request_context import AuthenticationStrength, RequestContext
+from app.platform.tenancy import TenantContext
+from app.schemas.leave import LEAVE_LIST_DEFAULT_LIMIT
+from app.services.leave_service import LeaveNotFoundError, LeaveService
 from fastapi import Depends
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -53,6 +58,65 @@ APPROVED_REQUEST_ID = UUID("bbbbbbbb-2222-4bbb-8bbb-bbbbbbbb2222")
 REJECTED_REQUEST_ID = UUID("cccccccc-4444-4ccc-8ccc-cccccccc4444")
 OTHER_REQUEST_ID = UUID("dddddddd-3333-4ddd-8ddd-dddddddd3333")
 NOW = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+LEAVE_FIXTURE_NAMESPACE = UUID("a1000000-0000-4000-8000-000000000004")
+ACCOUNT_LINK_ID = UUID("a7000000-0000-4000-8000-000000000001")
+BRANCH_ID = UUID("a7000000-0000-4000-8000-000000000002")
+DEPARTMENT_ID = UUID("a7000000-0000-4000-8000-000000000003")
+POSITION_ID = UUID("a7000000-0000-4000-8000-000000000004")
+ASSIGNMENT_ID = UUID("a7000000-0000-4000-8000-000000000005")
+LEAVE_PERMISSIONS = (
+    "leave:read:tenant",
+    "leave:manage:tenant",
+    "leave:create:own",
+    "leave:cancel:own",
+)
+
+
+def _leave_configuration(
+    tenant_id: UUID,
+    *codes: str,
+) -> list[LeaveType | LeavePolicy]:
+    rows: list[LeaveType | LeavePolicy] = []
+    for code in codes:
+        leave_type_id = _leave_type_id(tenant_id, code)
+        rows.extend(
+            (
+                LeaveType(
+                    id=leave_type_id,
+                    tenant_id=tenant_id,
+                    code=code,
+                    name=code.title(),
+                    description=None,
+                    is_active=True,
+                    version=1,
+                ),
+                LeavePolicy(
+                    id=_leave_policy_id(tenant_id, code),
+                    tenant_id=tenant_id,
+                    leave_type_id=leave_type_id,
+                    version=1,
+                    effective_from=date(1900, 1, 1),
+                    paid=False,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0.00"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=None,
+                    created_at=NOW,
+                ),
+            )
+        )
+    return rows
+
+
+def _leave_type_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-type:{tenant_id}:{code}")
+
+
+def _leave_policy_id(tenant_id: UUID, code: str) -> UUID:
+    return uuid5(LEAVE_FIXTURE_NAMESPACE, f"leave-policy:{tenant_id}:{code}:1")
 
 
 async def _client_with_database(
@@ -69,6 +133,15 @@ async def _client_with_database(
         poolclass=StaticPool,
         use_insertmanyvalues=False,
     )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def register_sqlite_now(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.create_function(
+            "now",
+            0,
+            lambda: NOW.isoformat(),
+        )
+
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
@@ -116,6 +189,22 @@ async def _client_with_database(
                 full_name="Other User",
                 status=UserStatus.ACTIVE.value,
             ),
+            Identity(
+                id=REQUESTING_USER_ID,
+                email="requester@wealthyfalcon.test",
+                status=IdentityStatus.ACTIVE.value,
+                password_hash="test-password-hash",
+                platform_permission_version=1,
+            ),
+            TenantMembership(
+                id=REQUESTING_USER_ID,
+                tenant_id=TENANT_ID,
+                identity_id=REQUESTING_USER_ID,
+                legacy_user_id=REQUESTING_USER_ID,
+                full_name="Requesting User",
+                status=MembershipStatus.ACTIVE.value,
+                permission_version=1,
+            ),
             Employee(
                 id=EMPLOYEE_ID,
                 tenant_id=TENANT_ID,
@@ -149,11 +238,79 @@ async def _client_with_database(
                 status=EmployeeStatus.ACTIVE.value,
                 employment_start_date=date(2026, 7, 1),
             ),
+            EmployeeAccountLink(
+                id=ACCOUNT_LINK_ID,
+                tenant_id=TENANT_ID,
+                employee_id=EMPLOYEE_ID,
+                membership_id=REQUESTING_USER_ID,
+                version=1,
+            ),
+            LegalEntity(
+                id=TENANT_ID,
+                tenant_id=TENANT_ID,
+                code="DEFAULT",
+                name="Wealthy Falcon HR",
+                registered_name="Wealthy Falcon HR",
+                country_code=None,
+                tax_number=None,
+                timezone="Europe/Istanbul",
+                status=LegalEntityStatus.ACTIVE.value,
+                is_default=True,
+            ),
+            Branch(
+                id=BRANCH_ID,
+                tenant_id=TENANT_ID,
+                legal_entity_id=TENANT_ID,
+                code="HQ",
+                name="Headquarters",
+                timezone="Europe/Istanbul",
+                country_code=None,
+                city=None,
+                address=None,
+                status=BranchStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Department(
+                id=DEPARTMENT_ID,
+                tenant_id=TENANT_ID,
+                parent_id=None,
+                code="PEOPLE",
+                name="People",
+                status=DepartmentStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            Position(
+                id=POSITION_ID,
+                tenant_id=TENANT_ID,
+                code="HR",
+                title="HR Specialist",
+                status=PositionStatus.ACTIVE.value,
+                archived_at=None,
+            ),
+            EmployeeAssignment(
+                id=ASSIGNMENT_ID,
+                tenant_id=TENANT_ID,
+                employee_id=EMPLOYEE_ID,
+                legal_entity_id=TENANT_ID,
+                branch_id=BRANCH_ID,
+                department_id=DEPARTMENT_ID,
+                position_id=POSITION_ID,
+                manager_user_id=APPROVER_USER_ID,
+                supersedes_assignment_id=None,
+                effective_from=date(2026, 7, 1),
+                effective_to=None,
+                change_reason="Leave API fixture assignment",
+                created_by_user_id=None,
+            ),
+            *_leave_configuration(TENANT_ID, "annual", "sick"),
+            *_leave_configuration(OTHER_TENANT_ID, "annual"),
             LeaveRequest(
                 id=PENDING_REQUEST_ID,
                 tenant_id=TENANT_ID,
                 employee_id=EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=date(2026, 7, 20),
                 end_date=date(2026, 7, 22),
                 status=LeaveRequestStatus.PENDING.value,
@@ -165,11 +322,14 @@ async def _client_with_database(
                 tenant_id=TENANT_ID,
                 employee_id=EMPLOYEE_ID,
                 leave_type="sick",
+                leave_type_id=_leave_type_id(TENANT_ID, "sick"),
+                policy_id=_leave_policy_id(TENANT_ID, "sick"),
                 start_date=date(2026, 7, 10),
                 end_date=date(2026, 7, 10),
                 status=LeaveRequestStatus.APPROVED.value,
                 requested_by_user_id=REQUESTING_USER_ID,
                 decided_by_user_id=APPROVER_USER_ID,
+                decided_at=NOW - timedelta(hours=1, minutes=30),
                 created_at=NOW - timedelta(hours=2),
             ),
             LeaveRequest(
@@ -177,12 +337,15 @@ async def _client_with_database(
                 tenant_id=TENANT_ID,
                 employee_id=SECOND_EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=date(2026, 7, 25),
                 end_date=date(2026, 7, 26),
                 status=LeaveRequestStatus.REJECTED.value,
                 requested_by_user_id=REQUESTING_USER_ID,
                 decided_by_user_id=APPROVER_USER_ID,
                 decision_note="Coverage conflict",
+                decided_at=NOW - timedelta(minutes=15),
                 created_at=NOW - timedelta(minutes=30),
             ),
             LeaveRequest(
@@ -190,6 +353,8 @@ async def _client_with_database(
                 tenant_id=OTHER_TENANT_ID,
                 employee_id=OTHER_EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(OTHER_TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(OTHER_TENANT_ID, "annual"),
                 start_date=date(2026, 7, 20),
                 end_date=date(2026, 7, 22),
                 status=LeaveRequestStatus.PENDING.value,
@@ -203,6 +368,8 @@ async def _client_with_database(
                 tenant_id=TENANT_ID,
                 employee_id=EMPLOYEE_ID,
                 leave_type="annual",
+                leave_type_id=_leave_type_id(TENANT_ID, "annual"),
+                policy_id=_leave_policy_id(TENANT_ID, "annual"),
                 start_date=date(2026, 8, 1) + timedelta(days=index),
                 end_date=date(2026, 8, 1) + timedelta(days=index),
                 status=LeaveRequestStatus.PENDING.value,
@@ -221,10 +388,10 @@ async def _client_with_database(
     app = create_app()
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_authenticated_tenant_request_context] = (
-        get_phase0_tenant_request_context
+        _authenticated_tenant_context
     )
     app.dependency_overrides[require_authenticated_session] = lambda: SimpleNamespace(
-        user=SimpleNamespace(permissions=("leave:read:tenant", "leave:manage:tenant"))
+        user=SimpleNamespace(permissions=LEAVE_PERMISSIONS)
     )
     app.dependency_overrides.update(dependency_overrides or {})
 
@@ -237,8 +404,22 @@ async def _client_with_database(
     )
 
 
-def _tenant_headers(tenant_id: UUID = TENANT_ID) -> dict[str, str]:
-    return {"X-Tenant-Id": str(tenant_id)}
+def _authenticated_tenant_context() -> RequestContext:
+    return RequestContext(
+        request_id="leave-request-api-test",
+        trace_id="c4000000000040008000000000000001",
+        tenant=TenantContext(
+            tenant_id=TENANT_ID,
+            slug="wealthy-falcon",
+        ),
+        actor_id=REQUESTING_USER_ID,
+        membership_id=REQUESTING_USER_ID,
+        authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
+    )
+
+
+def _tenant_headers() -> dict[str, str]:
+    return {}
 
 
 def _assert_error_response(
@@ -260,42 +441,38 @@ def _assert_error_response(
     }
 
 
-def _create_payload(
-    employee_id: UUID = EMPLOYEE_ID,
-    requested_by_user_id: UUID = REQUESTING_USER_ID,
-) -> dict[str, str]:
+def _create_payload() -> dict[str, str]:
     return {
-        "employee_id": str(employee_id),
-        "leave_type": "annual",
+        "leave_type_id": str(_leave_type_id(TENANT_ID, "annual")),
         "start_date": "2026-08-03",
         "end_date": "2026-08-07",
-        "requested_by_user_id": str(requested_by_user_id),
+        "employee_note": "Family trip",
     }
 
 
-def _decision_payload(decided_by_user_id: UUID = APPROVER_USER_ID) -> dict[str, str]:
+def _decision_payload() -> dict[str, object]:
     return {
-        "decided_by_user_id": str(decided_by_user_id),
+        "expected_version": 1,
         "decision_note": "Coverage is planned",
     }
 
 
-class _FailAfterFlushedApprovalService(LeaveRequestService):
-    async def approve_leave_request(self, *args, **kwargs):
-        await super().approve_leave_request(*args, **kwargs)
-        raise LeaveRequestUserNotFoundError
+class _FailAfterFlushedApprovalService(LeaveService):
+    async def decide_request(self, *args, **kwargs):
+        await super().decide_request(*args, **kwargs)
+        raise LeaveNotFoundError
 
 
 class _LeaveRequestNotFoundCommandHandler:
-    async def create_leave_request(self, *args, **kwargs):
-        raise LeaveRequestNotFoundError
+    async def create_request(self, *args, **kwargs):
+        raise LeaveNotFoundError
 
 
 class _FailingPersistenceCommandHandler:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    async def create_leave_request(self, *args, **kwargs):
+    async def create_request(self, *args, **kwargs):
         raise self.error
 
 
@@ -352,7 +529,7 @@ async def test_create_leave_request_rejects_client_controlled_status() -> None:
         await engine.dispose()
 
 
-async def test_leave_routes_prioritize_tenant_header_error_over_payload_validation() -> None:
+async def test_leave_routes_validate_payload_with_authenticated_tenant_context() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.post(
@@ -363,9 +540,9 @@ async def test_leave_routes_prioritize_tenant_header_error_over_payload_validati
 
         _assert_error_response(
             response,
-            status_code=400,
-            code="tenant_header_missing",
-            message="X-Tenant-Id header is required",
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
             correlation_id="w4a6-leave-tenant-first",
         )
     finally:
@@ -446,40 +623,44 @@ async def test_create_leave_request_rejects_numeric_leave_date() -> None:
         await engine.dispose()
 
 
-async def test_create_leave_request_rejects_cross_tenant_employee() -> None:
+async def test_create_leave_request_rejects_client_controlled_employee() -> None:
     client, engine = await _client_with_database()
     try:
+        payload = _create_payload()
+        payload["employee_id"] = str(OTHER_EMPLOYEE_ID)
         response = await client.post(
             "/api/v1/leave-requests",
             headers=_tenant_headers(),
-            json=_create_payload(employee_id=OTHER_EMPLOYEE_ID),
+            json=payload,
         )
 
         _assert_error_response(
             response,
-            status_code=404,
-            code="employee_not_found",
-            message="Employee not found",
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
         )
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_create_leave_request_rejects_cross_tenant_requesting_user() -> None:
+async def test_create_leave_request_rejects_client_controlled_requesting_user() -> None:
     client, engine = await _client_with_database()
     try:
+        payload = _create_payload()
+        payload["requested_by_user_id"] = str(OTHER_USER_ID)
         response = await client.post(
             "/api/v1/leave-requests",
             headers=_tenant_headers(),
-            json=_create_payload(requested_by_user_id=OTHER_USER_ID),
+            json=payload,
         )
 
         _assert_error_response(
             response,
-            status_code=404,
-            code="user_not_found",
-            message="User not found",
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
         )
     finally:
         await client.aclose()
@@ -575,13 +756,18 @@ async def test_list_leave_requests_rejects_invalid_cursor_and_cursor_offset_mix(
             },
         )
 
-        for response in (invalid_response, mixed_response):
-            _assert_error_response(
-                response,
-                status_code=422,
-                code="leave_request_validation_error",
-                message="Leave request validation failed",
-            )
+        _assert_error_response(
+            invalid_response,
+            status_code=422,
+            code="leave_validation_error",
+            message="The leave request cursor is invalid",
+        )
+        _assert_error_response(
+            mixed_response,
+            status_code=422,
+            code="leave_validation_error",
+            message="Cursor pagination requires offset=0",
+        )
     finally:
         await client.aclose()
         await engine.dispose()
@@ -609,7 +795,7 @@ async def test_list_leave_requests_uses_bounded_default_limit() -> None:
         response = await client.get("/api/v1/leave-requests", headers=_tenant_headers())
 
         assert response.status_code == 200
-        assert len(response.json()) == LEAVE_REQUEST_LIST_DEFAULT_LIMIT
+        assert len(response.json()) == LEAVE_LIST_DEFAULT_LIMIT
     finally:
         await client.aclose()
         await engine.dispose()
@@ -781,9 +967,7 @@ async def test_list_leave_requests_supports_single_sided_date_filters_within_ten
             str(REJECTED_REQUEST_ID),
             str(PENDING_REQUEST_ID),
         ]
-        assert str(OTHER_REQUEST_ID) not in {
-            item["id"] for item in open_start_response.json()
-        }
+        assert str(OTHER_REQUEST_ID) not in {item["id"] for item in open_start_response.json()}
         assert open_end_response.status_code == 200
         assert [item["id"] for item in open_end_response.json()] == [
             str(PENDING_REQUEST_ID),
@@ -807,8 +991,8 @@ async def test_list_leave_requests_rejects_invalid_filter_date_range() -> None:
         _assert_error_response(
             response,
             status_code=422,
-            code="leave_request_invalid_date_range",
-            message="Leave request end_date filter must be on or after start_date",
+            code="leave_validation_error",
+            message="The leave request filters are invalid",
         )
     finally:
         await client.aclose()
@@ -867,7 +1051,7 @@ async def test_approve_pending_leave_request() -> None:
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == LeaveRequestStatus.APPROVED.value
-        assert body["decided_by_user_id"] == str(APPROVER_USER_ID)
+        assert body["decided_by_user_id"] == str(REQUESTING_USER_ID)
         assert body["decision_note"] == "Coverage is planned"
 
         async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -875,7 +1059,7 @@ async def test_approve_pending_leave_request() -> None:
             persisted = await session.get(LeaveRequest, PENDING_REQUEST_ID)
         assert persisted is not None
         assert persisted.status == LeaveRequestStatus.APPROVED.value
-        assert persisted.decided_by_user_id == APPROVER_USER_ID
+        assert persisted.decided_by_user_id == REQUESTING_USER_ID
         assert persisted.decision_note == "Coverage is planned"
     finally:
         await client.aclose()
@@ -889,10 +1073,7 @@ async def test_decision_idempotency_replays_and_rejects_action_reuse() -> None:
         "X-Idempotency-Key": "leave-decision-retry-001",
         "X-Correlation-Id": "p0e-leave-decision-idempotency",
     }
-    payload = {
-        "decided_by_user_id": str(APPROVER_USER_ID),
-        "decision_note": "Stable decision",
-    }
+    payload = {"expected_version": 1, "decision_note": "Stable decision"}
     try:
         first_response = await client.post(
             f"/api/v1/leave-requests/{PENDING_REQUEST_ID}/approve",
@@ -917,9 +1098,7 @@ async def test_decision_idempotency_replays_and_rejects_action_reuse() -> None:
             mismatch_response,
             status_code=409,
             code="idempotency_key_mismatch",
-            message=(
-                "X-Idempotency-Key was already used for a different request in this tenant"
-            ),
+            message=("X-Idempotency-Key was already used for a different request in this tenant"),
             correlation_id="p0e-leave-decision-idempotency",
         )
 
@@ -929,10 +1108,7 @@ async def test_decision_idempotency_replays_and_rejects_action_reuse() -> None:
                 select(func.count())
                 .select_from(CommandIdempotency)
                 .where(CommandIdempotency.tenant_id == TENANT_ID)
-                .where(
-                    CommandIdempotency.idempotency_key
-                    == "leave-decision-retry-001"
-                )
+                .where(CommandIdempotency.idempotency_key == "leave-decision-retry-001")
             )
         assert persisted is not None
         assert persisted.status == LeaveRequestStatus.APPROVED.value
@@ -946,11 +1122,11 @@ async def test_decision_idempotency_replays_and_rejects_action_reuse() -> None:
 async def test_decision_command_rolls_back_flushed_mutation_after_typed_error() -> None:
     def override_service(
         session: Annotated[AsyncSession, Depends(get_session)],
-    ) -> LeaveRequestService:
+    ) -> LeaveService:
         return _FailAfterFlushedApprovalService(session)
 
     client, engine = await _client_with_database(
-        dependency_overrides={get_leave_request_service: override_service}
+        dependency_overrides={get_leave_service: override_service}
     )
     try:
         response = await client.post(
@@ -965,8 +1141,8 @@ async def test_decision_command_rolls_back_flushed_mutation_after_typed_error() 
         _assert_error_response(
             response,
             status_code=404,
-            code="user_not_found",
-            message="User not found",
+            code="leave_not_found",
+            message="The leave resource was not found",
             correlation_id="p0c-leave-rollback",
         )
         async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -984,7 +1160,7 @@ async def test_decision_command_rolls_back_flushed_mutation_after_typed_error() 
 async def test_central_error_mapper_handles_typed_command_error_for_any_write_route() -> None:
     handler = _LeaveRequestNotFoundCommandHandler()
     client, engine = await _client_with_database(
-        dependency_overrides={get_leave_request_command_handler: lambda: handler}
+        dependency_overrides={get_leave_command_handler: lambda: handler}
     )
     try:
         response = await client.post(
@@ -999,8 +1175,8 @@ async def test_central_error_mapper_handles_typed_command_error_for_any_write_ro
         _assert_error_response(
             response,
             status_code=404,
-            code="leave_request_not_found",
-            message="Leave request not found",
+            code="leave_not_found",
+            message="The leave resource was not found",
             correlation_id="p0c-leave-central-mapper",
         )
     finally:
@@ -1030,7 +1206,7 @@ async def test_central_error_mapper_safely_maps_persistence_command_errors(
 ) -> None:
     handler = _FailingPersistenceCommandHandler(error)
     client, engine = await _client_with_database(
-        dependency_overrides={get_leave_request_command_handler: lambda: handler}
+        dependency_overrides={get_leave_command_handler: lambda: handler}
     )
     try:
         response = await client.post(
@@ -1089,10 +1265,7 @@ async def test_leave_request_decision_validation_uses_standard_error_envelope() 
                 **_tenant_headers(),
                 "X-Correlation-Id": "w3a6-leave-decision-validation",
             },
-            json={
-                "decided_by_user_id": str(APPROVER_USER_ID),
-                "decision_note": "   ",
-            },
+            json={"expected_version": 1, "decision_note": "   "},
         )
 
         _assert_error_response(
@@ -1152,16 +1325,16 @@ async def test_approve_non_pending_leave_request_returns_conflict() -> None:
         _assert_error_response(
             response,
             status_code=409,
-            code="leave_request_transition_conflict",
-            message="Only pending leave requests can be decided",
+            code="leave_conflict",
+            message="Only pending leave requests can be approved or rejected",
         )
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-@pytest.mark.parametrize("action", ["approve", "reject", "cancel"])
-async def test_decision_routes_return_consistent_transition_conflict(action: str) -> None:
+@pytest.mark.parametrize("action", ["approve", "reject"])
+async def test_approval_routes_return_consistent_transition_conflict(action: str) -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.post(
@@ -1176,9 +1349,33 @@ async def test_decision_routes_return_consistent_transition_conflict(action: str
         _assert_error_response(
             response,
             status_code=409,
-            code="leave_request_transition_conflict",
-            message="Only pending leave requests can be decided",
+            code="leave_conflict",
+            message="Only pending leave requests can be approved or rejected",
             correlation_id=f"w4a6-leave-{action}-conflict",
+        )
+    finally:
+        await client.aclose()
+        await engine.dispose()
+
+
+async def test_cancel_route_rejects_terminal_rejected_request() -> None:
+    client, engine = await _client_with_database()
+    try:
+        response = await client.post(
+            f"/api/v1/leave-requests/{REJECTED_REQUEST_ID}/cancel",
+            headers={
+                **_tenant_headers(),
+                "X-Correlation-Id": "w4a6-leave-cancel-conflict",
+            },
+            json=_decision_payload(),
+        )
+
+        _assert_error_response(
+            response,
+            status_code=409,
+            code="leave_conflict",
+            message="Only pending or approved leave requests can be cancelled",
+            correlation_id="w4a6-leave-cancel-conflict",
         )
     finally:
         await client.aclose()
@@ -1197,28 +1394,30 @@ async def test_decision_routes_are_tenant_scoped() -> None:
         _assert_error_response(
             response,
             status_code=404,
-            code="leave_request_not_found",
-            message="Leave request not found",
+            code="leave_not_found",
+            message="The leave resource was not found",
         )
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_decision_routes_reject_cross_tenant_decider() -> None:
+async def test_decision_routes_reject_client_controlled_decider() -> None:
     client, engine = await _client_with_database()
     try:
+        payload = _decision_payload()
+        payload["decided_by_user_id"] = str(OTHER_USER_ID)
         response = await client.post(
             f"/api/v1/leave-requests/{PENDING_REQUEST_ID}/approve",
             headers=_tenant_headers(),
-            json=_decision_payload(decided_by_user_id=OTHER_USER_ID),
+            json=payload,
         )
 
         _assert_error_response(
             response,
-            status_code=404,
-            code="user_not_found",
-            message="User not found",
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
         )
     finally:
         await client.aclose()
@@ -1249,23 +1448,23 @@ async def test_create_leave_request_rejects_invalid_date_order() -> None:
         await engine.dispose()
 
 
-async def test_leave_request_routes_require_tenant_header() -> None:
+async def test_leave_request_routes_use_authenticated_tenant_without_header() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get("/api/v1/leave-requests")
 
-        _assert_error_response(
-            response,
-            status_code=400,
-            code="tenant_header_missing",
-            message="X-Tenant-Id header is required",
-        )
+        assert response.status_code == 200
+        assert {item["id"] for item in response.json()} == {
+            str(PENDING_REQUEST_ID),
+            str(APPROVED_REQUEST_ID),
+            str(REJECTED_REQUEST_ID),
+        }
     finally:
         await client.aclose()
         await engine.dispose()
 
 
-async def test_leave_request_routes_reject_invalid_tenant_before_payload_validation() -> None:
+async def test_leave_request_routes_ignore_spoofed_tenant_header_on_validation() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.post(
@@ -1279,9 +1478,9 @@ async def test_leave_request_routes_reject_invalid_tenant_before_payload_validat
 
         _assert_error_response(
             response,
-            status_code=400,
-            code="tenant_header_invalid",
-            message="X-Tenant-Id header must be a single canonical hyphenated UUID",
+            status_code=422,
+            code="leave_request_validation_error",
+            message="Leave request validation failed",
             correlation_id="w4b4-leave-tenant-invalid",
         )
     finally:
@@ -1289,7 +1488,7 @@ async def test_leave_request_routes_reject_invalid_tenant_before_payload_validat
         await engine.dispose()
 
 
-async def test_leave_request_routes_reject_repeated_tenant_header() -> None:
+async def test_leave_request_routes_ignore_repeated_spoofed_tenant_headers() -> None:
     client, engine = await _client_with_database()
     try:
         response = await client.get(
@@ -1301,13 +1500,13 @@ async def test_leave_request_routes_reject_repeated_tenant_header() -> None:
             ],
         )
 
-        _assert_error_response(
-            response,
-            status_code=400,
-            code="tenant_header_invalid",
-            message="X-Tenant-Id header must be a single canonical hyphenated UUID",
-            correlation_id="w4b4-leave-tenant-repeated",
-        )
+        assert response.status_code == 200
+        assert {item["id"] for item in response.json()} == {
+            str(PENDING_REQUEST_ID),
+            str(APPROVED_REQUEST_ID),
+            str(REJECTED_REQUEST_ID),
+        }
+        assert response.headers["X-Correlation-Id"] == "w4b4-leave-tenant-repeated"
     finally:
         await client.aclose()
         await engine.dispose()
@@ -1322,15 +1521,14 @@ async def test_leave_request_routes_are_exposed_in_openapi() -> None:
         paths = response.json()["paths"]
         assert "/api/v1/leave-requests" in paths
         query_params = {
-            parameter["name"]
-            for parameter in paths["/api/v1/leave-requests"]["get"]["parameters"]
+            parameter["name"] for parameter in paths["/api/v1/leave-requests"]["get"]["parameters"]
         }
         assert {"status", "employee_id", "start_date", "end_date", "limit", "offset"}.issubset(
             query_params
         )
-        assert "/api/v1/leave-requests/{leave_request_id}/approve" in paths
-        assert "/api/v1/leave-requests/{leave_request_id}/reject" in paths
-        assert "/api/v1/leave-requests/{leave_request_id}/cancel" in paths
+        assert "/api/v1/leave-requests/{request_id}/approve" in paths
+        assert "/api/v1/leave-requests/{request_id}/reject" in paths
+        assert "/api/v1/leave-requests/{request_id}/cancel" in paths
     finally:
         await client.aclose()
         await engine.dispose()

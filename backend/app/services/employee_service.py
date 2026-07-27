@@ -48,9 +48,7 @@ from app.schemas.employee import (
 from app.services.identity_projection_service import sync_existing_membership_projection
 
 EMPLOYEE_NUMBER_UNIQUE_CONSTRAINT = "uq_employees_tenant_employee_number"
-EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT = (
-    "uq_employees_tenant_employee_number_normalized"
-)
+EMPLOYEE_NUMBER_NORMALIZED_UNIQUE_CONSTRAINT = "uq_employees_tenant_employee_number_normalized"
 EMPLOYEE_WORK_EMAIL_NORMALIZED_UNIQUE_CONSTRAINT = "uq_employees_tenant_email_normalized"
 _SQLITE_EMPLOYEE_NUMBER_UNIQUE_SIGNATURE = (
     "UNIQUE constraint failed: employees.tenant_id, employees.employee_number"
@@ -301,11 +299,9 @@ class EmployeeService:
 
         # P4E submission serializes on the personal profile. Taking the same lock before the
         # employee prevents a request from being submitted between the blocker check and commit.
-        await self._lock_profile_section(
-            EmployeePersonalProfile,
-            tenant_id,
-            employee_id,
-        )
+        # PostgreSQL deliberately denies the tenant role raw profile UPDATE, which is also
+        # required by SELECT FOR UPDATE, so it exposes a tenant-bound lock-only gateway.
+        await self._lock_personal_profile_for_lifecycle(tenant_id, employee_id)
         employee = await self._get_employee_or_none(
             tenant_id,
             employee_id,
@@ -315,9 +311,7 @@ class EmployeeService:
         if employee is None:
             raise EmployeeNotFoundError
         if employee.archived_at is not None:
-            raise EmployeeLifecycleConflictError(
-                "Archived employees are read-only"
-            )
+            raise EmployeeLifecycleConflictError("Archived employees are read-only")
 
         before_status = employee.status
         if before_status == target_status:
@@ -433,10 +427,11 @@ class EmployeeService:
         *,
         expected_version: int | None = None,
     ) -> EmployeeArchiveMutation:
-        # Archive makes the entire Employee 360 record read-only, so it serializes with both
-        # profile section writers before locking the employee row.
-        await self._lock_profile_section(
-            EmployeePersonalProfile,
+        # Archive makes the entire Employee 360 record read-only. Match profile writers'
+        # personal -> employment -> employee lock order so every section is quiescent before the
+        # blocker check. PostgreSQL uses the lock-only gateway because the tenant role
+        # deliberately has no raw UPDATE privilege on personal profiles.
+        await self._lock_personal_profile_for_lifecycle(
             tenant_id,
             employee_id,
         )
@@ -456,9 +451,7 @@ class EmployeeService:
         if await self._has_submitted_profile_change_request(tenant_id, employee_id):
             raise EmployeeOpenProcessConflictError
         if employee.status != EmployeeStatus.TERMINATED.value:
-            raise EmployeeLifecycleConflictError(
-                "Only terminated employees can be archived"
-            )
+            raise EmployeeLifecycleConflictError("Only terminated employees can be archived")
         if employee.archived_at is not None:
             return EmployeeArchiveMutation(employee=employee, archived=False)
         if expected_version is not None and employee.version != expected_version:
@@ -525,6 +518,24 @@ class EmployeeService:
             if employee_exists is None:
                 raise EmployeeNotFoundError
             raise RuntimeError("Employee profile persistence is incomplete")
+
+    async def _lock_personal_profile_for_lifecycle(
+        self,
+        tenant_id: UUID,
+        employee_id: UUID,
+    ) -> None:
+        if self.session.get_bind().dialect.name == "postgresql":
+            locked = await self.session.scalar(
+                select(func.public.lock_employee_profile_for_command(employee_id))
+            )
+            if locked is not True:
+                raise EmployeeNotFoundError
+            return
+        await self._lock_profile_section(
+            EmployeePersonalProfile,
+            tenant_id,
+            employee_id,
+        )
 
     async def _lock_open_assignment(
         self,
@@ -638,8 +649,7 @@ class EmployeeService:
             select(Employee.id)
             .where(Employee.tenant_id == tenant_id)
             .where(
-                Employee.employee_number_normalized
-                == _normalize_uniqueness_text(employee_number)
+                Employee.employee_number_normalized == _normalize_uniqueness_text(employee_number)
             )
         )
         if exclude_employee_id is not None:

@@ -1,5 +1,8 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { employeeProfileInsights } from "./support/employee-profile";
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const EMPLOYEE_ID = "fc000000-0000-4000-8000-000000000001";
 const GUESSED_EMPLOYEE_ID = "fc000000-0000-4000-8000-000000000099";
 const HR_MEMBERSHIP_ID = "fc100000-0000-4000-8000-000000000001";
@@ -150,6 +153,7 @@ const employee360Profile = {
     email: "ada@wealthyfalcon.demo",
     status: "active",
     employee_version: 5,
+    archived_at: null,
   },
   personal: {
     preferred_name: "Ada",
@@ -159,6 +163,8 @@ const employee360Profile = {
   },
   employment: {
     employment_start_date: "2025-02-03",
+    employment_end_date: null,
+    termination_reason: null,
     contract_type: "indefinite",
     work_type: "full_time",
     version: 7,
@@ -298,6 +304,28 @@ test("HR links a canonical membership and only that linked session can populate 
       return;
     }
 
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
+
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/insights` &&
+      request.method() === "GET"
+    ) {
+      expect(url.searchParams.get("limit")).toBe("20");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(employeeProfileInsights()),
+      });
+      return;
+    }
+
     if (
       path === `/api/v1/employees/${EMPLOYEE_ID}/profile` &&
       request.method() === "GET"
@@ -426,7 +454,11 @@ test("HR links a canonical membership and only that linked session can populate 
   await expect(confirmation).toContainText("Ada Hesap");
   await confirmation.getByRole("button", { name: "Hesabı bağla" }).click();
 
-  await expect(page.getByRole("status")).toContainText("Hesap çalışana bağlandı");
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Hesap çalışana bağlandı" }),
+  ).toBeVisible();
   await expect(page.getByText("Profilim erişimine uygun")).toBeVisible();
   expect(accountPatchBody).toEqual({
     membership_id: LINKED_MEMBERSHIP_ID,

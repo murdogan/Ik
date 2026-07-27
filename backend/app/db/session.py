@@ -89,6 +89,7 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         raise RuntimeError("Database runtime is unavailable outside the application lifespan")
 
     async with runtime.session_factory() as session:
+
         def resolve_request_database_access() -> DatabaseAccessContext | None:
             context = getattr(
                 request.state,

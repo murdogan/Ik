@@ -58,6 +58,4 @@ def test_tenant_feature_flag_constraints_are_named_and_tenant_rooted() -> None:
     assert len(foreign_keys) == 1
     assert foreign_keys[0].name == "fk_tenant_feature_flags_tenant_id_tenants"
     assert foreign_keys[0].ondelete == "CASCADE"
-    assert [element.target_fullname for element in foreign_keys[0].elements] == [
-        "tenants.id"
-    ]
+    assert [element.target_fullname for element in foreign_keys[0].elements] == ["tenants.id"]

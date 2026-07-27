@@ -25,6 +25,7 @@ def test_employee_profile_read_contract_has_exact_section_shapes() -> None:
                 "email": "ada@example.test",
                 "status": "active",
                 "employee_version": 3,
+                "archived_at": None,
             },
             "personal": {
                 "preferred_name": "Ada",
@@ -34,6 +35,8 @@ def test_employee_profile_read_contract_has_exact_section_shapes() -> None:
             },
             "employment": {
                 "employment_start_date": "2026-07-01",
+                "employment_end_date": None,
+                "termination_reason": None,
                 "contract_type": "indefinite",
                 "work_type": "full_time",
                 "version": 4,
@@ -57,6 +60,7 @@ def test_employee_profile_read_contract_has_exact_section_shapes() -> None:
         "email",
         "status",
         "employee_version",
+        "archived_at",
     }
     assert set(dumped["personal"]) == {
         "preferred_name",
@@ -66,6 +70,8 @@ def test_employee_profile_read_contract_has_exact_section_shapes() -> None:
     }
     assert set(dumped["employment"]) == {
         "employment_start_date",
+        "employment_end_date",
+        "termination_reason",
         "contract_type",
         "work_type",
         "version",

@@ -78,9 +78,7 @@ class TenantFeatureService:
         if status is TenantStatus.CLOSED:
             raise TenantLifecycleConflictError("Closed tenants are immutable")
         if status is TenantStatus.OFFBOARDING:
-            raise TenantLifecycleConflictError(
-                "Offboarding tenants can only transition to closed"
-            )
+            raise TenantLifecycleConflictError("Offboarding tenants can only transition to closed")
 
         existing_rows = list(
             await self.session.scalars(
@@ -89,10 +87,7 @@ class TenantFeatureService:
                 .with_for_update()
             )
         )
-        overrides = {
-            FeatureFlagKey(row.key): row
-            for row in existing_rows
-        }
+        overrides = {FeatureFlagKey(row.key): row for row in existing_rows}
         changes: list[TenantFeatureChange] = []
         for update in payload.features:
             existing = overrides.get(update.key)
@@ -142,20 +137,12 @@ def _effective_features(
 ) -> tuple[TenantFeatureSnapshot, ...]:
     features: list[TenantFeatureSnapshot] = []
     for key in FeatureFlagKey:
-        enabled = (
-            overrides[key].enabled
-            if key in overrides
-            else default_feature_flag_enabled(key)
-        )
+        enabled = overrides[key].enabled if key in overrides else default_feature_flag_enabled(key)
         features.append(
             TenantFeatureSnapshot(
                 key=key,
                 enabled=enabled,
-                source=(
-                    "override"
-                    if is_feature_flag_override(key, enabled)
-                    else "default"
-                ),
+                source=("override" if is_feature_flag_override(key, enabled) else "default"),
             )
         )
     return tuple(features)

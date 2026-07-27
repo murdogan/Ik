@@ -158,9 +158,7 @@ class TenantService:
                 code="optional_communications",
                 version=1,
                 title="İsteğe bağlı iletişimler",
-                description=(
-                    "Zorunlu olmayan çalışan iletişimleri için isteğe bağlı onay."
-                ),
+                description=("Zorunlu olmayan çalışan iletişimleri için isteğe bağlı onay."),
                 is_active=True,
                 created_at=datetime.now(UTC),
             )
@@ -230,9 +228,7 @@ class TenantService:
         if current_status is TenantStatus.CLOSED and non_status_changed_fields:
             raise TenantLifecycleConflictError("Closed tenants are immutable")
         if current_status is TenantStatus.OFFBOARDING and non_status_changed_fields:
-            raise TenantLifecycleConflictError(
-                "Offboarding tenants can only transition to closed"
-            )
+            raise TenantLifecycleConflictError("Offboarding tenants can only transition to closed")
         if (
             next_status in {TenantStatus.OFFBOARDING, TenantStatus.CLOSED}
             and next_status is not current_status
@@ -241,12 +237,9 @@ class TenantService:
             raise TenantLifecycleConflictError(
                 "Offboarding or closure must be requested separately from metadata changes"
             )
-        if (
-            "data_region" in non_status_changed_fields
-            and (
-                current_status is not TenantStatus.PROVISIONING
-                or next_status is not TenantStatus.PROVISIONING
-            )
+        if "data_region" in non_status_changed_fields and (
+            current_status is not TenantStatus.PROVISIONING
+            or next_status is not TenantStatus.PROVISIONING
         ):
             raise TenantLifecycleConflictError(
                 "Tenant data region can only change while the tenant remains provisioning"
@@ -278,9 +271,7 @@ class TenantService:
         tenant_id: UUID,
         payload: TenantSettingsUpdate,
     ) -> TenantSettingsSnapshot:
-        return (
-            await self.update_tenant_settings_with_changes(tenant_id, payload)
-        ).settings
+        return (await self.update_tenant_settings_with_changes(tenant_id, payload)).settings
 
     async def update_tenant_settings_with_changes(
         self,
@@ -290,9 +281,7 @@ class TenantService:
         tenant = await self._get_tenant_for_update(tenant_id)
         _ensure_tenant_write_access(TenantStatus(tenant.status))
         settings = await self.session.scalar(
-            select(TenantSettings)
-            .where(TenantSettings.tenant_id == tenant_id)
-            .with_for_update()
+            select(TenantSettings).where(TenantSettings.tenant_id == tenant_id).with_for_update()
         )
         if settings is None:
             settings = TenantSettings(
@@ -344,10 +333,7 @@ class TenantService:
 def _provided_values(
     payload: TenantPlatformUpdate | TenantSettingsUpdate,
 ) -> dict[str, object]:
-    return {
-        field_name: getattr(payload, field_name)
-        for field_name in payload.model_fields_set
-    }
+    return {field_name: getattr(payload, field_name) for field_name in payload.model_fields_set}
 
 
 def _starter_leave_configuration(
@@ -447,19 +433,13 @@ def _settings_snapshot(
         locale=tenant.locale,
         timezone=tenant.timezone,
         week_start_day=(
-            settings.week_start_day
-            if settings is not None
-            else TenantWeekStartDay.MONDAY.value
+            settings.week_start_day if settings is not None else TenantWeekStartDay.MONDAY.value
         ),
         date_format=(
-            settings.date_format
-            if settings is not None
-            else TenantDateFormat.DAY_MONTH_YEAR.value
+            settings.date_format if settings is not None else TenantDateFormat.DAY_MONTH_YEAR.value
         ),
         time_format=(
-            settings.time_format
-            if settings is not None
-            else TenantTimeFormat.HOUR_24.value
+            settings.time_format if settings is not None else TenantTimeFormat.HOUR_24.value
         ),
     )
 
@@ -493,6 +473,4 @@ def _tenant_list_statement(
                 ),
             )
         )
-    return statement.order_by(created_at_key.asc(), Tenant.id.asc()).limit(
-        pagination.limit + 1
-    )
+    return statement.order_by(created_at_key.asc(), Tenant.id.asc()).limit(pagination.limit + 1)

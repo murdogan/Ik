@@ -48,8 +48,7 @@ def _plain_text(value: str) -> str:
         line.rstrip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     ).strip()
     if not normalized or any(
-        ord(character) < 32 and character not in {"\n", "\t"}
-        for character in normalized
+        ord(character) < 32 and character not in {"\n", "\t"} for character in normalized
     ):
         raise ValueError("A non-empty plain-text value is required")
     return normalized
@@ -61,10 +60,7 @@ def _locale(value: str) -> str:
         len(parts) not in {1, 2}
         or not parts[0].isalpha()
         or len(parts[0]) not in {2, 3}
-        or (
-            len(parts) == 2
-            and (not parts[1].isalpha() or len(parts[1]) not in {2, 4})
-        )
+        or (len(parts) == 2 and (not parts[1].isalpha() or len(parts[1]) not in {2, 4}))
     ):
         raise ValueError("Locale must be a language tag such as tr-TR")
     language = parts[0].lower()

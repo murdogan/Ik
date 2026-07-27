@@ -106,9 +106,10 @@ def test_p4b_postgresql_downgrade_refuses_changed_profiles_and_restores_force_rl
         "employee_profiles": (True, True),
         "employee_employments": (True, True),
     }
-    assert asyncio.run(
-        _single_table_row_security_flags(postgres_database_url, "employees")
-    ) == (True, True)
+    assert asyncio.run(_single_table_row_security_flags(postgres_database_url, "employees")) == (
+        True,
+        True,
+    )
     assert asyncio.run(_changed_profile_state(postgres_database_url)) == {
         "personal": ("Ada", 2),
         "employment": ("fixed_term", 2),
@@ -356,11 +357,14 @@ async def _assert_catalog(engine: AsyncEngine) -> None:
                     "updated_at",
                 },
             }[table_name]
-            assert await _column_update_privileges(
-                connection,
-                table_name=table_name,
-                role_name=TENANT_APPLICATION_ROLE,
-            ) == expected_update_columns
+            assert (
+                await _column_update_privileges(
+                    connection,
+                    table_name=table_name,
+                    role_name=TENANT_APPLICATION_ROLE,
+                )
+                == expected_update_columns
+            )
             for role_name in (
                 PLATFORM_APPLICATION_ROLE,
                 AUTHENTICATION_APPLICATION_ROLE,

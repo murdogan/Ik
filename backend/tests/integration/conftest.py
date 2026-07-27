@@ -49,9 +49,7 @@ def _postgres_admin_url(raw_url: str) -> URL:
     if url.get_backend_name() != "postgresql":
         raise pytest.UsageError(f"{TEST_DATABASE_URL_ENV} must use PostgreSQL")
     if not url.database:
-        raise pytest.UsageError(
-            f"{TEST_DATABASE_URL_ENV} must name an existing admin database"
-        )
+        raise pytest.UsageError(f"{TEST_DATABASE_URL_ENV} must name an existing admin database")
     if url.drivername not in {"postgresql", "postgresql+asyncpg"}:
         raise pytest.UsageError(
             f"{TEST_DATABASE_URL_ENV} must use postgresql or postgresql+asyncpg"

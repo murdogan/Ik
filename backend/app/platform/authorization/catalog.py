@@ -519,9 +519,7 @@ ROLE_PERMISSION_CODES = MappingProxyType(
 )
 
 ROLES_BY_CODE = MappingProxyType({role.code: role for role in ROLES})
-PERMISSIONS_BY_CODE = MappingProxyType(
-    {permission.code: permission for permission in PERMISSIONS}
-)
+PERMISSIONS_BY_CODE = MappingProxyType({permission.code: permission for permission in PERMISSIONS})
 
 if set(ROLE_PERMISSION_CODES) != set(ROLES_BY_CODE):  # pragma: no cover - import invariant
     raise RuntimeError("Every seeded role must have one explicit permission grant set")

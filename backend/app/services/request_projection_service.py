@@ -445,10 +445,7 @@ def _leave_visibility(
     conditions = []
     if "request:read:tenant" in permissions and "leave:read:tenant" in permissions:
         conditions.append(LeaveRequest.tenant_id == tenant_id)
-    if (
-        "request:read:team" in permissions
-        and "leave:read:team" in permissions
-    ):
+    if "request:read:team" in permissions and "leave:read:team" in permissions:
         conditions.append(
             exists(
                 select(EmployeeAssignment.id).where(

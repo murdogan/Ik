@@ -162,9 +162,7 @@ class RequestContext:
         if self.tenant is not None:
             metadata["tenant_id"] = str(self.tenant.tenant_id)
         if self.support_session is not None:
-            metadata["support_session_id"] = str(
-                self.support_session.support_session_id
-            )
+            metadata["support_session_id"] = str(self.support_session.support_session_id)
         return MappingProxyType(metadata)
 
     def require_tenant(self) -> TenantContext:
@@ -198,9 +196,7 @@ class RequestContext:
             trace_id=self.trace_id,
             tenant_id=str(tenant.tenant_id),
             actor_id=str(self.actor_id) if self.actor_id is not None else None,
-            membership_id=(
-                str(self.membership_id) if self.membership_id is not None else None
-            ),
+            membership_id=(str(self.membership_id) if self.membership_id is not None else None),
             session_id=str(self.session_id) if self.session_id is not None else None,
             authentication_strength=self.authentication_strength.value,
             support_session_id=support_session_id,

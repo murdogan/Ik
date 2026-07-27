@@ -1,5 +1,8 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { employeeProfileInsights } from "./support/employee-profile";
+import { tenantFeatureCatalog } from "./support/tenant-features";
+
 const EMPLOYEE_ID = "fa000000-0000-4000-8000-000000000001";
 const OTHER_EMPLOYEE_ID = "fa000000-0000-4000-8000-000000000099";
 
@@ -40,6 +43,10 @@ function errorEnvelope(code: string, correlationId = "browser-p4b"): string {
       correlation_id: correlationId,
     },
   });
+}
+
+function employeeInsightsEnvelope(): string {
+  return envelope(employeeProfileInsights());
 }
 
 const hrUser = {
@@ -215,6 +222,7 @@ function initialProfile() {
       email: "ada@wealthyfalcon.demo",
       status: "active",
       employee_version: 5,
+      archived_at: null,
     },
     personal: {
       preferred_name: "Ada",
@@ -224,6 +232,8 @@ function initialProfile() {
     },
     employment: {
       employment_start_date: "2025-02-03",
+      employment_end_date: null,
+      termination_reason: null,
       contract_type: "indefinite",
       work_type: "full_time",
       version: 7,
@@ -355,6 +365,28 @@ test("HR uses the full Employee 360 tabs, resolves a personal conflict, and read
       return;
     }
 
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
+
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/insights` &&
+      request.method() === "GET"
+    ) {
+      expect(url.searchParams.get("limit")).toBe("20");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: employeeInsightsEnvelope(),
+      });
+      return;
+    }
+
     if (path === "/api/v1/employees" && request.method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -435,6 +467,8 @@ test("HR uses the full Employee 360 tabs, resolves a personal conflict, and read
         ...profileState,
         employment: {
           employment_start_date: "2025-02-03",
+          employment_end_date: null,
+          termination_reason: null,
           contract_type: "fixed_term",
           work_type: "part_time",
           version: 8,
@@ -701,6 +735,27 @@ test("old bearer GET and PATCH completions cannot cross Employee 360 session bou
       return;
     }
 
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
+
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/insights` &&
+      request.method() === "GET"
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: employeeInsightsEnvelope(),
+      });
+      return;
+    }
+
     if (path === "/api/v1/auth/logout") {
       await route.fulfill({
         status: 503,
@@ -779,6 +834,8 @@ test("old bearer GET and PATCH completions cannot cross Employee 360 session bou
             },
             employment: {
               employment_start_date: "2030-01-01",
+              employment_end_date: null,
+              termination_reason: null,
               contract_type: "indefinite",
               work_type: "full_time",
               version: 100,
@@ -1001,6 +1058,25 @@ test("Employee 360 rejects a coherent aggregate for a different employee", async
       });
       return;
     }
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/insights` &&
+      request.method() === "GET"
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: employeeInsightsEnvelope(),
+      });
+      return;
+    }
     if (
       path === `/api/v1/employees/${EMPLOYEE_ID}/profile` &&
       request.method() === "GET"
@@ -1072,6 +1148,25 @@ test("Employee 360 rejects mismatched employee IDs from both PATCH responses", a
       });
       return;
     }
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
+      });
+      return;
+    }
+    if (
+      path === `/api/v1/employees/${EMPLOYEE_ID}/profile/insights` &&
+      request.method() === "GET"
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: employeeInsightsEnvelope(),
+      });
+      return;
+    }
     if (
       path === `/api/v1/employees/${EMPLOYEE_ID}/profile` &&
       request.method() === "GET"
@@ -1126,6 +1221,8 @@ test("Employee 360 rejects mismatched employee IDs from both PATCH responses", a
           },
           employment: {
             employment_start_date: "2030-01-01",
+            employment_end_date: null,
+            termination_reason: null,
             contract_type: "fixed_term",
             work_type: "part_time",
             version: 8,
@@ -1236,6 +1333,14 @@ test("direct Employee 360 denial redirects without mounting profile or assignmen
         status: 200,
         contentType: "application/json",
         body: envelope({ user: deniedUser }),
+      });
+      return;
+    }
+    if (path === "/api/v1/tenant/features") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenantFeatureCatalog()),
       });
       return;
     }

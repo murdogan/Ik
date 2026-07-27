@@ -12,7 +12,7 @@ from app.models.employee_profile import (
     EmployeeEmploymentProfile,
     EmployeePersonalProfile,
 )
-from app.schemas.employee import EmployeeRead
+from app.schemas.employee import EmployeeLifecycleRead, EmployeeRead
 from app.schemas.employee_account_link import (
     OwnEmployeeEmploymentProfileRead,
     OwnEmployeeOrganizationRead,
@@ -337,6 +337,7 @@ def test_response_contract_registries_are_exact_and_cannot_grow_silently() -> No
             "email",
             "status",
             "employee_version",
+            "archived_at",
         },
         EmployeePersonalProfileRead: {
             "preferred_name",
@@ -346,9 +347,20 @@ def test_response_contract_registries_are_exact_and_cannot_grow_silently() -> No
         },
         EmployeeEmploymentProfileRead: {
             "employment_start_date",
+            "employment_end_date",
+            "termination_reason",
             "contract_type",
             "work_type",
             "version",
+        },
+        EmployeeLifecycleRead: {
+            "id",
+            "status",
+            "employment_start_date",
+            "employment_end_date",
+            "termination_reason",
+            "version",
+            "archived_at",
         },
         EmployeeProfileOrganizationRead: {
             "current_assignment",
@@ -427,6 +439,7 @@ def test_response_contract_registries_are_exact_and_cannot_grow_silently() -> No
 
     registered_models = {
         EmployeeRead,
+        EmployeeLifecycleRead,
         EmployeeProfileRead,
         EmployeePersonalProfileMutationRead,
         EmployeeEmploymentProfileMutationRead,

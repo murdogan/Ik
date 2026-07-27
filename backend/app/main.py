@@ -76,7 +76,7 @@ from app.db.session import (
     DATABASE_RUNTIME_STATE_KEY,
     create_database_runtime,
 )
-from app.modules.documents import (
+from app.modules.documents.infrastructure.runtime import (
     DOCUMENT_RUNTIME_STATE_KEY,
     create_document_runtime,
 )

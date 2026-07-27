@@ -70,9 +70,7 @@ TENANT_OWNED_TABLES = frozenset(
 ROW_SECURITY_TABLES = TENANT_OWNED_TABLES | {"tenants"}
 GLOBAL_RESTRICTED_TABLES = frozenset({"identities"})
 SECURED_TABLES = ROW_SECURITY_TABLES | GLOBAL_RESTRICTED_TABLES
-PLATFORM_TABLES = frozenset(
-    {"tenants", "tenant_settings", "tenant_feature_flags"}
-)
+PLATFORM_TABLES = frozenset({"tenants", "tenant_settings", "tenant_feature_flags"})
 HR_TABLES = SECURED_TABLES - PLATFORM_TABLES
 
 TABLE_PRIVILEGES = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
@@ -203,18 +201,14 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
             assert platform_policy["qual"] == "true"
             assert platform_policy["with_check"] == "true"
 
-            settings_policy = policies[
-                ("tenant_settings", "platform_provision_settings")
-            ]
+            settings_policy = policies[("tenant_settings", "platform_provision_settings")]
             assert settings_policy["permissive"] == "PERMISSIVE"
             assert tuple(settings_policy["roles"]) == (PLATFORM_APPLICATION_ROLE,)
             assert settings_policy["cmd"] == "INSERT"
             assert settings_policy["qual"] is None
             assert settings_policy["with_check"] == "true"
 
-            feature_policy = policies[
-                ("tenant_feature_flags", "platform_feature_operations")
-            ]
+            feature_policy = policies[("tenant_feature_flags", "platform_feature_operations")]
             assert feature_policy["permissive"] == "PERMISSIVE"
             assert tuple(feature_policy["roles"]) == (PLATFORM_APPLICATION_ROLE,)
             assert feature_policy["cmd"] == "ALL"
@@ -366,9 +360,7 @@ async def test_f1c_catalog_covers_every_tenant_table_policy_role_and_grant(
                     )
                 ).mappings()
             )
-            assert all(
-                row["is_grantable"] is False for row in direct_column_acl_rows
-            )
+            assert all(row["is_grantable"] is False for row in direct_column_acl_rows)
             direct_column_grants = {
                 (
                     row["table_name"],
@@ -466,10 +458,7 @@ async def test_normal_role_raw_sql_is_tenant_scoped_and_missing_or_invalid_conte
                 await _set_local_role(connection, TENANT_APPLICATION_ROLE)
                 await _set_local_tenant(connection, TENANT_A_ID)
                 await connection.execute(
-                    text(
-                        "update tenants set status = 'suspended' "
-                        "where id = :tenant_id"
-                    ),
+                    text("update tenants set status = 'suspended' where id = :tenant_id"),
                     {"tenant_id": TENANT_A_ID},
                 )
         assert sqlstate_from_error(platform_field_update_error.value) == "42501"
@@ -532,10 +521,7 @@ async def test_platform_role_can_operate_metadata_but_cannot_select_any_hr_table
                 {"tenant_id": TENANT_B_ID},
             )
             await connection.execute(
-                text(
-                    "update tenants set active_employee_limit = 250 "
-                    "where id = :tenant_id"
-                ),
+                text("update tenants set active_employee_limit = 250 where id = :tenant_id"),
                 {"tenant_id": TENANT_A_ID},
             )
             await connection.execute(
@@ -571,13 +557,16 @@ async def test_platform_role_can_operate_metadata_but_cannot_select_any_hr_table
                 ),
                 {"tenant_id": TENANT_C_ID},
             )
-            assert await connection.scalar(
-                text(
-                    "select enabled from tenant_feature_flags "
-                    "where tenant_id = :tenant_id and key = 'documents'"
-                ),
-                {"tenant_id": TENANT_A_ID},
-            ) is True
+            assert (
+                await connection.scalar(
+                    text(
+                        "select enabled from tenant_feature_flags "
+                        "where tenant_id = :tenant_id and key = 'documents'"
+                    ),
+                    {"tenant_id": TENANT_A_ID},
+                )
+                is True
+            )
 
         with pytest.raises(DBAPIError) as settings_read_error:
             async with engine.begin() as connection:
@@ -609,26 +598,23 @@ async def test_platform_role_can_operate_metadata_but_cannot_select_any_hr_table
             )
             assert (
                 await connection.scalar(
-                    text(
-                        "select active_employee_limit from tenants "
-                        "where id = :tenant_id"
-                    ),
+                    text("select active_employee_limit from tenants where id = :tenant_id"),
                     {"tenant_id": TENANT_A_ID},
                 )
                 == 250
             )
-            assert await connection.scalar(
-                text(
-                    "select enabled from tenant_feature_flags "
-                    "where tenant_id = :tenant_id and key = 'organization'"
-                ),
-                {"tenant_id": TENANT_C_ID},
-            ) is True
+            assert (
+                await connection.scalar(
+                    text(
+                        "select enabled from tenant_feature_flags "
+                        "where tenant_id = :tenant_id and key = 'organization'"
+                    ),
+                    {"tenant_id": TENANT_C_ID},
+                )
+                is True
+            )
             assert not await connection.scalar(
-                text(
-                    "select has_table_privilege("
-                    ":role_name, 'public.tenant_settings', 'SELECT')"
-                ),
+                text("select has_table_privilege(:role_name, 'public.tenant_settings', 'SELECT')"),
                 {"role_name": PLATFORM_APPLICATION_ROLE},
             )
             for table_name in HR_TABLES:
@@ -654,9 +640,7 @@ async def test_tenant_feature_flags_are_read_only_and_cross_tenant_hidden(
             await _set_local_role(connection, TENANT_APPLICATION_ROLE)
             await _set_local_tenant(connection, TENANT_A_ID)
             assert set(
-                await connection.scalars(
-                    text("select tenant_id from tenant_feature_flags")
-                )
+                await connection.scalars(text("select tenant_id from tenant_feature_flags"))
             ) == {TENANT_A_ID}
             assert (
                 await connection.scalar(
@@ -686,9 +670,7 @@ async def test_tenant_feature_flags_are_read_only_and_cross_tenant_hidden(
             await _set_local_role(connection, TENANT_APPLICATION_ROLE)
             await _set_local_tenant(connection, TENANT_B_ID)
             assert set(
-                await connection.scalars(
-                    text("select tenant_id from tenant_feature_flags")
-                )
+                await connection.scalars(text("select tenant_id from tenant_feature_flags"))
             ) == {TENANT_B_ID}
     finally:
         await engine.dispose()
@@ -710,9 +692,7 @@ async def test_uow_set_local_role_and_tenant_rebind_and_reset_on_one_pool_connec
 
         async with session_factory() as missing_context_session:
             with pytest.raises(MissingDatabaseAccessContextError):
-                await SqlAlchemyUnitOfWork(missing_context_session).execute(
-                    _operation_must_not_run
-                )
+                await SqlAlchemyUnitOfWork(missing_context_session).execute(_operation_must_not_run)
             assert missing_context_session.in_transaction() is False
 
         async with session_factory() as session:
@@ -810,18 +790,12 @@ async def test_http_request_context_binds_effective_role_and_unfiltered_rls_scop
     ) -> dict[str, object]:
         transaction_identity = (
             await session.execute(
-                text(
-                    "select current_user, current_setting('app.tenant_id', true)"
-                )
+                text("select current_user, current_setting('app.tenant_id', true)")
             )
         ).one()
-        employee_ids = tuple(
-            await session.scalars(text("select id from employees order by id"))
-        )
+        employee_ids = tuple(await session.scalars(text("select id from employees order by id")))
         return {
-            "request_tenant_id": str(
-                request_context.require_tenant().tenant_id
-            ),
+            "request_tenant_id": str(request_context.require_tenant().tenant_id),
             "current_user": transaction_identity[0],
             "database_tenant_id": transaction_identity[1],
             "employee_ids": [str(employee_id) for employee_id in employee_ids],

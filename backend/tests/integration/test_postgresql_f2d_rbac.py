@@ -67,8 +67,7 @@ async def test_rbac_catalog_is_seeded_read_only_and_assignments_are_force_rls(
                 permission.code for permission in PERMISSIONS
             }
             assert await connection.scalar(text("select count(*) from role_permissions")) == sum(
-                len(permission_codes)
-                for permission_codes in ROLE_PERMISSION_CODES.values()
+                len(permission_codes) for permission_codes in ROLE_PERMISSION_CODES.values()
             )
 
             security = (
@@ -84,15 +83,19 @@ async def test_rbac_catalog_is_seeded_read_only_and_assignments_are_force_rls(
             assert security == (True, True)
 
             policy = (
-                await connection.execute(
-                    text(
-                        "select policyname, roles, cmd, qual, with_check "
-                        "from pg_catalog.pg_policies "
-                        "where schemaname = 'public' and tablename = 'user_roles' "
-                        "and policyname = 'tenant_isolation_app'"
+                (
+                    await connection.execute(
+                        text(
+                            "select policyname, roles, cmd, qual, with_check "
+                            "from pg_catalog.pg_policies "
+                            "where schemaname = 'public' and tablename = 'user_roles' "
+                            "and policyname = 'tenant_isolation_app'"
+                        )
                     )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             assert policy["policyname"] == "tenant_isolation_app"
             assert tuple(policy["roles"]) == (TENANT_APPLICATION_ROLE,)
             assert policy["cmd"] == "ALL"
@@ -115,25 +118,34 @@ async def test_rbac_catalog_is_seeded_read_only_and_assignments_are_force_rls(
                 role_name=TENANT_APPLICATION_ROLE,
                 table_name="user_roles",
             ) == {"SELECT", "INSERT", "UPDATE"}
-            assert await _granted_privileges(
-                connection,
-                role_name=PLATFORM_APPLICATION_ROLE,
-                table_name="user_roles",
-            ) == set()
-            assert await _has_column_privilege(
-                connection,
-                role_name=TENANT_APPLICATION_ROLE,
-                table_name="users",
-                column_name="permission_version",
-                privilege="UPDATE",
-            ) is True
-            assert await _has_column_privilege(
-                connection,
-                role_name=PLATFORM_APPLICATION_ROLE,
-                table_name="users",
-                column_name="permission_version",
-                privilege="UPDATE",
-            ) is False
+            assert (
+                await _granted_privileges(
+                    connection,
+                    role_name=PLATFORM_APPLICATION_ROLE,
+                    table_name="user_roles",
+                )
+                == set()
+            )
+            assert (
+                await _has_column_privilege(
+                    connection,
+                    role_name=TENANT_APPLICATION_ROLE,
+                    table_name="users",
+                    column_name="permission_version",
+                    privilege="UPDATE",
+                )
+                is True
+            )
+            assert (
+                await _has_column_privilege(
+                    connection,
+                    role_name=PLATFORM_APPLICATION_ROLE,
+                    table_name="users",
+                    column_name="permission_version",
+                    privilege="UPDATE",
+                )
+                is False
+            )
 
         for role_name in (TENANT_APPLICATION_ROLE, PLATFORM_APPLICATION_ROLE):
             with pytest.raises(DBAPIError) as catalog_write:
@@ -160,9 +172,7 @@ async def test_user_role_and_permission_version_writes_are_tenant_isolated(
             await _set_local_tenant_role(connection, TENANT_A_ID)
             assert (
                 await connection.execute(
-                    text(
-                        "select user_id, role_id, active from user_roles order by role_id"
-                    )
+                    text("select user_id, role_id, active from user_roles order by role_id")
                 )
             ).all() == [(USER_A_ID, employee_role_id, True)]
 
@@ -219,9 +229,7 @@ async def test_user_role_and_permission_version_writes_are_tenant_isolated(
         async with engine.begin() as connection:
             await _set_local_tenant_role(connection, TENANT_B_ID)
             assert (
-                await connection.execute(
-                    text("select user_id, role_id, active from user_roles")
-                )
+                await connection.execute(text("select user_id, role_id, active from user_roles"))
             ).all() == [(USER_B_ID, employee_role_id, True)]
 
         with pytest.raises(DBAPIError) as cross_tenant_insert:
@@ -277,10 +285,7 @@ async def test_user_role_and_permission_version_writes_are_tenant_isolated(
             assignments = set(
                 (
                     await connection.execute(
-                        text(
-                            "select tenant_id, user_id, role_id, active "
-                            "from user_roles"
-                        )
+                        text("select tenant_id, user_id, role_id, active from user_roles")
                     )
                 ).tuples()
             )
@@ -369,11 +374,7 @@ async def _granted_privileges(
     privileges: set[str] = set()
     for privilege in TABLE_PRIVILEGES:
         if await connection.scalar(
-            text(
-                "select has_table_privilege("
-                ":role_name, :relation_name, :privilege"
-                ")"
-            ),
+            text("select has_table_privilege(:role_name, :relation_name, :privilege)"),
             {
                 "role_name": role_name,
                 "relation_name": f"public.{table_name}",
@@ -395,9 +396,7 @@ async def _has_column_privilege(
     return bool(
         await connection.scalar(
             text(
-                "select has_column_privilege("
-                ":role_name, :relation_name, :column_name, :privilege"
-                ")"
+                "select has_column_privilege(:role_name, :relation_name, :column_name, :privilege)"
             ),
             {
                 "role_name": role_name,

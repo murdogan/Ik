@@ -81,9 +81,7 @@ def test_leave_balance_summary_foreign_keys_are_tenant_scoped_and_retention_safe
     assert len(tenant_root_foreign_keys) == 1
     assert tenant_root_foreign_keys[0].ondelete == "CASCADE"
     assert tenant_id.index is True
-    assert employee_foreign_keys[
-        "fk_leave_balance_summaries_tenant_employee_id_employees"
-    ] == (
+    assert employee_foreign_keys["fk_leave_balance_summaries_tenant_employee_id_employees"] == (
         ("tenant_id", "employee_id"),
         "employees",
         ("tenant_id", "id"),
@@ -107,10 +105,7 @@ def test_leave_balance_summary_constraints_are_named() -> None:
     assert "ck_leave_balance_summaries_opening_non_negative" in check_constraint_names
     assert "ck_leave_balance_summaries_used_non_negative" in check_constraint_names
     assert "ck_leave_balance_summaries_planned_non_negative" in check_constraint_names
-    assert (
-        "uq_leave_balance_summaries_tenant_employee_type_period"
-        in unique_constraint_names
-    )
+    assert "uq_leave_balance_summaries_tenant_employee_type_period" in unique_constraint_names
 
 
 def test_leave_balance_summary_has_tenant_scoped_lookup_index() -> None:

@@ -25,9 +25,7 @@ class AuditEventNotFoundError(ApplicationError):
 
 
 _TENANT_CATEGORY_VISIBILITY: dict[str, frozenset[AuditCategory]] = {
-    "tenant_admin": frozenset(
-        {AuditCategory.TENANT_ADMIN, AuditCategory.TENANT_SECURITY}
-    ),
+    "tenant_admin": frozenset({AuditCategory.TENANT_ADMIN, AuditCategory.TENANT_SECURITY}),
     "it_admin": frozenset({AuditCategory.TENANT_SECURITY}),
     "auditor": frozenset(
         {

@@ -80,26 +80,19 @@ async def _seed_stale_authentication_grants(database_url: URL) -> None:
                 )
             )
             await connection.execute(
-                text(
-                    f'GRANT SELECT ON TABLE employees TO "{AUTHENTICATION_APPLICATION_ROLE}"'
-                )
+                text(f'GRANT SELECT ON TABLE employees TO "{AUTHENTICATION_APPLICATION_ROLE}"')
+            )
+            await connection.execute(
+                text(f'GRANT SELECT (email) ON TABLE users TO "{AUTHENTICATION_APPLICATION_ROLE}"')
             )
             await connection.execute(
                 text(
-                    f'GRANT SELECT (email) ON TABLE users TO "{AUTHENTICATION_APPLICATION_ROLE}"'
-                )
-            )
-            await connection.execute(
-                text(
-                    f'GRANT SELECT (plan_code) ON TABLE tenants '
+                    f"GRANT SELECT (plan_code) ON TABLE tenants "
                     f'TO "{AUTHENTICATION_APPLICATION_ROLE}"'
                 )
             )
             await connection.execute(
-                text(
-                    f'GRANT SELECT ON TABLE audit_events '
-                    f'TO "{AUTHENTICATION_APPLICATION_ROLE}"'
-                )
+                text(f'GRANT SELECT ON TABLE audit_events TO "{AUTHENTICATION_APPLICATION_ROLE}"')
             )
     finally:
         await engine.dispose()
@@ -196,10 +189,7 @@ async def test_p3b_authentication_role_is_narrow_and_selection_rows_are_private(
                     },
                 )
                 await connection.execute(
-                    text(
-                        "select public.sync_current_tenant_identity_membership("
-                        ":user_id, true)"
-                    ),
+                    text("select public.sync_current_tenant_identity_membership(:user_id, true)"),
                     {"user_id": RACE_USER_ID},
                 )
         assert sqlstate_from_error(raced_activation.value) == "WF001"
@@ -222,21 +212,27 @@ async def test_p3b_authentication_role_is_narrow_and_selection_rows_are_private(
         selection_key = uuid4()
         async with engine.begin() as connection:
             await _set_local_role(connection, AUTHENTICATION_APPLICATION_ROLE)
-            assert await connection.scalar(
-                text("select count(id) from identities where id = :user_id"),
-                {"user_id": USER_ID},
-            ) == 1
-            assert await connection.scalar(
-                text(
-                    "select count(id) from tenant_memberships "
-                    "where identity_id = :user_id"
-                ),
-                {"user_id": USER_ID},
-            ) == 3
-            assert await connection.scalar(
-                text("select name from tenants where id = :tenant_id"),
-                {"tenant_id": TENANT_ID},
-            ) == "P3B Organization"
+            assert (
+                await connection.scalar(
+                    text("select count(id) from identities where id = :user_id"),
+                    {"user_id": USER_ID},
+                )
+                == 1
+            )
+            assert (
+                await connection.scalar(
+                    text("select count(id) from tenant_memberships where identity_id = :user_id"),
+                    {"user_id": USER_ID},
+                )
+                == 3
+            )
+            assert (
+                await connection.scalar(
+                    text("select name from tenants where id = :tenant_id"),
+                    {"tenant_id": TENANT_ID},
+                )
+                == "P3B Organization"
+            )
             await connection.execute(
                 text(
                     "insert into organization_selection_transactions ("
@@ -310,13 +306,16 @@ async def test_p3b_authentication_role_is_narrow_and_selection_rows_are_private(
                     "INSERT",
                 ),
             } <= policies
-            assert await connection.scalar(
-                text(
-                    "select count(*) from organization_selection_transactions "
-                    "where id = :id and token_hash = repeat('a', 64)"
-                ),
-                {"id": transaction_id},
-            ) == 1
+            assert (
+                await connection.scalar(
+                    text(
+                        "select count(*) from organization_selection_transactions "
+                        "where id = :id and token_hash = repeat('a', 64)"
+                    ),
+                    {"id": transaction_id},
+                )
+                == 1
+            )
 
         for role_name in (TENANT_APPLICATION_ROLE, PLATFORM_APPLICATION_ROLE):
             with pytest.raises(DBAPIError) as denied:
@@ -399,9 +398,7 @@ async def test_p3b_authentication_role_is_narrow_and_selection_rows_are_private(
                     "where token_hash <> repeat('a', 64)"
                 )
             )
-        assert persisted_hash == hash_organization_selection_token(
-            result.selection_transaction
-        )
+        assert persisted_hash == hash_organization_selection_token(result.selection_transaction)
         with pytest.raises(InvalidCredentialsError):
             await service.login(
                 email="identity@p3b.test",

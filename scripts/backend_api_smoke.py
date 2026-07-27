@@ -6,7 +6,8 @@ import argparse
 import asyncio
 import re
 import sys
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -14,11 +15,10 @@ from uuid import UUID, uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "backend"
-API_IMPLEMENTATION_STATUS_DOC = (
-    ROOT / "docs" / "09-uygulama" / "11-api-implementation-status.md"
-)
-OPENAPI_ENDPOINT_DRAFT_DOC = (
-    ROOT / "docs" / "09-uygulama" / "03-openapi-endpoint-taslagi.md"
+API_IMPLEMENTATION_STATUS_DOC = ROOT / "docs" / "09-uygulama" / "11-api-implementation-status.md"
+OPENAPI_ENDPOINT_DRAFT_DOC = ROOT / "docs" / "09-uygulama" / "03-openapi-endpoint-taslagi.md"
+PHASE11_OPENAPI_OPERATIONS = (
+    ROOT / "backend" / "tests" / "contracts" / "phase11_openapi_operations.txt"
 )
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
@@ -29,9 +29,10 @@ from app.db.base import Base
 from app.db.session import DATABASE_RUNTIME_STATE_KEY
 from app.main import create_app
 from app.models.employee import EmployeeStatus
-from app.models.identity import Identity, PlatformIdentityRole
-from app.models.leave_balance_summary import LeaveBalanceSummary
-from app.models.leave_request import LeaveRequestStatus
+from app.models.employee_account_link import EmployeeAccountLink
+from app.models.identity import Identity, PlatformIdentityRole, TenantMembership
+from app.models.leave import LeaveBalanceLedger, LeavePolicy, LeaveType
+from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import LegalEntity, LegalEntityStatus
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
@@ -190,6 +191,7 @@ EMPLOYEE_PROFILE_CORE_FIELDS = {
     "email",
     "status",
     "employee_version",
+    "archived_at",
 }
 EMPLOYEE_PERSONAL_PROFILE_FIELDS = {
     "preferred_name",
@@ -199,6 +201,8 @@ EMPLOYEE_PERSONAL_PROFILE_FIELDS = {
 }
 EMPLOYEE_EMPLOYMENT_PROFILE_FIELDS = {
     "employment_start_date",
+    "employment_end_date",
+    "termination_reason",
     "contract_type",
     "work_type",
     "version",
@@ -263,9 +267,9 @@ FEATURE_DEFAULTS = {
     "employees": True,
     "documents": False,
     "leave": True,
-    "self_service": False,
+    "self_service": True,
     "reporting": True,
-    "notifications": False,
+    "notifications": True,
 }
 FORBIDDEN_HR_FIELDS = {
     "document_body",
@@ -331,15 +335,17 @@ DOCUMENTED_OPENAPI_OPERATIONS = {
     ("get", "/api/v1/employees/{employee_id}"),
     ("patch", "/api/v1/employees/{employee_id}"),
     ("delete", "/api/v1/employees/{employee_id}"),
+    ("post", "/api/v1/employees/{employee_id}/lifecycle-transitions"),
+    ("post", "/api/v1/employees/{employee_id}/archive"),
     ("get", "/api/v1/employees/{employee_id}/profile"),
     ("patch", "/api/v1/employees/{employee_id}/profile/personal"),
     ("patch", "/api/v1/employees/{employee_id}/profile/employment"),
     ("get", "/api/v1/employees/{employee_id}/leave-balances"),
     ("get", "/api/v1/leave-requests"),
     ("post", "/api/v1/leave-requests"),
-    ("post", "/api/v1/leave-requests/{leave_request_id}/approve"),
-    ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
-    ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
+    ("post", "/api/v1/leave-requests/{request_id}/approve"),
+    ("post", "/api/v1/leave-requests/{request_id}/reject"),
+    ("post", "/api/v1/leave-requests/{request_id}/cancel"),
     ("post", "/api/v1/users/invitations"),
     ("get", "/api/v1/users"),
     ("get", "/api/v1/users/{user_id}"),
@@ -411,12 +417,14 @@ P3K_AUTH_MIGRATED_OPERATIONS = {
     ("get", "/api/v1/employees/{employee_id}"),
     ("patch", "/api/v1/employees/{employee_id}"),
     ("delete", "/api/v1/employees/{employee_id}"),
+    ("post", "/api/v1/employees/{employee_id}/lifecycle-transitions"),
+    ("post", "/api/v1/employees/{employee_id}/archive"),
     ("get", "/api/v1/employees/{employee_id}/leave-balances"),
     ("get", "/api/v1/leave-requests"),
     ("post", "/api/v1/leave-requests"),
-    ("post", "/api/v1/leave-requests/{leave_request_id}/approve"),
-    ("post", "/api/v1/leave-requests/{leave_request_id}/reject"),
-    ("post", "/api/v1/leave-requests/{leave_request_id}/cancel"),
+    ("post", "/api/v1/leave-requests/{request_id}/approve"),
+    ("post", "/api/v1/leave-requests/{request_id}/reject"),
+    ("post", "/api/v1/leave-requests/{request_id}/cancel"),
 }
 P4B_BEARER_OPERATIONS = {
     ("get", "/api/v1/employees/{employee_id}/profile"),
@@ -465,9 +473,7 @@ async def main(database_url: str | None = None) -> None:
             tenant_principal_scope = _install_test_principal_overrides(app)
             await _smoke_system_endpoints(client)
             _smoke_documented_endpoint_tables()
-            tenant_admin_headers, other_admin_headers = await _smoke_auth_endpoints(
-                client
-            )
+            tenant_admin_headers, other_admin_headers = await _smoke_auth_endpoints(client)
             client.headers["Authorization"] = tenant_admin_headers["Authorization"]
             assignment_structure = await _smoke_organization_endpoints(
                 client,
@@ -477,9 +483,11 @@ async def main(database_url: str | None = None) -> None:
             tenant_principal_scope["tenant_id"] = provisioned_tenant_id
             await _smoke_current_tenant_endpoints(client, provisioned_tenant_id)
             await _smoke_tenant_auth_boundary(client)
-            primary_employee_id, secondary_employee_id, other_employee_id = (
-                await _smoke_employee_endpoints(client, other_admin_headers)
-            )
+            (
+                primary_employee_id,
+                secondary_employee_id,
+                other_employee_id,
+            ) = await _smoke_employee_endpoints(client, other_admin_headers)
             assignment_history = await _smoke_employee_assignment_endpoints(
                 client,
                 tenant_admin_headers,
@@ -492,17 +500,24 @@ async def main(database_url: str | None = None) -> None:
                 employee_id=primary_employee_id,
                 other_employee_id=other_employee_id,
                 assignment_history=assignment_history,
+                expected_employee_version=assignment_history["employee_version"],
+            )
+            leave_state = await _prepare_phase6_leave_state(
+                runtime.engine,
+                employee_id=primary_employee_id,
+                other_employee_id=other_employee_id,
             )
             leave_request_ids = await _smoke_leave_request_endpoints(
                 client,
+                runtime.engine,
                 primary_employee_id,
                 secondary_employee_id,
                 other_employee_id,
-                other_admin_headers,
+                leave_type_id=leave_state["tenant_leave_type_id"],
+                other_tenant_request_id=leave_state["other_tenant_request_id"],
             )
             await _smoke_leave_balance_endpoint(
                 client,
-                runtime.engine,
                 primary_employee_id,
                 secondary_employee_id,
                 other_employee_id,
@@ -541,6 +556,8 @@ async def _prepare_smoke_database(
 ) -> None:
     if create_schema:
         async with engine.begin() as connection:
+            if engine.dialect.name == "sqlite":
+                await connection.run_sync(_register_sqlite_now)
             await connection.run_sync(Base.metadata.create_all)
 
     # Fixture setup is an explicit test-admin path. Runtime request sessions are always reduced
@@ -636,9 +653,7 @@ async def _prepare_smoke_database(
                     email="requester@otherfalcon.test",
                     full_name="Other Requesting User",
                     status=UserStatus.ACTIVE.value,
-                    password_hash=PasswordManager().hash(
-                        SMOKE_OTHER_ADMIN_CREDENTIAL
-                    ),
+                    password_hash=PasswordManager().hash(SMOKE_OTHER_ADMIN_CREDENTIAL),
                 ),
             ]
         )
@@ -697,11 +712,17 @@ async def _prepare_smoke_database(
             await _seed_smoke_platform_role(session)
 
 
+def _register_sqlite_now(connection: Any) -> None:
+    connection.connection.dbapi_connection.create_function(
+        "now",
+        0,
+        lambda: "2026-01-01T00:00:00+00:00",
+    )
+
+
 async def _seed_smoke_platform_role(session: Any) -> None:
     identity_id = await session.scalar(
-        select(Identity.id).where(
-            Identity.email_normalized == "requester@wealthyfalcon.test"
-        )
+        select(Identity.id).where(Identity.email_normalized == "requester@wealthyfalcon.test")
     )
     if identity_id is None:
         raise AssertionError("smoke platform identity projection is missing")
@@ -1056,9 +1077,7 @@ async def _smoke_auth_endpoints(
             client,
             "post",
             "/api/v1/platform/auth/logout",
-            headers={
-                "Authorization": f"Bearer {refreshed_platform['access_token']}"
-            },
+            headers={"Authorization": f"Bearer {refreshed_platform['access_token']}"},
         ),
         204,
         "POST /api/v1/platform/auth/logout",
@@ -1314,16 +1333,14 @@ async def _smoke_auth_endpoints(
             "/api/v1/leave-requests",
             headers={"Authorization": f"Bearer {activated_access}"},
             json={
-                "employee_id": str(uuid4()),
-                "leave_type": "annual",
+                "leave_type_id": str(uuid4()),
                 "start_date": leave_start.isoformat(),
                 "end_date": (leave_start + timedelta(days=1)).isoformat(),
-                "requested_by_user_id": invitation["user"]["id"],
             },
         ),
-        403,
-        "authorization_denied",
-        "employee role cannot mutate tenant leave requests",
+        409,
+        "employee_account_link_conflict",
+        "unlinked employee membership cannot submit a leave request",
     )
     current_user = _expect_phase1_data(
         await _request_documented(
@@ -2193,9 +2210,24 @@ async def _smoke_employee_assignment_endpoints(
     )
     _assert_equal(former_team, [], "former manager derived team after change")
 
+    employee_after_assignments = _expect_json(
+        await client.get(
+            f"/api/v1/employees/{employee_id}",
+            headers=admin_headers,
+        ),
+        200,
+        "GET employee after assignment changes",
+    )
+    _assert_equal(
+        employee_after_assignments["current_assignment"]["id"],
+        successor["id"],
+        "employee current assignment after reporting-line change",
+    )
+
     return {
         "current": successor,
         "history": [successor, created],
+        "employee_version": employee_after_assignments["version"],
     }
 
 
@@ -2206,6 +2238,7 @@ async def _smoke_employee_profile_endpoints(
     employee_id: str,
     other_employee_id: str,
     assignment_history: dict[str, Any],
+    expected_employee_version: int,
 ) -> None:
     profile = _expect_phase1_data(
         await _request_documented(
@@ -2243,7 +2276,7 @@ async def _smoke_employee_profile_endpoints(
     _assert_equal(profile["core"]["id"], employee_id, "Employee 360 employee ID")
     _assert_equal(
         profile["core"]["employee_version"],
-        3,
+        expected_employee_version,
         "Employee 360 initial core version",
     )
     _assert_equal(
@@ -2508,9 +2541,7 @@ async def _smoke_tenant_audit_endpoints(
         _assert_equal(event["before_data"], {}, "tenant audit before snapshot redaction")
         _assert_equal(event["after_data"], {}, "tenant audit after snapshot redaction")
 
-    invitation = next(
-        event for event in events if event["event_type"] == "user.invitation.created"
-    )
+    invitation = next(event for event in events if event["event_type"] == "user.invitation.created")
     detail = _expect_phase1_data(
         await _request_documented(
             client,
@@ -2888,22 +2919,34 @@ async def _smoke_current_tenant_endpoints(
 
 def _expect_documented_openapi_operations(openapi: dict[str, Any]) -> None:
     actual_operations = {
-        (method, path)
+        f"{method.upper()} {path}"
         for path, path_item in openapi["paths"].items()
         for method in path_item
         if method in HTTP_METHODS
     }
-    missing_operations = sorted(DOCUMENTED_OPENAPI_OPERATIONS - actual_operations)
-    undocumented_operations = sorted(actual_operations - DOCUMENTED_OPENAPI_OPERATIONS)
+    expected_operations = {
+        line.strip()
+        for line in PHASE11_OPENAPI_OPERATIONS.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    missing_operations = sorted(expected_operations - actual_operations)
+    undocumented_operations = sorted(actual_operations - expected_operations)
     if missing_operations:
         raise AssertionError(
-            "OpenAPI is missing documented operations: "
-            f"{_format_operations(missing_operations)}"
+            f"OpenAPI is missing Phase 11 contract operations: {missing_operations}"
         )
     if undocumented_operations:
         raise AssertionError(
-            "OpenAPI has operations missing from backend smoke documentation: "
-            f"{_format_operations(undocumented_operations)}"
+            "OpenAPI has operations missing from the Phase 11 contract registry: "
+            f"{undocumented_operations}"
+        )
+    smoke_operations = {
+        f"{method.upper()} {path}" for method, path in DOCUMENTED_OPENAPI_OPERATIONS
+    }
+    missing_smoke_operations = sorted(smoke_operations - actual_operations)
+    if missing_smoke_operations:
+        raise AssertionError(
+            f"OpenAPI is missing backend smoke operations: {missing_smoke_operations}"
         )
 
 
@@ -3572,6 +3615,23 @@ async def _smoke_employee_endpoints(
     )
     _assert_equal(detail["employee_number"], "WF-SMOKE-001", "employee detail number")
 
+    lifecycle = _expect_json(
+        await _request_documented(
+            client,
+            "post",
+            f"/api/v1/employees/{employee_id}/lifecycle-transitions",
+            documented_path=("/api/v1/employees/{employee_id}/lifecycle-transitions"),
+            headers=TENANT_HEADERS,
+            json={
+                "target_status": EmployeeStatus.ON_LEAVE.value,
+                "expected_version": detail["version"],
+            },
+        ),
+        200,
+        "POST /api/v1/employees/{employee_id}/lifecycle-transitions",
+    )
+    _assert_equal(lifecycle["status"], EmployeeStatus.ON_LEAVE.value, "employee status")
+    _assert_equal(lifecycle["version"], 2, "employee lifecycle version increment")
     updated = _expect_json(
         await _request_documented(
             client,
@@ -3580,15 +3640,15 @@ async def _smoke_employee_endpoints(
             documented_path="/api/v1/employees/{employee_id}",
             headers=TENANT_HEADERS,
             json={
-                "status": EmployeeStatus.ON_LEAVE.value,
-                "version": detail["version"],
+                "position": "HR Lead",
+                "version": lifecycle["version"],
             },
         ),
         200,
         "PATCH /api/v1/employees/{employee_id}",
     )
-    _assert_equal(updated["status"], EmployeeStatus.ON_LEAVE.value, "employee status")
-    _assert_equal(updated["version"], 2, "employee optimistic version increment")
+    _assert_equal(updated["position"], "HR Lead", "employee master-data update")
+    _assert_equal(updated["version"], 3, "employee optimistic version increment")
     _expect_error_code(
         await client.patch(
             f"/api/v1/employees/{employee_id}",
@@ -3709,10 +3769,7 @@ async def _smoke_employee_endpoints(
         "GET /api/v1/employees?limit=1&cursor=<cursor>",
     )
     _assert_equal(
-        [
-            employee["id"]
-            for employee in employee_cursor_page + employee_next_page
-        ],
+        [employee["id"] for employee in employee_cursor_page + employee_next_page],
         expected_employee_id_order,
         "employee deterministic ID cursor pagination",
     )
@@ -3758,46 +3815,27 @@ async def _smoke_employee_endpoints(
         [offset_source[2]["id"]],
         "employee pagination",
     )
-    _expect_status(
+    terminated = _expect_json(
         await _request_documented(
             client,
-            "delete",
-            f"/api/v1/employees/{delete_candidate['id']}",
-            documented_path="/api/v1/employees/{employee_id}",
+            "post",
+            (f"/api/v1/employees/{delete_candidate['id']}/lifecycle-transitions"),
+            documented_path=("/api/v1/employees/{employee_id}/lifecycle-transitions"),
             headers=TENANT_HEADERS,
+            json={
+                "target_status": EmployeeStatus.TERMINATED.value,
+                "expected_version": delete_candidate["version"],
+                "effective_date": today,
+                "termination_reason": "other",
+            },
         ),
-        204,
-        "DELETE /api/v1/employees/{employee_id}",
+        200,
+        "POST terminate /api/v1/employees/{employee_id}/lifecycle-transitions",
     )
-    _expect_status(
-        await client.get(
-            f"/api/v1/employees/{delete_candidate['id']}",
-            headers=TENANT_HEADERS,
-        ),
-        404,
-        "GET archived /api/v1/employees/{employee_id}",
-    )
-    _expect_status(
-        await client.delete(
-            f"/api/v1/employees/{delete_candidate['id']}",
-            headers=TENANT_HEADERS,
-        ),
-        204,
-        "repeat archive /api/v1/employees/{employee_id}",
-    )
-
-    terminated = await _create_employee(
-        client,
-        {
-            "employee_number": "WF-SMOKE-TERMINATED",
-            "first_name": "Terminated",
-            "last_name": "Employee",
-            "department": "People",
-            "position": "Former HR Specialist",
-            "status": EmployeeStatus.TERMINATED.value,
-            "employment_start_date": today,
-            "employment_end_date": today,
-        },
+    _assert_equal(
+        terminated["status"],
+        EmployeeStatus.TERMINATED.value,
+        "employee explicit termination status",
     )
     terminated_filtered = _expect_json(
         await client.get(
@@ -3810,51 +3848,219 @@ async def _smoke_employee_endpoints(
     )
     _assert_equal(
         [employee["id"] for employee in terminated_filtered],
-        [terminated["id"]],
+        [delete_candidate["id"]],
         "employee terminated status filter",
+    )
+    archived = _expect_json(
+        await _request_documented(
+            client,
+            "post",
+            f"/api/v1/employees/{delete_candidate['id']}/archive",
+            documented_path="/api/v1/employees/{employee_id}/archive",
+            headers=TENANT_HEADERS,
+            json={"expected_version": terminated["version"]},
+        ),
+        200,
+        "POST /api/v1/employees/{employee_id}/archive",
+    )
+    if archived["archived_at"] is None:
+        raise AssertionError("employee explicit archive did not expose archived_at")
+    _expect_status(
+        await client.get(
+            f"/api/v1/employees/{delete_candidate['id']}",
+            headers=TENANT_HEADERS,
+        ),
+        404,
+        "GET archived /api/v1/employees/{employee_id}",
+    )
+    _expect_status(
+        await _request_documented(
+            client,
+            "delete",
+            f"/api/v1/employees/{delete_candidate['id']}",
+            documented_path="/api/v1/employees/{employee_id}",
+            headers=TENANT_HEADERS,
+        ),
+        204,
+        "deprecated archive compatibility /api/v1/employees/{employee_id}",
     )
 
     return employee_id, secondary_employee_id, other_employee_id
 
 
+async def _prepare_phase6_leave_state(
+    engine: AsyncEngine,
+    *,
+    employee_id: str,
+    other_employee_id: str,
+) -> dict[str, str]:
+    tenant_leave_type_id = uuid4()
+    tenant_policy_id = uuid4()
+    other_leave_type_id = uuid4()
+    other_policy_id = uuid4()
+    other_request_id = uuid4()
+    period_year = date.today().year
+    fixture_timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions() as session:
+        tenant_membership_id = await session.scalar(
+            select(TenantMembership.id).where(
+                TenantMembership.tenant_id == TENANT_ID,
+                TenantMembership.legacy_user_id == REQUESTING_USER_ID,
+            )
+        )
+        other_membership_id = await session.scalar(
+            select(TenantMembership.id).where(
+                TenantMembership.tenant_id == OTHER_TENANT_ID,
+                TenantMembership.legacy_user_id == OTHER_REQUESTING_USER_ID,
+            )
+        )
+        if tenant_membership_id is None or other_membership_id is None:
+            raise AssertionError("Phase 6 smoke membership projection is missing")
+        session.add_all(
+            [
+                LeaveType(
+                    id=tenant_leave_type_id,
+                    tenant_id=TENANT_ID,
+                    code="annual",
+                    name="Annual Leave",
+                    description="Synthetic smoke leave type",
+                    is_active=True,
+                    version=1,
+                ),
+                LeaveType(
+                    id=other_leave_type_id,
+                    tenant_id=OTHER_TENANT_ID,
+                    code="annual",
+                    name="Annual Leave",
+                    description="Synthetic cross-tenant smoke leave type",
+                    is_active=True,
+                    version=1,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                LeavePolicy(
+                    id=tenant_policy_id,
+                    tenant_id=TENANT_ID,
+                    leave_type_id=tenant_leave_type_id,
+                    version=1,
+                    effective_from=date(1900, 1, 1),
+                    paid=False,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=None,
+                    created_at=fixture_timestamp,
+                ),
+                LeavePolicy(
+                    id=other_policy_id,
+                    tenant_id=OTHER_TENANT_ID,
+                    leave_type_id=other_leave_type_id,
+                    version=1,
+                    effective_from=date(1900, 1, 1),
+                    paid=False,
+                    document_required=False,
+                    negative_balance_allowed=False,
+                    accrual_enabled=False,
+                    accrual_days_per_month=Decimal("0"),
+                    carryover_enabled=False,
+                    carryover_limit_days=None,
+                    created_by_user_id=None,
+                    created_at=fixture_timestamp,
+                ),
+                EmployeeAccountLink(
+                    id=uuid4(),
+                    tenant_id=TENANT_ID,
+                    employee_id=UUID(employee_id),
+                    membership_id=tenant_membership_id,
+                    version=1,
+                ),
+                EmployeeAccountLink(
+                    id=uuid4(),
+                    tenant_id=OTHER_TENANT_ID,
+                    employee_id=UUID(other_employee_id),
+                    membership_id=other_membership_id,
+                    version=1,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                LeaveBalanceLedger(
+                    id=uuid4(),
+                    tenant_id=TENANT_ID,
+                    employee_id=UUID(employee_id),
+                    leave_type_id=tenant_leave_type_id,
+                    period_year=period_year,
+                    entry_type="earned",
+                    amount_days=Decimal("20"),
+                    effective_date=date(period_year, 1, 1),
+                    reason=None,
+                    request_id=None,
+                    source_type="phase11_smoke",
+                    source_id=None,
+                    source_key="phase11-smoke-earned-current",
+                    reversal_of_entry_id=None,
+                    created_by_user_id=None,
+                    created_at=fixture_timestamp,
+                ),
+                LeaveBalanceLedger(
+                    id=uuid4(),
+                    tenant_id=OTHER_TENANT_ID,
+                    employee_id=UUID(other_employee_id),
+                    leave_type_id=other_leave_type_id,
+                    period_year=period_year,
+                    entry_type="earned",
+                    amount_days=Decimal("99"),
+                    effective_date=date(period_year, 1, 1),
+                    reason=None,
+                    request_id=None,
+                    source_type="phase11_smoke",
+                    source_id=None,
+                    source_key="phase11-smoke-earned-other",
+                    reversal_of_entry_id=None,
+                    created_by_user_id=None,
+                    created_at=fixture_timestamp,
+                ),
+                LeaveRequest(
+                    id=other_request_id,
+                    tenant_id=OTHER_TENANT_ID,
+                    employee_id=UUID(other_employee_id),
+                    leave_type="annual",
+                    leave_type_id=other_leave_type_id,
+                    policy_id=other_policy_id,
+                    start_date=date.today() + timedelta(days=35),
+                    end_date=date.today() + timedelta(days=36),
+                    status=LeaveRequestStatus.PENDING.value,
+                    requested_by_user_id=OTHER_REQUESTING_USER_ID,
+                    requested_by_membership_id=other_membership_id,
+                    routed_manager_user_id=None,
+                    counted_days=Decimal("2"),
+                    version=1,
+                ),
+            ]
+        )
+        await session.commit()
+    return {
+        "tenant_leave_type_id": str(tenant_leave_type_id),
+        "other_tenant_request_id": str(other_request_id),
+    }
+
+
 async def _smoke_leave_balance_endpoint(
     client: AsyncClient,
-    engine: AsyncEngine,
     employee_id: str,
     secondary_employee_id: str,
     other_employee_id: str,
 ) -> None:
     period_year = date.today().year
-    balance_id = uuid4()
-    other_balance_id = uuid4()
-    bootstrap_sessions = async_sessionmaker(engine, expire_on_commit=False)
-    async with bootstrap_sessions() as session:
-        session.add_all(
-            [
-                LeaveBalanceSummary(
-                    id=balance_id,
-                    tenant_id=TENANT_ID,
-                    employee_id=UUID(employee_id),
-                    leave_type="annual",
-                    period_year=period_year,
-                    opening_balance_days=20.0,
-                    used_days=5.0,
-                    planned_days=2.0,
-                ),
-                LeaveBalanceSummary(
-                    id=other_balance_id,
-                    tenant_id=OTHER_TENANT_ID,
-                    employee_id=UUID(other_employee_id),
-                    leave_type="annual",
-                    period_year=period_year,
-                    opening_balance_days=99.0,
-                    used_days=0.0,
-                    planned_days=0.0,
-                ),
-            ]
-        )
-        await session.commit()
-
     balances = _expect_phase0_list(
         await _request_documented(
             client,
@@ -3868,11 +4074,16 @@ async def _smoke_leave_balance_endpoint(
         "GET /api/v1/employees/{employee_id}/leave-balances",
     )
     _assert_equal(len(balances), 1, "leave balance summary count")
-    _assert_equal(balances[0]["id"], str(balance_id), "leave balance summary id")
-    _assert_equal(balances[0]["remaining_days"], 13.0, "leave balance remaining_days")
+    _assert_equal(balances[0]["employee_id"], employee_id, "leave balance employee")
+    _assert_equal(balances[0]["leave_type_code"], "annual", "leave balance type")
+    _assert_equal(
+        Decimal(balances[0]["remaining_days"]),
+        Decimal(balances[0]["available_days"]),
+        "leave balance compatibility remaining_days",
+    )
     _assert_equal(
         balances[0]["calculation_mode"],
-        "manual_placeholder",
+        "ledger",
         "leave balance calculation_mode",
     )
     _assert_equal(
@@ -3890,13 +4101,38 @@ async def _smoke_leave_balance_endpoint(
             params={"period_year": period_year},
         ),
         200,
-        "GET /api/v1/employees/{employee_id}/leave-balances with only leave requests",
+        "GET /api/v1/employees/{employee_id}/leave-balances without ledger entries",
     )
+    _assert_equal(len(synthetic_balances), 1, "zero-valued leave balance count")
+    zero_balance = synthetic_balances[0]
     _assert_equal(
-        synthetic_balances,
-        [],
-        "leave balance does not synthesize rows from leave requests",
+        zero_balance["employee_id"],
+        secondary_employee_id,
+        "zero-valued leave balance employee",
     )
+    _assert_equal(zero_balance["leave_type_code"], "annual", "zero balance type")
+    for field in (
+        "earned_days",
+        "adjusted_days",
+        "used_days",
+        "planned_days",
+        "available_days",
+        "opening_balance_days",
+        "remaining_days",
+    ):
+        _assert_equal(
+            Decimal(zero_balance[field]),
+            Decimal("0"),
+            f"zero-valued leave balance {field}",
+        )
+    _assert_equal(zero_balance["calculation_mode"], "ledger", "zero balance mode")
+    _assert_equal(
+        zero_balance["external_integration_enabled"],
+        False,
+        "zero balance external integration flag",
+    )
+    if "tenant_id" in zero_balance:
+        raise AssertionError("zero-valued leave balance leaked tenant_id")
 
     _expect_error_code(
         await client.get(
@@ -3904,38 +4140,54 @@ async def _smoke_leave_balance_endpoint(
             headers=TENANT_HEADERS,
         ),
         404,
-        "employee_not_found",
+        "leave_not_found",
         "GET cross-tenant /api/v1/employees/{employee_id}/leave-balances",
     )
 
 
 async def _smoke_leave_request_endpoints(
     client: AsyncClient,
+    engine: AsyncEngine,
     employee_id: str,
     secondary_employee_id: str,
     other_employee_id: str,
-    other_admin_headers: dict[str, str],
+    *,
+    leave_type_id: str,
+    other_tenant_request_id: str,
 ) -> dict[str, str]:
     pending_request = await _create_leave_request(
         client,
-        secondary_employee_id,
         day_offset=7,
-        leave_type="personal",
+        leave_type_id=leave_type_id,
     )
-    approved_request = await _create_leave_request(client, employee_id, day_offset=14)
-    rejected_request = await _create_leave_request(client, employee_id, day_offset=21)
-    cancelled_request = await _create_leave_request(client, employee_id, day_offset=28)
-    other_tenant_request = await _create_leave_request(
+    approved_request = await _create_leave_request(
         client,
-        other_employee_id,
-        day_offset=35,
-        headers=other_admin_headers,
-        requested_by_user_id=str(OTHER_REQUESTING_USER_ID),
+        day_offset=14,
+        leave_type_id=leave_type_id,
+    )
+    rejected_request = await _create_leave_request(
+        client,
+        day_offset=21,
+        leave_type_id=leave_type_id,
+    )
+    cancelled_request = await _create_leave_request(
+        client,
+        day_offset=28,
+        leave_type_id=leave_type_id,
+    )
+    await _normalize_sqlite_leave_request_timestamps(
+        engine,
+        {
+            pending_request["id"],
+            approved_request["id"],
+            rejected_request["id"],
+            cancelled_request["id"],
+        },
     )
 
     decision_note = "W3B2 backend smoke decision"
-    decision_payload = {
-        "decided_by_user_id": str(APPROVER_USER_ID),
+    approval_payload = {
+        "expected_version": approved_request["version"],
         "decision_note": decision_note,
     }
     approved = _expect_json(
@@ -3943,15 +4195,15 @@ async def _smoke_leave_request_endpoints(
             client,
             "post",
             f"/api/v1/leave-requests/{approved_request['id']}/approve",
-            documented_path="/api/v1/leave-requests/{leave_request_id}/approve",
+            documented_path="/api/v1/leave-requests/{request_id}/approve",
             headers={
                 **TENANT_HEADERS,
                 "X-Idempotency-Key": "smoke-leave-approve-001",
             },
-            json=decision_payload,
+            json=approval_payload,
         ),
         200,
-        "POST /api/v1/leave-requests/{leave_request_id}/approve",
+        "POST /api/v1/leave-requests/{request_id}/approve",
     )
     _assert_equal(
         approved["status"],
@@ -3960,7 +4212,7 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(
         approved["decided_by_user_id"],
-        str(APPROVER_USER_ID),
+        str(REQUESTING_USER_ID),
         "approved leave decider",
     )
     _assert_equal(
@@ -3975,10 +4227,10 @@ async def _smoke_leave_request_endpoints(
                 **TENANT_HEADERS,
                 "X-Idempotency-Key": "smoke-leave-approve-001",
             },
-            json=decision_payload,
+            json=approval_payload,
         ),
         200,
-        "replay POST /api/v1/leave-requests/{leave_request_id}/approve",
+        "replay POST /api/v1/leave-requests/{request_id}/approve",
     )
     _assert_equal(replayed_approval, approved, "leave approval idempotency replay")
 
@@ -3987,12 +4239,15 @@ async def _smoke_leave_request_endpoints(
             client,
             "post",
             f"/api/v1/leave-requests/{rejected_request['id']}/reject",
-            documented_path="/api/v1/leave-requests/{leave_request_id}/reject",
+            documented_path="/api/v1/leave-requests/{request_id}/reject",
             headers=TENANT_HEADERS,
-            json=decision_payload,
+            json={
+                "expected_version": rejected_request["version"],
+                "decision_note": decision_note,
+            },
         ),
         200,
-        "POST /api/v1/leave-requests/{leave_request_id}/reject",
+        "POST /api/v1/leave-requests/{request_id}/reject",
     )
     _assert_equal(
         rejected["status"],
@@ -4001,7 +4256,7 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(
         rejected["decided_by_user_id"],
-        str(APPROVER_USER_ID),
+        str(REQUESTING_USER_ID),
         "rejected leave decider",
     )
     _assert_equal(
@@ -4015,12 +4270,15 @@ async def _smoke_leave_request_endpoints(
             client,
             "post",
             f"/api/v1/leave-requests/{cancelled_request['id']}/cancel",
-            documented_path="/api/v1/leave-requests/{leave_request_id}/cancel",
+            documented_path="/api/v1/leave-requests/{request_id}/cancel",
             headers=TENANT_HEADERS,
-            json=decision_payload,
+            json={
+                "expected_version": cancelled_request["version"],
+                "decision_note": decision_note,
+            },
         ),
         200,
-        "POST /api/v1/leave-requests/{leave_request_id}/cancel",
+        "POST /api/v1/leave-requests/{request_id}/cancel",
     )
     _assert_equal(
         cancelled["status"],
@@ -4029,7 +4287,7 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(
         cancelled["decided_by_user_id"],
-        str(APPROVER_USER_ID),
+        str(REQUESTING_USER_ID),
         "cancelled leave decider",
     )
     _assert_equal(
@@ -4040,35 +4298,24 @@ async def _smoke_leave_request_endpoints(
 
     await _expect_leave_request_transition_conflicts(
         client,
-        decision_payload=decision_payload,
-        request_ids_by_status={
-            LeaveRequestStatus.APPROVED.value: approved_request["id"],
-            LeaveRequestStatus.REJECTED.value: rejected_request["id"],
-            LeaveRequestStatus.CANCELLED.value: cancelled_request["id"],
+        requests_by_status={
+            LeaveRequestStatus.APPROVED.value: approved,
+            LeaveRequestStatus.REJECTED.value: rejected,
+            LeaveRequestStatus.CANCELLED.value: cancelled,
         },
     )
     _expect_error_code(
         await client.post(
-            f"/api/v1/leave-requests/{other_tenant_request['id']}/approve",
-            headers=TENANT_HEADERS,
-            json=decision_payload,
-        ),
-        404,
-        "leave_request_not_found",
-        "POST cross-tenant /api/v1/leave-requests/{leave_request_id}/approve",
-    )
-    _expect_error_code(
-        await client.post(
-            f"/api/v1/leave-requests/{pending_request['id']}/approve",
+            f"/api/v1/leave-requests/{other_tenant_request_id}/approve",
             headers=TENANT_HEADERS,
             json={
-                "decided_by_user_id": str(OTHER_REQUESTING_USER_ID),
-                "decision_note": "Cross tenant decider",
+                "expected_version": 1,
+                "decision_note": decision_note,
             },
         ),
         404,
-        "user_not_found",
-        "POST /api/v1/leave-requests/{leave_request_id}/approve cross-tenant user",
+        "leave_not_found",
+        "POST cross-tenant /api/v1/leave-requests/{request_id}/approve",
     )
 
     leave_requests = _expect_phase0_list(
@@ -4149,7 +4396,7 @@ async def _smoke_leave_request_endpoints(
             params={"cursor": leave_cursor, "offset": 1},
         ),
         422,
-        "leave_request_validation_error",
+        "leave_validation_error",
         "GET /api/v1/leave-requests cursor and offset conflict",
     )
 
@@ -4243,7 +4490,12 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(
         {leave_request["id"] for leave_request in employee_filtered},
-        {approved_request["id"], rejected_request["id"], cancelled_request["id"]},
+        {
+            pending_request["id"],
+            approved_request["id"],
+            rejected_request["id"],
+            cancelled_request["id"],
+        },
         "leave request employee_id filter",
     )
     employee_filtered_page = _expect_json(
@@ -4257,6 +4509,7 @@ async def _smoke_leave_request_endpoints(
     )
     _assert_equal(len(employee_filtered_page), 1, "leave request filtered pagination size")
     employee_filter_ids = {
+        pending_request["id"],
         approved_request["id"],
         rejected_request["id"],
         cancelled_request["id"],
@@ -4273,8 +4526,8 @@ async def _smoke_leave_request_endpoints(
         "GET /api/v1/leave-requests?employee_id=<secondary_employee_id>",
     )
     _assert_equal(
-        [leave_request["id"] for leave_request in secondary_employee_filtered],
-        [pending_request["id"]],
+        secondary_employee_filtered,
+        [],
         "leave request secondary employee_id filter",
     )
     combined_filtered = _expect_json(
@@ -4401,7 +4654,7 @@ async def _smoke_leave_request_endpoints(
             },
         ),
         422,
-        "leave_request_invalid_date_range",
+        "leave_validation_error",
         "GET /api/v1/leave-requests invalid date range",
     )
     _expect_error_code(
@@ -4420,31 +4673,58 @@ async def _smoke_leave_request_endpoints(
         "approved": approved_request["id"],
         "rejected": rejected_request["id"],
         "cancelled": cancelled_request["id"],
-        "other_tenant": other_tenant_request["id"],
+        "other_tenant": other_tenant_request_id,
     }
+
+
+async def _normalize_sqlite_leave_request_timestamps(
+    engine: AsyncEngine,
+    request_ids: set[str],
+) -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    # SQLite's CURRENT_TIMESTAMP omits fractional seconds, while its DateTime binder adds them
+    # to cursor parameters. Persist the same deterministic value through the binder so this
+    # supplementary lane faithfully exercises equal-timestamp keyset tie-breakers.
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions() as session:
+        result = await session.execute(
+            LeaveRequest.__table__.update()
+            .where(
+                LeaveRequest.tenant_id == TENANT_ID,
+                LeaveRequest.id.in_(UUID(request_id) for request_id in request_ids),
+            )
+            .values(created_at=datetime(2026, 1, 2, tzinfo=UTC))
+        )
+        if result.rowcount != len(request_ids):
+            raise AssertionError("SQLite leave cursor fixture omitted a request")
+        await session.commit()
 
 
 async def _expect_leave_request_transition_conflicts(
     client: AsyncClient,
     *,
-    decision_payload: dict[str, str],
-    request_ids_by_status: dict[str, str],
+    requests_by_status: dict[str, dict[str, Any]],
 ) -> None:
-    for source_status, leave_request_id in request_ids_by_status.items():
-        for action in ("approve", "reject", "cancel"):
+    for source_status, leave_request in requests_by_status.items():
+        actions = (
+            ("approve", "reject")
+            if source_status == LeaveRequestStatus.APPROVED.value
+            else ("approve", "reject", "cancel")
+        )
+        for action in actions:
             _expect_error_code(
                 await client.post(
-                    f"/api/v1/leave-requests/{leave_request_id}/{action}",
+                    f"/api/v1/leave-requests/{leave_request['id']}/{action}",
                     headers=TENANT_HEADERS,
-                    json=decision_payload,
+                    json={
+                        "expected_version": leave_request["version"],
+                        "decision_note": "Invalid repeated Phase 11 smoke decision",
+                    },
                 ),
                 409,
-                "leave_request_transition_conflict",
-                (
-                    "POST "
-                    f"{source_status} /api/v1/leave-requests/"
-                    f"{{leave_request_id}}/{action}"
-                ),
+                "leave_conflict",
+                (f"POST {source_status} /api/v1/leave-requests/{{request_id}}/{action}"),
             )
 
 
@@ -4480,7 +4760,11 @@ async def _smoke_dashboard_endpoint(
         "dashboard pending leave compatibility count",
     )
     _assert_equal(summary["new_starters_this_month"], 2, "dashboard new_starters_this_month")
-    _assert_equal(summary["open_tasks"], 0, "dashboard open_tasks")
+    _assert_equal(
+        summary["open_tasks"],
+        summary["pending_leave_count"],
+        "dashboard open_tasks",
+    )
     _assert_equal(
         summary["department_distribution"],
         [{"department": "Engineering", "count": 2}],
@@ -4544,23 +4828,28 @@ async def _smoke_dashboard_endpoint(
         "other dashboard new_starters_this_month",
     )
     _assert_equal(
+        other_summary["open_tasks"],
+        other_summary["pending_leave_count"],
+        "other dashboard open_tasks",
+    )
+    _assert_equal(
         other_summary["department_distribution"],
         [{"department": "People", "count": 1}],
         "other dashboard department_distribution",
     )
     _assert_equal(
         len(other_summary["recent_activity"]),
-        2,
+        1,
         "other dashboard recent_activity count",
     )
     _assert_equal(
         {activity["activity_type"] for activity in other_summary["recent_activity"]},
-        {"employee.created", "leave.requested"},
+        {"employee.created"},
         "other dashboard recent_activity types",
     )
     _assert_equal(
         {activity["entity_id"] for activity in other_summary["recent_activity"]},
-        {other_employee_id, other_tenant_leave_request_id},
+        {other_employee_id},
         "other dashboard recent_activity tenant scope",
     )
 
@@ -4585,12 +4874,9 @@ async def _create_employee(
 
 async def _create_leave_request(
     client: AsyncClient,
-    employee_id: str,
     day_offset: int,
     *,
-    headers: dict[str, str] | None = None,
-    requested_by_user_id: str | None = None,
-    leave_type: str = "annual",
+    leave_type_id: str,
 ) -> dict[str, Any]:
     start_date = date.today() + timedelta(days=day_offset)
     end_date = start_date + timedelta(days=1)
@@ -4599,13 +4885,12 @@ async def _create_leave_request(
             client,
             "post",
             "/api/v1/leave-requests",
-            headers=headers or TENANT_HEADERS,
+            headers=TENANT_HEADERS,
             json={
-                "employee_id": employee_id,
-                "leave_type": leave_type,
+                "leave_type_id": leave_type_id,
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
-                "requested_by_user_id": requested_by_user_id or str(REQUESTING_USER_ID),
+                "employee_note": "Phase 11 synthetic backend smoke request",
             },
         ),
         201,
@@ -4626,8 +4911,7 @@ def _expect_phase0_list(
     body = _expect_json(response, status_code, label)
     if not isinstance(body, list):
         raise AssertionError(
-            f"{label} must preserve the Phase 0 plain-array body, "
-            f"got {type(body).__name__}"
+            f"{label} must preserve the Phase 0 plain-array body, got {type(body).__name__}"
         )
     return body
 

@@ -22,7 +22,10 @@ from app.api.errors import (
 from app.api.openapi import TENANT_SETTINGS_TAG, with_correlation_response_headers
 from app.core.config import Settings
 from app.db.session import get_session
-from app.modules.documents import DOCUMENT_RUNTIME_STATE_KEY, DocumentRuntime
+from app.modules.documents.infrastructure.runtime import (
+    DOCUMENT_RUNTIME_STATE_KEY,
+    DocumentRuntime,
+)
 from app.platform.request_context import RequestContext
 from app.platform.responses import DataEnvelope, data_envelope
 from app.schemas.tenant_readiness import TenantReadinessRead

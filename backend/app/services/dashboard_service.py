@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, exists, func, literal, or_, select
@@ -85,39 +85,19 @@ class DashboardService:
             effective_on=self.today,
         )
         row = (
-            await self.session.execute(
-                select(
-                    func.count()
-                    .filter(Employee.status == EmployeeStatus.ACTIVE.value)
-                    .label("active_count"),
-                    func.count().filter(Employee.status.in_(_CURRENT_STATUSES)).label("headcount"),
-                    func.count()
-                    .filter(
-                        and_(
-                            Employee.status.in_(_CURRENT_STATUSES),
-                            Employee.employment_start_date >= start_date,
-                            Employee.employment_start_date < end_date,
-                        )
+            (
+                await self.session.execute(
+                    _dashboard_counts_statement(
+                        tenant_id=tenant_id,
+                        start_date=start_date,
+                        end_date=end_date,
+                        employee_scope=employee_scope,
                     )
-                    .label("starters"),
-                    func.count()
-                    .filter(
-                        and_(
-                            Employee.status == EmployeeStatus.TERMINATED.value,
-                            Employee.employment_end_date >= start_date,
-                            Employee.employment_end_date < end_date,
-                        )
-                    )
-                    .label("terminated"),
-                )
-                .select_from(Employee)
-                .where(
-                    Employee.tenant_id == tenant_id,
-                    Employee.archived_at.is_(None),
-                    employee_scope,
                 )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         pending_leave = await self.session.scalar(
             select(func.count())
             .select_from(LeaveRequest)
@@ -204,34 +184,38 @@ async def _document_counts(
         .scalar_subquery()
     )
     row = (
-        await session.execute(
-            select(
-                func.count().filter(~available_document).label("missing"),
-                func.count()
-                .filter(
-                    best_expiry.is_not(None),
-                    best_expiry >= effective_on,
-                    best_expiry <= expiring_on,
+        (
+            await session.execute(
+                select(
+                    func.count().filter(~available_document).label("missing"),
+                    func.count()
+                    .filter(
+                        best_expiry.is_not(None),
+                        best_expiry >= effective_on,
+                        best_expiry <= expiring_on,
+                    )
+                    .label("expiring"),
                 )
-                .label("expiring"),
-            )
-            .select_from(Employee)
-            .join(DocumentType, DocumentType.tenant_id == Employee.tenant_id)
-            .where(
-                Employee.tenant_id == tenant_id,
-                Employee.archived_at.is_(None),
-                Employee.status.in_(_CURRENT_STATUSES),
-                DocumentType.required.is_(True),
-                DocumentType.archived_at.is_(None),
-                _employee_scope_predicate(
-                    tenant_id=tenant_id,
-                    employee_id=Employee.id,
-                    scope=scope,
-                    effective_on=effective_on,
-                ),
+                .select_from(Employee)
+                .join(DocumentType, DocumentType.tenant_id == Employee.tenant_id)
+                .where(
+                    Employee.tenant_id == tenant_id,
+                    Employee.archived_at.is_(None),
+                    Employee.status.in_(_CURRENT_STATUSES),
+                    DocumentType.required.is_(True),
+                    DocumentType.archived_at.is_(None),
+                    _employee_scope_predicate(
+                        tenant_id=tenant_id,
+                        employee_id=Employee.id,
+                        scope=scope,
+                        effective_on=effective_on,
+                    ),
+                )
             )
         )
-    ).mappings().one()
+        .mappings()
+        .one()
+    )
     return int(row["missing"] or 0), int(row["expiring"] or 0)
 
 
@@ -284,10 +268,7 @@ async def _department_distribution(
     if scope.value == "team":
         statement = statement.where(EmployeeAssignment.manager_user_id == scope.manager_user_id)
     rows = (await session.execute(statement)).all()
-    return [
-        DepartmentDistributionItem(department=name, count=int(count))
-        for name, count in rows
-    ]
+    return [DepartmentDistributionItem(department=name, count=int(count)) for name, count in rows]
 
 
 async def _recent_activity(
@@ -361,11 +342,65 @@ async def _recent_activity(
             entity_type=resource_type,
             entity_id=resource_id,
             title=_AUDIT_ACTIVITY[event_type][1],
-            occurred_at=occurred_at,
+            occurred_at=_aware(occurred_at),
         )
         for event_type, resource_type, resource_id, occurred_at in events
         if resource_id is not None
     ]
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _dashboard_counts_statement(
+    *,
+    tenant_id: UUID,
+    start_date: date,
+    end_date: date,
+    employee_scope=None,
+):
+    """Build the bounded employee aggregate used by the role-aware dashboard.
+
+    The optional predicate keeps the historical tenant-wide query reusable by
+    the PostgreSQL plan gate while allowing the runtime service to apply its
+    manager-scoped employee boundary.
+    """
+
+    return (
+        select(
+            func.count()
+            .filter(Employee.status == EmployeeStatus.ACTIVE.value)
+            .label("active_count"),
+            func.count().filter(Employee.status.in_(_CURRENT_STATUSES)).label("headcount"),
+            func.count()
+            .filter(
+                and_(
+                    Employee.status.in_(_CURRENT_STATUSES),
+                    Employee.employment_start_date >= start_date,
+                    Employee.employment_start_date < end_date,
+                )
+            )
+            .label("starters"),
+            func.count()
+            .filter(
+                and_(
+                    Employee.status == EmployeeStatus.TERMINATED.value,
+                    Employee.employment_end_date >= start_date,
+                    Employee.employment_end_date < end_date,
+                )
+            )
+            .label("terminated"),
+        )
+        .select_from(Employee)
+        .where(
+            Employee.tenant_id == tenant_id,
+            Employee.archived_at.is_(None),
+            literal(True) if employee_scope is None else employee_scope,
+        )
+    )
 
 
 def _employee_scope_predicate(
@@ -403,11 +438,7 @@ def _dashboard_scope(*, actor_id: UUID, permissions: tuple[str, ...]) -> _Dashbo
 
 def _month_window(today: date) -> tuple[date, date]:
     start = date(today.year, today.month, 1)
-    end = (
-        date(today.year + 1, 1, 1)
-        if today.month == 12
-        else date(today.year, today.month + 1, 1)
-    )
+    end = date(today.year + 1, 1, 1) if today.month == 12 else date(today.year, today.month + 1, 1)
     return start, end
 
 

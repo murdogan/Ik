@@ -132,6 +132,7 @@ async def test_hr_manager_and_linked_employee_receive_distinct_server_projection
         "email": "ada@example.test",
         "status": "active",
         "employee_version": 1,
+        "archived_at": None,
     }
     assert hr["personal"] == {
         "preferred_name": "Ada",
@@ -292,11 +293,11 @@ async def test_own_only_actor_cannot_guess_manager_or_hr_projection() -> None:
 
 async def test_manager_reads_denials_logs_and_audit_never_receive_excluded_values(
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    caplog.set_level(
-        logging.INFO,
-        logger="app.platform.observability.correlation",
-    )
+    logger = logging.getLogger("tests.manager-profile.correlation")
+    caplog.set_level(logging.INFO, logger=logger.name)
+    monkeypatch.setattr("app.main.configure_operational_logger", lambda: logger)
     async with employee_field_policy_database() as database:
         async with employee_field_policy_api(
             database,

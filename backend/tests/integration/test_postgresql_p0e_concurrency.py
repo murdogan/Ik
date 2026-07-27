@@ -49,6 +49,7 @@ _EMPLOYEE_HISTORY_CONSTRAINTS = {
     "fk_leave_requests_tenant_employee_id_employees",
     "fk_leave_balance_summaries_tenant_employee_id_employees",
 }
+_HR_DIRECTOR_ROLE_ID = UUID("d2000000-0000-4000-8000-000000000003")
 
 
 @pytest.fixture
@@ -277,9 +278,7 @@ async def _assert_concurrent_idempotent_leave_create(database_url: URL) -> None:
             )
             receipts = list(
                 await verification_session.scalars(
-                    select(CommandIdempotency).where(
-                        CommandIdempotency.tenant_id == seed.tenant_id
-                    )
+                    select(CommandIdempotency).where(CommandIdempotency.tenant_id == seed.tenant_id)
                 )
             )
 
@@ -308,9 +307,26 @@ async def _assert_employee_archive_retention(database_url: URL) -> None:
             include_leave_request=False,
             include_balance=False,
         )
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "update employees set status = 'terminated', "
+                    "employment_end_date = :employment_end_date, "
+                    "termination_reason = 'contract_end' where id = :employee_id"
+                ),
+                {
+                    "employment_end_date": date(2026, 7, 31),
+                    "employee_id": seed.employee_id,
+                },
+            )
 
         async with session_factory() as wrong_tenant_session:
-            configure_tenant_database_access(wrong_tenant_session, seed.tenant_id)
+            configure_tenant_database_access(
+                wrong_tenant_session,
+                seed.tenant_id,
+                actor_id=seed.approver_user_id,
+                membership_id=seed.actor_membership_id,
+            )
             wrong_tenant_handler = EmployeeCommandHandler(
                 service=EmployeeService(wrong_tenant_session),
                 unit_of_work=SqlAlchemyUnitOfWork(wrong_tenant_session),
@@ -322,7 +338,12 @@ async def _assert_employee_archive_retention(database_url: URL) -> None:
                 )
 
         async with session_factory() as archive_session:
-            configure_tenant_database_access(archive_session, seed.tenant_id)
+            configure_tenant_database_access(
+                archive_session,
+                seed.tenant_id,
+                actor_id=seed.approver_user_id,
+                membership_id=seed.actor_membership_id,
+            )
             archive_handler = EmployeeCommandHandler(
                 service=EmployeeService(archive_session),
                 unit_of_work=SqlAlchemyUnitOfWork(archive_session),
@@ -379,29 +400,28 @@ async def _assert_employee_archive_retention(database_url: URL) -> None:
             assert other_employee.archived_at is None
 
         async with session_factory() as retention_session:
-            async with retention_session.begin():
-                await retention_session.execute(
-                    delete(Tenant).where(Tenant.id == seed.tenant_id)
-                )
+            with pytest.raises(IntegrityError) as tenant_delete:
+                async with retention_session.begin():
+                    await retention_session.execute(
+                        delete(Tenant).where(Tenant.id == seed.tenant_id)
+                    )
+        assert sqlstate_from_error(tenant_delete.value) == "23514"
 
         async with session_factory() as retention_verification_session:
-            assert (
-                await retention_verification_session.get(Employee, seed.employee_id)
-                is None
-            )
+            assert await retention_verification_session.get(Employee, seed.employee_id) is not None
             assert (
                 await retention_verification_session.get(
                     LeaveRequest,
                     seed.leave_request_id,
                 )
-                is None
+                is not None
             )
             assert (
                 await retention_verification_session.get(
                     LeaveBalanceSummary,
                     seed.leave_balance_id,
                 )
-                is None
+                is not None
             )
             other_employee = await retention_verification_session.get(
                 Employee,
@@ -424,6 +444,7 @@ async def _seed_p0e_downgrade_blockers(
             seed,
             include_leave_request=False,
             include_balance=False,
+            include_current_contract=False,
         )
         async with engine.begin() as connection:
             await connection.execute(
@@ -471,6 +492,8 @@ async def _current_revision(database_url: URL) -> str | None:
 @dataclass(frozen=True, slots=True)
 class _TenantSeed:
     tenant_id: UUID
+    actor_identity_id: UUID
+    actor_membership_id: UUID
     requester_user_id: UUID
     approver_user_id: UUID
     rejecter_user_id: UUID
@@ -482,6 +505,8 @@ class _TenantSeed:
 def _tenant_seed() -> _TenantSeed:
     return _TenantSeed(
         tenant_id=uuid4(),
+        actor_identity_id=uuid4(),
+        actor_membership_id=uuid4(),
         requester_user_id=uuid4(),
         approver_user_id=uuid4(),
         rejecter_user_id=uuid4(),
@@ -497,7 +522,11 @@ async def _seed_tenant_graph(
     *,
     include_leave_request: bool = True,
     include_balance: bool = True,
+    include_current_contract: bool = True,
 ) -> None:
+    leave_type_id = uuid4()
+    leave_policy_id = uuid4()
+    approver_email = f"approver-{seed.approver_user_id.hex}@p0e.test"
     async with engine.begin() as connection:
         await connection.execute(
             text(
@@ -512,6 +541,13 @@ async def _seed_tenant_graph(
         )
         await connection.execute(
             text(
+                "insert into identities (id, email, status, password_hash) "
+                "values (:id, :email, 'active', 'p0e-hash')"
+            ),
+            {"id": seed.actor_identity_id, "email": approver_email},
+        )
+        await connection.execute(
+            text(
                 "insert into users (id, tenant_id, email, full_name, status) values "
                 "(:requester_id, :tenant_id, :requester_email, 'P0E Requester', 'active'), "
                 "(:approver_id, :tenant_id, :approver_email, 'P0E Approver', 'active'), "
@@ -522,9 +558,40 @@ async def _seed_tenant_graph(
                 "requester_id": seed.requester_user_id,
                 "requester_email": f"requester-{uuid4().hex}@p0e.test",
                 "approver_id": seed.approver_user_id,
-                "approver_email": f"approver-{uuid4().hex}@p0e.test",
+                "approver_email": approver_email,
                 "rejecter_id": seed.rejecter_user_id,
                 "rejecter_email": f"rejecter-{uuid4().hex}@p0e.test",
+            },
+        )
+        await connection.execute(
+            text(
+                "insert into tenant_memberships ("
+                "id, tenant_id, identity_id, legacy_user_id, full_name, status, "
+                "permission_version"
+                ") values ("
+                ":membership_id, :tenant_id, :identity_id, :legacy_user_id, "
+                "'P0E Approver', 'active', 1"
+                ")"
+            ),
+            {
+                "membership_id": seed.actor_membership_id,
+                "tenant_id": seed.tenant_id,
+                "identity_id": seed.actor_identity_id,
+                "legacy_user_id": seed.approver_user_id,
+            },
+        )
+        await connection.execute(
+            text(
+                "insert into membership_roles ("
+                "tenant_id, membership_id, role_id, role_scope_type, active"
+                ") values ("
+                ":tenant_id, :membership_id, :role_id, 'tenant', true"
+                ")"
+            ),
+            {
+                "tenant_id": seed.tenant_id,
+                "membership_id": seed.actor_membership_id,
+                "role_id": _HR_DIRECTOR_ROLE_ID,
             },
         )
         await connection.execute(
@@ -543,21 +610,74 @@ async def _seed_tenant_graph(
                 "start_date": date(2026, 7, 1),
             },
         )
+        if include_current_contract:
+            await connection.execute(
+                text(
+                    "insert into employee_profiles (id, tenant_id, employee_id) "
+                    "values (:id, :tenant_id, :employee_id)"
+                ),
+                {
+                    "id": uuid4(),
+                    "tenant_id": seed.tenant_id,
+                    "employee_id": seed.employee_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    "insert into employee_employments (id, tenant_id, employee_id) "
+                    "values (:id, :tenant_id, :employee_id)"
+                ),
+                {
+                    "id": uuid4(),
+                    "tenant_id": seed.tenant_id,
+                    "employee_id": seed.employee_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    "insert into leave_types (id, tenant_id, code, name) values "
+                    "(:id, :tenant_id, 'annual', 'Annual leave')"
+                ),
+                {
+                    "id": leave_type_id,
+                    "tenant_id": seed.tenant_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    "insert into leave_policies ("
+                    "id, tenant_id, leave_type_id, version, effective_from, paid, "
+                    "document_required, negative_balance_allowed, accrual_enabled, "
+                    "accrual_days_per_month, carryover_enabled"
+                    ") values ("
+                    ":id, :tenant_id, :leave_type_id, 1, :effective_from, true, "
+                    "false, false, false, 0, false"
+                    ")"
+                ),
+                {
+                    "id": leave_policy_id,
+                    "tenant_id": seed.tenant_id,
+                    "leave_type_id": leave_type_id,
+                    "effective_from": date(1900, 1, 1),
+                },
+            )
         if include_leave_request:
             await connection.execute(
                 text(
                     "insert into leave_requests ("
-                    "id, tenant_id, employee_id, leave_type, start_date, end_date, status, "
-                    "requested_by_user_id"
+                    "id, tenant_id, employee_id, leave_type, leave_type_id, policy_id, "
+                    "start_date, end_date, status, requested_by_user_id"
                     ") values ("
-                    ":id, :tenant_id, :employee_id, 'annual', :start_date, :end_date, "
-                    "'pending', :requester_id"
+                    ":id, :tenant_id, :employee_id, 'annual', :leave_type_id, "
+                    ":policy_id, :start_date, :end_date, 'pending', :requester_id"
                     ")"
                 ),
                 {
                     "id": seed.leave_request_id,
                     "tenant_id": seed.tenant_id,
                     "employee_id": seed.employee_id,
+                    "leave_type_id": leave_type_id,
+                    "policy_id": leave_policy_id,
                     "start_date": date(2026, 8, 1),
                     "end_date": date(2026, 8, 2),
                     "requester_id": seed.requester_user_id,

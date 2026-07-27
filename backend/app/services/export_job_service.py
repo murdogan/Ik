@@ -264,11 +264,13 @@ class ExportJobService:
                 if (
                     job.status != ExportJobStatus.SUCCEEDED.value
                     or job.expires_at is None
-                    or job.expires_at <= now
                     or job.artifact_object_key is None
                     or job.generated_scope is None
                     or job.generated_fields is None
                 ):
+                    raise ReportingConflictError()
+                artifact_expires_at = _aware(job.expires_at)
+                if artifact_expires_at <= now:
                     raise ReportingConflictError()
                 current = resolve_report_authorization(
                     permissions=permissions,
@@ -292,7 +294,7 @@ class ExportJobService:
                     raise ReportingConflictError()
                 ttl_seconds = min(
                     self.settings.export_download_ttl_seconds,
-                    max(0, int((job.expires_at - now).total_seconds()) - 1),
+                    max(0, int((artifact_expires_at - now).total_seconds()) - 1),
                 )
                 if ttl_seconds < 1:
                     raise ReportingConflictError()
@@ -304,7 +306,7 @@ class ExportJobService:
                     )
                 except ObjectStorageError as exc:
                     raise ReportingStorageUnavailableError() from exc
-                expires_at = min(grant.expires_at, job.expires_at)
+                expires_at = min(_aware(grant.expires_at), artifact_expires_at)
                 intent = ReportExportDownloadIntent(
                     id=uuid4(),
                     tenant_id=tenant_id,
@@ -370,7 +372,8 @@ async def _download_intent_count(session: AsyncSession, tenant_id: UUID, job_id:
 
 def _job_read(job: ReportExportJob, *, download_intent_count: int, now: datetime) -> ExportJobRead:
     status = ExportJobStatus(job.status)
-    if status is ExportJobStatus.SUCCEEDED and job.expires_at is not None and job.expires_at <= now:
+    expires_at = _aware(job.expires_at) if job.expires_at is not None else None
+    if status is ExportJobStatus.SUCCEEDED and expires_at is not None and expires_at <= _aware(now):
         status = ExportJobStatus.EXPIRED
     return ExportJobRead(
         id=job.id,
@@ -390,11 +393,17 @@ def _job_read(job: ReportExportJob, *, download_intent_count: int, now: datetime
         failure_code=job.failure_code,
         cancel_requested=job.cancel_requested_at is not None,
         download_intents_remaining=max(0, _MAX_DOWNLOAD_INTENTS - download_intent_count),
-        available_at=job.available_at,
-        expires_at=job.expires_at,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
+        available_at=_aware(job.available_at) if job.available_at is not None else None,
+        expires_at=expires_at,
+        created_at=_aware(job.created_at),
+        updated_at=_aware(job.updated_at),
     )
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _field_classifications(report_type: ReportType, fields: tuple[str, ...]) -> list[str]:

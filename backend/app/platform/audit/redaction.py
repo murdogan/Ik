@@ -379,9 +379,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
                 "sessions_revoked",
             }
         ),
-        changed_fields=frozenset(
-            {"status", "employment_end_date", "termination_reason"}
-        ),
+        changed_fields=frozenset({"status", "employment_end_date", "termination_reason"}),
     ),
     AuditEventType.EMPLOYEE_PERSONAL_PROFILE_UPDATED: AuditMetadataPolicy(
         changed_fields=frozenset(
@@ -671,9 +669,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         changed_fields=frozenset({"processing_state", "finalized_at"}),
     ),
     AuditEventType.EMPLOYEE_DOCUMENT_SCAN_COMPLETED: AuditMetadataPolicy(
-        metadata_keys=frozenset(
-            {"before_state", "after_state", "scan_result", "scanner_provider"}
-        ),
+        metadata_keys=frozenset({"before_state", "after_state", "scan_result", "scanner_provider"}),
         changed_fields=frozenset({"processing_state", "scan_result", "scanned_at"}),
     ),
     AuditEventType.EMPLOYEE_DOCUMENT_UPDATED: AuditMetadataPolicy(
@@ -719,9 +715,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     ),
     AuditEventType.ANNOUNCEMENT_UPDATED: AuditMetadataPolicy(
         metadata_keys=frozenset({"before_status", "after_status", "version"}),
-        changed_fields=frozenset(
-            {"title", "text_changed", "is_critical", "targeting", "version"}
-        ),
+        changed_fields=frozenset({"title", "text_changed", "is_critical", "targeting", "version"}),
     ),
     AuditEventType.ANNOUNCEMENT_PUBLISHED: AuditMetadataPolicy(
         metadata_keys=frozenset({"before_status", "after_status", "recipient_count", "version"}),
@@ -736,9 +730,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         changed_fields=frozenset({"acknowledged_at", "version"}),
     ),
     AuditEventType.PRIVACY_NOTICE_PUBLISHED: AuditMetadataPolicy(
-        metadata_keys=frozenset(
-            {"notice_kind", "notice_version", "notice_content_hash"}
-        ),
+        metadata_keys=frozenset({"notice_kind", "notice_version", "notice_content_hash"}),
         changed_fields=frozenset({"status", "published_at", "revision"}),
     ),
     AuditEventType.PRIVACY_NOTICE_ACKNOWLEDGED: AuditMetadataPolicy(
@@ -761,9 +753,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         changed_fields=frozenset({"granted", "version"}),
     ),
     AuditEventType.RETENTION_POLICY_MUTATED: AuditMetadataPolicy(
-        metadata_keys=frozenset(
-            {"data_category", "retention_action", "policy_version"}
-        ),
+        metadata_keys=frozenset({"data_category", "retention_action", "policy_version"}),
         changed_fields=frozenset(
             {
                 "data_category",
@@ -777,9 +767,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
         ),
     ),
     AuditEventType.RETENTION_DRY_RUN: AuditMetadataPolicy(
-        metadata_keys=frozenset(
-            {"data_category", "retention_action", "policy_version", "count"}
-        )
+        metadata_keys=frozenset({"data_category", "retention_action", "policy_version", "count"})
     ),
     AuditEventType.NOTIFICATION_DELIVERY_FAILED: AuditMetadataPolicy(
         metadata_keys=frozenset({"channel", "delivery_error_code", "attempt_count"}),
