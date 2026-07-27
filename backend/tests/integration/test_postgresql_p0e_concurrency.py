@@ -539,13 +539,14 @@ async def _seed_tenant_graph(
             ),
             {"id": seed.tenant_id, "slug": f"p0e-{uuid4().hex}"},
         )
-        await connection.execute(
-            text(
-                "insert into identities (id, email, status, password_hash) "
-                "values (:id, :email, 'active', 'p0e-hash')"
-            ),
-            {"id": seed.actor_identity_id, "email": approver_email},
-        )
+        if include_current_contract:
+            await connection.execute(
+                text(
+                    "insert into identities (id, email, status, password_hash) "
+                    "values (:id, :email, 'active', 'p0e-hash')"
+                ),
+                {"id": seed.actor_identity_id, "email": approver_email},
+            )
         await connection.execute(
             text(
                 "insert into users (id, tenant_id, email, full_name, status) values "
@@ -563,37 +564,38 @@ async def _seed_tenant_graph(
                 "rejecter_email": f"rejecter-{uuid4().hex}@p0e.test",
             },
         )
-        await connection.execute(
-            text(
-                "insert into tenant_memberships ("
-                "id, tenant_id, identity_id, legacy_user_id, full_name, status, "
-                "permission_version"
-                ") values ("
-                ":membership_id, :tenant_id, :identity_id, :legacy_user_id, "
-                "'P0E Approver', 'active', 1"
-                ")"
-            ),
-            {
-                "membership_id": seed.actor_membership_id,
-                "tenant_id": seed.tenant_id,
-                "identity_id": seed.actor_identity_id,
-                "legacy_user_id": seed.approver_user_id,
-            },
-        )
-        await connection.execute(
-            text(
-                "insert into membership_roles ("
-                "tenant_id, membership_id, role_id, role_scope_type, active"
-                ") values ("
-                ":tenant_id, :membership_id, :role_id, 'tenant', true"
-                ")"
-            ),
-            {
-                "tenant_id": seed.tenant_id,
-                "membership_id": seed.actor_membership_id,
-                "role_id": _HR_DIRECTOR_ROLE_ID,
-            },
-        )
+        if include_current_contract:
+            await connection.execute(
+                text(
+                    "insert into tenant_memberships ("
+                    "id, tenant_id, identity_id, legacy_user_id, full_name, status, "
+                    "permission_version"
+                    ") values ("
+                    ":membership_id, :tenant_id, :identity_id, :legacy_user_id, "
+                    "'P0E Approver', 'active', 1"
+                    ")"
+                ),
+                {
+                    "membership_id": seed.actor_membership_id,
+                    "tenant_id": seed.tenant_id,
+                    "identity_id": seed.actor_identity_id,
+                    "legacy_user_id": seed.approver_user_id,
+                },
+            )
+            await connection.execute(
+                text(
+                    "insert into membership_roles ("
+                    "tenant_id, membership_id, role_id, role_scope_type, active"
+                    ") values ("
+                    ":tenant_id, :membership_id, :role_id, 'tenant', true"
+                    ")"
+                ),
+                {
+                    "tenant_id": seed.tenant_id,
+                    "membership_id": seed.actor_membership_id,
+                    "role_id": _HR_DIRECTOR_ROLE_ID,
+                },
+            )
         await connection.execute(
             text(
                 "insert into employees ("
