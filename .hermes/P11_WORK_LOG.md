@@ -1,7 +1,9 @@
 # Phase 11 Work Log
 
-Status: in progress
+Status: complete — all required local Phase 11 gates have current green
+evidence; staging acceptance and merge remain supervisor-owned
 Started: 2026-07-27T13:03:41Z
+Finished: 2026-07-27T15:54:19Z
 Starting plan SHA: `37150c8e8a8afb6459a74a2dfbf5166431ec3353`
 Branch: `codex/mvp-phase11-final-validation`
 Authoring: Codex `gpt-5.6-sol` with `ultra` reasoning; Hermes supervises
@@ -15,11 +17,11 @@ disposable PostgreSQL 17 administrator DSN is represented as `[REDACTED]`.
 | Block | State | Evidence | Defects repaired |
 |---|---|---|---|
 | P11A inventory/baseline | complete | 100 backend test files; 1,128 initial cases (1,056 default + 72 PostgreSQL); 42 initial migrations through `0042`; 142 API paths / 177 operations / 381 schemas; 36 frontend routes; 36 initial Chromium cases | Two collection blockers repaired |
-| P11B backend regression | repair in progress | Initial full default lane: 284 failed, 766 passed, 72 deselected, 6 errors; repaired focused backend lanes are green and OpenAPI/smoke confirmation is in progress | Authorization catalog serialization, dashboard UTC projection, current lifecycle/profile fixtures/contracts, migration compatibility harness, leave lineage/date validation, and architecture boundaries |
-| P11C PostgreSQL/RLS | repair in progress | PostgreSQL 17.10 baseline: 61 passed / 11 failed; all reproduced fixture failures are repaired and focused nodes are green; one real lifecycle ACL defect has a least-privilege forward-migration repair under focused confirmation | Current P6 SQL fixtures, privacy model default drift, guarded downgrade remediation, session-policy selection, tenant FK fixtures, archive/profile locking, and performance data |
-| P11D frontend/E2E | focused repairs green | Clean install/typecheck/lint/build green; baseline Chromium 22 passed / 14 failed; every original failure and 16 added Phase 11 cases has a latest focused pass | Strict feature fixtures, current Employee 360 contracts, authorization selectors, 17 previously untouched routes, and PWA cache isolation |
-| P11E security/performance | in progress | Production dependency and verified secret scans green; 10k PostgreSQL query-plan proof, document/object boundary, and full synthetic PostgreSQL backup/restore/rollback proof green | Current performance fixtures, PWA authenticated-data cache proof, and real PostgreSQL recovery evidence |
-| P11F final/report | pending | Final complete gate is intentionally reserved until focused repairs are green | pending |
+| P11B backend regression | complete | Final complete default lane: 1,072 passed / 74 PostgreSQL deselected; Ruff, formatter, 177-operation OpenAPI registry, and 80-endpoint runtime smoke green | Authorization catalog serialization, dashboard UTC projection, current lifecycle/profile fixtures/contracts, migration compatibility harness, leave lineage/date validation, and architecture boundaries |
+| P11C PostgreSQL/RLS | complete | Final PostgreSQL 17.10 lane: 73 passed / 1 historical fixture failure; scoped fixture repair node then passed, making all 74 cases green | Current P6 SQL fixtures, privacy model default drift, guarded downgrade remediation, session-policy selection, tenant FK fixtures, archive/profile locking/race, non-super migration ownership, and performance data |
+| P11D frontend/E2E | complete | Frozen install, production audit, typecheck, lint, build, and 52-case inventory green; complete Chromium 51 passed / 1 selector failure, then repaired spec 1 passed | Strict feature fixtures, current Employee 360 contracts, authorization selectors, 17 previously untouched routes, PWA cache isolation, and unambiguous status assertion |
+| P11E security/performance | complete | Production dependency and secret scans green; 10k PostgreSQL plan proof, document/object boundary, and synthetic PostgreSQL backup/restore/rollback proof green | Current performance fixtures, upload/report/privacy boundaries, PWA authenticated-data cache proof, and real PostgreSQL recovery evidence |
+| P11F final/report | complete | Tested product checkpoint and two test-only follow-ups pushed; local complete gate green after affected reruns; remote candidate SHA and cleanup verified | Evidence-backed residual report |
 
 ## P11A — inventory and one-time baselines
 
@@ -107,7 +109,8 @@ metadata. `DashboardActivityItem` requires an aware timestamp, causing every
 non-empty recent-activity projection to fail validation. The dashboard service
 now normalizes database timestamps to UTC at its projection boundary.
 
-Focused dashboard result is pending the concurrent fixture lane's final rerun.
+Dashboard and leave-balance focused confirmation passed 25 cases in 59.51s;
+the complete default lane also passed.
 
 ### P2 — module architecture gate had 76 violations
 
@@ -156,7 +159,7 @@ Evidence:
 - Corrected stale-ID node: 1 passed in 3.05s.
 - Manager/field-policy/profile/correlation focused lane after repair:
   28 passed / 1 stale registry entry failed; the registry entry was then
-  corrected and awaits its focused confirmation.
+  corrected and confirmed by the subsequent affected/default lanes.
 
 ### Tenant/leave/migration fixture and harness repair
 
@@ -342,7 +345,19 @@ Repair and evidence:
   5 passed in 30.35s.
 - Migration-chain unit: 1 passed in 2.24s.
 
-The final complete PostgreSQL rerun remains pending.
+Final complete-lane result:
+
+- `IK_TEST_DATABASE_URL=[REDACTED] uv run pytest -q -m postgres`
+  - 73 passed, 1 failed, 1,072 deselected, 11 warnings in 194.65s.
+  - The only failure was test-harness drift: the P0E downgrade probe
+    intentionally moves to revision `0012`, but the newly required current
+    gateway identity seed was initially unconditional and therefore referenced
+    the later `identities` table.
+- The identity/membership/role seed is now scoped to current-contract fixtures.
+  The affected historical node passed 1/1 in 6.50s.
+- Thus all 74 collected PostgreSQL cases have current passing evidence. The
+  final complete command was not repeated after a test-only repair, in
+  accordance with the Phase 11 broad-suite budget.
 
 ## P11D — frontend and persona coverage
 
@@ -363,7 +378,21 @@ The final complete PostgreSQL rerun remains pending.
     absent from Cache Storage, and `/sw.js` carried `no-store` and root scope.
 - TypeScript typecheck and ESLint over all changed/new E2E files are green.
 
-The final configured Chromium run is intentionally reserved for P11F.
+Final frontend evidence:
+
+- `npm ci`: 352 packages installed from the lockfile.
+- `npm audit --omit=dev --audit-level=high`: 0 production vulnerabilities.
+- `npm run typecheck` and `npm run lint`: passed.
+- `npm run build`: Next.js 16.2.12 production build passed; 34 static pages.
+- `npx playwright test --list`: 52 Chromium cases across 22 files.
+- Complete `npx playwright test`: 51 passed / 1 failed in 2.7 minutes.
+  - The product correctly showed creation success while a reload status was
+    transiently present. The new test used an ambiguous global `role=status`
+    locator and failed Playwright strict mode.
+  - Both creation/archive assertions now filter status by their exact success
+    message. Targeted ESLint passed and the affected spec passed 1/1 in 42.3s.
+  - The complete browser command was not repeated after this test-only selector
+    repair; all 52 cases have current passing evidence.
 
 ## P11E — security and dependency evidence
 
@@ -372,10 +401,17 @@ The final configured Chromium run is intentionally reserved for P11F.
   - no known vulnerabilities under strict `pip-audit`.
 - Frontend production audit:
   - 0 vulnerabilities.
-- Verified `detect-secrets` scan:
-  - zero verified findings.
-- Independent tracked-file credential/private-key pattern scan:
-  - 697 files checked; zero credential-like filenames, private keys, or live
+- Tracked-file `detect-secrets` scan:
+  - 719 tracked files scanned;
+  - 311 heuristic candidates across 51 files: 244 hexadecimal entropy, 55
+    keyword, 11 basic-auth syntax, and 1 base64 entropy;
+  - the seven production/script candidates were inspected as error-message
+    identifiers, a local dummy DSN, audit enum identifiers, secure token-module
+    imports, a fixed dummy Argon2 timing hash, and a synthetic trace ID;
+  - remaining candidates are deterministic tests/contracts/documentation
+    examples. Zero live or verified secrets.
+- Independent high-confidence tracked-file scan:
+  - 719 files checked; zero credential-like filenames, private keys, or live
     AWS/GitHub/OpenAI/Slack/Stripe token patterns.
 - Recovery CLI unit/guard lane:
   - 5 passed.
@@ -428,6 +464,11 @@ The final configured Chromium run is intentionally reserved for P11F.
   supplementary SQLite with `unknown function: now()`. `func.now()` compiles
   to PostgreSQL `now()` and SQLite `CURRENT_TIMESTAMP`; migration `0039`
   remains semantically identical and no schema migration is required.
+- A bounded repair-diff audit found the same P2 portability defect in the newly
+  aligned `PrivacyConsentPurpose.created_at` default. It now also uses
+  `func.now()`; the SQLite privacy seed intentionally omits that field and the
+  same 6-case lane passes. Dialect compilation is PostgreSQL `now()` and SQLite
+  `CURRENT_TIMESTAMP`, preserving migration `0041` semantics.
 
 ### Synthetic PostgreSQL recovery and rollback proof
 
@@ -462,8 +503,102 @@ This is local synthetic logical-backup/application-rollback evidence, not
 staging/production deployment, WAL/PITR, object-store restore, or
 cross-store-atomicity evidence.
 
+## P11F — final local gate and immutable candidate
+
+Final inventory is 1,146 backend cases: 1,072 default and 74 PostgreSQL.
+Playwright contains 52 Chromium cases across 22 files. The product repair
+checkpoint is `8625839836013f6ec5d4dadff86bd2ddcad678f8`; the only later code-tree
+changes are two test-only harness corrections. The final locally tested/pushed
+candidate before this evidence-only log update is
+`08d659ca21801fad464073128c31e04fda243681`.
+
+### Static, default backend, and runtime contract
+
+- `uv run ruff check backend scripts`: passed.
+- `uv run ruff format --check backend scripts`: 361 files already formatted.
+- The excluded new forward migration was checked explicitly: 1 file already
+  formatted. No historical migration changed.
+- `uv lock --check`: passed; 55 packages resolved from the frozen lock.
+- `uv run pytest -q --lf`
+  - The stale cache contained no matching failed nodes, so pytest's documented
+    no-failures fallback executed the entire default lane.
+  - 1,072 passed, 74 PostgreSQL cases deselected, 1 dependency deprecation
+    warning, in 683.66s.
+- `uv run python scripts/backend_api_smoke.py`
+  - `BACKEND_SMOKE_OK`;
+  - 80 documented endpoint tables exercised;
+  - exact 142 paths / 177 operations / 381 schemas retained.
+
+### PostgreSQL
+
+- Complete lane and its one test-only historical fixture correction are
+  recorded under P11C: 73/74 passed in the broad run, then the affected node
+  passed in 6.50s, yielding current green evidence for all 74 cases.
+- Migration head is the single linear
+  `0043_p11_employee_lifecycle_profile_lock`.
+- The representative 10k/5k query-plan case, non-super migration-owner
+  round-trip, RLS/ACL/tenant isolation, concurrency, drift, downgrade, and API
+  smoke cases all passed in the complete command.
+
+### Frontend and Chromium
+
+- Frozen install, 0-vulnerability production audit, typecheck, lint, and
+  production build passed.
+- Playwright inventory: 52 cases / 22 files.
+- Complete Chromium: 51 passed / 1 selector-only failure in 2.7 minutes;
+  repaired affected spec: 1 passed in 42.3s. All 52 cases therefore have
+  current passing evidence without repeating the broad browser command.
+
+### Release candidate
+
+- `scripts/ops/release_manifest.py` generated a schema-valid manifest for
+  `08d659ca21801fad464073128c31e04fda243681`.
+- App version `0.1.0`; compatible migration head
+  `0043_p11_employee_lifecycle_profile_lock`.
+- `sha256sum --check --strict` passed; final verified manifest SHA-256:
+  `2130642f48f3e95af5b7d096b6022202ffaf31131feb087f049268e0f7f22155`.
+- The disposable release-manifest directory was removed.
+- `git ls-remote` matched local and remote candidate SHA
+  `08d659ca21801fad464073128c31e04fda243681` before this evidence-only
+  log commit.
+- The disposable PostgreSQL server was stopped; its exact cluster root, the
+  Chromium installation, recovery/security/release proof roots, collection
+  output, `.next`/Playwright artifacts, Ruff/pytest caches, and Python bytecode
+  caches were removed. Final `/opt/data/tmp/ik-p11-*` count: zero.
+
 ## Residual gap report
 
-Pending final acceptance. No residual is classified until the real PostgreSQL,
-security/recovery, final backend, final frontend, and final Chromium gates have
-completed. Staging deployment and merge remain supervisor-owned.
+### MVP blockers
+
+None open. No demonstrated tenant leak, authorization bypass, data
+loss/corruption, migration break, secret exposure, or broken critical journey
+remains.
+
+### Safe post-MVP gaps
+
+- Physical retention deletion/anonymization execution, legal-hold
+  orchestration, and DSAR/data-subject request packages remain the plan's
+  explicit post-MVP scope. The MVP exposes only a tenant-bounded count-only
+  retention dry-run; there is no destructive endpoint that can bypass a hold.
+- The complete npm tree reports nine high advisories confined to ESLint and
+  plugin/transitive development tooling. The production tree has zero
+  vulnerabilities. npm proposes unsafe major/downgrade changes rather than a
+  compatible fix; this is build-tool dependency debt, not shipped runtime
+  exposure.
+- Starlette emits one dependency deprecation warning for its current TestClient
+  HTTP client integration. It does not affect the validated runtime behavior.
+- The local recovery proof is logical PostgreSQL backup/restore and application
+  rollback compatibility. WAL/PITR, real object-store restoration,
+  cross-store atomicity, and staging/production restore drills require the
+  supervisor-owned environment.
+- Query-plan evidence is representative synthetic evidence, not a fabricated
+  production SLO.
+
+### Environment-owned acceptance
+
+- The repository Quality workflow runs on pull requests, `main`, or manual
+  dispatch, not an ordinary branch push. No branch CI run is expected without a
+  supervisor-owned PR/manual dispatch.
+- Staging deployment, four-process staging identity, staging smoke, lock
+  release, immutable staging manifest verification, merge, and production
+  deployment remain supervisor-owned and were not performed.
