@@ -137,17 +137,21 @@ test("HR creates and archives a tenant document type without deleting history", 
   await page.getByLabel("Belge türü adı").fill("Çalışma belgesi");
   await page.getByLabel("Açıklama").fill("İmzalı çalışma belgesi");
   await page.getByRole("button", { name: "Belge türü oluştur" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "Belge türü oluşturuldu",
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Belge türü oluşturuldu" }),
+  ).toBeVisible();
   await expect(
     page.getByText("Çalışma belgesi", { exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Arşivle" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "Belge türü arşivlendi",
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Belge türü arşivlendi" }),
+  ).toBeVisible();
   await expect(page.getByText("Arşivli", { exact: true })).toBeVisible();
   expect(mutations).toEqual([
     "/api/v1/document-types",
