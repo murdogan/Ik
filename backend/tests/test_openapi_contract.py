@@ -187,6 +187,12 @@ P3K_AUTH_MIGRATED_OPERATIONS = {
     "POST /api/v1/leave-requests/{leave_request_id}/reject",
     "POST /api/v1/leave-requests/{leave_request_id}/cancel",
 }
+TENANT_METADATA_BEARER_MIGRATIONS = {
+    "GET /api/v1/tenant",
+    "GET /api/v1/tenant/features",
+    "GET /api/v1/tenant/settings",
+    "PATCH /api/v1/tenant/settings",
+}
 POST_PHASE1_APPROVED_COMPONENT_MIGRATIONS = {
     "DashboardActivityItem",
     "DashboardSummary",
@@ -215,11 +221,21 @@ def test_f1e_openapi_contract_matches_review_snapshot() -> None:
     assert {
         operation: current["operations"].get(operation)
         for operation in snapshot["contract"]["operations"]
-        if operation not in P3D_PLATFORM_BEARER_OPERATIONS | P3K_AUTH_MIGRATED_OPERATIONS
+        if operation
+        not in (
+            P3D_PLATFORM_BEARER_OPERATIONS
+            | P3K_AUTH_MIGRATED_OPERATIONS
+            | TENANT_METADATA_BEARER_MIGRATIONS
+        )
     } == {
         operation: digest
         for operation, digest in snapshot["contract"]["operations"].items()
-        if operation not in P3D_PLATFORM_BEARER_OPERATIONS | P3K_AUTH_MIGRATED_OPERATIONS
+        if operation
+        not in (
+            P3D_PLATFORM_BEARER_OPERATIONS
+            | P3K_AUTH_MIGRATED_OPERATIONS
+            | TENANT_METADATA_BEARER_MIGRATIONS
+        )
     }
     for group_name, components in snapshot["contract"]["components"].items():
         assert {
@@ -264,12 +280,6 @@ def test_current_openapi_surface_matches_phase11_registry_and_security_realms() 
         "POST /api/v1/platform/auth/logout",
         "POST /api/v1/platform/auth/refresh",
     }
-    trusted_tenant_principal_operations = {
-        "GET /api/v1/tenant",
-        "GET /api/v1/tenant/features",
-        "GET /api/v1/tenant/settings",
-        "PATCH /api/v1/tenant/settings",
-    }
     platform_operations = {
         operation
         for operation in expected_operations
@@ -279,7 +289,7 @@ def test_current_openapi_surface_matches_phase11_registry_and_security_realms() 
     for operation_name in expected_operations:
         method, path = operation_name.split(" ", maxsplit=1)
         operation = openapi["paths"][path][method.lower()]
-        if operation_name in public_operations | trusted_tenant_principal_operations:
+        if operation_name in public_operations:
             assert "security" not in operation
         elif operation_name in platform_operations:
             assert operation["security"] == [{"PlatformBearerAuth": []}]

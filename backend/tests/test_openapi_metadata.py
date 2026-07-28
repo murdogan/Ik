@@ -273,7 +273,7 @@ def test_phase1_tenant_operations_document_injected_principal_denial() -> None:
         if expected_principals[(path, method)] == "platform":
             assert operation["security"] == [{"PlatformBearerAuth": []}]
         else:
-            assert "security" not in operation
+            assert operation["security"] == [{"BearerAuth": []}]
         assert denial["description"] == description
         assert media_type["schema"]["$ref"].endswith("/ApiErrorResponse")
         assert media_type["example"]["error"] == {
