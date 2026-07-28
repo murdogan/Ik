@@ -25,6 +25,13 @@ const platformNavigation = [
     exact: true,
   },
   {
+    href: "/platform/tenants",
+    label: "Tenant yönetimi",
+    icon: "T",
+    permission: AUTHORIZATION_PERMISSIONS.readPlatformTenants,
+    exact: false,
+  },
+  {
     href: "/platform/audit",
     label: "Denetim kayıtları",
     icon: "D",
@@ -148,44 +155,5 @@ export function PlatformShell({ children }: { children: ReactNode }) {
         </div>
       </main>
     </div>
-  );
-}
-
-export function PlatformOverview() {
-  return (
-    <section aria-labelledby="platform-title">
-      <div className={styles.welcome}>
-        <span>Platform operasyonları</span>
-        <h1 id="platform-title">Platform operasyonları</h1>
-        <p>
-          Tenant yaşam döngüsü ve güvenli platform metadata operasyonları için ayrılmış çalışma
-          alanındasınız. Müşteri çalışan verileri bu kabukta gösterilmez.
-        </p>
-      </div>
-
-      <div className={styles.cards}>
-        <article className={styles.card}>
-          <span className={styles.cardIcon} aria-hidden="true">
-            P
-          </span>
-          <div>
-            <small>Çalışma alanı</small>
-            <h2>Platform sınırı etkin</h2>
-            <p>Tenant uygulama menüleri ve müşteri çalışma alanları bu kabuktan ayrıdır.</p>
-          </div>
-        </article>
-
-        <article className={styles.card}>
-          <span className={`${styles.cardIcon} ${styles.lockIcon}`} aria-hidden="true">
-            ✓
-          </span>
-          <div>
-            <small>Yetkilendirme</small>
-            <h2>Varsayılan olarak reddet</h2>
-            <p>Yalnız açıkça tanımlanmış platform izinleri navigasyona ve API’lere erişir.</p>
-          </div>
-        </article>
-      </div>
-    </section>
   );
 }

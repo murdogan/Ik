@@ -41,6 +41,11 @@ export const AUTHORIZATION_PERMISSIONS = {
   manageTenantRetentionPolicies: "retention_policy:manage:tenant",
   readTenantAudit: "audit:read:tenant",
   readPlatformAudit: "audit:read:platform",
+  readPlatformTenants: "tenant:read:platform",
+  createPlatformTenants: "tenant:create:platform",
+  updatePlatformTenants: "tenant:update:platform",
+  readPlatformFeatures: "feature:read:platform",
+  updatePlatformFeatures: "feature:update:platform",
   readTenantDashboard: "dashboard:read:tenant",
   readTeamDashboard: "dashboard:read:team",
   readOwnDashboard: "dashboard:read:own",
@@ -64,6 +69,12 @@ export function isWorkspace(user: AuthUser, scope: WorkspaceScope): boolean {
 }
 
 export function homePathForUser(user: AuthUser): "/home" | "/dashboard" {
+  const hasElevatedDashboard = [
+    AUTHORIZATION_PERMISSIONS.readTenantDashboard,
+    AUTHORIZATION_PERMISSIONS.readTeamDashboard,
+  ].some((permission) => hasPermission(user, permission));
+
+  if (hasElevatedDashboard) return "/dashboard";
   return hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnSelfService)
     ? "/home"
     : "/dashboard";
