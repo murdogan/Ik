@@ -188,88 +188,6 @@
   font-size: 13px;
 }
 
-.welcome {
-  max-width: 760px;
-}
-
-.welcome > span {
-  color: #536bc4;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.welcome h1 {
-  margin: 12px 0 15px;
-  font-size: clamp(36px, 5vw, 54px);
-  line-height: 1.06;
-  letter-spacing: -0.055em;
-}
-
-.welcome p {
-  margin: 0;
-  color: var(--wf-muted);
-  font-size: 16px;
-  line-height: 1.65;
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 42px;
-}
-
-.card {
-  display: flex;
-  min-width: 0;
-  gap: 16px;
-  padding: 22px;
-  border: 1px solid #dde3ef;
-  border-radius: var(--wf-radius-md);
-  background: var(--wf-surface);
-  box-shadow: 0 12px 35px rgba(32, 49, 91, 0.07);
-}
-
-.cardIcon {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 13px;
-  color: #425cb9;
-  background: #e8edff;
-  font-size: 14px;
-  font-weight: 900;
-}
-
-.lockIcon {
-  color: var(--wf-green);
-  background: var(--wf-mint);
-}
-
-.card small {
-  color: var(--wf-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.card h2 {
-  margin: 6px 0 8px;
-  font-size: 17px;
-  letter-spacing: -0.02em;
-}
-
-.card p {
-  margin: 0;
-  color: var(--wf-muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 @media (max-width: 780px) {
   .application {
     display: block;
@@ -319,9 +237,6 @@
     padding-top: 42px;
   }
 
-  .cards {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 430px) {
