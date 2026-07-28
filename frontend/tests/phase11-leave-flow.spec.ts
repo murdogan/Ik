@@ -353,9 +353,9 @@ test("manager portal and direct approvals use server-derived team scope", async 
     .getByRole("dialog", { name: "İzin talebi onaylansın mı?" })
     .getByRole("button", { name: "Talebi onayla" })
     .click();
-  await expect(page.getByRole("status")).toContainText(
-    "atomik olarak güncellendi",
-  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "atomik olarak güncellendi" }),
+  ).toContainText("atomik olarak güncellendi");
   expect(approvalCalls).toBe(1);
 });
 

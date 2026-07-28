@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { usePlatformSession } from "@/components/session/platform-session-provider";
 import {
@@ -83,6 +89,44 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
   >("");
   const [confirmation, setConfirmation] =
     useState<PendingConfirmation | null>(null);
+  const mutationLockRef = useRef(false);
+  const confirmationIsAuthorized =
+    confirmation?.kind === "lifecycle"
+      ? canUpdateTenant
+      : confirmation?.kind === "feature"
+        ? canUpdateFeatures
+        : false;
+
+  useEffect(() => {
+    let isActive = true;
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setConfirmation((current) => {
+        if (
+          (current?.kind === "lifecycle" && !canUpdateTenant) ||
+          (current?.kind === "feature" && !canUpdateFeatures)
+        ) {
+          return null;
+        }
+        return current;
+      });
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [canUpdateFeatures, canUpdateTenant]);
+
+  function acquireMutationLock(): boolean {
+    if (mutationLockRef.current) return false;
+    mutationLockRef.current = true;
+    setIsMutating(true);
+    return true;
+  }
+
+  function releaseMutationLock() {
+    mutationLockRef.current = false;
+    setIsMutating(false);
+  }
 
   useEffect(() => {
     let isActive = true;
@@ -176,7 +220,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
 
   async function submitMetadata(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!tenant || !metadataMutable || isMutating) return;
+    if (!tenant || !metadataMutable || mutationLockRef.current) return;
 
     const form = new FormData(event.currentTarget);
     const name = String(form.get("name") ?? "").trim();
@@ -251,7 +295,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
       return;
     }
 
-    setIsMutating(true);
+    if (!acquireMutationLock()) return;
     setOperationError(null);
     setOperationSuccess(null);
     try {
@@ -268,13 +312,12 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
         "Tenant ayarları şu anda güncellenemiyor. Veriyi yenileyip yeniden deneyin.",
       );
     } finally {
-      setIsMutating(false);
+      releaseMutationLock();
     }
   }
 
   async function confirmLifecycle(target: PlatformTenantStatus) {
-    if (!tenant || !canUpdateTenant || isMutating) return;
-    setIsMutating(true);
+    if (!tenant || !canUpdateTenant || !acquireMutationLock()) return;
     setOperationError(null);
     setOperationSuccess(null);
     try {
@@ -294,14 +337,13 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
         "Yaşam döngüsü değiştirilemedi. Tenant durumunu yenileyip yeniden deneyin.",
       );
     } finally {
-      setIsMutating(false);
+      releaseMutationLock();
     }
   }
 
   async function confirmFeature(feature: PlatformTenantFeature) {
-    if (!tenant || !featuresMutable || isMutating) return;
+    if (!tenant || !featuresMutable || !acquireMutationLock()) return;
     const targetEnabled = !feature.enabled;
-    setIsMutating(true);
     setOperationError(null);
     setOperationSuccess(null);
     try {
@@ -325,7 +367,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
         "Modül özelliği güncellenemedi. Güncel tenant durumunu kontrol edip yeniden deneyin.",
       );
     } finally {
-      setIsMutating(false);
+      releaseMutationLock();
     }
   }
 
@@ -774,7 +816,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
         </div>
       </aside>
 
-      {confirmation ? (
+      {confirmation && confirmationIsAuthorized ? (
         <PlatformConfirmationDialog
           title={
             confirmation.kind === "lifecycle"

@@ -119,6 +119,12 @@ const MAX_CURSOR_LENGTH = 2_048;
 const MAX_TENANT_PAGES = 1_000;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TENANT_SLUG_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
+const RFC3339_UTC_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
+const IANA_TIMEZONE_PATTERN = /^(?:UTC|[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)+)$/;
+const RECOGNIZED_TIMEZONES = new Set<string>();
 
 const HEALTH_BY_STATUS: Record<PlatformTenantStatus, PlatformTenantHealth> = {
   provisioning: "provisioning",
@@ -165,11 +171,68 @@ function isBoundedString(
   );
 }
 
-function isUtcDateTime(value: unknown): value is string {
+function isTrimmedBoundedString(
+  value: unknown,
+  bounds: { min?: number; max: number },
+): value is string {
+  return isBoundedString(value, bounds) && value === value.trim();
+}
+
+function isTenantSlug(value: unknown): value is string {
   return (
-    typeof value === "string" &&
-    /(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
-    Number.isFinite(Date.parse(value))
+    isTrimmedBoundedString(value, { min: 2, max: 80 }) &&
+    TENANT_SLUG_PATTERN.test(value)
+  );
+}
+
+function isTenantName(value: unknown): value is string {
+  return isTrimmedBoundedString(value, { max: 200 });
+}
+
+function isTenantTimezone(value: unknown): value is string {
+  if (
+    !isTrimmedBoundedString(value, { max: 64 }) ||
+    !IANA_TIMEZONE_PATTERN.test(value)
+  ) {
+    return false;
+  }
+  if (RECOGNIZED_TIMEZONES.has(value)) {
+    return true;
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+    RECOGNIZED_TIMEZONES.add(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isUtcDateTime(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const match = RFC3339_UTC_PATTERN.exec(value);
+  if (!match) {
+    return false;
+  }
+  const [year, month, day, hour, minute, second] = match
+    .slice(1, 7)
+    .map(Number);
+  if (year === 0 || second > 59) {
+    return false;
+  }
+  const parsed = new Date(0);
+  parsed.setUTCFullYear(year, month - 1, day);
+  parsed.setUTCHours(hour, minute, second, 0);
+  return (
+    Number.isFinite(parsed.getTime()) &&
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day &&
+    parsed.getUTCHours() === hour &&
+    parsed.getUTCMinutes() === minute &&
+    parsed.getUTCSeconds() === second
   );
 }
 
@@ -233,13 +296,13 @@ function isPlatformTenant(value: unknown): value is PlatformTenant {
     ]) ||
     typeof value.id !== "string" ||
     !UUID_PATTERN.test(value.id) ||
-    typeof value.slug !== "string" ||
-    typeof value.name !== "string" ||
+    !isTenantSlug(value.slug) ||
+    !isTenantName(value.name) ||
     !isStatus(value.status) ||
     !isPlan(value.plan_code) ||
     !isRegion(value.data_region) ||
     !isLocale(value.locale) ||
-    typeof value.timezone !== "string" ||
+    !isTenantTimezone(value.timezone) ||
     !isUtcDateTime(value.created_at) ||
     !isUtcDateTime(value.updated_at) ||
     !isRecord(value.limits) ||

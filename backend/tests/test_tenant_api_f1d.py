@@ -10,6 +10,10 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from app.api.auth_dependencies import (
+    PlatformAuthenticatedSession,
+    require_platform_authenticated_session,
+)
 from app.api.dependencies import (
     get_authenticated_tenant_request_context,
     get_platform_event_recorder,
@@ -30,10 +34,13 @@ from app.modules.core.application.events import (
     TenantSettingChangedEvent,
     TenantStatusChangedEvent,
 )
+from app.platform.authorization import ROLE_PERMISSION_CODES
 from app.platform.events import RecordingPlatformEventRecorder
+from app.platform.identity import PlatformAccessPrincipal
 from app.platform.principals import PlatformPrincipal
-from app.platform.request_context import RequestContext
+from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
+from app.services.platform_auth_session_service import PlatformAuthenticatedUser
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.ext.asyncio import (
@@ -303,6 +310,26 @@ async def _tenant_api(
 
 
 def _authorize_platform(app: FastAPI) -> None:
+    principal = PlatformAccessPrincipal(
+        identity_id=USER_A_ID,
+        session_family_id=USER_B_ID,
+        permission_version=1,
+        authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
+    )
+    authenticated = PlatformAuthenticatedSession(
+        principal=principal,
+        user=PlatformAuthenticatedUser(
+            id=USER_A_ID,
+            email="platform.test@wealthyfalcon.test",
+            full_name="Platform Test",
+            workspace_scope="platform",
+            roles=(),
+            permissions=tuple(sorted(ROLE_PERMISSION_CODES["super_admin"])),
+            permission_version=principal.permission_version,
+            authentication_strength=principal.authentication_strength,
+        ),
+    )
+    app.dependency_overrides[require_platform_authenticated_session] = lambda: authenticated
     app.dependency_overrides[get_platform_principal] = lambda: PlatformPrincipal(
         source="f1d-api-test"
     )

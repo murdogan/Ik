@@ -8,6 +8,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from app.api.auth_dependencies import (
+    PlatformAuthenticatedSession,
+    require_platform_authenticated_session,
+)
 from app.api.dependencies import (
     get_authenticated_tenant_request_context,
     get_platform_principal,
@@ -22,9 +26,12 @@ from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import LegalEntity
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
+from app.platform.authorization import ROLE_PERMISSION_CODES
+from app.platform.identity import PlatformAccessPrincipal
 from app.platform.principals import PlatformPrincipal
-from app.platform.request_context import RequestContext
+from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
+from app.services.platform_auth_session_service import PlatformAuthenticatedUser
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -208,6 +215,26 @@ async def _tenant_api(
 
 
 def _authorize_platform(app: FastAPI) -> None:
+    principal = PlatformAccessPrincipal(
+        identity_id=USER_ID,
+        session_family_id=OTHER_TENANT_ID,
+        permission_version=1,
+        authentication_strength=AuthenticationStrength.SINGLE_FACTOR,
+    )
+    authenticated = PlatformAuthenticatedSession(
+        principal=principal,
+        user=PlatformAuthenticatedUser(
+            id=USER_ID,
+            email="platform.test@wealthyfalcon.test",
+            full_name="Platform Test",
+            workspace_scope="platform",
+            roles=(),
+            permissions=tuple(sorted(ROLE_PERMISSION_CODES["super_admin"])),
+            permission_version=principal.permission_version,
+            authentication_strength=principal.authentication_strength,
+        ),
+    )
+    app.dependency_overrides[require_platform_authenticated_session] = lambda: authenticated
     app.dependency_overrides[get_platform_principal] = lambda: PlatformPrincipal(
         source="phase1-test"
     )

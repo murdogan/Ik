@@ -468,7 +468,10 @@ test("platform login exposes cursor-complete tenant operations and refreshes a c
   await expect(confirmation).toBeVisible();
   await confirmation
     .getByRole("button", { name: "Değişikliği uygula" })
-    .click();
+    .evaluate((button) => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
   await featurePatchObserved;
   await expect(
     confirmation.getByRole("button", {
@@ -590,4 +593,430 @@ test("tenant navigation and direct route fail closed without the read permission
   ).toHaveCount(0);
   expect(tenantApiPaths).toEqual([]);
   expect(nonPlatformApiPaths).toEqual([]);
+});
+
+test("tenant creation ignores same-task duplicate submissions", async ({
+  context,
+  page,
+}) => {
+  const tenantCreator = {
+    ...platformAdmin,
+    permissions: ["tenant:read:platform", "tenant:create:platform"],
+  };
+  const createdTenant = {
+    ...tenants[0],
+    id: "10000000-0000-4000-8000-000000000099",
+    slug: "guvenli-yeni-tenant",
+    name: "Güvenli Yeni Tenant",
+    status: "provisioning",
+    health: "provisioning",
+    limits: { active_employees: 125 },
+  };
+  let createRequests = 0;
+  let listRequests = 0;
+  let observeCreateRequest = () => {};
+  const createRequestObserved = new Promise<void>((resolve) => {
+    observeCreateRequest = resolve;
+  });
+  let releaseCreateRequest = () => {};
+  const createRequestRelease = new Promise<void>((resolve) => {
+    releaseCreateRequest = resolve;
+  });
+
+  await context.addCookies([
+    {
+      name: "wf_platform_refresh",
+      value: "platform-create-lock-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/platform/auth/refresh") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          access_token: PLATFORM_ACCESS_TOKEN,
+          token_type: "bearer",
+          expires_in: 900,
+          user: tenantCreator,
+        }),
+      });
+      return;
+    }
+
+    expectPlatformBearer(request, PLATFORM_ACCESS_TOKEN);
+    if (path === "/api/v1/platform/me") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ user: tenantCreator }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/platform/tenants" && request.method() === "GET") {
+      listRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: tenantListEnvelope(
+          listRequests === 1
+            ? tenants.slice(0, 2)
+            : [createdTenant, ...tenants.slice(0, 2)],
+          null,
+        ),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/platform/tenants" && request.method() === "POST") {
+      createRequests += 1;
+      expect(request.postDataJSON()).toEqual({
+        name: "Güvenli Yeni Tenant",
+        slug: "guvenli-yeni-tenant",
+        plan_code: "core",
+        data_region: "tr-1",
+        locale: "tr-TR",
+        timezone: "Europe/Istanbul",
+        limits: { active_employees: 125 },
+      });
+      observeCreateRequest();
+      await createRequestRelease;
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: envelope(createdTenant, responseMeta("tenant-create-lock")),
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404 });
+  });
+
+  await page.goto("/platform/tenants");
+  await expect(
+    page.getByRole("heading", { name: "Tenant yönetimi" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Yeni tenant oluştur" }).click();
+  const dialog = page.getByRole("dialog", { name: "Yeni tenant oluştur" });
+  await dialog.getByLabel("Tenant adı").fill("Güvenli Yeni Tenant");
+  await dialog.getByLabel("Tenant kodu").fill("guvenli-yeni-tenant");
+  await dialog.getByLabel("Tanımlı aktif çalışan limiti").fill("125");
+
+  await dialog.locator("form").evaluate((form) => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+
+  await createRequestObserved;
+  await expect.poll(() => createRequests).toBe(1);
+  await expect(
+    dialog.getByRole("button", { name: "Tenant oluşturuluyor…" }),
+  ).toBeDisabled();
+  releaseCreateRequest();
+
+  await expect(
+    page.getByText("Güvenli Yeni Tenant oluşturuldu", { exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => listRequests).toBe(2);
+  expect(createRequests).toBe(1);
+});
+
+test("live platform permission grants and revocations update mounted tenant controls", async ({
+  context,
+  page,
+}) => {
+  let currentUser = {
+    ...platformAdmin,
+    permissions: ["tenant:read:platform", "feature:read:platform"],
+    permission_version: 20,
+  };
+  let meRequests = 0;
+  let mutationRequests = 0;
+
+  await context.addCookies([
+    {
+      name: "wf_platform_refresh",
+      value: "platform-live-permission-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/platform/auth/refresh") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          access_token: PLATFORM_ACCESS_TOKEN,
+          token_type: "bearer",
+          expires_in: 900,
+          user: currentUser,
+        }),
+      });
+      return;
+    }
+
+    expectPlatformBearer(request, PLATFORM_ACCESS_TOKEN);
+    if (path === "/api/v1/platform/me") {
+      meRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ user: currentUser }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/platform/tenants") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: tenantListEnvelope([tenants[0]], null),
+      });
+      return;
+    }
+
+    if (path === `/api/v1/platform/tenants/${TENANT_ID}`) {
+      if (request.method() === "PATCH") mutationRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenants[0]),
+      });
+      return;
+    }
+
+    if (path === `/api/v1/platform/tenants/${TENANT_ID}/features`) {
+      if (request.method() === "PATCH") mutationRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ features: mockFeatures(false) }),
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404 });
+  });
+
+  async function revalidateWithPermissions(permissions: string[]) {
+    const previousMeRequests = meRequests;
+    currentUser = {
+      ...currentUser,
+      permissions,
+      permission_version: currentUser.permission_version + 1,
+    };
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect.poll(() => meRequests).toBe(previousMeRequests + 1);
+  }
+
+  await page.goto("/platform/tenants");
+  await expect(
+    page.getByRole("heading", { name: "Tenant yönetimi" }),
+  ).toBeVisible();
+  await page
+    .getByRole("link", { name: "Platform genel bakış" })
+    .click();
+  await expect(page).toHaveURL(/\/platform$/);
+
+  await revalidateWithPermissions(["feature:read:platform"]);
+  await expect(
+    page.getByText("Tenant görünümü yetkiniz kapsamında değil"),
+  ).toBeVisible();
+
+  const meRequestsBeforeBoundaryGrant = meRequests;
+  currentUser = {
+    ...currentUser,
+    permissions: ["tenant:read:platform", "feature:read:platform"],
+    permission_version: currentUser.permission_version + 1,
+  };
+  await page.goBack();
+  await expect.poll(() => meRequests).toBe(meRequestsBeforeBoundaryGrant + 1);
+  await expect(
+    page.getByRole("heading", { name: "Tenant yönetimi" }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("link", { name: "Anadolu Teknoloji tenantını yönet" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Anadolu Teknoloji" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Yaşam döngüsü güncelleme yetkiniz yok"),
+  ).toBeVisible();
+
+  await revalidateWithPermissions([
+    "tenant:read:platform",
+    "tenant:update:platform",
+    "feature:read:platform",
+    "feature:update:platform",
+  ]);
+  await page
+    .getByLabel("Yeni yaşam döngüsü durumu")
+    .selectOption("suspended");
+  await page.getByRole("button", { name: "Geçişi incele" }).click();
+  const lifecycleConfirmation = page.getByRole("dialog", {
+    name: "Askıya alınmış durumuna geçir",
+  });
+  await expect(lifecycleConfirmation).toBeVisible();
+
+  await revalidateWithPermissions([
+    "tenant:read:platform",
+    "feature:read:platform",
+    "feature:update:platform",
+  ]);
+  await expect(lifecycleConfirmation).toBeHidden();
+  await expect(
+    page.getByText("Yaşam döngüsü güncelleme yetkiniz yok"),
+  ).toBeVisible();
+
+  const featureButton = page.getByRole("button", {
+    name: "Organizasyon özelliğini etkinleştir",
+  });
+  await featureButton.click();
+  const featureConfirmation = page.getByRole("dialog", {
+    name: "Organizasyon özelliğini etkinleştir",
+  });
+  await expect(featureConfirmation).toBeVisible();
+
+  await revalidateWithPermissions([
+    "tenant:read:platform",
+    "feature:read:platform",
+  ]);
+  await expect(featureConfirmation).toBeHidden();
+  await expect(featureButton).toHaveCount(0);
+  expect(mutationRequests).toBe(0);
+});
+
+test("platform tenant responses fail closed for malformed bounded and localized fields", async ({
+  context,
+  page,
+}) => {
+  const malformedTenants = [
+    { title: "short slug", tenant: { ...tenants[0], slug: "a" } },
+    {
+      title: "overlong slug",
+      tenant: { ...tenants[0], slug: "a".repeat(81) },
+    },
+    { title: "empty name", tenant: { ...tenants[0], name: "" } },
+    {
+      title: "overlong name",
+      tenant: { ...tenants[0], name: "n".repeat(201) },
+    },
+    {
+      title: "unknown timezone",
+      tenant: { ...tenants[0], timezone: "Mars/Olympus" },
+    },
+    {
+      title: "timezone abbreviation accepted by Intl but not the IANA contract",
+      tenant: { ...tenants[0], timezone: "CST" },
+    },
+    {
+      title: "impossible calendar date",
+      tenant: {
+        ...tenants[0],
+        created_at: "2026-02-30T12:00:00.000Z",
+      },
+    },
+    {
+      title: "non-Z UTC offset",
+      tenant: {
+        ...tenants[0],
+        updated_at: "2026-07-28T12:00:00+00:00",
+      },
+    },
+    {
+      title: "year zero",
+      tenant: {
+        ...tenants[0],
+        created_at: "0000-01-01T00:00:00Z",
+      },
+    },
+    {
+      title: "timestamp junk",
+      tenant: {
+        ...tenants[0],
+        updated_at: "2026-07-28T12:00:00Z trailing",
+      },
+    },
+  ];
+  let responseTenant = malformedTenants[0].tenant;
+
+  await context.addCookies([
+    {
+      name: "wf_platform_refresh",
+      value: "malformed-platform-response-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/platform/auth/refresh") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          access_token: PLATFORM_ACCESS_TOKEN,
+          token_type: "bearer",
+          expires_in: 900,
+          user: platformAdmin,
+        }),
+      });
+      return;
+    }
+
+    expectPlatformBearer(request, PLATFORM_ACCESS_TOKEN);
+    if (path === "/api/v1/platform/me") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ user: platformAdmin }),
+      });
+      return;
+    }
+
+    if (path === "/api/v1/platform/tenants") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: tenantListEnvelope([responseTenant], null),
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404 });
+  });
+
+  for (const candidate of malformedTenants) {
+    await test.step(candidate.title, async () => {
+      responseTenant = candidate.tenant;
+      await page.goto("/platform");
+      const alert = page
+        .getByRole("alert")
+        .filter({ hasText: "Operasyon özeti yüklenemedi" });
+      await expect(alert).toContainText(
+        "Sunucudan beklenmeyen bir yanıt alındı. Güvenliğiniz için veri gösterilmedi.",
+      );
+      await expect(page.getByTestId("platform-total-tenants")).toHaveCount(0);
+    });
+  }
 });

@@ -224,6 +224,7 @@ async function performPlatformRestore(): Promise<PlatformAuthUser> {
   const data = await requestPlatformAuthenticatedApi<PlatformMeResponseData>(
     PLATFORM_ME_PATH,
   );
+  publishPlatformSessionChange({ type: "user_updated", user: data.user });
   return data.user;
 }
 

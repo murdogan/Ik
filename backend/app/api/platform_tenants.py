@@ -1,9 +1,11 @@
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import ValidationError
 
+from app.api.auth_dependencies import require_platform_permission
 from app.api.dependencies import (
     get_platform_request_context,
     get_platform_tenant_query_service,
@@ -72,6 +74,7 @@ router = APIRouter(
 
 @router.post(
     "",
+    dependencies=[Depends(require_platform_permission("tenant:create:platform"))],
     openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantPlatformRead],
     status_code=status.HTTP_201_CREATED,
@@ -138,6 +141,7 @@ def get_platform_tenant_list_pagination(
 
 @router.get(
     "",
+    dependencies=[Depends(require_platform_permission("tenant:read:platform"))],
     openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=ListEnvelope[TenantPlatformRead],
     summary="List platform tenant metadata",
@@ -173,6 +177,7 @@ async def list_platform_tenants(
 
 @router.get(
     "/{tenant_id}",
+    dependencies=[Depends(require_platform_permission("tenant:read:platform"))],
     openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantPlatformRead],
     summary="Read platform tenant metadata",
@@ -206,6 +211,7 @@ async def get_platform_tenant(
 
 @router.patch(
     "/{tenant_id}",
+    dependencies=[Depends(require_platform_permission("tenant:update:platform"))],
     openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantPlatformRead],
     summary="Update platform tenant lifecycle",
@@ -244,6 +250,7 @@ async def update_platform_tenant(
 
 @router.get(
     "/{tenant_id}/features",
+    dependencies=[Depends(require_platform_permission("feature:read:platform"))],
     openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantFeaturesRead],
     summary="Read platform tenant feature flags",
@@ -277,6 +284,7 @@ async def get_platform_tenant_features(
 
 @router.patch(
     "/{tenant_id}/features",
+    dependencies=[Depends(require_platform_permission("feature:update:platform"))],
     openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
     response_model=DataEnvelope[TenantFeaturesRead],
     summary="Update platform tenant feature flags",
@@ -326,8 +334,8 @@ def _platform_tenant_read(
             "timezone": tenant.timezone,
             "health": health_for_status(tenant.status),
             "limits": {"active_employees": tenant.active_employee_limit},
-            "created_at": tenant.created_at,
-            "updated_at": tenant.updated_at,
+            "created_at": _aware_utc(tenant.created_at),
+            "updated_at": _aware_utc(tenant.updated_at),
         }
     )
 
@@ -341,3 +349,11 @@ def _tenant_features_read(
             for feature in features
         ]
     )
+
+
+def _aware_utc(value: object) -> datetime:
+    if not isinstance(value, datetime):
+        raise RuntimeError("Tenant timestamps must be datetimes")
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
