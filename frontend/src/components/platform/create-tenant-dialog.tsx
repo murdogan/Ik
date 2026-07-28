@@ -37,6 +37,7 @@ export function CreateTenantDialog({
   onCreated: (tenant: PlatformTenant, meta: PlatformResponseMeta) => void;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
+  const submitLockRef = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] =
     useState<PlatformTenantErrorPresentation | null>(null);
@@ -91,7 +92,7 @@ export function CreateTenantDialog({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isSaving) return;
+    if (isSaving || submitLockRef.current) return;
 
     const form = new FormData(event.currentTarget);
     const name = String(form.get("name") ?? "").trim();
@@ -141,6 +142,7 @@ export function CreateTenantDialog({
 
     setValidationError(null);
     setError(null);
+    submitLockRef.current = true;
     setIsSaving(true);
     try {
       const response = await createPlatformTenant(payload);
@@ -152,6 +154,8 @@ export function CreateTenantDialog({
           "Tenant şu anda oluşturulamıyor. Bilgileri kontrol edip yeniden deneyin.",
         ),
       );
+    } finally {
+      submitLockRef.current = false;
       setIsSaving(false);
     }
   }

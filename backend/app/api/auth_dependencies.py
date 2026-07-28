@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated
@@ -15,7 +16,12 @@ from app.api.errors import (
 from app.core.auth_runtime import AUTH_RUNTIME_STATE_KEY, AuthRuntime
 from app.core.config import APP_SETTINGS_STATE_KEY, Settings
 from app.db.session import DATABASE_RUNTIME_STATE_KEY, DatabaseRuntime
-from app.platform.authorization import PERMISSIONS_BY_CODE, DenyByDefaultPolicy, PermissionName
+from app.platform.authorization import (
+    PERMISSIONS_BY_CODE,
+    AuthorizationScope,
+    DenyByDefaultPolicy,
+    PermissionName,
+)
 from app.platform.errors.application import ApplicationError
 from app.platform.identity import (
     AccessPrincipal,
@@ -268,6 +274,33 @@ async def require_platform_authenticated_session(
     )
 
 
+def require_platform_permission(
+    permission_code: str,
+) -> Callable[[PlatformAuthenticatedSession], Awaitable[PlatformAuthenticatedSession]]:
+    """Build an exact-match platform policy dependency over the live session user."""
+
+    required_permission = PermissionName.parse(permission_code)
+    if required_permission.code not in PERMISSIONS_BY_CODE:
+        raise ValueError(f"Unknown permission code: {required_permission.code}")
+    if required_permission.scope is not AuthorizationScope.PLATFORM:
+        raise ValueError(f"Permission is not platform-scoped: {required_permission.code}")
+
+    async def dependency(
+        authenticated: Annotated[
+            PlatformAuthenticatedSession,
+            Depends(require_platform_authenticated_session),
+        ],
+    ) -> PlatformAuthenticatedSession:
+        if not _authorization_policy.allows(
+            required_permission,
+            authenticated.user.permissions,
+        ):
+            raise platform_access_denied_error()
+        return authenticated
+
+    return dependency
+
+
 def require_platform_step_up(
     authenticated: Annotated[
         PlatformAuthenticatedSession,
@@ -390,6 +423,7 @@ __all__ = [
     "PlatformAuthenticatedSession",
     "require_platform_access_principal",
     "require_platform_authenticated_session",
+    "require_platform_permission",
     "require_platform_step_up",
     "require_any_permission",
     "require_permission",
