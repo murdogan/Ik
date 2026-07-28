@@ -11,9 +11,9 @@ from uuid import UUID
 
 import pytest
 from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
     get_platform_event_recorder,
     get_platform_principal,
-    get_tenant_principal,
 )
 from app.db.base import Base
 from app.db.session import get_session
@@ -31,8 +31,10 @@ from app.modules.core.application.events import (
     TenantStatusChangedEvent,
 )
 from app.platform.events import RecordingPlatformEventRecorder
-from app.platform.principals import PlatformPrincipal, TenantPrincipal
-from fastapi import FastAPI
+from app.platform.principals import PlatformPrincipal
+from app.platform.request_context import RequestContext
+from app.platform.tenancy import TenantContext
+from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -307,10 +309,12 @@ def _authorize_platform(app: FastAPI) -> None:
 
 
 def _authorize_tenant(app: FastAPI, tenant_id: UUID) -> None:
-    app.dependency_overrides[get_tenant_principal] = lambda: TenantPrincipal(
-        tenant_id=tenant_id,
-        source="f1d-api-test",
-    )
+    def authenticated_context(request: Request) -> RequestContext:
+        context = request.state.request_context
+        assert isinstance(context, RequestContext)
+        return context.derive(tenant=TenantContext(tenant_id=tenant_id, slug=str(tenant_id)))
+
+    app.dependency_overrides[get_authenticated_tenant_request_context] = authenticated_context
 
 
 def _expected_features(
@@ -549,7 +553,7 @@ async def test_platform_principal_alone_does_not_grant_current_tenant_features()
             headers=SPOOFED_TENANT_A_HEADERS,
         )
 
-    _assert_error(response, 403, "tenant_access_denied")
+    _assert_error(response, 401, "authentication_required")
 
 
 @pytest.mark.parametrize(
@@ -611,7 +615,10 @@ async def test_every_phase1_operation_denies_without_its_injected_principal(
             json=payload,
         )
 
-    _assert_error(response, 403, expected_code)
+    if path.startswith("/api/v1/tenant"):
+        _assert_error(response, 401, "authentication_required")
+    else:
+        _assert_error(response, 403, expected_code)
 
 
 @pytest.mark.parametrize(

@@ -8,7 +8,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from app.api.dependencies import get_platform_principal, get_tenant_principal
+from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
+    get_platform_principal,
+    get_tenant_principal,
+)
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
@@ -18,8 +22,10 @@ from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import LegalEntity
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
-from app.platform.principals import PlatformPrincipal, TenantPrincipal
-from fastapi import FastAPI
+from app.platform.principals import PlatformPrincipal
+from app.platform.request_context import RequestContext
+from app.platform.tenancy import TenantContext
+from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
@@ -208,10 +214,12 @@ def _authorize_platform(app: FastAPI) -> None:
 
 
 def _authorize_tenant(app: FastAPI, tenant_id: UUID = TENANT_ID) -> None:
-    app.dependency_overrides[get_tenant_principal] = lambda: TenantPrincipal(
-        tenant_id=tenant_id,
-        source="phase1-test",
-    )
+    def authenticated_context(request: Request) -> RequestContext:
+        context = request.state.request_context
+        assert isinstance(context, RequestContext)
+        return context.derive(tenant=TenantContext(tenant_id=tenant_id, slug=str(tenant_id)))
+
+    app.dependency_overrides[get_authenticated_tenant_request_context] = authenticated_context
 
 
 def _assert_error_code(response: Any, status_code: int, code: str | None = None) -> None:
@@ -274,7 +282,7 @@ async def test_invalid_injected_principal_values_still_fail_closed() -> None:
         tenant_response = await harness.client.get("/api/v1/tenant")
 
     _assert_error_code(platform_response, 403, "platform_access_denied")
-    _assert_error_code(tenant_response, 403, "tenant_access_denied")
+    _assert_error_code(tenant_response, 401, "authentication_required")
 
 
 @pytest.mark.parametrize(
@@ -686,8 +694,10 @@ async def test_tenant_self_endpoints_deny_spoofed_headers_without_trusted_princi
             headers={"X-Tenant-Id": str(TENANT_ID), "X-User-Id": str(USER_ID)},
         )
 
-    assert current_response.status_code == 403
-    assert settings_response.status_code == 403
+    assert current_response.status_code == 401
+    assert settings_response.status_code == 401
+    assert current_response.json()["error"]["code"] == "authentication_required"
+    assert settings_response.json()["error"]["code"] == "authentication_required"
 
 
 async def test_tenant_principal_not_spoofed_header_drives_current_tenant_and_settings() -> None:

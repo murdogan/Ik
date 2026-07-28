@@ -3,9 +3,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.dependencies import (
+    get_authenticated_tenant_request_context,
     get_tenant_command_handler,
     get_tenant_feature_service,
-    get_tenant_principal_request_context,
     get_tenant_service,
 )
 from app.api.errors import (
@@ -42,7 +42,7 @@ from app.services.tenant_service import TenantService, TenantSettingsSnapshot
 router = APIRouter(
     prefix="/api/v1/tenant",
     tags=[TENANT_SETTINGS_TAG],
-    dependencies=[Depends(get_tenant_principal_request_context)],
+    dependencies=[Depends(get_authenticated_tenant_request_context)],
     responses=with_correlation_response_headers(
         {
             **TENANT_AUTHORIZATION_RESPONSES,
@@ -77,7 +77,7 @@ router = APIRouter(
 async def get_current_tenant(
     request_context: Annotated[
         RequestContext,
-        Depends(get_tenant_principal_request_context),
+        Depends(get_authenticated_tenant_request_context),
     ],
     service: Annotated[TenantService, Depends(get_tenant_service)],
 ) -> DataEnvelope[TenantRead]:
@@ -108,7 +108,7 @@ async def get_current_tenant(
 async def get_current_tenant_settings(
     request_context: Annotated[
         RequestContext,
-        Depends(get_tenant_principal_request_context),
+        Depends(get_authenticated_tenant_request_context),
     ],
     service: Annotated[TenantService, Depends(get_tenant_service)],
 ) -> DataEnvelope[TenantSettingsRead]:
@@ -140,7 +140,7 @@ async def update_current_tenant_settings(
     payload: TenantSettingsUpdate,
     request_context: Annotated[
         RequestContext,
-        Depends(get_tenant_principal_request_context),
+        Depends(get_authenticated_tenant_request_context),
     ],
     command_handler: Annotated[
         TenantCommandHandler,
@@ -179,7 +179,7 @@ async def update_current_tenant_settings(
 async def get_current_tenant_features(
     request_context: Annotated[
         RequestContext,
-        Depends(get_tenant_principal_request_context),
+        Depends(get_authenticated_tenant_request_context),
     ],
     service: Annotated[
         TenantFeatureService,

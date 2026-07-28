@@ -264,6 +264,30 @@ def _activation_token(activation_url: str) -> str:
     return fragment["token"][0]
 
 
+async def test_authenticated_tenant_session_reads_metadata_without_legacy_override() -> None:
+    async with _auth_api() as harness:
+        access_token, _ = await _login(
+            harness.client,
+            email=ADMIN_EMAIL,
+            password=ADMIN_PASSWORD,
+        )
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        tenant_response = await harness.client.get("/api/v1/tenant", headers=headers)
+        settings_response = await harness.client.get(
+            "/api/v1/tenant/settings",
+            headers=headers,
+        )
+        features_response = await harness.client.get(
+            "/api/v1/tenant/features",
+            headers=headers,
+        )
+
+    assert tenant_response.status_code == 200
+    assert settings_response.status_code == 200
+    assert features_response.status_code == 200
+
+
 async def test_invite_activate_and_login_end_to_end_with_hashed_single_use_credentials() -> None:
     async with _auth_api() as harness:
         admin_access_token, _ = await _login(
