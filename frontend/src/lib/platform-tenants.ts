@@ -1,5 +1,8 @@
 import { ApiClientError, type ApiSuccessEnvelope } from "./api-client";
-import { requestPlatformAuthenticatedApiEnvelope } from "./platform-session";
+import {
+  isPostResponsePlatformSessionSupersededError,
+  requestPlatformAuthenticatedApiEnvelope,
+} from "./platform-session";
 
 export const PLATFORM_TENANT_STATUSES = [
   "provisioning",
@@ -18,6 +21,30 @@ export const PLATFORM_TENANT_PLANS = [
 
 export const PLATFORM_TENANT_REGIONS = ["tr-1", "eu-1"] as const;
 export const PLATFORM_TENANT_LOCALES = ["tr-TR", "en-US"] as const;
+export const PLATFORM_TENANT_TIMEZONE_FALLBACK = [
+  "Europe/Istanbul",
+  "Africa/Cairo",
+  "Africa/Johannesburg",
+  "America/Argentina/Buenos_Aires",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "America/New_York",
+  "America/Sao_Paulo",
+  "Asia/Dubai",
+  "Asia/Hong_Kong",
+  "Asia/Kolkata",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "Europe/Amsterdam",
+  "Europe/Athens",
+  "Europe/Berlin",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Warsaw",
+  "Pacific/Auckland",
+  "UTC",
+] as const;
 export const PLATFORM_FEATURE_KEYS = [
   "organization",
   "employees",
@@ -32,6 +59,7 @@ export type PlatformTenantStatus = (typeof PLATFORM_TENANT_STATUSES)[number];
 export type PlatformTenantPlan = (typeof PLATFORM_TENANT_PLANS)[number];
 export type PlatformTenantRegion = (typeof PLATFORM_TENANT_REGIONS)[number];
 export type PlatformTenantLocale = (typeof PLATFORM_TENANT_LOCALES)[number];
+export type PlatformTenantTimezone = string;
 export type PlatformFeatureKey = (typeof PLATFORM_FEATURE_KEYS)[number];
 export type PlatformTenantHealth =
   | "provisioning"
@@ -85,16 +113,38 @@ export interface PlatformTenantCollection {
   lastMeta: PlatformTenantListMeta;
 }
 
+export interface PlatformTenantCreateReconciliation {
+  tenant: PlatformTenant | null;
+  meta: PlatformTenantListMeta;
+}
+
 export interface PlatformTenantCreateRequest {
   slug: string;
   name: string;
+  initial_admin: {
+    full_name: string;
+    email: string;
+  };
   plan_code: PlatformTenantPlan;
   data_region: PlatformTenantRegion;
   locale: PlatformTenantLocale;
-  timezone: string;
+  timezone: PlatformTenantTimezone;
   limits?: {
     active_employees: number | null;
   };
+}
+
+export interface PlatformTenantInitialAdminRead {
+  status: "invitation_prepared";
+}
+
+export interface PlatformTenantInitialAdminCorrectionRequest {
+  full_name: string;
+  email: string;
+}
+
+export interface PlatformTenantCreateRead extends PlatformTenant {
+  initial_admin: PlatformTenantInitialAdminRead;
 }
 
 export interface PlatformTenantUpdateRequest {
@@ -125,6 +175,29 @@ const RFC3339_UTC_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
 const IANA_TIMEZONE_PATTERN = /^(?:UTC|[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)+)$/;
 const RECOGNIZED_TIMEZONES = new Set<string>();
+const PLATFORM_TENANT_KEYS = [
+  "id",
+  "slug",
+  "name",
+  "status",
+  "plan_code",
+  "data_region",
+  "locale",
+  "timezone",
+  "health",
+  "limits",
+  "created_at",
+  "updated_at",
+] as const;
+const PLATFORM_TENANT_CREATE_REQUEST_KEYS = [
+  "slug",
+  "name",
+  "initial_admin",
+  "plan_code",
+  "data_region",
+  "locale",
+  "timezone",
+] as const;
 
 const HEALTH_BY_STATUS: Record<PlatformTenantStatus, PlatformTenantHealth> = {
   provisioning: "provisioning",
@@ -208,6 +281,51 @@ function isTenantTimezone(value: unknown): value is string {
   }
 }
 
+export function isPlatformTenantTimezone(
+  value: string,
+): value is PlatformTenantTimezone {
+  return isTenantTimezone(value);
+}
+
+export function platformTenantTimezoneOptions(
+  currentTimezone?: string,
+): string[] {
+  let values: readonly string[] = PLATFORM_TENANT_TIMEZONE_FALLBACK;
+  try {
+    const supportedValuesOf = Intl.supportedValuesOf;
+    if (typeof supportedValuesOf === "function") {
+      values = supportedValuesOf.call(Intl, "timeZone");
+    }
+  } catch {
+    values = PLATFORM_TENANT_TIMEZONE_FALLBACK;
+  }
+
+  const timezones = new Set<string>(["UTC", ...values]);
+  if (currentTimezone && isTenantTimezone(currentTimezone)) {
+    timezones.add(currentTimezone);
+  }
+  timezones.delete("Europe/Istanbul");
+  return ["Europe/Istanbul", ...[...timezones].sort()];
+}
+
+function normalizeInitialAdminEmail(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized.length < 3 ||
+    normalized.length > 320 ||
+    normalized.split("@").length !== 2 ||
+    normalized.startsWith("@") ||
+    normalized.endsWith("@") ||
+    /\s/.test(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
 function isUtcDateTime(value: unknown): value is string {
   if (typeof value !== "string") {
     return false;
@@ -280,20 +398,7 @@ function isConfiguredLimit(value: unknown): value is number | null {
 function isPlatformTenant(value: unknown): value is PlatformTenant {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      "id",
-      "slug",
-      "name",
-      "status",
-      "plan_code",
-      "data_region",
-      "locale",
-      "timezone",
-      "health",
-      "limits",
-      "created_at",
-      "updated_at",
-    ]) ||
+    !hasExactKeys(value, PLATFORM_TENANT_KEYS) ||
     typeof value.id !== "string" ||
     !UUID_PATTERN.test(value.id) ||
     !isTenantSlug(value.slug) ||
@@ -313,6 +418,16 @@ function isPlatformTenant(value: unknown): value is PlatformTenant {
   }
 
   return value.health === HEALTH_BY_STATUS[value.status];
+}
+
+function isInitialAdminRead(
+  value: unknown,
+): value is PlatformTenantInitialAdminRead {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["status"]) &&
+    value.status === "invitation_prepared"
+  );
 }
 
 function isResponseMeta(value: unknown): value is PlatformResponseMeta {
@@ -379,6 +494,95 @@ function invalidResponse(
   });
 }
 
+function invalidRequest(): ApiClientError {
+  return new ApiClientError({
+    status: null,
+    code: "invalid_request",
+  });
+}
+
+export function adaptPlatformTenantCreateRequest(
+  value: unknown,
+): PlatformTenantCreateRequest {
+  if (!isRecord(value)) {
+    throw invalidRequest();
+  }
+  const expectedKeys = Object.hasOwn(value, "limits")
+    ? [...PLATFORM_TENANT_CREATE_REQUEST_KEYS, "limits"]
+    : PLATFORM_TENANT_CREATE_REQUEST_KEYS;
+  const normalizedEmail = isRecord(value.initial_admin)
+    ? normalizeInitialAdminEmail(value.initial_admin.email)
+    : null;
+
+  if (
+    !hasExactKeys(value, expectedKeys) ||
+    !isTenantSlug(value.slug) ||
+    !isTenantName(value.name) ||
+    !isRecord(value.initial_admin) ||
+    !hasExactKeys(value.initial_admin, ["full_name", "email"]) ||
+    !isTrimmedBoundedString(value.initial_admin.full_name, {
+      max: 200,
+    }) ||
+    normalizedEmail === null ||
+    !isPlan(value.plan_code) ||
+    value.plan_code === "premium" ||
+    !isRegion(value.data_region) ||
+    !isLocale(value.locale) ||
+    typeof value.timezone !== "string" ||
+    !isPlatformTenantTimezone(value.timezone) ||
+    (Object.hasOwn(value, "limits") &&
+      (!isRecord(value.limits) ||
+        !hasExactKeys(value.limits, ["active_employees"]) ||
+        !isConfiguredLimit(value.limits.active_employees)))
+  ) {
+    throw invalidRequest();
+  }
+
+  return {
+    slug: value.slug,
+    name: value.name,
+    initial_admin: {
+      full_name: value.initial_admin.full_name,
+      email: normalizedEmail,
+    },
+    plan_code: value.plan_code,
+    data_region: value.data_region,
+    locale: value.locale,
+    timezone: value.timezone,
+    ...(isRecord(value.limits)
+      ? {
+          limits: {
+            active_employees: value.limits.active_employees as number | null,
+          },
+        }
+      : {}),
+  };
+}
+
+export function adaptPlatformTenantInitialAdminCorrectionRequest(
+  value: unknown,
+): PlatformTenantInitialAdminCorrectionRequest {
+  if (!isRecord(value)) {
+    throw invalidRequest();
+  }
+
+  const fullName =
+    typeof value.full_name === "string" ? value.full_name.trim() : null;
+  const normalizedEmail = normalizeInitialAdminEmail(value.email);
+  if (
+    !hasExactKeys(value, ["full_name", "email"]) ||
+    !isBoundedString(fullName, { max: 200 }) ||
+    normalizedEmail === null
+  ) {
+    throw invalidRequest();
+  }
+
+  return {
+    full_name: fullName,
+    email: normalizedEmail,
+  };
+}
+
 function validateTenantEnvelope(
   envelope: ApiSuccessEnvelope<unknown, unknown>,
 ): ApiSuccessEnvelope<PlatformTenant, PlatformResponseMeta> {
@@ -386,6 +590,60 @@ function validateTenantEnvelope(
     throw invalidResponse(envelope.meta);
   }
   return { data: envelope.data, meta: envelope.meta };
+}
+
+function validateTenantCreateEnvelope(
+  envelope: ApiSuccessEnvelope<unknown, unknown>,
+): ApiSuccessEnvelope<PlatformTenantCreateRead, PlatformResponseMeta> {
+  if (
+    !isRecord(envelope.data) ||
+    !hasExactKeys(envelope.data, [
+      ...PLATFORM_TENANT_KEYS,
+      "initial_admin",
+    ]) ||
+    !isInitialAdminRead(envelope.data.initial_admin) ||
+    !isResponseMeta(envelope.meta)
+  ) {
+    throw invalidResponse(envelope.meta);
+  }
+
+  const data = envelope.data;
+  const initialAdmin = data.initial_admin;
+  if (!isInitialAdminRead(initialAdmin)) {
+    throw invalidResponse(envelope.meta);
+  }
+  const tenant = Object.fromEntries(
+    PLATFORM_TENANT_KEYS.map((key) => [key, data[key]]),
+  );
+  if (!isPlatformTenant(tenant)) {
+    throw invalidResponse(envelope.meta);
+  }
+
+  return {
+    data: {
+      ...tenant,
+      initial_admin: initialAdmin,
+    },
+    meta: envelope.meta,
+  };
+}
+
+function validateInitialAdminEnvelope(
+  envelope: ApiSuccessEnvelope<unknown, unknown>,
+): ApiSuccessEnvelope<
+  PlatformTenantInitialAdminRead,
+  PlatformResponseMeta
+> {
+  if (
+    !isInitialAdminRead(envelope.data) ||
+    !isResponseMeta(envelope.meta)
+  ) {
+    throw invalidResponse(envelope.meta);
+  }
+  return {
+    data: envelope.data,
+    meta: envelope.meta,
+  };
 }
 
 function validateFeatureEnvelope(
@@ -484,6 +742,26 @@ export async function listAllPlatformTenants(): Promise<PlatformTenantCollection
   return { tenants, pageCount, lastMeta };
 }
 
+export async function reconcilePlatformTenantCreateBySlug(
+  slug: string,
+): Promise<PlatformTenantCreateReconciliation> {
+  if (!isTenantSlug(slug)) {
+    throw invalidRequest();
+  }
+
+  const collection = await listAllPlatformTenants();
+  const exactMatches = collection.tenants.filter(
+    (tenant) => tenant.slug === slug,
+  );
+  if (exactMatches.length > 1) {
+    throw invalidResponse(collection.lastMeta);
+  }
+  return {
+    tenant: exactMatches[0] ?? null,
+    meta: collection.lastMeta,
+  };
+}
+
 export async function readPlatformTenant(
   tenantId: string,
 ): Promise<ApiSuccessEnvelope<PlatformTenant, PlatformResponseMeta>> {
@@ -496,15 +774,18 @@ export async function readPlatformTenant(
 
 export async function createPlatformTenant(
   payload: PlatformTenantCreateRequest,
-): Promise<ApiSuccessEnvelope<PlatformTenant, PlatformResponseMeta>> {
+): Promise<
+  ApiSuccessEnvelope<PlatformTenantCreateRead, PlatformResponseMeta>
+> {
+  const requestPayload = adaptPlatformTenantCreateRequest(payload);
   const envelope = await requestPlatformAuthenticatedApiEnvelope<
     unknown,
     unknown
   >("/api/v1/platform/tenants", {
     method: "POST",
-    body: payload,
+    body: requestPayload,
   });
-  const validated = validateTenantEnvelope(envelope);
+  const validated = validateTenantCreateEnvelope(envelope);
   if (validated.data.status !== "provisioning") {
     throw invalidResponse(validated.meta);
   }
@@ -523,6 +804,48 @@ export async function updatePlatformTenant(
     body: payload,
   });
   return validateTenantEnvelope(envelope);
+}
+
+export async function resendPlatformTenantInitialAdminInvitation(
+  tenantId: string,
+): Promise<
+  ApiSuccessEnvelope<
+    PlatformTenantInitialAdminRead,
+    PlatformResponseMeta
+  >
+> {
+  const envelope = await requestPlatformAuthenticatedApiEnvelope<
+    unknown,
+    unknown
+  >(
+    `/api/v1/platform/tenants/${encodeURIComponent(tenantId)}/initial-admin-invitation/resend`,
+    { method: "POST" },
+  );
+  return validateInitialAdminEnvelope(envelope);
+}
+
+export async function correctPlatformTenantInitialAdminInvitation(
+  tenantId: string,
+  payload: PlatformTenantInitialAdminCorrectionRequest,
+): Promise<
+  ApiSuccessEnvelope<
+    PlatformTenantInitialAdminRead,
+    PlatformResponseMeta
+  >
+> {
+  const requestPayload =
+    adaptPlatformTenantInitialAdminCorrectionRequest(payload);
+  const envelope = await requestPlatformAuthenticatedApiEnvelope<
+    unknown,
+    unknown
+  >(
+    `/api/v1/platform/tenants/${encodeURIComponent(tenantId)}/initial-admin-invitation`,
+    {
+      method: "PATCH",
+      body: requestPayload,
+    },
+  );
+  return validateInitialAdminEnvelope(envelope);
 }
 
 export async function readPlatformTenantFeatures(
@@ -582,6 +905,9 @@ export function platformTenantErrorPresentation(
     message = "Tenant bulunamadı veya artık erişilebilir değil.";
   } else if (code.includes("slug_conflict")) {
     message = "Bu tenant kodu zaten kullanılıyor. Farklı bir kod girin.";
+  } else if (code === "tenant_initial_admin_unavailable") {
+    message =
+      "İlk yönetici işlemi mevcut durumda kullanılamıyor. Tenant ayrıntısını yenileyip daha sonra yeniden deneyin.";
   } else if (code.includes("lifecycle")) {
     message =
       "İşlem tenant’ın güncel yaşam döngüsü durumuyla çakıştı. Veriyi yenileyip geçerli bir işlem seçin.";
@@ -596,4 +922,20 @@ export function platformTenantErrorPresentation(
   }
 
   return { message, reference: cause.correlationId };
+}
+
+export function isAmbiguousPlatformMutationOutcome(
+  cause: unknown,
+): boolean {
+  if (isPostResponsePlatformSessionSupersededError(cause)) {
+    return true;
+  }
+  if (!(cause instanceof ApiClientError)) {
+    return false;
+  }
+  return (
+    cause.code === "network_error" ||
+    cause.code === "invalid_response" ||
+    (cause.status !== null && cause.status >= 500 && cause.status < 600)
+  );
 }

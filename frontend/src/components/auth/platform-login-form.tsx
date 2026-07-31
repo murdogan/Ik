@@ -5,11 +5,9 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
 import {
-  type PlatformLoginResponseData,
   platformLoginErrorPresentation,
 } from "@/lib/auth-contracts";
-import { ApiClientError, postApi } from "@/lib/api-client";
-import { establishPlatformSession } from "@/lib/platform-session";
+import { loginPlatformSession } from "@/lib/platform-session";
 
 import styles from "./auth.module.css";
 import { FormAlert } from "./form-alert";
@@ -32,20 +30,8 @@ export function PlatformLoginForm() {
     setIsSubmitting(true);
 
     try {
-      const data = await postApi<
-        { email: string; password: string },
-        PlatformLoginResponseData
-      >("/api/v1/platform/auth/login", { email, password });
-
-      if (
-        data.status !== "authenticated" ||
-        data.user.workspace_scope !== "platform"
-      ) {
-        throw new ApiClientError({ status: 200, code: "invalid_response" });
-      }
-
+      await loginPlatformSession({ email, password });
       form.reset();
-      establishPlatformSession(data);
       router.replace("/platform");
     } catch (cause) {
       setError(platformLoginErrorPresentation(cause));

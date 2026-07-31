@@ -44,6 +44,8 @@ class PlatformEventType(StrEnum):
     TENANT_STATUS_CHANGED = "tenant.status_changed"
     TENANT_SETTING_CHANGED = "tenant.setting_changed"
     FEATURE_FLAG_CHANGED = "feature_flag.changed"
+    INITIAL_ADMIN_INVITATION_CORRECTED = "tenant.initial_admin_invitation_corrected"
+    INITIAL_ADMIN_INVITATION_REISSUED = "tenant.initial_admin_invitation_reissued"
 
 
 class TenantSettingField(StrEnum):
@@ -61,7 +63,7 @@ class TenantSettingField(StrEnum):
 
 
 class _PlatformTenantEvent(BaseModel, PlatformEventContract):
-    """Fixed audit-safe metadata shared by the four explicit event contracts."""
+    """Fixed audit-safe metadata shared by the explicit event contracts."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -206,11 +208,35 @@ class FeatureFlagChangedEvent(_PlatformTenantEvent):
         return self
 
 
+@register_platform_event_contract
+class InitialTenantAdminInvitationCorrectedEvent(_PlatformTenantEvent):
+    """A PII-free fact that the unactivated initial-admin invitation was corrected."""
+
+    event_type: Literal[PlatformEventType.INITIAL_ADMIN_INVITATION_CORRECTED] = (
+        PlatformEventType.INITIAL_ADMIN_INVITATION_CORRECTED
+    )
+    resource_type: Literal["tenant"] = "tenant"
+    action: Literal["correct_initial_admin_invitation"] = "correct_initial_admin_invitation"
+
+
+@register_platform_event_contract
+class InitialTenantAdminInvitationReissuedEvent(_PlatformTenantEvent):
+    """A credential-free fact that a fresh initial-admin invitation was prepared."""
+
+    event_type: Literal[PlatformEventType.INITIAL_ADMIN_INVITATION_REISSUED] = (
+        PlatformEventType.INITIAL_ADMIN_INVITATION_REISSUED
+    )
+    resource_type: Literal["tenant"] = "tenant"
+    action: Literal["reissue_initial_admin_invitation"] = "reissue_initial_admin_invitation"
+
+
 type PlatformEvent = (
     TenantCreatedEvent
     | TenantStatusChangedEvent
     | TenantSettingChangedEvent
     | FeatureFlagChangedEvent
+    | InitialTenantAdminInvitationCorrectedEvent
+    | InitialTenantAdminInvitationReissuedEvent
 )
 
 # Runtime adapters use exact type membership rather than ``isinstance`` so a subclass cannot add
@@ -220,11 +246,15 @@ PLATFORM_EVENT_TYPES: tuple[type[PlatformEventContract], ...] = (
     TenantStatusChangedEvent,
     TenantSettingChangedEvent,
     FeatureFlagChangedEvent,
+    InitialTenantAdminInvitationCorrectedEvent,
+    InitialTenantAdminInvitationReissuedEvent,
 )
 
 
 __all__ = [
     "FeatureFlagChangedEvent",
+    "InitialTenantAdminInvitationCorrectedEvent",
+    "InitialTenantAdminInvitationReissuedEvent",
     "PlatformEvent",
     "PLATFORM_EVENT_TYPES",
     "PlatformEventActorType",

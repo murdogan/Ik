@@ -21,6 +21,14 @@ PLATFORM_TENANT_OPERATIONS = {
     ("/api/v1/platform/tenants", "get"),
     ("/api/v1/platform/tenants/{tenant_id}", "get"),
     ("/api/v1/platform/tenants/{tenant_id}", "patch"),
+    (
+        "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation",
+        "patch",
+    ),
+    (
+        "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend",
+        "post",
+    ),
     ("/api/v1/platform/tenants/{tenant_id}/features", "get"),
     ("/api/v1/platform/tenants/{tenant_id}/features", "patch"),
 }
@@ -97,6 +105,22 @@ def test_current_operations_have_readable_openapi_metadata() -> None:
             PLATFORM_TENANTS_TAG,
             "Update platform tenant lifecycle",
             "Closed is terminal, offboarding is closure-only",
+        ),
+        (
+            "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation",
+            "patch",
+        ): (
+            PLATFORM_TENANTS_TAG,
+            "Correct initial tenant administrator invitation",
+            "ever reveals or records either administrator email",
+        ),
+        (
+            "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend",
+            "post",
+        ): (
+            PLATFORM_TENANTS_TAG,
+            "Reissue initial tenant administrator invitation",
+            "never reveals the administrator identity, activation credential",
         ),
         ("/api/v1/platform/tenants/{tenant_id}/features", "get"): (
             PLATFORM_TENANTS_TAG,
@@ -305,7 +329,10 @@ def test_phase1_tenant_operations_document_lifecycle_and_resource_errors() -> No
     paths = response.json()["paths"]
     expected_error_codes = {
         ("/api/v1/platform/tenants", "post"): {
-            "409": {"tenant_slug_conflict"},
+            "409": {
+                "tenant_initial_admin_unavailable",
+                "tenant_slug_conflict",
+            },
         },
         ("/api/v1/platform/tenants/{tenant_id}", "get"): {
             "404": {"tenant_not_found"},
@@ -313,6 +340,18 @@ def test_phase1_tenant_operations_document_lifecycle_and_resource_errors() -> No
         ("/api/v1/platform/tenants/{tenant_id}", "patch"): {
             "404": {"tenant_not_found"},
             "409": {"tenant_lifecycle_conflict"},
+        },
+        (
+            "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation",
+            "patch",
+        ): {
+            "409": {"tenant_initial_admin_unavailable"},
+        },
+        (
+            "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend",
+            "post",
+        ): {
+            "409": {"tenant_initial_admin_unavailable"},
         },
         ("/api/v1/platform/tenants/{tenant_id}/features", "get"): {
             "404": {"tenant_not_found"},
@@ -399,6 +438,14 @@ def test_phase1_operations_use_standard_envelopes_and_correlation_headers() -> N
         ("/api/v1/platform/tenants", "get"): "200",
         ("/api/v1/platform/tenants/{tenant_id}", "get"): "200",
         ("/api/v1/platform/tenants/{tenant_id}", "patch"): "200",
+        (
+            "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation",
+            "patch",
+        ): "202",
+        (
+            "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend",
+            "post",
+        ): "202",
         ("/api/v1/platform/tenants/{tenant_id}/features", "get"): "200",
         ("/api/v1/platform/tenants/{tenant_id}/features", "patch"): "200",
         ("/api/v1/tenant", "get"): "200",
@@ -512,6 +559,111 @@ def test_platform_tenant_schema_exposes_configured_limits_without_usage_fields()
         "employees",
     }:
         assert forbidden_field not in limits["properties"]
+
+
+def test_platform_tenant_create_contract_requires_safe_initial_admin_provisioning() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    openapi = response.json()
+    schemas = openapi["components"]["schemas"]
+    create = schemas["TenantPlatformCreate"]
+    assert create["additionalProperties"] is False
+    assert "initial_admin" in create["required"]
+    assert create["properties"]["initial_admin"]["$ref"].endswith("/TenantInitialAdminProvision")
+
+    initial_admin = schemas["TenantInitialAdminProvision"]
+    assert initial_admin["additionalProperties"] is False
+    assert set(initial_admin["properties"]) == {"email", "full_name"}
+    assert set(initial_admin["required"]) == {"email", "full_name"}
+    assert initial_admin["properties"]["email"]["maxLength"] == 320
+    assert initial_admin["properties"]["full_name"]["maxLength"] == 200
+
+    success_schema = openapi["paths"]["/api/v1/platform/tenants"]["post"]["responses"]["201"][
+        "content"
+    ]["application/json"]["schema"]
+    references = _transitive_schema_references(success_schema, schemas)
+    assert "TenantPlatformCreateRead" in references
+    assert "TenantInitialAdminProvisioningRead" in references
+    provisioning = schemas["TenantInitialAdminProvisioningRead"]
+    assert set(provisioning["properties"]) == {"status"}
+    assert provisioning["properties"]["status"]["const"] == "invitation_prepared"
+    assert not {
+        "activation_url",
+        "activation_path",
+        "email",
+        "identity_id",
+        "membership_id",
+        "password_hash",
+        "token",
+        "user_id",
+    } & set(schemas["TenantPlatformCreateRead"]["properties"])
+
+
+def test_platform_initial_admin_reissue_contract_is_credential_safe() -> None:
+    openapi = create_app().openapi()
+    schemas = openapi["components"]["schemas"]
+    operation = openapi["paths"][
+        "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend"
+    ]["post"]
+
+    assert "requestBody" not in operation
+    success_schema = operation["responses"]["202"]["content"]["application/json"]["schema"]
+    references = _transitive_schema_references(success_schema, schemas)
+    assert references & {
+        "DataEnvelope_TenantInitialAdminProvisioningRead_",
+        "TenantInitialAdminProvisioningRead",
+    }
+    provisioning = schemas["TenantInitialAdminProvisioningRead"]
+    assert set(provisioning["properties"]) == {"status"}
+    serialized_operation = str(operation).lower()
+    assert all(
+        field_name not in serialized_operation
+        for field_name in (
+            "activation_path",
+            "activation_url",
+            "password_hash",
+            "raw_token",
+        )
+    )
+    conflict_examples = operation["responses"]["409"]["content"]["application/json"]["examples"]
+    assert set(conflict_examples) == {"tenant_initial_admin_unavailable"}
+
+
+def test_platform_initial_admin_correction_contract_is_identity_safe() -> None:
+    openapi = create_app().openapi()
+    schemas = openapi["components"]["schemas"]
+    operation = openapi["paths"]["/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation"][
+        "patch"
+    ]
+
+    request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert request_schema["$ref"].endswith("/TenantInitialAdminCorrection")
+    correction = schemas["TenantInitialAdminCorrection"]
+    assert correction["additionalProperties"] is False
+    assert set(correction["properties"]) == {"email", "full_name"}
+    assert set(correction["required"]) == {"email", "full_name"}
+    success_schema = operation["responses"]["202"]["content"]["application/json"]["schema"]
+    references = _transitive_schema_references(success_schema, schemas)
+    assert "TenantInitialAdminProvisioningRead" in references
+    assert set(schemas["TenantInitialAdminProvisioningRead"]["properties"]) == {"status"}
+    serialized_success = str(operation["responses"]["202"]).lower()
+    assert all(
+        forbidden not in serialized_success
+        for forbidden in (
+            "activation_path",
+            "activation_url",
+            "email",
+            "identity",
+            "password",
+            "token",
+            "user_id",
+        )
+    )
+    conflict_examples = operation["responses"]["409"]["content"]["application/json"]["examples"]
+    assert set(conflict_examples) == {"tenant_initial_admin_unavailable"}
 
 
 def test_platform_tenant_list_documents_cursor_only_bounded_page_contract() -> None:

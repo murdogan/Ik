@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass
 from hashlib import sha256
+from hmac import new as hmac_new
 from secrets import token_urlsafe
 from uuid import UUID
 
 ACTIVATION_TOKEN_VERSION = "v1"
+_DELIVERY_TOKEN_PURPOSE = b"wealthy-falcon:activation-delivery:v1"
 
 
 class InvalidActivationTokenFormatError(ValueError):
@@ -19,15 +21,47 @@ class ActivationTokenMaterial:
     tenant_id: UUID
 
 
+class ActivationDeliveryTokenCodec:
+    """Reproduce one opaque activation credential for idempotent email retries."""
+
+    __slots__ = ("_signing_key",)
+
+    def __init__(self, signing_key: bytes) -> None:
+        if len(signing_key) < 32:
+            raise ValueError("Activation delivery signing keys must contain at least 32 bytes")
+        self._signing_key = signing_key
+
+    def issue(self, tenant_id: UUID, activation_id: UUID) -> ActivationTokenMaterial:
+        _require_nonzero_uuid(tenant_id, "tenant")
+        _require_nonzero_uuid(activation_id, "activation")
+        material = b"\0".join(
+            (
+                _DELIVERY_TOKEN_PURPOSE,
+                tenant_id.bytes,
+                activation_id.bytes,
+            )
+        )
+        secret = hmac_new(self._signing_key, material, sha256).hexdigest()
+        return _activation_token_material(tenant_id, secret)
+
+
 def issue_activation_token(tenant_id: UUID) -> ActivationTokenMaterial:
-    if not isinstance(tenant_id, UUID) or tenant_id.int == 0:
-        raise ValueError("A non-zero tenant ID is required")
-    raw_token = f"{ACTIVATION_TOKEN_VERSION}.{tenant_id}.{token_urlsafe(32)}"
+    _require_nonzero_uuid(tenant_id, "tenant")
+    return _activation_token_material(tenant_id, token_urlsafe(32))
+
+
+def _activation_token_material(tenant_id: UUID, secret: str) -> ActivationTokenMaterial:
+    raw_token = f"{ACTIVATION_TOKEN_VERSION}.{tenant_id}.{secret}"
     return ActivationTokenMaterial(
         raw_token=raw_token,
         token_hash=hash_activation_token(raw_token),
         tenant_id=tenant_id,
     )
+
+
+def _require_nonzero_uuid(value: UUID, label: str) -> None:
+    if not isinstance(value, UUID) or value.int == 0:
+        raise ValueError(f"A non-zero {label} ID is required")
 
 
 def parse_activation_token(raw_token: str) -> ActivationTokenMaterial:
@@ -58,6 +92,7 @@ def hash_activation_token(raw_token: str) -> str:
 
 
 __all__ = [
+    "ActivationDeliveryTokenCodec",
     "ActivationTokenMaterial",
     "InvalidActivationTokenFormatError",
     "hash_activation_token",

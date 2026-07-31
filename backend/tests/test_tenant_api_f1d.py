@@ -408,7 +408,14 @@ async def test_provisioning_assigns_exact_default_feature_catalog_in_stable_orde
         _authorize_platform(harness.app)
         create_response = await harness.client.post(
             "/api/v1/platform/tenants",
-            json={"slug": "new-feature-tenant", "name": "New Feature Tenant"},
+            json={
+                "slug": "new-feature-tenant",
+                "name": "New Feature Tenant",
+                "initial_admin": {
+                    "full_name": "New Feature Admin",
+                    "email": "new-feature-admin@example.test",
+                },
+            },
         )
         assert create_response.status_code == 201
         created_id = UUID(create_response.json()["data"]["id"])
@@ -797,7 +804,14 @@ async def test_successful_actual_changes_record_all_four_redacted_event_contract
                 "X-Request-Id": "req_f1d_created_001",
                 "X-Trace-Id": "11111111111111111111111111111111",
             },
-            json={"slug": "event-tenant", "name": "Never In Event Payload"},
+            json={
+                "slug": "event-tenant",
+                "name": "Never In Event Payload",
+                "initial_admin": {
+                    "full_name": "Never In Event Admin",
+                    "email": "never-in-event@example.test",
+                },
+            },
         )
         assert created_response.status_code == 201
         tenant_id = UUID(created_response.json()["data"]["id"])
@@ -910,7 +924,14 @@ async def test_unsafe_correlation_inputs_are_replaced_in_recorded_event_fixture(
                 "Authorization": "Bearer raw-authorization-secret",
                 "Cookie": "session=raw-cookie-secret",
             },
-            json={"slug": "f1e-safe-event", "name": "F1E Safe Event"},
+            json={
+                "slug": "f1e-safe-event",
+                "name": "F1E Safe Event",
+                "initial_admin": {
+                    "full_name": "Safe Event Admin",
+                    "email": "safe-event-admin@example.test",
+                },
+            },
         )
 
     assert response.status_code == 201

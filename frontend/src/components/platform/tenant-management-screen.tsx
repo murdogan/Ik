@@ -32,6 +32,7 @@ const VIEW_PAGE_SIZE = 20;
 interface SuccessState {
   tenant: PlatformTenant;
   meta: PlatformResponseMeta;
+  source: "response" | "reconciliation";
 }
 
 export function TenantManagementScreen() {
@@ -120,9 +121,10 @@ export function TenantManagementScreen() {
   function handleCreated(
     tenant: PlatformTenant,
     meta: PlatformResponseMeta,
+    source: "response" | "reconciliation",
   ) {
     setIsCreateOpen(false);
-    setSuccess({ tenant, meta });
+    setSuccess({ tenant, meta, source });
     setSearch("");
     setStatus("");
     setPage(1);
@@ -137,13 +139,13 @@ export function TenantManagementScreen() {
       aria-labelledby="tenant-management-title"
       aria-busy={isLoading}
     >
-      <header className={styles.pageHeader}>
-        <div>
+      <header className={`${styles.pageHeader} ${styles.compactPageHeader}`}>
+        <div className={styles.pageHeading}>
           <span>Platform operasyonları</span>
           <h1 id="tenant-management-title">Tenant yönetimi</h1>
           <p>
-            Tenant kimliği, planı ve yaşam döngüsünü yönetin. Bu görünümde
-            müşteri çalışan veya HR kayıtları bulunmaz.
+            Tenant kimliği, planı ve yaşam döngüsü için güvenli operasyon
+            görünümü.
           </p>
         </div>
         {canCreate ? (
@@ -162,8 +164,9 @@ export function TenantManagementScreen() {
           <div>
             <strong>{success.tenant.name} oluşturuldu</strong>
             <p>
-              Tenant hazırlama durumunda açıldı. Ayrıntı ekranından güvenli
-              metadata ve modül ayarlarını tamamlayabilirsiniz.
+              {success.source === "reconciliation"
+                ? "Tenant kaydı tam platform listesinde güvenli metadata ile doğrulandı. İlk yönetici davetinin durumunu tenant ayrıntısı ve platform denetim kaydından kontrol edin."
+                : "Tenant ve ilk yönetici daveti/erişimi hazırlandı. Ayrıntı ekranından güvenli metadata ve modül ayarlarını tamamlayabilirsiniz."}
             </p>
             <small>Referans: {success.meta.correlation_id}</small>
           </div>
@@ -185,71 +188,83 @@ export function TenantManagementScreen() {
       ) : null}
 
       <form
-        className={styles.filterBar}
+        className={`${styles.filterBar} ${styles.managementToolbar}`}
         role="search"
+        aria-label="Tenant listesinde ara ve filtrele"
         onSubmit={(event) => event.preventDefault()}
       >
-        <label className={styles.filterField}>
-          <span>Tenant ara</span>
-          <input
-            type="search"
-            value={search}
-            maxLength={200}
-            placeholder="Ad veya tenant kodu"
-            onChange={(event) => {
-              setSearch(event.target.value);
-              resetPage();
-            }}
-          />
-        </label>
-        <label className={styles.filterField}>
-          <span>Yaşam döngüsü durumu</span>
-          <select
-            value={status}
-            onChange={(event) => {
-              setStatus(event.target.value as PlatformTenantStatus | "");
-              resetPage();
-            }}
-          >
-            <option value="">Tüm durumlar</option>
-            {PLATFORM_TENANT_STATUSES.map((tenantStatus) => (
-              <option value={tenantStatus} key={tenantStatus}>
-                {PLATFORM_STATUS_LABELS[tenantStatus]}
-              </option>
-            ))}
-          </select>
-        </label>
-        {hasFilters ? (
+        <div className={styles.managementFilterControls}>
+          <label className={styles.filterField}>
+            <span>Tenant ara</span>
+            <input
+              type="search"
+              value={search}
+              maxLength={200}
+              placeholder="Ad veya tenant kodu"
+              onChange={(event) => {
+                setSearch(event.target.value);
+                resetPage();
+              }}
+            />
+          </label>
+          <label className={styles.filterField}>
+            <span>Yaşam döngüsü durumu</span>
+            <select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value as PlatformTenantStatus | "");
+                resetPage();
+              }}
+            >
+              <option value="">Tüm durumlar</option>
+              {PLATFORM_TENANT_STATUSES.map((tenantStatus) => (
+                <option value={tenantStatus} key={tenantStatus}>
+                  {PLATFORM_STATUS_LABELS[tenantStatus]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className={styles.managementToolbarActions}>
+          {hasFilters ? (
+            <button
+              className={styles.secondaryButton}
+              type="button"
+              onClick={() => {
+                setSearch("");
+                setStatus("");
+                resetPage();
+              }}
+            >
+              Filtreleri temizle
+            </button>
+          ) : null}
           <button
-            className={styles.secondaryButton}
+            className={styles.refreshButton}
             type="button"
-            onClick={() => {
-              setSearch("");
-              setStatus("");
-              resetPage();
-            }}
+            disabled={isLoading}
+            onClick={retry}
           >
-            Filtreleri temizle
+            {isLoading ? "Yükleniyor…" : "Yenile"}
           </button>
-        ) : null}
-        <button
-          className={styles.refreshButton}
-          type="button"
-          disabled={isLoading}
-          onClick={retry}
-        >
-          {isLoading ? "Yükleniyor…" : "Yenile"}
-        </button>
+        </div>
       </form>
 
-      <div className={styles.listCard}>
-        <div className={styles.listHeader}>
+      <section
+        className={`${styles.listCard} ${styles.tenantListWorkspace}`}
+        aria-labelledby="tenant-list-title"
+      >
+        <div className={`${styles.listHeader} ${styles.tenantListHeader}`}>
           <div>
             <span>Güvenli tenant metadata’sı</span>
-            <h2>Tenant listesi</h2>
+            <h2 id="tenant-list-title">Tenant listesi</h2>
           </div>
           {!isLoading && !error ? (
-            <p aria-live="polite">
+            <p
+              className={styles.tenantListResultCount}
+              role="status"
+              aria-live="polite"
+            >
               {filteredTenants.length.toLocaleString("tr-TR")} gösteriliyor ·
               toplam {tenants.length.toLocaleString("tr-TR")}
             </p>
@@ -308,8 +323,18 @@ export function TenantManagementScreen() {
           </div>
         ) : (
           <>
-            <div className={styles.tableScroller}>
-              <table className={styles.tenantTable}>
+            <div
+              className={`${styles.tableScroller} ${styles.managementTableScroller}`}
+              role="region"
+              aria-label="Tenant listesi tablosu"
+              tabIndex={0}
+            >
+              <table
+                className={`${styles.tenantTable} ${styles.managementTenantTable}`}
+              >
+                <caption className={styles.visuallyHidden}>
+                  Tenant listesi
+                </caption>
                 <thead>
                   <tr>
                     <th scope="col">Tenant</th>
@@ -388,7 +413,7 @@ export function TenantManagementScreen() {
             </footer>
           </>
         )}
-      </div>
+      </section>
 
       {isCreateOpen && canCreate ? (
         <CreateTenantDialog

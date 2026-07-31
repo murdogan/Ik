@@ -14,19 +14,24 @@ from app.api.auth_dependencies import (
 )
 from app.api.dependencies import (
     get_authenticated_tenant_request_context,
+    get_platform_event_recorder,
     get_platform_principal,
     get_tenant_principal,
 )
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
+from app.models.audit import AuditEvent
+from app.models.auth import UserActivationToken
+from app.models.authorization import UserRole
 from app.models.employee import Employee, EmployeeStatus
-from app.models.leave import LeavePolicy, LeaveType
+from app.models.identity import Identity, MembershipRole, TenantMembership
+from app.models.leave import LeavePolicy, LeaveType, OutboxEvent
 from app.models.leave_request import LeaveRequest, LeaveRequestStatus
 from app.models.organization import LegalEntity
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
-from app.platform.authorization import ROLE_PERMISSION_CODES
+from app.platform.authorization import ROLE_PERMISSION_CODES, ROLES_BY_CODE
 from app.platform.identity import PlatformAccessPrincipal
 from app.platform.principals import PlatformPrincipal
 from app.platform.request_context import AuthenticationStrength, RequestContext
@@ -364,6 +369,10 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
             json={
                 "slug": "acme-turkiye",
                 "name": "Acme Turkiye",
+                "initial_admin": {
+                    "full_name": "Ada Yönetici",
+                    "email": "ada.yonetici@acme.test",
+                },
                 "plan_code": "professional",
                 "data_region": "eu-1",
                 "locale": "en-US",
@@ -377,7 +386,8 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
         )
 
         assert create_response.status_code == 201
-        created = _phase1_data(create_response, PLATFORM_FIELDS)
+        created = _phase1_data(create_response, PLATFORM_FIELDS | {"initial_admin"})
+        assert created["initial_admin"] == {"status": "invitation_prepared"}
         assert UUID(created["id"]).version == 4
         assert created["status"] == "provisioning"
         assert created["health"] == "provisioning"
@@ -394,7 +404,7 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
         detail_response = await harness.client.get(f"/api/v1/platform/tenants/{created['id']}")
         assert detail_response.status_code == 200
         detailed = _phase1_data(detail_response, PLATFORM_FIELDS)
-        assert detailed == created
+        assert detailed == {field: created[field] for field in PLATFORM_FIELDS}
 
         serialized_platform_responses = json.dumps([created, listed, detailed])
         for forbidden_value in (
@@ -423,6 +433,839 @@ async def test_authorized_platform_can_provision_list_and_read_tenant_metadata_o
         assert default_entity.is_default is True
 
 
+async def test_platform_create_prepares_only_the_initial_tenant_admin_invitation() -> None:
+    async with _tenant_api() as harness:
+        _authorize_platform(harness.app)
+
+        response = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "first-admin-ready",
+                "name": "First Admin Ready",
+                "initial_admin": {
+                    "full_name": "  İlk Yönetici  ",
+                    "email": "  FIRST.ADMIN@EXAMPLE.TEST  ",
+                },
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert set(data) == PLATFORM_FIELDS | {"initial_admin"}
+        assert data["initial_admin"] == {"status": "invitation_prepared"}
+        assert "token" not in json.dumps(response.json()).lower()
+        tenant_id = UUID(data["id"])
+
+        async with harness.session_factory() as session:
+            user = await session.scalar(select(User).where(User.tenant_id == tenant_id))
+            identity = await session.scalar(
+                select(Identity).where(
+                    Identity.email_normalized == "first.admin@example.test",
+                )
+            )
+            membership = await session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            )
+            user_roles = tuple(
+                await session.scalars(select(UserRole).where(UserRole.tenant_id == tenant_id))
+            )
+            membership_roles = tuple(
+                await session.scalars(
+                    select(MembershipRole).where(MembershipRole.tenant_id == tenant_id)
+                )
+            )
+            activation_tokens = tuple(
+                await session.scalars(
+                    select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_id))
+            )
+
+        assert user is not None
+        assert user.email == "first.admin@example.test"
+        assert user.full_name == "İlk Yönetici"
+        assert user.status == UserStatus.INVITED.value
+        assert user.password_hash is None
+        assert identity is not None
+        assert identity.status == "pending"
+        assert identity.password_hash is None
+        assert membership is not None
+        assert membership.identity_id == identity.id
+        assert membership.legacy_user_id == user.id
+        assert membership.status == UserStatus.INVITED.value
+        tenant_admin_role_id = ROLES_BY_CODE["tenant_admin"].id
+        assert [(assignment.role_id, assignment.active) for assignment in user_roles] == [
+            (tenant_admin_role_id, True)
+        ]
+        assert [(assignment.role_id, assignment.active) for assignment in membership_roles] == [
+            (tenant_admin_role_id, True)
+        ]
+        assert len(activation_tokens) == 1
+        assert len(activation_tokens[0].token_hash) == 64
+        assert len(outbox_events) == 1
+        assert outbox_events[0].event_type == "identity.initial_admin_invited"
+        assert outbox_events[0].aggregate_id == user.id
+        assert outbox_events[0].payload == {
+            "recipient_user_id": str(user.id),
+            "activation_id": str(activation_tokens[0].id),
+        }
+        assert "token" not in json.dumps(outbox_events[0].payload).lower()
+
+
+async def test_platform_corrects_only_unactivated_initial_admin_membership_and_invitation() -> None:
+    old_identity_id = uuid4()
+    target_identity_id = uuid4()
+    other_membership_id = uuid4()
+    old_password_hash = "$argon2id$old-global-credential-must-not-change"
+    target_password_hash = "$argon2id$target-global-credential-must-not-change"
+    old_email = "incorrect.initial.admin@example.test"
+    corrected_email = "corrected.initial.admin@example.test"
+
+    async with _tenant_api() as harness:
+        async with harness.session_factory.begin() as session:
+            session.add_all(
+                [
+                    Identity(
+                        id=old_identity_id,
+                        email=old_email,
+                        status="active",
+                        password_hash=old_password_hash,
+                        platform_permission_version=7,
+                    ),
+                    Identity(
+                        id=target_identity_id,
+                        email=corrected_email,
+                        status="active",
+                        password_hash=target_password_hash,
+                        platform_permission_version=11,
+                    ),
+                    User(
+                        id=other_membership_id,
+                        tenant_id=OTHER_TENANT_ID,
+                        email=old_email,
+                        full_name="Old Identity Other Tenant",
+                        status=UserStatus.ACTIVE.value,
+                        password_hash=old_password_hash,
+                    ),
+                    TenantMembership(
+                        id=other_membership_id,
+                        tenant_id=OTHER_TENANT_ID,
+                        identity_id=old_identity_id,
+                        legacy_user_id=other_membership_id,
+                        full_name="Old Identity Other Tenant",
+                        status=UserStatus.ACTIVE.value,
+                        permission_version=3,
+                    ),
+                ]
+            )
+
+        _authorize_platform(harness.app)
+        created = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "correct-initial-admin",
+                "name": "Correct Initial Admin",
+                "initial_admin": {
+                    "full_name": "Incorrect Initial Admin",
+                    "email": old_email,
+                },
+            },
+        )
+        assert created.status_code == 201
+        tenant_id = UUID(created.json()["data"]["id"])
+
+        response = await harness.client.patch(
+            f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation",
+            json={
+                "full_name": "  Corrected Initial Admin  ",
+                "email": f"  {corrected_email.upper()}  ",
+            },
+            headers={
+                "X-Request-Id": "req_initial_admin_correction_001",
+                "X-Trace-Id": "20000000000000000000000000000001",
+            },
+        )
+
+        assert response.status_code == 202
+        assert _phase1_data(response, {"status"}) == {"status": "invitation_prepared"}
+        serialized_response = json.dumps(response.json()).lower()
+        assert corrected_email not in serialized_response
+        assert old_email not in serialized_response
+        assert "token" not in serialized_response
+        assert "activate" not in serialized_response
+        assert "identity" not in serialized_response
+
+        async with harness.session_factory() as session:
+            user = await session.scalar(select(User).where(User.tenant_id == tenant_id))
+            membership = await session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            )
+            old_identity = await session.get(Identity, old_identity_id)
+            target_identity = await session.get(Identity, target_identity_id)
+            old_other_membership = await session.get(TenantMembership, other_membership_id)
+            activations = tuple(
+                await session.scalars(
+                    select(UserActivationToken)
+                    .where(UserActivationToken.tenant_id == tenant_id)
+                    .order_by(UserActivationToken.created_at, UserActivationToken.id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(
+                    select(OutboxEvent)
+                    .where(OutboxEvent.tenant_id == tenant_id)
+                    .order_by(OutboxEvent.created_at, OutboxEvent.id)
+                )
+            )
+            correction_audit = await session.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.event_type == "platform.tenant.initial_admin_invitation_corrected",
+                    AuditEvent.resource_id == tenant_id,
+                )
+            )
+
+        assert user is not None
+        assert user.email == corrected_email
+        assert user.full_name == "Corrected Initial Admin"
+        assert user.status == UserStatus.INVITED.value
+        assert user.password_hash is None
+        assert membership is not None
+        assert membership.id == user.id
+        assert membership.legacy_user_id == user.id
+        assert membership.identity_id == target_identity_id
+        assert membership.full_name == "Corrected Initial Admin"
+        assert membership.status == UserStatus.INVITED.value
+        assert old_identity is not None
+        assert (
+            old_identity.email,
+            old_identity.status,
+            old_identity.password_hash,
+            old_identity.platform_permission_version,
+        ) == (old_email, "active", old_password_hash, 7)
+        assert target_identity is not None
+        assert (
+            target_identity.email,
+            target_identity.status,
+            target_identity.password_hash,
+            target_identity.platform_permission_version,
+        ) == (corrected_email, "active", target_password_hash, 11)
+        assert old_other_membership is not None
+        assert old_other_membership.identity_id == old_identity_id
+        assert old_other_membership.tenant_id == OTHER_TENANT_ID
+        assert len(activations) == 2
+        assert (
+            sum(
+                activation.consumed_at is None and activation.revoked_at is None
+                for activation in activations
+            )
+            == 1
+        )
+        assert sum(activation.revoked_at is not None for activation in activations) == 1
+        assert len(outbox_events) == 2
+        correction_event = next(
+            event for event in outbox_events if ":correction:" in event.source_key
+        )
+        assert correction_event.aggregate_id == user.id
+        assert correction_event.source_key == (
+            f"identity.initial_admin_invited:{user.id}:correction:"
+            f"{correction_event.payload['activation_id']}"
+        )
+        assert set(correction_event.payload) == {"recipient_user_id", "activation_id"}
+        assert corrected_email not in json.dumps(correction_event.payload).lower()
+        assert old_email not in json.dumps(correction_event.payload).lower()
+        assert correction_audit is not None
+        assert correction_audit.action == "correct_initial_admin_invitation"
+        assert correction_audit.request_id == "req_initial_admin_correction_001"
+        assert correction_audit.metadata_ == {}
+        assert correction_audit.changed_fields == []
+        assert correction_audit.before_data == {}
+        assert correction_audit.after_data == {}
+
+
+async def test_initial_admin_correction_rejects_duplicate_target_without_enumeration() -> None:
+    target_identity_id = uuid4()
+    conflicting_user_id = uuid4()
+    target_email = "duplicate.target.initial.admin@example.test"
+    async with _tenant_api() as harness:
+        _authorize_platform(harness.app)
+        created = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "duplicate-correction-target",
+                "name": "Duplicate Correction Target",
+                "initial_admin": {
+                    "full_name": "Original Initial Admin",
+                    "email": "original.initial.admin@example.test",
+                },
+            },
+        )
+        assert created.status_code == 201
+        tenant_id = UUID(created.json()["data"]["id"])
+
+        async with harness.session_factory.begin() as session:
+            session.add_all(
+                [
+                    Identity(
+                        id=target_identity_id,
+                        email=target_email,
+                        status="active",
+                        password_hash="$argon2id$duplicate-target-credential",
+                    ),
+                    User(
+                        id=conflicting_user_id,
+                        tenant_id=tenant_id,
+                        email=target_email,
+                        full_name="Existing Tenant Member",
+                        status=UserStatus.ACTIVE.value,
+                        password_hash="$argon2id$duplicate-target-credential",
+                    ),
+                    TenantMembership(
+                        id=conflicting_user_id,
+                        tenant_id=tenant_id,
+                        identity_id=target_identity_id,
+                        legacy_user_id=conflicting_user_id,
+                        full_name="Existing Tenant Member",
+                        status=UserStatus.ACTIVE.value,
+                    ),
+                ]
+            )
+
+        response = await harness.client.patch(
+            f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation",
+            json={
+                "full_name": "Must Not Apply",
+                "email": target_email,
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "tenant_initial_admin_unavailable"
+        assert response.json()["error"]["message"] == (
+            "The initial administrator cannot be prepared for access"
+        )
+        assert target_email not in json.dumps(response.json()).lower()
+
+        async with harness.session_factory() as session:
+            original_user = await session.scalar(
+                select(User).where(
+                    User.tenant_id == tenant_id,
+                    User.id != conflicting_user_id,
+                )
+            )
+            activations = tuple(
+                await session.scalars(
+                    select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_id))
+            )
+            correction_audit = await session.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.event_type == "platform.tenant.initial_admin_invitation_corrected",
+                    AuditEvent.resource_id == tenant_id,
+                )
+            )
+
+        assert original_user is not None
+        assert original_user.email == "original.initial.admin@example.test"
+        assert original_user.full_name == "Original Initial Admin"
+        assert len(activations) == 1
+        assert activations[0].revoked_at is None
+        assert len(outbox_events) == 1
+        assert correction_audit is None
+
+
+async def test_platform_can_safely_reissue_only_the_original_initial_admin_invitation() -> None:
+    identity_id = uuid4()
+    original_identity_hash = "$argon2id$existing-identity-credential-must-not-change"
+    async with _tenant_api() as harness:
+        async with harness.session_factory.begin() as session:
+            session.add(
+                Identity(
+                    id=identity_id,
+                    email="stranded.initial.admin@example.test",
+                    status="active",
+                    password_hash=original_identity_hash,
+                    platform_permission_version=9,
+                )
+            )
+        _authorize_platform(harness.app)
+        created = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "stranded-initial-admin",
+                "name": "Stranded Initial Admin",
+                "initial_admin": {
+                    "full_name": "Stranded Initial Admin",
+                    "email": "stranded.initial.admin@example.test",
+                },
+            },
+        )
+        assert created.status_code == 201
+        tenant_id = UUID(created.json()["data"]["id"])
+
+        first = await harness.client.post(
+            f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend",
+            headers={
+                "X-Request-Id": "req_initial_admin_reissue_001",
+                "X-Trace-Id": "10000000000000000000000000000001",
+            },
+        )
+        second = await harness.client.post(
+            f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend",
+            headers={
+                "X-Request-Id": "req_initial_admin_reissue_002",
+                "X-Trace-Id": "10000000000000000000000000000002",
+            },
+        )
+
+        for response in (first, second):
+            assert response.status_code == 202
+            assert _phase1_data(response, {"status"}) == {
+                "status": "invitation_prepared",
+            }
+            serialized_response = json.dumps(response.json()).lower()
+            assert "token" not in serialized_response
+            assert "activate" not in serialized_response
+            assert "email" not in serialized_response
+
+        async with harness.session_factory() as session:
+            user = await session.scalar(select(User).where(User.tenant_id == tenant_id))
+            membership = await session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            )
+            identity = await session.get(Identity, identity_id)
+            activations = tuple(
+                await session.scalars(
+                    select(UserActivationToken)
+                    .where(UserActivationToken.tenant_id == tenant_id)
+                    .order_by(UserActivationToken.created_at, UserActivationToken.id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(
+                    select(OutboxEvent)
+                    .where(OutboxEvent.tenant_id == tenant_id)
+                    .order_by(OutboxEvent.created_at, OutboxEvent.id)
+                )
+            )
+            reissue_audits = tuple(
+                await session.scalars(
+                    select(AuditEvent)
+                    .where(
+                        AuditEvent.event_type
+                        == "platform.tenant.initial_admin_invitation_reissued",
+                        AuditEvent.resource_id == tenant_id,
+                    )
+                    .order_by(AuditEvent.occurred_at, AuditEvent.id)
+                )
+            )
+
+        assert user is not None
+        assert user.status == UserStatus.INVITED.value
+        assert user.password_hash is None
+        assert membership is not None
+        assert membership.status == UserStatus.INVITED.value
+        assert identity is not None
+        assert (
+            identity.status,
+            identity.password_hash,
+            identity.platform_permission_version,
+        ) == ("active", original_identity_hash, 9)
+        assert len(activations) == 3
+        assert (
+            sum(
+                activation.consumed_at is None and activation.revoked_at is None
+                for activation in activations
+            )
+            == 1
+        )
+        assert all(len(activation.token_hash) == 64 for activation in activations)
+        assert len(outbox_events) == 3
+        assert len({event.source_key for event in outbox_events}) == 3
+        original_event = next(
+            event for event in outbox_events if ":reissue:" not in event.source_key
+        )
+        assert original_event.source_key == (
+            f"identity.initial_admin_invited:{original_event.aggregate_id}"
+        )
+        assert all(
+            set(event.payload) == {"recipient_user_id", "activation_id"} for event in outbox_events
+        )
+        assert (
+            "token"
+            not in json.dumps(
+                [event.payload for event in outbox_events],
+                sort_keys=True,
+            ).lower()
+        )
+        assert len(reissue_audits) == 2
+        assert {audit.request_id for audit in reissue_audits} == {
+            "req_initial_admin_reissue_001",
+            "req_initial_admin_reissue_002",
+        }
+        assert all(
+            audit.metadata_ == {}
+            and audit.changed_fields == []
+            and audit.before_data == {}
+            and audit.after_data == {}
+            for audit in reissue_audits
+        )
+        assert (
+            "token"
+            not in json.dumps(
+                [
+                    {
+                        "metadata": audit.metadata_,
+                        "before": audit.before_data,
+                        "after": audit.after_data,
+                    }
+                    for audit in reissue_audits
+                ],
+                sort_keys=True,
+            ).lower()
+        )
+
+
+async def test_initial_admin_reissue_does_not_enumerate_missing_or_activated_state() -> None:
+    async with _tenant_api() as harness:
+        _authorize_platform(harness.app)
+        created = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "already-activated-admin",
+                "name": "Already Activated Admin",
+                "initial_admin": {
+                    "full_name": "Already Activated Admin",
+                    "email": "already.activated.admin@example.test",
+                },
+            },
+        )
+        assert created.status_code == 201
+        tenant_id = UUID(created.json()["data"]["id"])
+        now = datetime.now(UTC)
+        activated_password_hash = "$argon2id$activated-ineligible-credential"
+        async with harness.session_factory.begin() as session:
+            user = await session.scalar(select(User).where(User.tenant_id == tenant_id))
+            membership = await session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            )
+            identity = await session.scalar(
+                select(Identity).where(
+                    Identity.email_normalized == "already.activated.admin@example.test"
+                )
+            )
+            activation = await session.scalar(
+                select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+            )
+            assert user is not None
+            assert membership is not None
+            assert identity is not None
+            assert activation is not None
+            user.status = UserStatus.ACTIVE.value
+            user.password_hash = activated_password_hash
+            membership.status = UserStatus.ACTIVE.value
+            identity.status = "active"
+            identity.password_hash = activated_password_hash
+            activation.consumed_at = now
+
+        activated_response = await harness.client.post(
+            f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend"
+        )
+        missing_response = await harness.client.post(
+            f"/api/v1/platform/tenants/{uuid4()}/initial-admin-invitation/resend"
+        )
+
+        for response in (activated_response, missing_response):
+            assert response.status_code == 409
+            error = response.json()["error"]
+            assert error["code"] == "tenant_initial_admin_unavailable"
+            assert error["message"] == "The initial administrator cannot be prepared for access"
+            assert "active" not in error["message"].lower()
+            assert "identity" not in error["message"].lower()
+
+        async with harness.session_factory() as session:
+            activations = tuple(
+                await session.scalars(
+                    select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_id))
+            )
+            reissue_audit_count = len(
+                tuple(
+                    await session.scalars(
+                        select(AuditEvent).where(
+                            AuditEvent.event_type
+                            == "platform.tenant.initial_admin_invitation_reissued",
+                            AuditEvent.resource_id == tenant_id,
+                        )
+                    )
+                )
+            )
+
+        assert len(activations) == 1
+        assert activations[0].consumed_at is not None
+        assert activations[0].revoked_at is None
+        assert len(outbox_events) == 1
+        assert reissue_audit_count == 0
+
+
+async def test_initial_admin_reissue_rolls_back_when_audit_recording_fails() -> None:
+    class FailingRecorder:
+        async def record(self, _event: object, /) -> None:
+            raise RuntimeError("simulated initial-admin audit failure")
+
+    async with _tenant_api() as harness:
+        _authorize_platform(harness.app)
+        created = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "reissue-audit-rollback",
+                "name": "Reissue Audit Rollback",
+                "initial_admin": {
+                    "full_name": "Reissue Audit Rollback Admin",
+                    "email": "reissue.audit.rollback@example.test",
+                },
+            },
+        )
+        assert created.status_code == 201
+        tenant_id = UUID(created.json()["data"]["id"])
+        async with harness.session_factory() as session:
+            original_activation = await session.scalar(
+                select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+            )
+            assert original_activation is not None
+            original_activation_id = original_activation.id
+            original_activation_hash = original_activation.token_hash
+
+        harness.app.dependency_overrides[get_platform_event_recorder] = FailingRecorder
+        with pytest.raises(RuntimeError, match="simulated initial-admin audit failure"):
+            await harness.client.post(
+                f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend"
+            )
+
+        async with harness.session_factory() as session:
+            activations = tuple(
+                await session.scalars(
+                    select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_id))
+            )
+
+        assert len(activations) == 1
+        assert activations[0].id == original_activation_id
+        assert activations[0].token_hash == original_activation_hash
+        assert activations[0].revoked_at is None
+        assert len(outbox_events) == 1
+        assert ":reissue:" not in outbox_events[0].source_key
+
+
+async def test_initial_admin_correction_rolls_back_when_audit_recording_fails() -> None:
+    class FailingRecorder:
+        async def record(self, _event: object, /) -> None:
+            raise RuntimeError("simulated initial-admin correction audit failure")
+
+    async with _tenant_api() as harness:
+        _authorize_platform(harness.app)
+        created = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "correction-audit-rollback",
+                "name": "Correction Audit Rollback",
+                "initial_admin": {
+                    "full_name": "Original Correction Admin",
+                    "email": "original.correction.rollback@example.test",
+                },
+            },
+        )
+        assert created.status_code == 201
+        tenant_id = UUID(created.json()["data"]["id"])
+        async with harness.session_factory() as session:
+            original_user = await session.scalar(select(User).where(User.tenant_id == tenant_id))
+            original_membership = await session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            )
+            original_activation = await session.scalar(
+                select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+            )
+            assert original_user is not None
+            assert original_membership is not None
+            assert original_activation is not None
+            original_state = (
+                original_user.id,
+                original_user.email,
+                original_user.full_name,
+                original_membership.identity_id,
+                original_membership.full_name,
+                original_activation.id,
+                original_activation.token_hash,
+            )
+
+        harness.app.dependency_overrides[get_platform_event_recorder] = FailingRecorder
+        with pytest.raises(
+            RuntimeError,
+            match="simulated initial-admin correction audit failure",
+        ):
+            await harness.client.patch(
+                f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation",
+                json={
+                    "full_name": "Must Roll Back",
+                    "email": "must.rollback.correction@example.test",
+                },
+            )
+
+        async with harness.session_factory() as session:
+            user = await session.scalar(select(User).where(User.tenant_id == tenant_id))
+            membership = await session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            )
+            activations = tuple(
+                await session.scalars(
+                    select(UserActivationToken).where(UserActivationToken.tenant_id == tenant_id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_id))
+            )
+            rolled_back_identity = await session.scalar(
+                select(Identity).where(
+                    Identity.email_normalized == "must.rollback.correction@example.test"
+                )
+            )
+
+        assert user is not None
+        assert membership is not None
+        assert len(activations) == 1
+        assert (
+            user.id,
+            user.email,
+            user.full_name,
+            membership.identity_id,
+            membership.full_name,
+            activations[0].id,
+            activations[0].token_hash,
+        ) == original_state
+        assert activations[0].revoked_at is None
+        assert len(outbox_events) == 1
+        assert ":correction:" not in outbox_events[0].source_key
+        assert rolled_back_identity is None
+
+
+async def test_unusable_initial_admin_rolls_back_the_entire_tenant() -> None:
+    async with _tenant_api() as harness:
+        async with harness.session_factory.begin() as session:
+            session.add(
+                Identity(
+                    id=uuid4(),
+                    email="locked.initial.admin@example.test",
+                    status="locked",
+                    password_hash="$argon2id$locked-credential-must-remain-untouched",
+                )
+            )
+        _authorize_platform(harness.app)
+
+        response = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "must-roll-back",
+                "name": "Must Roll Back",
+                "initial_admin": {
+                    "full_name": "Locked Initial Admin",
+                    "email": "locked.initial.admin@example.test",
+                },
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "tenant_initial_admin_unavailable"
+        assert "locked" not in json.dumps(response.json()).lower()
+
+        async with harness.session_factory() as session:
+            tenant = await session.scalar(select(Tenant).where(Tenant.slug == "must-roll-back"))
+            users = tuple(
+                await session.scalars(
+                    select(User).where(User.email == "locked.initial.admin@example.test")
+                )
+            )
+            memberships = tuple(
+                await session.scalars(
+                    select(TenantMembership).where(
+                        TenantMembership.identity_id
+                        == select(Identity.id)
+                        .where(Identity.email_normalized == "locked.initial.admin@example.test")
+                        .scalar_subquery()
+                    )
+                )
+            )
+
+        assert tenant is None
+        assert users == ()
+        assert memberships == ()
+
+
+async def test_existing_canonical_identity_is_attached_without_credential_changes() -> None:
+    identity_id = uuid4()
+    original_hash = "$argon2id$existing-canonical-credential"
+    async with _tenant_api() as harness:
+        async with harness.session_factory.begin() as session:
+            session.add(
+                Identity(
+                    id=identity_id,
+                    email="existing.initial.admin@example.test",
+                    status="active",
+                    password_hash=original_hash,
+                    platform_permission_version=7,
+                )
+            )
+        _authorize_platform(harness.app)
+
+        response = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "existing-admin-ready",
+                "name": "Existing Admin Ready",
+                "initial_admin": {
+                    "full_name": "Existing Initial Admin",
+                    "email": "existing.initial.admin@example.test",
+                },
+            },
+        )
+
+        assert response.status_code == 201
+        tenant_id = UUID(response.json()["data"]["id"])
+        async with harness.session_factory() as session:
+            identities = tuple(
+                await session.scalars(
+                    select(Identity).where(
+                        Identity.email_normalized == "existing.initial.admin@example.test"
+                    )
+                )
+            )
+            user = await session.scalar(select(User).where(User.tenant_id == tenant_id))
+            membership = await session.scalar(
+                select(TenantMembership).where(TenantMembership.tenant_id == tenant_id)
+            )
+
+        assert len(identities) == 1
+        assert identities[0].id == identity_id
+        assert identities[0].status == "active"
+        assert identities[0].password_hash == original_hash
+        assert identities[0].platform_permission_version == 7
+        assert user is not None
+        assert user.status == UserStatus.INVITED.value
+        assert user.password_hash is None
+        assert membership is not None
+        assert membership.identity_id == identity_id
+        assert membership.status == UserStatus.INVITED.value
+
+
 async def test_platform_tenant_list_uses_bounded_deterministic_cursor_envelope() -> None:
     async with _tenant_api() as harness:
         _authorize_platform(harness.app)
@@ -433,10 +1276,14 @@ async def test_platform_tenant_list_uses_bounded_deterministic_cursor_envelope()
                 json={
                     "slug": f"cursor-falcon-{number}",
                     "name": f"Cursor Falcon {number}",
+                    "initial_admin": {
+                        "full_name": f"Cursor Admin {number}",
+                        "email": f"cursor-admin-{number}@example.test",
+                    },
                 },
             )
             assert response.status_code == 201
-            expected_ids.add(_phase1_data(response, PLATFORM_FIELDS)["id"])
+            expected_ids.add(_phase1_data(response, PLATFORM_FIELDS | {"initial_admin"})["id"])
 
         fixed_created_at = datetime(2026, 7, 11, 8, 30, tzinfo=UTC)
         async with harness.session_factory() as session:
@@ -509,6 +1356,10 @@ async def test_platform_reads_legacy_premium_plan_but_new_writes_reject_it() -> 
             json={
                 "slug": "legacy-plan-write",
                 "name": "Legacy Plan Write",
+                "initial_admin": {
+                    "full_name": "Legacy Plan Admin",
+                    "email": "legacy-plan-admin@example.test",
+                },
                 "plan_code": "premium",
             },
         )
@@ -524,7 +1375,14 @@ async def test_platform_provisioning_rejects_client_controlled_identity_and_stat
 ) -> None:
     async with _tenant_api() as harness:
         _authorize_platform(harness.app)
-        payload = {"slug": f"client-field-{client_field}", "name": "Client Field"}
+        payload = {
+            "slug": f"client-field-{client_field}",
+            "name": "Client Field",
+            "initial_admin": {
+                "full_name": "Client Field Admin",
+                "email": f"client-field-{client_field}@example.test",
+            },
+        }
         payload[client_field] = str(uuid4()) if client_field != "status" else "active"
 
         response = await harness.client.post("/api/v1/platform/tenants", json=payload)
@@ -538,7 +1396,14 @@ async def test_platform_provisioning_rejects_duplicate_slug_with_conflict() -> N
 
         response = await harness.client.post(
             "/api/v1/platform/tenants",
-            json={"slug": "wealthy-falcon", "name": "Duplicate"},
+            json={
+                "slug": "wealthy-falcon",
+                "name": "Duplicate",
+                "initial_admin": {
+                    "full_name": "Duplicate Admin",
+                    "email": "duplicate-admin@example.test",
+                },
+            },
         )
 
     _assert_error_code(response, 409, "tenant_slug_conflict")
@@ -568,6 +1433,10 @@ async def test_platform_rejects_invalid_typed_tenant_metadata(
             json={
                 "slug": f"invalid-{field}",
                 "name": "Invalid Metadata",
+                "initial_admin": {
+                    "full_name": "Invalid Metadata Admin",
+                    "email": f"invalid-{field}@example.test",
+                },
                 field: invalid_value,
             },
         )
@@ -605,10 +1474,20 @@ async def test_platform_patch_updates_only_allowlisted_metadata() -> None:
 
         create_response = await harness.client.post(
             "/api/v1/platform/tenants",
-            json={"slug": "region-change", "name": "Region Change"},
+            json={
+                "slug": "region-change",
+                "name": "Region Change",
+                "initial_admin": {
+                    "full_name": "Region Change Admin",
+                    "email": "region-change-admin@example.test",
+                },
+            },
         )
         assert create_response.status_code == 201
-        created = _phase1_data(create_response, PLATFORM_FIELDS)
+        created = _phase1_data(
+            create_response,
+            PLATFORM_FIELDS | {"initial_admin"},
+        )
         region_response = await harness.client.patch(
             f"/api/v1/platform/tenants/{created['id']}",
             json={"data_region": "eu-1"},

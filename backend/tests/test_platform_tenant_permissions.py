@@ -59,7 +59,14 @@ PLATFORM_OPERATION_CASES = (
     PlatformOperationCase(
         method="POST",
         path="/api/v1/platform/tenants",
-        payload={"slug": "permission-test", "name": "Permission Test"},
+        payload={
+            "slug": "permission-test",
+            "name": "Permission Test",
+            "initial_admin": {
+                "full_name": "Permission Test Admin",
+                "email": "permission-test-admin@example.test",
+            },
+        },
         required_permission="tenant:create:platform",
         service_call="create_tenant",
         success_status=201,
@@ -87,6 +94,25 @@ PLATFORM_OPERATION_CASES = (
         required_permission="tenant:update:platform",
         service_call="update_tenant",
         success_status=200,
+    ),
+    PlatformOperationCase(
+        method="POST",
+        path=f"/api/v1/platform/tenants/{TENANT_ID}/initial-admin-invitation/resend",
+        payload=None,
+        required_permission="tenant:update:platform",
+        service_call="reissue_initial_admin_invitation",
+        success_status=202,
+    ),
+    PlatformOperationCase(
+        method="PATCH",
+        path=f"/api/v1/platform/tenants/{TENANT_ID}/initial-admin-invitation",
+        payload={
+            "full_name": "Corrected Initial Admin",
+            "email": "corrected.initial.admin@example.test",
+        },
+        required_permission="tenant:update:platform",
+        service_call="correct_initial_admin_invitation",
+        success_status=202,
     ),
     PlatformOperationCase(
         method="GET",
@@ -146,6 +172,20 @@ class PlatformOperationProbe:
     async def update_tenant(self, *_args: object, **_kwargs: object) -> PlatformTenantMetadata:
         self.calls.append("update_tenant")
         return self.tenant
+
+    async def reissue_initial_admin_invitation(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        self.calls.append("reissue_initial_admin_invitation")
+
+    async def correct_initial_admin_invitation(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        self.calls.append("correct_initial_admin_invitation")
 
     async def get_tenant_features(
         self,
@@ -245,6 +285,15 @@ async def test_platform_tenant_operation_accepts_exact_live_permission_once(
         assert response.json()["data"][0]["created_at"] == "2026-07-28T00:00:00Z"
     elif case.service_call in {"create_tenant", "get_tenant", "update_tenant"}:
         assert response.json()["data"]["created_at"] == "2026-07-28T00:00:00Z"
+    elif case.service_call in {
+        "correct_initial_admin_invitation",
+        "reissue_initial_admin_invitation",
+    }:
+        assert response.json()["data"] == {"status": "invitation_prepared"}
+    else:
+        assert response.json()["data"] == {
+            "features": [{"key": "employees", "enabled": True, "source": "default"}]
+        }
 
 
 @pytest.mark.parametrize("case", PLATFORM_OPERATION_CASES, ids=lambda case: case.service_call)

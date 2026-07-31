@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth_dependencies import (
     PlatformAuthenticatedSession,
+    get_application_settings,
     get_authenticated_request_context,
     require_platform_authenticated_session,
 )
@@ -21,6 +23,7 @@ from app.api.errors import (
     tenant_header_missing_error,
     tenant_slug_header_invalid_error,
 )
+from app.core.config import Settings
 from app.db.session import get_session
 from app.platform.db import (
     DatabaseAccessContext,
@@ -40,6 +43,7 @@ from app.platform.request_context import RequestContext
 from app.platform.tenancy import TenantContext
 from app.services.audit_recorder import SqlAlchemyAuditRecorder
 from app.services.command_idempotency import CommandIdempotencyService
+from app.services.initial_tenant_admin_provisioner import InitialTenantAdminProvisioner
 from app.services.platform_event_audit_recorder import PlatformEventAuditRecorder
 from app.services.platform_tenant_queries import PlatformTenantQueryService
 from app.services.tenant_commands import TenantCommandHandler
@@ -169,6 +173,16 @@ def get_tenant_feature_service(
     return TenantFeatureService(session=session)
 
 
+def get_initial_tenant_admin_provisioner(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_application_settings)],
+) -> InitialTenantAdminProvisioner:
+    return InitialTenantAdminProvisioner(
+        session,
+        activation_ttl=timedelta(hours=settings.auth_activation_token_ttl_hours),
+    )
+
+
 def get_platform_event_recorder(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PlatformEventRecorder:
@@ -184,6 +198,10 @@ def get_tenant_command_handler(
         Depends(get_tenant_feature_service),
     ],
     unit_of_work: Annotated[SqlAlchemyUnitOfWork, Depends(get_unit_of_work)],
+    initial_admin_provisioner: Annotated[
+        InitialTenantAdminProvisioner,
+        Depends(get_initial_tenant_admin_provisioner),
+    ],
     event_recorder: Annotated[
         PlatformEventRecorder,
         Depends(get_platform_event_recorder),
@@ -192,6 +210,7 @@ def get_tenant_command_handler(
     return TenantCommandHandler(
         service=service,
         feature_service=feature_service,
+        initial_admin_provisioner=initial_admin_provisioner,
         unit_of_work=unit_of_work,
         event_recorder=event_recorder,
     )

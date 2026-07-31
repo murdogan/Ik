@@ -16,6 +16,7 @@ from app.api.errors import (
     PLATFORM_AUTHORIZATION_RESPONSES,
     PLATFORM_TENANT_VALIDATION_RESPONSES,
     TENANT_CREATE_CONFLICT_RESPONSES,
+    TENANT_INITIAL_ADMIN_REISSUE_CONFLICT_RESPONSES,
     TENANT_NOT_FOUND_RESPONSES,
     TENANT_UPDATE_CONFLICT_RESPONSES,
     UNEXPECTED_ERROR_RESPONSES,
@@ -42,9 +43,12 @@ from app.schemas.tenant import (
     TenantFeatureFlagRead,
     TenantFeaturesRead,
     TenantFeaturesUpdate,
+    TenantInitialAdminCorrection,
+    TenantInitialAdminProvisioningRead,
     TenantListCursor,
     TenantListPagination,
     TenantPlatformCreate,
+    TenantPlatformCreateRead,
     TenantPlatformRead,
     TenantPlatformUpdate,
 )
@@ -76,14 +80,16 @@ router = APIRouter(
     "",
     dependencies=[Depends(require_platform_permission("tenant:create:platform"))],
     openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
-    response_model=DataEnvelope[TenantPlatformRead],
+    response_model=DataEnvelope[TenantPlatformCreateRead],
     status_code=status.HTTP_201_CREATED,
     summary="Provision platform tenant",
     description=(
-        "Creates tenant metadata, typed default settings, fixed feature defaults, and optional "
-        "configured active-employee limit metadata under an injected platform principal. The "
-        "server generates the tenant ID and always starts the lifecycle in provisioning; request "
-        "headers or payload IDs never grant platform authority."
+        "Creates tenant metadata, typed default settings, fixed feature defaults, optional "
+        "configured active-employee limit metadata, and one invited tenant administrator under "
+        "an injected platform principal. The server owns all tenant, identity, membership, role, "
+        "and activation identifiers; the server generates the tenant ID, assigns only the system "
+        "tenant_admin role, and never returns the activation credential. The tenant always starts "
+        "in provisioning."
     ),
     response_description="Provisioned tenant data with safe request metadata.",
     responses=with_correlation_response_headers(
@@ -100,9 +106,9 @@ async def create_platform_tenant(
         TenantCommandHandler,
         Depends(get_tenant_command_handler),
     ],
-) -> DataEnvelope[TenantPlatformRead]:
+) -> DataEnvelope[TenantPlatformCreateRead]:
     tenant = await command_handler.create_tenant(payload, request_context=request_context)
-    return data_envelope(_platform_tenant_read(tenant), request_context)
+    return data_envelope(_platform_tenant_create_read(tenant), request_context)
 
 
 def get_platform_tenant_list_pagination(
@@ -248,6 +254,80 @@ async def update_platform_tenant(
     return data_envelope(_platform_tenant_read(tenant), request_context)
 
 
+@router.post(
+    "/{tenant_id}/initial-admin-invitation/resend",
+    dependencies=[Depends(require_platform_permission("tenant:update:platform"))],
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
+    response_model=DataEnvelope[TenantInitialAdminProvisioningRead],
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Reissue initial tenant administrator invitation",
+    description=(
+        "Atomically revokes prior activation credentials and prepares a fresh invitation only "
+        "for the tenant's original, still-unactivated initial administrator. The response never "
+        "reveals the administrator identity, activation credential, or activation path."
+    ),
+    response_description="Safe invitation preparation status with request metadata.",
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_202_ACCEPTED: {},
+            **TENANT_INITIAL_ADMIN_REISSUE_CONFLICT_RESPONSES,
+        }
+    ),
+)
+async def reissue_platform_initial_admin_invitation(
+    tenant_id: UUID,
+    request_context: Annotated[RequestContext, Depends(get_platform_request_context)],
+    command_handler: Annotated[
+        TenantCommandHandler,
+        Depends(get_tenant_command_handler),
+    ],
+) -> DataEnvelope[TenantInitialAdminProvisioningRead]:
+    await command_handler.reissue_initial_admin_invitation(
+        tenant_id,
+        request_context=request_context,
+    )
+    return data_envelope(TenantInitialAdminProvisioningRead(), request_context)
+
+
+@router.patch(
+    "/{tenant_id}/initial-admin-invitation",
+    dependencies=[Depends(require_platform_permission("tenant:update:platform"))],
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
+    response_model=DataEnvelope[TenantInitialAdminProvisioningRead],
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Correct initial tenant administrator invitation",
+    description=(
+        "Atomically corrects the name and email association only for the tenant's original, "
+        "still-unactivated initial administrator, revokes prior activation credentials, and "
+        "prepares a fresh invitation. It never mutates another tenant membership or a global "
+        "identity credential. Neither the response nor the platform audit event ever reveals or "
+        "records either administrator email, name, identity state, activation credential, or path."
+    ),
+    response_description="Safe invitation preparation status with request metadata.",
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_202_ACCEPTED: {},
+            **TENANT_INITIAL_ADMIN_REISSUE_CONFLICT_RESPONSES,
+        }
+    ),
+)
+async def correct_platform_initial_admin_invitation(
+    tenant_id: UUID,
+    payload: TenantInitialAdminCorrection,
+    request_context: Annotated[RequestContext, Depends(get_platform_request_context)],
+    command_handler: Annotated[
+        TenantCommandHandler,
+        Depends(get_tenant_command_handler),
+    ],
+) -> DataEnvelope[TenantInitialAdminProvisioningRead]:
+    await command_handler.correct_initial_admin_invitation(
+        tenant_id,
+        payload,
+        request_context=request_context,
+    )
+    return data_envelope(TenantInitialAdminProvisioningRead(), request_context)
+
+
 @router.get(
     "/{tenant_id}/features",
     dependencies=[Depends(require_platform_permission("feature:read:platform"))],
@@ -336,6 +416,15 @@ def _platform_tenant_read(
             "limits": {"active_employees": tenant.active_employee_limit},
             "created_at": _aware_utc(tenant.created_at),
             "updated_at": _aware_utc(tenant.updated_at),
+        }
+    )
+
+
+def _platform_tenant_create_read(tenant: Tenant) -> TenantPlatformCreateRead:
+    return TenantPlatformCreateRead.model_validate(
+        {
+            **_platform_tenant_read(tenant).model_dump(),
+            "initial_admin": {"status": "invitation_prepared"},
         }
     )
 

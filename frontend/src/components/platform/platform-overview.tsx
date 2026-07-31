@@ -104,13 +104,13 @@ export function PlatformOverview() {
       aria-labelledby="platform-title"
       aria-busy={isLoading}
     >
-      <header className={styles.pageHeader}>
-        <div>
-          <span>Platform operasyonları</span>
+      <header className={`${styles.pageHeader} ${styles.compactPageHeader}`}>
+        <div className={styles.pageHeading}>
+          <span>Genel bakış</span>
           <h1 id="platform-title">Platform operasyonları</h1>
           <p>
-            Tenant yaşam döngüsünü, plan metadata’sını ve güvenli modül
-            dağıtımlarını tek çalışma alanından yönetin.
+            Tenant yaşam döngüsünü ve son platform metadata hareketlerini
+            izleyin.
           </p>
         </div>
         {canReadTenants ? (
@@ -152,26 +152,115 @@ export function PlatformOverview() {
         </div>
       ) : (
         <>
-          <div className={styles.overviewMetrics}>
-            <article className={styles.totalMetric}>
-              <span>Toplam tenant</span>
-              <strong data-testid="platform-total-tenants">
-                {tenants.length.toLocaleString("tr-TR")}
-              </strong>
-              <p>Platform metadata kataloğundaki tüm tenantlar</p>
-            </article>
+          <div className={styles.overviewWorkspace}>
+            <section
+              className={`${styles.listCard} ${styles.overviewRecentList}`}
+              aria-labelledby="recent-tenants-title"
+            >
+              <div className={`${styles.listHeader} ${styles.overviewListHeader}`}>
+                <div>
+                  <span>Güncel görünüm</span>
+                  <h2 id="recent-tenants-title">Son güncellenen tenantlar</h2>
+                </div>
+                <Link href="/platform/tenants">Tümünü görüntüle</Link>
+              </div>
+
+              {recentTenants.length === 0 ? (
+                <div className={styles.emptyState}>
+                  <span aria-hidden="true">T</span>
+                  <h3>Henüz tenant yok</h3>
+                  <p>
+                    Tenant oluşturma yetkiniz varsa yönetim ekranından ilk
+                    tenantı hazırlayabilirsiniz.
+                  </p>
+                  <Link className={styles.secondaryLink} href="/platform/tenants">
+                    Tenant yönetimini aç
+                  </Link>
+                </div>
+              ) : (
+                <div
+                  className={`${styles.tableScroller} ${styles.overviewTableScroller}`}
+                  role="region"
+                  aria-label="Son güncellenen tenantlar tablosu"
+                  tabIndex={0}
+                >
+                  <table
+                    className={`${styles.tenantTable} ${styles.overviewTenantTable}`}
+                  >
+                    <caption className={styles.visuallyHidden}>
+                      Son güncellenen tenantlar
+                    </caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Tenant</th>
+                        <th scope="col">Durum</th>
+                        <th scope="col">Plan</th>
+                        <th scope="col">Son güncelleme</th>
+                        <th scope="col">
+                          <span className={styles.visuallyHidden}>İşlemler</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentTenants.map((tenant) => (
+                        <tr key={tenant.id}>
+                          <td data-label="Tenant">
+                            <div className={styles.tenantIdentity}>
+                              <strong>{tenant.name}</strong>
+                              <span>{tenant.slug}</span>
+                            </div>
+                          </td>
+                          <td data-label="Durum">
+                            <span
+                              className={styles.statusBadge}
+                              data-status={tenant.status}
+                            >
+                              {PLATFORM_STATUS_LABELS[tenant.status]}
+                            </span>
+                          </td>
+                          <td data-label="Plan">
+                            {PLATFORM_PLAN_LABELS[tenant.plan_code]}
+                          </td>
+                          <td data-label="Son güncelleme">
+                            <time dateTime={tenant.updated_at}>
+                              {formatPlatformDate(tenant.updated_at)}
+                            </time>
+                          </td>
+                          <td className={styles.actionCell}>
+                            <Link
+                              href={`/platform/tenants/${encodeURIComponent(tenant.id)}`}
+                              aria-label={`${tenant.name} tenantını incele`}
+                            >
+                              İncele
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
 
             <section
-              className={styles.statusBreakdown}
+              className={`${styles.statusBreakdown} ${styles.lifecycleSummary}`}
               aria-labelledby="status-breakdown-title"
             >
-              <div className={styles.sectionTitle}>
-                <div>
-                  <span>Yaşam döngüsü</span>
-                  <h2 id="status-breakdown-title">Durum dağılımı</h2>
+              <div className={styles.lifecycleSummaryHeader}>
+                <div className={styles.sectionTitle}>
+                  <div>
+                    <span>Yaşam döngüsü</span>
+                    <h2 id="status-breakdown-title">Durum dağılımı</h2>
+                  </div>
+                </div>
+                <div className={styles.lifecycleTotal}>
+                  <span>Toplam tenant</span>
+                  <strong data-testid="platform-total-tenants">
+                    {tenants.length.toLocaleString("tr-TR")}
+                  </strong>
                 </div>
               </div>
-              <dl>
+              <dl className={styles.lifecycleStatusList}>
                 {PLATFORM_TENANT_STATUSES.map((status) => (
                   <div key={status}>
                     <dt>
@@ -188,89 +277,13 @@ export function PlatformOverview() {
               </dl>
             </section>
           </div>
-
-          <section
-            className={styles.listCard}
-            aria-labelledby="recent-tenants-title"
-          >
-            <div className={styles.listHeader}>
-              <div>
-                <span>Güncel görünüm</span>
-                <h2 id="recent-tenants-title">Son güncellenen tenantlar</h2>
-              </div>
-              <Link href="/platform/tenants">Tümünü görüntüle</Link>
-            </div>
-
-            {recentTenants.length === 0 ? (
-              <div className={styles.emptyState}>
-                <span aria-hidden="true">T</span>
-                <h3>Henüz tenant yok</h3>
-                <p>
-                  Tenant oluşturma yetkiniz varsa yönetim ekranından ilk tenantı
-                  hazırlayabilirsiniz.
-                </p>
-                <Link className={styles.secondaryLink} href="/platform/tenants">
-                  Tenant yönetimini aç
-                </Link>
-              </div>
-            ) : (
-              <div className={styles.tableScroller}>
-                <table className={styles.tenantTable}>
-                  <thead>
-                    <tr>
-                      <th scope="col">Tenant</th>
-                      <th scope="col">Durum</th>
-                      <th scope="col">Plan</th>
-                      <th scope="col">Son güncelleme</th>
-                      <th scope="col">
-                        <span className={styles.visuallyHidden}>İşlemler</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentTenants.map((tenant) => (
-                      <tr key={tenant.id}>
-                        <td data-label="Tenant">
-                          <div className={styles.tenantIdentity}>
-                            <strong>{tenant.name}</strong>
-                            <span>{tenant.slug}</span>
-                          </div>
-                        </td>
-                        <td data-label="Durum">
-                          <span
-                            className={styles.statusBadge}
-                            data-status={tenant.status}
-                          >
-                            {PLATFORM_STATUS_LABELS[tenant.status]}
-                          </span>
-                        </td>
-                        <td data-label="Plan">
-                          {PLATFORM_PLAN_LABELS[tenant.plan_code]}
-                        </td>
-                        <td data-label="Son güncelleme">
-                          <time dateTime={tenant.updated_at}>
-                            {formatPlatformDate(tenant.updated_at)}
-                          </time>
-                        </td>
-                        <td className={styles.actionCell}>
-                          <Link
-                            href={`/platform/tenants/${encodeURIComponent(tenant.id)}`}
-                            aria-label={`${tenant.name} tenantını incele`}
-                          >
-                            İncele
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
         </>
       )}
 
-      <aside className={styles.securityBoundary} aria-label="Güvenlik sınırı">
+      <aside
+        className={`${styles.securityBoundary} ${styles.compactSecurityBoundary}`}
+        aria-label="Güvenlik sınırı"
+      >
         <span aria-hidden="true">✓</span>
         <div>
           <strong>Platform sınırı etkin</strong>

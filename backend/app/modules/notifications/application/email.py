@@ -36,6 +36,7 @@ class EmailMessage:
     portal_url: str
     idempotency_key: str
     attempt_number: int
+    message_id: str
 
 
 class EmailProvider(Protocol):

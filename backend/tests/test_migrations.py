@@ -595,8 +595,9 @@ def test_core_migration_chain_is_linear() -> None:
     p9_privacy_revision = script.get_revision("0041_p9_privacy_compliance")
     p9_privacy_hardening_revision = script.get_revision("0042_p9_privacy_evidence_hardening")
     p11_lifecycle_lock_revision = script.get_revision("0043_p11_employee_lifecycle_profile_lock")
+    platform_initial_admin_revision = script.get_revision("0044_platform_initial_tenant_admin")
 
-    assert script.get_heads() == ["0043_p11_employee_lifecycle_profile_lock"]
+    assert script.get_heads() == ["0044_platform_initial_tenant_admin"]
     assert tenant_revision is not None
     assert tenant_revision.down_revision is None
     assert user_revision is not None
@@ -689,6 +690,10 @@ def test_core_migration_chain_is_linear() -> None:
     assert p9_privacy_hardening_revision.down_revision == "0041_p9_privacy_compliance"
     assert p11_lifecycle_lock_revision is not None
     assert p11_lifecycle_lock_revision.down_revision == ("0042_p9_privacy_evidence_hardening")
+    assert platform_initial_admin_revision is not None
+    assert platform_initial_admin_revision.down_revision == (
+        "0043_p11_employee_lifecycle_profile_lock"
+    )
 
 
 def test_alembic_upgrade_reaches_sqlite_compatibility_schema(tmp_path: Path) -> None:

@@ -526,7 +526,8 @@ class OutboxEvent(Base):
         CheckConstraint(
             "event_type in "
             "('leave.requested','leave.approved','leave.rejected','leave.cancelled',"
-            "'leave.balance_adjusted','announcement.published')",
+            "'leave.balance_adjusted','announcement.published',"
+            "'identity.initial_admin_invited')",
             name="ck_outbox_events_event_type",
         ),
         CheckConstraint(

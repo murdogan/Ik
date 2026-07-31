@@ -28,6 +28,7 @@ export interface ApiRequestOptions {
   accessToken?: string;
   idempotencyKey?: string;
   accept?: string;
+  signal?: AbortSignal;
 }
 
 export interface ApiFileSuccess {
@@ -81,7 +82,16 @@ function errorMetadata(
 }
 
 async function responsePayload(response: Response): Promise<unknown> {
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw new ApiClientError({
+      status: response.status,
+      code: "invalid_response",
+      correlationId: response.headers.get("x-request-id"),
+    });
+  }
   if (!text) {
     return null;
   }
@@ -89,7 +99,11 @@ async function responsePayload(response: Response): Promise<unknown> {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    return null;
+    throw new ApiClientError({
+      status: response.status,
+      code: "invalid_response",
+      correlationId: response.headers.get("x-request-id"),
+    });
   }
 }
 
@@ -105,6 +119,7 @@ async function sendRawApiRequest(
     accessToken,
     idempotencyKey,
     accept = "application/json",
+    signal,
   }: ApiRequestOptions,
 ): Promise<Response> {
   const headers = new Headers({ Accept: accept });
@@ -125,6 +140,7 @@ async function sendRawApiRequest(
       headers,
       credentials: "same-origin",
       cache: "no-store",
+      signal,
       body:
         body === undefined
           ? undefined

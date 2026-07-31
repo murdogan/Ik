@@ -538,6 +538,10 @@ async def _assert_platform_tenant_service_creates_default(engine: AsyncEngine) -
     payload = TenantPlatformCreate(
         slug=f"p3f-provisioned-{uuid4().hex[:16]}",
         name="P3F Provisioned Tenant",
+        initial_admin={
+            "full_name": "P3F Provisioned Admin",
+            "email": f"p3f-provisioned-{uuid4().hex[:16]}@example.test",
+        },
         timezone="Europe/Amsterdam",
     )
     async with session_factory() as session:

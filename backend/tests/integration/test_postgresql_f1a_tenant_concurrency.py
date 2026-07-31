@@ -72,7 +72,14 @@ async def _assert_same_slug_provisioning_race(database_url: URL) -> None:
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     barrier = _AvailabilityBarrier()
     slug = f"f1a-concurrent-{uuid4().hex}"
-    payload = TenantPlatformCreate(slug=slug, name="Concurrent Tenant")
+    payload = TenantPlatformCreate(
+        slug=slug,
+        name="Concurrent Tenant",
+        initial_admin={
+            "full_name": "Concurrent Tenant Admin",
+            "email": f"{slug}@example.test",
+        },
+    )
     try:
 
         async def provision() -> object:

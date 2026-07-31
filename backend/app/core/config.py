@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from email.utils import parseaddr
 from functools import lru_cache
 from re import compile as compile_regex
 from typing import Literal
@@ -71,8 +72,15 @@ class Settings(BaseSettings):
     notification_worker_backoff_base_seconds: int = Field(default=30, ge=1, le=3600)
     notification_worker_backoff_max_seconds: int = Field(default=3600, ge=1, le=86_400)
     notification_worker_poll_seconds: float = Field(default=5.0, ge=0.25, le=60.0)
-    notification_email_backend: Literal["disabled", "fake"] = "disabled"
+    notification_email_backend: Literal["disabled", "fake", "smtp"] = "disabled"
     notification_fake_email_failures_before_success: int = Field(default=0, ge=0, le=20)
+    notification_smtp_host: str | None = None
+    notification_smtp_port: int = Field(default=587, ge=1, le=65_535)
+    notification_smtp_from_address: str | None = None
+    notification_smtp_username: str | None = None
+    notification_smtp_password: SecretStr | None = None
+    notification_smtp_tls_mode: Literal["none", "starttls", "implicit"] = "starttls"
+    notification_smtp_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     reporting_worker_tenant_batch_size: int = Field(default=25, ge=1, le=100)
     reporting_worker_export_batch_size: int = Field(default=5, ge=1, le=20)
     reporting_worker_import_batch_size: int = Field(default=3, ge=1, le=10)
@@ -155,6 +163,53 @@ class Settings(BaseSettings):
             raise ValueError("S3 endpoint must be an absolute HTTP(S) URL")
         return normalized
 
+    @field_validator("notification_smtp_host")
+    @classmethod
+    def validate_notification_smtp_host(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if any(character.isspace() or ord(character) < 32 for character in normalized):
+            raise ValueError("SMTP host cannot contain whitespace or control characters")
+        return normalized
+
+    @field_validator("notification_smtp_from_address")
+    @classmethod
+    def validate_notification_smtp_from_address(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if any(ord(character) < 32 for character in normalized):
+            raise ValueError("SMTP from address cannot contain control characters")
+        display_name, address = parseaddr(normalized, strict=True)
+        local_part, separator, domain = address.rpartition("@")
+        if (
+            display_name
+            or address != normalized
+            or separator != "@"
+            or not local_part
+            or not domain
+            or any(character.isspace() for character in address)
+        ):
+            raise ValueError("SMTP from address must be a plain email address")
+        return normalized
+
+    @field_validator("notification_smtp_username")
+    @classmethod
+    def validate_notification_smtp_username(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if any(ord(character) < 32 for character in normalized):
+            raise ValueError("SMTP username cannot contain control characters")
+        return normalized
+
     @model_validator(mode="after")
     def validate_release_identity(self) -> "Settings":
         if self.environment in {"staging", "prod"} and (
@@ -166,9 +221,43 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def validate_protected_frontend_base_url(self) -> "Settings":
+        if (
+            self.environment in {"staging", "prod"}
+            and urlsplit(self.frontend_base_url).scheme.casefold() != "https"
+        ):
+            raise ValueError("Staging and production require an HTTPS frontend_base_url")
+        return self
+
+    @model_validator(mode="after")
     def validate_notification_delivery_mode(self) -> "Settings":
-        if self.environment == "prod" and self.notification_email_backend != "disabled":
-            raise ValueError("Production notification email requires a real provider adapter")
+        if (
+            self.environment not in {"local", "test"}
+            and self.notification_email_backend == "fake"
+        ):
+            restriction = (
+                "Fake notification email capture is restricted to local and test environments"
+            )
+            if self.environment == "prod":
+                raise ValueError(
+                    f"Production notification email delivery cannot use fake capture. "
+                    f"{restriction}"
+                )
+            raise ValueError(restriction)
+        if self.notification_email_backend == "smtp":
+            if self.notification_smtp_host is None:
+                raise ValueError("SMTP email delivery requires an SMTP host")
+            if self.notification_smtp_from_address is None:
+                raise ValueError("SMTP email delivery requires an SMTP from address")
+            password_is_configured = self.notification_smtp_password is not None and bool(
+                self.notification_smtp_password.get_secret_value()
+            )
+            if self.notification_smtp_password is not None and not password_is_configured:
+                raise ValueError("SMTP password cannot be empty")
+            if (self.notification_smtp_username is None) is not (not password_is_configured):
+                raise ValueError("SMTP username and password must be configured together")
+            if self.environment == "prod" and self.notification_smtp_tls_mode == "none":
+                raise ValueError("Production SMTP email delivery requires TLS")
         if (
             self.notification_email_backend != "fake"
             and self.notification_fake_email_failures_before_success != 0

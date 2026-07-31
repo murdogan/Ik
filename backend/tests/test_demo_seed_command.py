@@ -235,6 +235,7 @@ def _run_seed_command(
     if environment in {"staging", "prod"}:
         env["IK_RELEASE_COMMIT_SHA"] = "0" * 40
         env["IK_RELEASE_BUILD_TIMESTAMP"] = "2026-07-27T00:00:00Z"
+        env["IK_FRONTEND_BASE_URL"] = "https://frontend.example.test"
 
     arguments = [
         sys.executable,

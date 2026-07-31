@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.auth import (
@@ -383,6 +383,17 @@ class AuthenticationService:
             unit_of_work = SqlAlchemyUnitOfWork(session)
 
             async def operation() -> AuthenticatedUser:
+                if session.get_bind().dialect.name == "postgresql":
+                    # Initial-admin resend/correction use the same tenant-scoped transaction
+                    # lock before touching activation rows. Taking it here first gives all three
+                    # operations one lock order and makes the winning state transition atomic.
+                    await session.execute(
+                        text(
+                            "select pg_catalog.pg_advisory_xact_lock("
+                            "pg_catalog.hashtextextended(cast(:tenant_id as text), 11044))"
+                        ),
+                        {"tenant_id": str(token_material.tenant_id)},
+                    )
                 row = (
                     await session.execute(
                         select(UserActivationToken, User, Tenant)

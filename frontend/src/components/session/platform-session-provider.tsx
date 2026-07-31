@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import {
   createContext,
+  Fragment,
   type ReactNode,
   useCallback,
   useContext,
@@ -11,6 +12,7 @@ import {
   useState,
 } from "react";
 
+import { PlatformOperationSafetyProvider } from "@/components/session/platform-operation-safety-provider";
 import type { PlatformAuthUser } from "@/lib/auth-contracts";
 import {
   logoutPlatformSession,
@@ -168,7 +170,9 @@ export function PlatformSessionProvider({ children }: { children: ReactNode }) {
 
   return (
     <PlatformSessionContext.Provider value={contextValue}>
-      {children}
+      <PlatformOperationSafetyProvider>
+        <Fragment key={contextValue.user.id}>{children}</Fragment>
+      </PlatformOperationSafetyProvider>
     </PlatformSessionContext.Provider>
   );
 }

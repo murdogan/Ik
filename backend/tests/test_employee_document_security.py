@@ -321,6 +321,7 @@ def test_protected_runtime_rejects_fail_open_document_backends() -> None:
     settings = Settings(
         _env_file=None,
         environment="staging",
+        frontend_base_url="https://frontend.example.test",
         release_commit_sha="a" * 40,
         release_build_timestamp=datetime(2026, 7, 27, tzinfo=UTC),
         document_storage_backend="disabled",

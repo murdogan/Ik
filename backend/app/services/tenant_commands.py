@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from app.models.tenant import Tenant
 from app.modules.core.application.events import (
     FeatureFlagChangedEvent,
+    InitialTenantAdminInvitationCorrectedEvent,
+    InitialTenantAdminInvitationReissuedEvent,
     PlatformEventActorType,
     TenantCreatedEvent,
     TenantSettingChangedEvent,
@@ -22,9 +24,13 @@ from app.platform.events import (
 from app.platform.request_context import RequestContext
 from app.schemas.tenant import (
     TenantFeaturesUpdate,
+    TenantInitialAdminCorrection,
     TenantPlatformCreate,
     TenantPlatformUpdate,
     TenantSettingsUpdate,
+)
+from app.services.initial_tenant_admin_provisioner import (
+    InitialTenantAdminProvisioner,
 )
 from app.services.tenant_feature_service import (
     TenantFeatureService,
@@ -45,12 +51,19 @@ class TenantCommandHandler:
         service: TenantService,
         unit_of_work: UnitOfWork,
         feature_service: TenantFeatureService | None = None,
+        initial_admin_provisioner: InitialTenantAdminProvisioner | None = None,
         event_recorder: PlatformEventRecorder = DEFAULT_PLATFORM_EVENT_RECORDER,
         event_id_factory: EventIdFactory = uuid4,
         event_time_factory: EventTimeFactory = lambda: datetime.now(UTC),
     ) -> None:
         self.service = service
         self.feature_service = feature_service
+        self.initial_admin_provisioner = initial_admin_provisioner or (
+            InitialTenantAdminProvisioner(
+                service.session,
+                activation_ttl=timedelta(hours=48),
+            )
+        )
         self.unit_of_work = unit_of_work
         self.event_recorder = event_recorder
         self.event_id_factory = event_id_factory
@@ -64,6 +77,10 @@ class TenantCommandHandler:
     ) -> Tenant:
         async def operation() -> Tenant:
             tenant = await self.service.create_tenant(payload)
+            await self.initial_admin_provisioner.provision(
+                tenant=tenant,
+                initial_admin=payload.initial_admin,
+            )
             await self.event_recorder.record(
                 TenantCreatedEvent(
                     **self._event_metadata(
@@ -79,6 +96,50 @@ class TenantCommandHandler:
             return tenant
 
         return await self.unit_of_work.execute(operation)
+
+    async def reissue_initial_admin_invitation(
+        self,
+        tenant_id: UUID,
+        *,
+        request_context: RequestContext,
+    ) -> None:
+        async def operation() -> None:
+            await self.initial_admin_provisioner.reissue(tenant_id=tenant_id)
+            await self.event_recorder.record(
+                InitialTenantAdminInvitationReissuedEvent(
+                    **self._event_metadata(
+                        tenant_id,
+                        request_context,
+                        actor_type=PlatformEventActorType.PLATFORM_ADMIN,
+                    )
+                )
+            )
+
+        await self.unit_of_work.execute(operation)
+
+    async def correct_initial_admin_invitation(
+        self,
+        tenant_id: UUID,
+        payload: TenantInitialAdminCorrection,
+        *,
+        request_context: RequestContext,
+    ) -> None:
+        async def operation() -> None:
+            await self.initial_admin_provisioner.correct(
+                tenant_id=tenant_id,
+                correction=payload,
+            )
+            await self.event_recorder.record(
+                InitialTenantAdminInvitationCorrectedEvent(
+                    **self._event_metadata(
+                        tenant_id,
+                        request_context,
+                        actor_type=PlatformEventActorType.PLATFORM_ADMIN,
+                    )
+                )
+            )
+
+        await self.unit_of_work.execute(operation)
 
     async def update_tenant(
         self,

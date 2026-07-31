@@ -29,6 +29,7 @@ from app.modules.core.domain.tenant import (
     TenantWeekStartDay,
 )
 from app.platform.pagination import decode_cursor, encode_cursor
+from app.schemas.auth import EmailValue, FullNameValue, normalize_email
 
 TENANT_LIST_DEFAULT_LIMIT = 50
 TENANT_LIST_MAX_LIMIT = 200
@@ -127,9 +128,24 @@ class TenantFeaturesRead(BaseModel):
     features: list[TenantFeatureFlagRead]
 
 
+class TenantInitialAdminProvision(_TenantPayload):
+    full_name: FullNameValue
+    email: EmailValue
+
+    @field_validator("email")
+    @classmethod
+    def canonicalize_email(cls, value: str) -> str:
+        return normalize_email(value)
+
+
+class TenantInitialAdminCorrection(TenantInitialAdminProvision):
+    """The only client-controlled fields in an initial-admin correction."""
+
+
 class TenantPlatformCreate(_TenantPayload):
     slug: TenantSlug
     name: TenantName
+    initial_admin: TenantInitialAdminProvision
     plan_code: TenantPlan = TenantPlan.CORE
     data_region: TenantRegion = TenantRegion.TR_1
     locale: TenantLocale = TenantLocale.TR_TR
@@ -181,6 +197,18 @@ class TenantPlatformRead(BaseModel):
     limits: TenantLimitsRead
     created_at: datetime
     updated_at: datetime
+
+
+class TenantInitialAdminProvisioningRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["invitation_prepared"] = "invitation_prepared"
+
+
+class TenantPlatformCreateRead(TenantPlatformRead):
+    initial_admin: TenantInitialAdminProvisioningRead = Field(
+        default_factory=TenantInitialAdminProvisioningRead
+    )
 
 
 class TenantListCursor(BaseModel):

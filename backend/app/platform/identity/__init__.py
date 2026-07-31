@@ -7,6 +7,7 @@ from app.platform.identity.access_tokens import (
     IssuedAccessToken,
 )
 from app.platform.identity.activation_tokens import (
+    ActivationDeliveryTokenCodec,
     ActivationTokenMaterial,
     InvalidActivationTokenFormatError,
     hash_activation_token,
@@ -55,6 +56,7 @@ from app.platform.identity.refresh_tokens import (
 __all__ = [
     "AccessPrincipal",
     "AccessTokenCodec",
+    "ActivationDeliveryTokenCodec",
     "ActivationTokenMaterial",
     "InvalidAccessTokenError",
     "InvalidActivationTokenFormatError",

@@ -20,28 +20,90 @@ const platformNavigation = [
   {
     href: "/platform",
     label: "Platform genel bakış",
-    icon: "P",
+    icon: "overview",
     permission: null,
     exact: true,
   },
   {
     href: "/platform/tenants",
     label: "Tenant yönetimi",
-    icon: "T",
+    icon: "tenants",
     permission: AUTHORIZATION_PERMISSIONS.readPlatformTenants,
     exact: false,
   },
   {
     href: "/platform/audit",
     label: "Denetim kayıtları",
-    icon: "D",
+    icon: "audit",
     permission: AUTHORIZATION_PERMISSIONS.readPlatformAudit,
     exact: false,
   },
 ] as const;
 
+type PlatformNavigationItem = (typeof platformNavigation)[number];
+
 function displayName(fullName: string | null, email: string): string {
   return fullName?.trim() || email;
+}
+
+function matchesNavigationPath(
+  pathname: string,
+  item: PlatformNavigationItem,
+): boolean {
+  return item.exact
+    ? pathname === item.href
+    : pathname === item.href || pathname.startsWith(`${item.href}/`);
+}
+
+function NavigationIcon({
+  name,
+}: {
+  name: PlatformNavigationItem["icon"];
+}) {
+  if (name === "overview") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.5" />
+        <rect x="14" y="3.5" width="6.5" height="6.5" rx="1.5" />
+        <rect x="3.5" y="14" width="6.5" height="6.5" rx="1.5" />
+        <rect x="14" y="14" width="6.5" height="6.5" rx="1.5" />
+      </svg>
+    );
+  }
+
+  if (name === "tenants") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 20.5V6.25a1.75 1.75 0 0 1 1.75-1.75h8.5A1.75 1.75 0 0 1 16 6.25V20.5" />
+        <path d="M16 9.5h2.25A1.75 1.75 0 0 1 20 11.25v9.25M8 8h4M8 12h4M8 16h4M2.5 20.5h19" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8.5 5.5h-2A1.5 1.5 0 0 0 5 7v12a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V7a1.5 1.5 0 0 0-1.5-1.5h-2" />
+      <path d="M9 3.5h6v4H9zM8.5 12h7M8.5 16h5" />
+    </svg>
+  );
+}
+
+function PlatformBrand({ mobile = false }: { mobile?: boolean }) {
+  return (
+    <div
+      className={`${styles.brand} ${mobile ? styles.mobileBrand : ""}`}
+      role="img"
+      aria-label="Wealthy Falcon HR Platform"
+    >
+      <span className={styles.brandMark} aria-hidden="true">
+        WF
+      </span>
+      <span className={styles.brandCopy}>
+        <strong>Wealthy Falcon HR</strong>
+        <small>Platform</small>
+      </span>
+    </div>
+  );
 }
 
 function Navigation({
@@ -62,9 +124,7 @@ function Navigation({
       aria-label={mobile ? "Mobil platform menüsü" : "Platform menüsü"}
     >
       {visibleItems.map((item) => {
-        const isActive = item.exact
-          ? pathname === item.href
-          : pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const isActive = matchesNavigationPath(pathname, item);
         return (
           <Link
             className={`${styles.navigationItem} ${isActive ? styles.activeNavigationItem : ""}`}
@@ -72,8 +132,10 @@ function Navigation({
             aria-current={isActive ? "page" : undefined}
             key={item.href}
           >
-            <span aria-hidden="true">{item.icon}</span>
-            {item.label}
+            <span className={styles.navigationIcon}>
+              <NavigationIcon name={item.icon} />
+            </span>
+            <span className={styles.navigationLabel}>{item.label}</span>
           </Link>
         );
       })}
@@ -94,53 +156,79 @@ function authenticationStrengthLabel(
 }
 
 export function PlatformShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const { user, isLoggingOut, logoutError, signOut } = usePlatformSession();
   const name = displayName(user.full_name, user.email);
-  const roleNames = user.roles.map((role) => role.name).join(" · ") || "Platform yetkisi";
+  const roleNames =
+    user.roles.map((role) => role.name).join(" · ") || "Platform yetkisi";
   const authenticationStrength = authenticationStrengthLabel(
     user.authentication_strength,
   );
+  const currentSection =
+    platformNavigation.find(
+      (item) =>
+        (item.permission === null || hasPermission(user, item.permission)) &&
+        matchesNavigationPath(pathname, item),
+    )?.label ?? "Platform yönetimi";
 
   return (
     <div className={styles.application} data-workspace-shell="platform">
-      <aside className={styles.sidebar}>
-        <div className={styles.brand} aria-label="Wealthy Falcon HR Platform">
-          <span className={styles.brandMark} aria-hidden="true">
-            WF
-          </span>
-          <span>Wealthy Falcon HR</span>
-        </div>
+      <aside className={styles.sidebar} aria-label="Platform gezintisi">
+        <PlatformBrand />
 
-        <div className={styles.platformCard}>
-          <span>Platform çalışma alanı</span>
-          <strong>Operasyon merkezi</strong>
-          <small>Müşteri HR alanlarından ayrılmış yönetim kabuğu</small>
+        <div className={styles.workspaceLabel}>
+          <span aria-hidden="true" />
+          Platform çalışma alanı
         </div>
 
         <Navigation user={user} />
 
-        <p className={styles.sidebarNote}>
-          Platform oturumu · {authenticationStrength} · varsayılan erişim kapalı
-        </p>
+        <div className={styles.sidebarSession}>
+          <span className={styles.sessionMark} aria-hidden="true">
+            ✓
+          </span>
+          <span>
+            <small>Oturum güvenliği</small>
+            <strong>{authenticationStrength}</strong>
+          </span>
+        </div>
       </aside>
 
-      <main className={styles.main}>
-        <header className={styles.header}>
-          <div className={styles.identity}>
-            <span>Platform yönetimi</span>
-            <strong>{name}</strong>
-            <small>
-              {roleNames} · {authenticationStrength}
-            </small>
+      <main className={styles.main} aria-label="Platform çalışma alanı">
+        <header
+          className={styles.header}
+          role="banner"
+          aria-label="Platform üst çubuğu"
+        >
+          <PlatformBrand mobile />
+
+          <div className={styles.workspaceContext}>
+            <span>
+              <small>Platform çalışma alanı</small>
+              <strong>{currentSection}</strong>
+            </span>
+            <span className={styles.mobileSession}>
+              <strong>{name}</strong>
+              <small>{authenticationStrength}</small>
+            </span>
           </div>
-          <button
-            className={styles.logoutButton}
-            type="button"
-            disabled={isLoggingOut}
-            onClick={() => void signOut()}
-          >
-            {isLoggingOut ? "Çıkış yapılıyor…" : "Çıkış yap"}
-          </button>
+
+          <div className={styles.headerActions}>
+            <div className={styles.identity}>
+              <strong>{name}</strong>
+              <small>
+                {roleNames} · {authenticationStrength}
+              </small>
+            </div>
+            <button
+              className={styles.logoutButton}
+              type="button"
+              disabled={isLoggingOut}
+              onClick={() => void signOut()}
+            >
+              {isLoggingOut ? "Çıkış yapılıyor…" : "Çıkış yap"}
+            </button>
+          </div>
         </header>
 
         <Navigation user={user} mobile />

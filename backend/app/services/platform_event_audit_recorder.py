@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from app.modules.core.application.events import (
     FeatureFlagChangedEvent,
+    InitialTenantAdminInvitationCorrectedEvent,
+    InitialTenantAdminInvitationReissuedEvent,
     TenantCreatedEvent,
     TenantSettingChangedEvent,
     TenantStatusChangedEvent,
@@ -42,6 +44,10 @@ class PlatformEventAuditRecorder:
                 "plan_code": event.plan_code.value,  # type: ignore[attr-defined]
                 "data_region": event.data_region.value,  # type: ignore[attr-defined]
             }
+        elif type(event) is InitialTenantAdminInvitationCorrectedEvent:
+            event_type = AuditEventType.PLATFORM_INITIAL_ADMIN_INVITATION_CORRECTED
+        elif type(event) is InitialTenantAdminInvitationReissuedEvent:
+            event_type = AuditEventType.PLATFORM_INITIAL_ADMIN_INVITATION_REISSUED
         elif type(event) is TenantStatusChangedEvent:
             event_type = AuditEventType.PLATFORM_TENANT_STATUS_CHANGED
             metadata = {

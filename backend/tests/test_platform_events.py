@@ -9,6 +9,8 @@ from uuid import UUID
 import pytest
 from app.modules.core.application.events import (
     FeatureFlagChangedEvent,
+    InitialTenantAdminInvitationCorrectedEvent,
+    InitialTenantAdminInvitationReissuedEvent,
     PlatformEventType,
     TenantCreatedEvent,
     TenantSettingChangedEvent,
@@ -92,10 +94,22 @@ def _event_factories() -> tuple[tuple[type[Any], dict[str, Any]], ...]:
                 "after_enabled": True,
             },
         ),
+        (
+            InitialTenantAdminInvitationCorrectedEvent,
+            {
+                **_base_fields(),
+            },
+        ),
+        (
+            InitialTenantAdminInvitationReissuedEvent,
+            {
+                **_base_fields(),
+            },
+        ),
     )
 
 
-def test_four_event_contracts_have_fixed_redacted_audit_metadata() -> None:
+def test_platform_event_contracts_have_fixed_redacted_audit_metadata() -> None:
     events = [event_class(**fields) for event_class, fields in _event_factories()]
 
     assert [event.event_type for event in events] == list(PlatformEventType)
@@ -104,6 +118,8 @@ def test_four_event_contracts_have_fixed_redacted_audit_metadata() -> None:
         PlatformEventType.TENANT_STATUS_CHANGED,
         PlatformEventType.TENANT_SETTING_CHANGED,
         PlatformEventType.FEATURE_FLAG_CHANGED,
+        PlatformEventType.INITIAL_ADMIN_INVITATION_CORRECTED,
+        PlatformEventType.INITIAL_ADMIN_INVITATION_REISSUED,
     }
     for event in events:
         dumped = event.model_dump(mode="json")
@@ -366,6 +382,8 @@ def test_every_tenant_command_requires_an_explicit_safe_request_context() -> Non
         "update_tenant",
         "update_tenant_settings",
         "update_tenant_features",
+        "correct_initial_admin_invitation",
+        "reissue_initial_admin_invitation",
     ):
         parameter = signature(getattr(TenantCommandHandler, method_name)).parameters[
             "request_context"

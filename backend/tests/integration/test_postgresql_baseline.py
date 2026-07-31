@@ -536,7 +536,12 @@ def test_p11_upgrade_runs_as_non_super_migration_owner(
     )
     owner_config = _alembic_config(owner_url)
     try:
-        alembic_command.upgrade(owner_config, "head")
+        # This probe owns P11's non-super migration contract. Revision 0044 has a
+        # different capability owner and is covered by its own focused integration tests.
+        alembic_command.upgrade(
+            owner_config,
+            "0043_p11_employee_lifecycle_profile_lock",
+        )
         assert asyncio.run(_current_revision(postgres_database_url)) == (
             "0043_p11_employee_lifecycle_profile_lock"
         )
@@ -551,7 +556,10 @@ def test_p11_upgrade_runs_as_non_super_migration_owner(
         )
         assert not asyncio.run(_recovery_owner_can_create_in_public(postgres_database_url))
 
-        alembic_command.upgrade(owner_config, "head")
+        alembic_command.upgrade(
+            owner_config,
+            "0043_p11_employee_lifecycle_profile_lock",
+        )
         assert asyncio.run(_current_revision(postgres_database_url)) == (
             "0043_p11_employee_lifecycle_profile_lock"
         )

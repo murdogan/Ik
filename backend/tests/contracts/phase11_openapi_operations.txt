@@ -101,6 +101,7 @@ PATCH /api/v1/holiday-calendars/{calendar_id}/holidays/{entry_id}
 PATCH /api/v1/leave-types/{leave_type_id}
 PATCH /api/v1/legal-entities/{legal_entity_id}
 PATCH /api/v1/platform/tenants/{tenant_id}
+PATCH /api/v1/platform/tenants/{tenant_id}/initial-admin-invitation
 PATCH /api/v1/platform/tenants/{tenant_id}/features
 PATCH /api/v1/positions/{position_id}
 PATCH /api/v1/privacy/manage/notices/{notice_id}
@@ -165,6 +166,7 @@ POST /api/v1/platform/auth/login
 POST /api/v1/platform/auth/logout
 POST /api/v1/platform/auth/refresh
 POST /api/v1/platform/tenants
+POST /api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend
 POST /api/v1/positions
 POST /api/v1/privacy/consents/{purpose_id}/grant
 POST /api/v1/privacy/consents/{purpose_id}/withdraw

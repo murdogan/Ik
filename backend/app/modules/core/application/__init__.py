@@ -2,6 +2,8 @@
 
 from app.modules.core.application.events import (
     FeatureFlagChangedEvent,
+    InitialTenantAdminInvitationCorrectedEvent,
+    InitialTenantAdminInvitationReissuedEvent,
     PlatformEvent,
     PlatformEventActorType,
     PlatformEventType,
@@ -13,6 +15,8 @@ from app.modules.core.application.events import (
 
 __all__ = [
     "FeatureFlagChangedEvent",
+    "InitialTenantAdminInvitationCorrectedEvent",
+    "InitialTenantAdminInvitationReissuedEvent",
     "PlatformEvent",
     "PlatformEventActorType",
     "PlatformEventType",

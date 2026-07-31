@@ -174,6 +174,24 @@ class NotificationDelivery(Base):
             "and terminal_error_message is null)",
             name="ck_notification_deliveries_lifecycle",
         ),
+        CheckConstraint(
+            "(lease_id is null and lease_expires_at is null and lease_attempt is null) or "
+            "(lease_id is not null and lease_expires_at is not null "
+            "and lease_attempt = attempt_count "
+            "and channel = 'email' and status in ('pending','retry'))",
+            name="ck_notification_deliveries_lease",
+        ),
+        CheckConstraint(
+            "(prepared_recipient_email is null and prepared_subject is null "
+            "and prepared_body_prefix is null and prepared_frontend_base_url is null "
+            "and prepared_portal_path is null and prepared_message_id is null "
+            "and prepared_activation_id is null) or "
+            "(channel = 'email' and prepared_recipient_email is not null "
+            "and prepared_subject is not null and prepared_body_prefix is not null "
+            "and prepared_frontend_base_url is not null "
+            "and prepared_portal_path is not null and prepared_message_id is not null)",
+            name="ck_notification_deliveries_prepared_message",
+        ),
         ForeignKeyConstraint(
             ("tenant_id", "notification_id"),
             ("notifications.tenant_id", "notifications.id"),
@@ -225,10 +243,24 @@ class NotificationDelivery(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lease_attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     terminal_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     terminal_error_message: Mapped[str | None] = mapped_column(String(200), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    prepared_recipient_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    prepared_subject: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    prepared_body_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prepared_frontend_base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prepared_portal_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    prepared_message_id: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    prepared_activation_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

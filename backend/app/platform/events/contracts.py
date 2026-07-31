@@ -77,6 +77,14 @@ _CLOSED_EVENT_IDENTITIES = frozenset(
         ("app.modules.core.application.events", "TenantStatusChangedEvent"),
         ("app.modules.core.application.events", "TenantSettingChangedEvent"),
         ("app.modules.core.application.events", "FeatureFlagChangedEvent"),
+        (
+            "app.modules.core.application.events",
+            "InitialTenantAdminInvitationCorrectedEvent",
+        ),
+        (
+            "app.modules.core.application.events",
+            "InitialTenantAdminInvitationReissuedEvent",
+        ),
     }
 )
 _registered_event_types: dict[
@@ -100,11 +108,11 @@ def register_platform_event_contract[T: type[PlatformEventContract]](
 
 
 def require_platform_event_contract(event: object, /) -> PlatformEventContract:
-    """Accept only one of the four exact, closed F1D event model classes.
+    """Accept only one of the exact, closed CORE event model classes.
 
     Exact registry membership rejects the marker itself, structural lookalikes, and subclasses
     that add sensitive fields. The framework-neutral platform module never imports a product
-    module; CORE registers only the four identities frozen above as each concrete class is defined.
+    module; CORE registers only the identities frozen above as each concrete class is defined.
     """
 
     if type(event) not in _registered_event_types.values():

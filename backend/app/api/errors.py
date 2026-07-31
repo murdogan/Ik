@@ -91,6 +91,9 @@ from app.services.employee_service import (
     EmployeeOpenProcessConflictError,
     EmployeeVersionConflictError,
 )
+from app.services.initial_tenant_admin_provisioner import (
+    InitialTenantAdminUnavailableError,
+)
 from app.services.leave_request_service import (
     LeaveRequestDateRangeError,
     LeaveRequestEmployeeNotFoundError,
@@ -285,6 +288,10 @@ TENANT_NOT_FOUND_ERROR_CODE = "tenant_not_found"
 TENANT_NOT_FOUND_ERROR_MESSAGE = "Tenant was not found"
 TENANT_SLUG_CONFLICT_ERROR_CODE = "tenant_slug_conflict"
 TENANT_SLUG_CONFLICT_ERROR_MESSAGE = "Tenant slug is already in use"
+TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_CODE = "tenant_initial_admin_unavailable"
+TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_MESSAGE = (
+    "The initial administrator cannot be prepared for access"
+)
 TENANT_LIFECYCLE_CONFLICT_ERROR_CODE = "tenant_lifecycle_conflict"
 TENANT_NOT_READY_ERROR_CODE = "tenant_not_ready"
 TENANT_NOT_READY_ERROR_MESSAGE = "Tenant provisioning is not complete"
@@ -745,7 +752,20 @@ TENANT_CREATE_CONFLICT_RESPONSES = _conflict_response(
         TENANT_SLUG_CONFLICT_ERROR_CODE: _error_example(
             TENANT_SLUG_CONFLICT_ERROR_CODE,
             TENANT_SLUG_CONFLICT_ERROR_MESSAGE,
-        )
+        ),
+        TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_CODE: _error_example(
+            TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_CODE,
+            TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_MESSAGE,
+        ),
+    },
+)
+TENANT_INITIAL_ADMIN_REISSUE_CONFLICT_RESPONSES = _conflict_response(
+    description="Initial tenant administrator invitation conflict envelope.",
+    examples={
+        TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_CODE: _error_example(
+            TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_CODE,
+            TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_MESSAGE,
+        ),
     },
 )
 TENANT_UPDATE_CONFLICT_RESPONSES = _conflict_response(
@@ -1362,6 +1382,8 @@ def application_error_to_api_error(exc: ApplicationError) -> ApiError:
         return tenant_not_found_error()
     if isinstance(exc, DuplicateTenantSlugError):
         return tenant_slug_conflict_error()
+    if isinstance(exc, InitialTenantAdminUnavailableError):
+        return tenant_initial_admin_unavailable_error()
     if isinstance(exc, TenantLifecycleConflictError):
         return tenant_lifecycle_conflict_error(str(exc))
     if isinstance(exc, TenantNotReadyError):
@@ -1497,6 +1519,14 @@ def tenant_slug_conflict_error() -> ApiError:
         status_code=status.HTTP_409_CONFLICT,
         code=TENANT_SLUG_CONFLICT_ERROR_CODE,
         message=TENANT_SLUG_CONFLICT_ERROR_MESSAGE,
+    )
+
+
+def tenant_initial_admin_unavailable_error() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_CODE,
+        message=TENANT_INITIAL_ADMIN_UNAVAILABLE_ERROR_MESSAGE,
     )
 
 

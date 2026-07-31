@@ -80,6 +80,10 @@ class AuditEventType(StrEnum):
     PLATFORM_SESSION_REUSE_DETECTED = "platform.session.reuse_detected"
     PLATFORM_SESSION_REVOKED = "platform.session.revoked"
     PLATFORM_TENANT_CREATED = "platform.tenant.created"
+    PLATFORM_INITIAL_ADMIN_INVITATION_CORRECTED = (
+        "platform.tenant.initial_admin_invitation_corrected"
+    )
+    PLATFORM_INITIAL_ADMIN_INVITATION_REISSUED = "platform.tenant.initial_admin_invitation_reissued"
     PLATFORM_TENANT_STATUS_CHANGED = "platform.tenant.status_changed"
     PLATFORM_TENANT_SETTING_CHANGED = "platform.tenant.setting_changed"
     PLATFORM_FEATURE_FLAG_CHANGED = "platform.feature_flag.changed"

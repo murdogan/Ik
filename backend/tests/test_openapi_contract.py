@@ -203,6 +203,7 @@ POST_PHASE1_APPROVED_COMPONENT_MIGRATIONS = {
     "LeaveRequestCreate",
     "LeaveRequestDecision",
     "LeaveRequestRead",
+    "TenantPlatformCreate",
 }
 
 
@@ -260,7 +261,7 @@ def test_current_openapi_surface_matches_phase11_registry_and_security_realms() 
         if line.strip()
     }
 
-    assert len(expected_operations) == 177
+    assert len(expected_operations) == 179
     assert current["operation_count"] == len(expected_operations)
     assert set(current["operations"]) == expected_operations
 
