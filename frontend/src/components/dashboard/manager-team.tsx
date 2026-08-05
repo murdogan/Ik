@@ -267,10 +267,11 @@ export function ManagerTeam() {
     <article className={styles.teamCard} aria-labelledby="manager-team-title">
       <header className={styles.teamHeader}>
         <div>
-          <span>Yapısal raporlama hattı</span>
+          <span>Doğrudan ekibiniz</span>
           <h2 id="manager-team-title">Ekibim</h2>
           <p>
-            Bu liste güncel çalışan atamalarında doğrudan size bağlı ekipten türetilir.
+            Birlikte çalıştığınız ekip üyelerini ve güncel iş bilgilerini burada
+            görebilirsiniz.
           </p>
         </div>
         <button type="button" onClick={reload} disabled={isLoading}>
@@ -290,27 +291,27 @@ export function ManagerTeam() {
       ) : isLoading ? (
         <div className={styles.teamLoading} role="status">
           <span className={styles.teamSpinner} aria-hidden="true" />
-          <strong>Ekip atamaları yükleniyor</strong>
+          <strong>Ekip listesi yükleniyor</strong>
         </div>
       ) : members.length === 0 ? (
         <div className={styles.teamEmpty}>
           <span aria-hidden="true">E</span>
           <div>
-            <strong>Güncel ekip üyesi yok</strong>
-            <p>Size bağlı etkin bir çalışan ataması olduğunda burada görünür.</p>
+            <strong>Henüz ekip üyesi yok</strong>
+            <p>Ekibinize yeni biri katıldığında burada görünecek.</p>
           </div>
         </div>
       ) : (
         <>
           <div className={styles.teamTableScroller}>
-            <table className={styles.teamTable} aria-label="Güncel doğrudan ekip">
+            <table className={styles.teamTable} aria-label="Ekibim">
               <thead>
                 <tr>
                   <th scope="col">Çalışan</th>
                   <th scope="col">Departman</th>
                   <th scope="col">Pozisyon</th>
                   <th scope="col">Şube</th>
-                  <th scope="col">Yürürlük</th>
+                  <th scope="col">Başlangıç</th>
                   <th scope="col">Profil</th>
                 </tr>
               </thead>
@@ -339,15 +340,15 @@ export function ManagerTeam() {
                       <strong>{member.assignment.branch.name}</strong>
                       <small>{member.assignment.legal_entity.name}</small>
                     </td>
-                    <td data-label="Yürürlük">
+                    <td data-label="Başlangıç">
                       <strong>{formatAssignmentDate(member.assignment.effective_from)}</strong>
-                      <small>Güncel atama</small>
+                      <small>Ekipteki başlangıç tarihi</small>
                     </td>
                     <td data-label="Profil">
                       <Link
                         className={styles.teamProfileLink}
                         href={`/team/${encodeURIComponent(member.employee.id)}`}
-                        aria-label={`${employeeName(member)} güvenli ekip profilini aç`}
+                        aria-label={`${employeeName(member)} ekip profilini aç`}
                       >
                         Profili aç <span aria-hidden="true">→</span>
                       </Link>
@@ -366,7 +367,9 @@ export function ManagerTeam() {
           {nextCursor && !pageError ? (
             <div className={styles.teamPagination}>
               <button type="button" onClick={loadMore} disabled={isLoadingMore}>
-                {isLoadingMore ? "Ek ekip yükleniyor…" : "Daha fazla ekip üyesi göster"}
+                {isLoadingMore
+                  ? "Daha fazla ekip üyesi yükleniyor…"
+                  : "Daha fazla ekip üyesi göster"}
               </button>
             </div>
           ) : null}

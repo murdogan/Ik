@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { useSession } from "@/components/session/session-provider";
 import { useTenantFeatures } from "@/components/session/tenant-feature-provider";
@@ -14,16 +14,18 @@ import {
 } from "@/lib/authorization";
 import { TENANT_FEATURES } from "@/lib/feature-rollout";
 
+import { ProfileMenu } from "./profile-menu";
+import { TenantIcon, type TenantIconName } from "./tenant-icons";
 import styles from "./tenant-shell.module.css";
 
-function displayName(fullName: string | null, email: string): string {
-  return fullName?.trim() || email;
+function tenantInitial(name: string): string {
+  return name.trim().charAt(0).toLocaleUpperCase("tr-TR") || "K";
 }
 
 interface NavigationItem {
   href: string;
   label: string;
-  icon: string;
+  icon: TenantIconName;
   permissions?: readonly string[];
   anyPermissions?: readonly string[];
   feature: (typeof TENANT_FEATURES)[keyof typeof TENANT_FEATURES] | null;
@@ -33,63 +35,63 @@ const navigationItems: readonly NavigationItem[] = [
   {
     href: "/home",
     label: "Çalışan ana sayfası",
-    icon: "⌂",
+    icon: "home",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnSelfService],
     feature: TENANT_FEATURES.selfService,
   },
   {
     href: "/dashboard",
     label: "Genel bakış",
-    icon: "⌂",
+    icon: "dashboard",
     permissions: [],
     feature: null,
   },
   {
     href: "/setup",
     label: "Kurulum hazırlığı",
-    icon: "✓",
+    icon: "setup",
     permissions: [AUTHORIZATION_PERMISSIONS.updateOrganization],
     feature: null,
   },
   {
     href: "/users",
     label: "Kullanıcılar",
-    icon: "K",
+    icon: "users",
     permissions: [AUTHORIZATION_PERMISSIONS.readUsers],
     feature: null,
   },
   {
     href: "/profile",
     label: "Profilim",
-    icon: "P",
+    icon: "profile",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnEmployee],
     feature: null,
   },
   {
     href: "/privacy",
     label: "Gizlilik merkezi",
-    icon: "G",
+    icon: "privacy",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnPrivacyNotice],
     feature: null,
   },
   {
     href: "/employees",
     label: "Çalışanlar",
-    icon: "Ç",
+    icon: "employees",
     permissions: [AUTHORIZATION_PERMISSIONS.readTenantEmployees],
     feature: null,
   },
   {
     href: "/document-types",
     label: "Belge türleri",
-    icon: "B",
+    icon: "document-types",
     permissions: [AUTHORIZATION_PERMISSIONS.manageDocumentTypes],
     feature: null,
   },
   {
     href: "/reports",
     label: "Raporlar ve aktarımlar",
-    icon: "R",
+    icon: "reports",
     anyPermissions: [
       AUTHORIZATION_PERMISSIONS.readTenantReports,
       AUTHORIZATION_PERMISSIONS.readTeamReports,
@@ -100,21 +102,21 @@ const navigationItems: readonly NavigationItem[] = [
   {
     href: "/requests",
     label: "Talepler",
-    icon: "T",
+    icon: "requests",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnRequests],
     feature: TENANT_FEATURES.selfService,
   },
   {
     href: "/leave",
     label: "İzinlerim",
-    icon: "İ",
+    icon: "leave",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnLeave],
     feature: TENANT_FEATURES.leave,
   },
   {
     href: "/manager",
     label: "Yönetici alanı",
-    icon: "E",
+    icon: "manager",
     permissions: [
       AUTHORIZATION_PERMISSIONS.readTeamEmployees,
       AUTHORIZATION_PERMISSIONS.readTeamLeave,
@@ -125,7 +127,7 @@ const navigationItems: readonly NavigationItem[] = [
   {
     href: "/leave/approvals",
     label: "Onay görevleri",
-    icon: "✓",
+    icon: "leave-approvals",
     permissions: [
       AUTHORIZATION_PERMISSIONS.readTeamLeave,
       AUTHORIZATION_PERMISSIONS.approveTeamLeave,
@@ -135,7 +137,7 @@ const navigationItems: readonly NavigationItem[] = [
   {
     href: "/leave/admin",
     label: "İzin yönetimi",
-    icon: "Y",
+    icon: "leave-admin",
     permissions: [
       AUTHORIZATION_PERMISSIONS.readTenantLeave,
       AUTHORIZATION_PERMISSIONS.manageTenantLeave,
@@ -145,7 +147,7 @@ const navigationItems: readonly NavigationItem[] = [
   {
     href: "/profile-change-requests",
     label: "Değişiklik talepleri",
-    icon: "D",
+    icon: "profile-change-requests",
     permissions: [
       AUTHORIZATION_PERMISSIONS.readTenantEmployees,
       AUTHORIZATION_PERMISSIONS.updateEmployees,
@@ -155,7 +157,7 @@ const navigationItems: readonly NavigationItem[] = [
   {
     href: "/hr/requests",
     label: "HR talepleri",
-    icon: "H",
+    icon: "hr-requests",
     permissions: [
       AUTHORIZATION_PERMISSIONS.readTenantRequests,
       AUTHORIZATION_PERMISSIONS.manageTenantDocumentRequests,
@@ -165,42 +167,42 @@ const navigationItems: readonly NavigationItem[] = [
   {
     href: "/announcements",
     label: "Duyurular",
-    icon: "D",
+    icon: "announcements",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnAnnouncements],
     feature: TENANT_FEATURES.selfService,
   },
   {
     href: "/announcements/manage",
     label: "Duyuru yönetimi",
-    icon: "Y",
+    icon: "announcement-management",
     permissions: [AUTHORIZATION_PERMISSIONS.manageTenantAnnouncements],
     feature: TENANT_FEATURES.selfService,
   },
   {
     href: "/notifications",
     label: "Bildirimler",
-    icon: "B",
+    icon: "notifications",
     permissions: [AUTHORIZATION_PERMISSIONS.readOwnNotifications],
     feature: TENANT_FEATURES.notifications,
   },
   {
     href: "/organization",
     label: "Organizasyon",
-    icon: "O",
+    icon: "organization",
     permissions: [AUTHORIZATION_PERMISSIONS.readOrganization],
     feature: TENANT_FEATURES.organization,
   },
   {
     href: "/audit",
     label: "Denetim kayıtları",
-    icon: "D",
+    icon: "audit",
     permissions: [AUTHORIZATION_PERMISSIONS.readTenantAudit],
     feature: null,
   },
   {
     href: "/privacy/manage",
     label: "Gizlilik uyumu",
-    icon: "U",
+    icon: "privacy-management",
     anyPermissions: [
       AUTHORIZATION_PERMISSIONS.readTenantPrivacyCompliance,
       AUTHORIZATION_PERMISSIONS.manageTenantPrivacyNotices,
@@ -210,7 +212,15 @@ const navigationItems: readonly NavigationItem[] = [
   },
 ];
 
-function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean }) {
+function Navigation({
+  user,
+  variant = "desktop",
+  onNavigate,
+}: {
+  user: AuthUser;
+  variant?: "desktop" | "drawer";
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const { status: featureStatus, isEnabled } = useTenantFeatures();
   const selfServiceEnabled =
@@ -258,8 +268,8 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
 
   return (
     <nav
-      className={mobile ? styles.mobileNavigation : styles.navigation}
-      aria-label={mobile ? "Mobil ana menü" : "Ana menü"}
+      className={variant === "drawer" ? styles.drawerNavigation : styles.navigation}
+      aria-label={variant === "drawer" ? "Mobil ana menü" : "Ana menü"}
     >
       {visibleItems.map((item) => {
         const isActive =
@@ -276,10 +286,12 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
             className={`${styles.navigationItem} ${isActive ? styles.activeNavigationItem : ""}`}
             href={item.href}
             aria-current={isActive ? "page" : undefined}
+            title={item.label}
+            onClick={onNavigate}
             key={item.href}
           >
-            <span aria-hidden="true">{item.icon}</span>
-            {item.label}
+            <TenantIcon name={item.icon} />
+            <span className={styles.navigationLabel}>{item.label}</span>
           </Link>
         );
       })}
@@ -288,82 +300,175 @@ function Navigation({ user, mobile = false }: { user: AuthUser; mobile?: boolean
 }
 
 export function TenantShell({ children }: { children: ReactNode }) {
-  const {
-    user,
-    isLoggingOut,
-    isSwitchingOrganization,
-    logoutError,
-    organizationSwitchError,
-    signOut,
-    switchOrganization,
-  } = useSession();
+  const { user, logoutError, organizationSwitchError } = useSession();
   const { status: featureStatus, isEnabled } = useTenantFeatures();
-  const name = displayName(user.full_name, user.email);
-  const roleNames = user.roles.map((role) => role.name).join(" · ") || "Rol atanmamış";
+  const [isNavigationOpen, setIsNavigationOpen] = useState(false);
+  const mobileMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const desktopSidebarRef = useRef<HTMLElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const drawerId = useId();
   const showNotifications =
     hasPermission(user, AUTHORIZATION_PERMISSIONS.readOwnNotifications) &&
     featureStatus === "ready" &&
     isEnabled(TENANT_FEATURES.notifications);
 
+  const closeNavigation = useCallback((returnFocus: boolean) => {
+    setIsNavigationOpen(false);
+    if (returnFocus) {
+      window.requestAnimationFrame(() => mobileMenuTriggerRef.current?.focus());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isNavigationOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const frame = window.requestAnimationFrame(() => {
+      drawerRef.current?.querySelector<HTMLElement>("a[href]")?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeNavigation(true);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const drawer = drawerRef.current;
+      if (!drawer) return;
+      const focusable = Array.from(
+        drawer.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeNavigation, isNavigationOpen]);
+
+  useEffect(() => {
+    const desktopQuery = window.matchMedia("(min-width: 1024px)");
+    const handleDesktopChange = (event: MediaQueryListEvent) => {
+      if (!event.matches || !drawerRef.current) return;
+      setIsNavigationOpen(false);
+      window.requestAnimationFrame(() => {
+        const destination =
+          desktopSidebarRef.current?.querySelector<HTMLElement>(
+            'a[aria-current="page"]',
+          ) ?? desktopSidebarRef.current?.querySelector<HTMLElement>("a[href]");
+        destination?.focus();
+      });
+    };
+    desktopQuery.addEventListener("change", handleDesktopChange);
+    return () => desktopQuery.removeEventListener("change", handleDesktopChange);
+  }, []);
+
   return (
     <div className={styles.application} data-workspace-shell="tenant">
-      <aside className={styles.sidebar}>
+      <aside ref={desktopSidebarRef} className={styles.sidebar}>
         <div className={styles.brand} aria-label="Wealthy Falcon HR">
           <span className={styles.brandMark} aria-hidden="true">
             WF
           </span>
-          <span>Wealthy Falcon HR</span>
+          <span className={styles.brandName}>Wealthy Falcon HR</span>
         </div>
 
-        <div className={styles.tenantCard}>
-          <span>Çalışma alanı</span>
-          <strong>{user.tenant.name}</strong>
-          <small>{user.tenant.slug}</small>
-          <small className={styles.roleSummary}>{roleNames}</small>
-          <button
-            className={styles.tenantSwitchButton}
-            type="button"
-            disabled={isLoggingOut || isSwitchingOrganization}
-            onClick={() => void switchOrganization()}
-          >
-            {isSwitchingOrganization ? "Kurumlar hazırlanıyor…" : "Kurum değiştir"}
-          </button>
+        <div className={styles.tenantCard} title={user.tenant.name}>
+          <span className={styles.tenantCompactMark} aria-hidden="true">
+            {tenantInitial(user.tenant.name)}
+          </span>
+          <div className={styles.tenantDetails}>
+            <span>Çalışma alanı</span>
+            <strong>{user.tenant.name}</strong>
+          </div>
         </div>
 
         <Navigation user={user} />
-
-        <p className={styles.sidebarNote}>Güvenli tenant oturumu etkin</p>
       </aside>
+
+      {isNavigationOpen ? (
+        <div className={styles.mobileDrawerLayer}>
+          <div
+            className={styles.mobileDrawerBackdrop}
+            aria-hidden="true"
+            onMouseDown={() => closeNavigation(true)}
+          />
+          <aside
+            ref={drawerRef}
+            id={drawerId}
+            className={styles.mobileDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Ana menü"
+            tabIndex={-1}
+          >
+            <div className={styles.drawerHeader}>
+              <div className={styles.brand} aria-label="Wealthy Falcon HR">
+                <span className={styles.brandMark} aria-hidden="true">WF</span>
+                <span className={styles.brandName}>Wealthy Falcon HR</span>
+              </div>
+              <button
+                className={styles.drawerCloseButton}
+                type="button"
+                aria-label="Menüyü kapat"
+                onClick={() => closeNavigation(true)}
+              >
+                <TenantIcon name="close" />
+              </button>
+            </div>
+            <div className={styles.drawerTenant}>
+              <span>Çalışma alanı</span>
+              <strong>{user.tenant.name}</strong>
+            </div>
+            <Navigation
+              user={user}
+              variant="drawer"
+              onNavigate={() => closeNavigation(false)}
+            />
+          </aside>
+        </div>
+      ) : null}
 
       <main className={styles.main}>
         <header className={styles.header}>
-          <div>
+          <div className={styles.mobileHeaderContext}>
+            <button
+              ref={mobileMenuTriggerRef}
+              className={styles.mobileMenuButton}
+              type="button"
+              aria-label="Ana menüyü aç"
+              aria-expanded={isNavigationOpen}
+              aria-controls={drawerId}
+              onClick={() => setIsNavigationOpen(true)}
+            >
+              <TenantIcon name="menu" />
+            </button>
             <span className={styles.mobileTenant}>{user.tenant.name}</span>
-            <strong>{name}</strong>
-            <small>{user.email}</small>
           </div>
           <div className={styles.headerActions}>
             {showNotifications ? <NotificationBadge /> : null}
-            <button
-              className={styles.mobileSwitchButton}
-              type="button"
-              disabled={isLoggingOut || isSwitchingOrganization}
-              onClick={() => void switchOrganization()}
-            >
-              {isSwitchingOrganization ? "Hazırlanıyor…" : "Kurum değiştir"}
-            </button>
-            <button
-              className={styles.logoutButton}
-              type="button"
-              disabled={isLoggingOut || isSwitchingOrganization}
-              onClick={() => void signOut()}
-            >
-              {isLoggingOut ? "Çıkış yapılıyor…" : "Çıkış yap"}
-            </button>
+            <ProfileMenu />
           </div>
         </header>
-
-        <Navigation user={user} mobile />
 
         <div className={styles.content}>
           {logoutError ? (

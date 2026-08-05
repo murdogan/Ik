@@ -45,7 +45,28 @@ export function NotificationBadge() {
         unreadCount > 0 ? `${unreadCount} okunmamış bildirim` : "Bildirim merkezi"
       }
     >
-      <span aria-hidden="true">Bildirimler</span>
+      <svg
+        aria-hidden="true"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M10 21h4"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+      </svg>
       {unreadCount > 0 ? (
         <span className={styles.notificationCount} aria-hidden="true">
           {unreadCount > 99 ? "99+" : unreadCount}

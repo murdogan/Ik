@@ -546,29 +546,36 @@
 .notificationButton {
   position: relative;
   display: inline-flex;
-  min-height: 42px;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  flex: 0 0 44px;
   align-items: center;
-  gap: 8px;
-  padding: 0 13px;
-  border: 1px solid #cbd9d2;
-  border-radius: 11px;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--wf-line);
+  border-radius: 50%;
   color: var(--wf-ink);
   background: #ffffff;
-  font-size: 14px;
-  font-weight: 700;
   text-decoration: none;
 }
 
 .notificationCount {
+  position: absolute;
+  top: -5px;
+  right: -6px;
   display: grid;
-  min-width: 23px;
-  height: 23px;
+  min-width: 18px;
+  height: 18px;
   place-items: center;
-  padding: 0 6px;
+  padding: 0 4px;
+  border: 2px solid #ffffff;
   border-radius: 999px;
   color: #ffffff;
-  background: #b34d3b;
-  font-size: 13px;
+  background: var(--wf-danger);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .managerStack {
