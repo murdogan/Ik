@@ -372,6 +372,46 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
   expect(restoredStorage).not.toContain("refresh-");
   expect(restoredStorage).not.toContain("token");
 
+  const desktopSidebar = inviteePage.locator(
+    '[data-workspace-shell="tenant"] > aside',
+  );
+  const mobileMenuTrigger = inviteePage.getByRole("button", {
+    name: "Ana menüyü aç",
+  });
+
+  await inviteePage.setViewportSize({ width: 1280, height: 800 });
+  await expect(desktopSidebar).toBeVisible();
+  expect((await desktopSidebar.boundingBox())?.width).toBeCloseTo(248, 0);
+  await expect(mobileMenuTrigger).toBeHidden();
+
+  await inviteePage.setViewportSize({ width: 1100, height: 800 });
+  expect((await desktopSidebar.boundingBox())?.width).toBeCloseTo(76, 0);
+  expect(
+    await inviteePage.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+
+  await inviteePage.setViewportSize({ width: 390, height: 720 });
+  await expect(desktopSidebar).toBeHidden();
+  await expect(mobileMenuTrigger).toBeVisible();
+  const mobileTriggerBox = await mobileMenuTrigger.boundingBox();
+  expect(mobileTriggerBox?.width).toBeGreaterThanOrEqual(44);
+  expect(mobileTriggerBox?.height).toBeGreaterThanOrEqual(44);
+  expect(
+    await inviteePage.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await mobileMenuTrigger.click();
+  const mobileNavigation = inviteePage.getByRole("dialog", { name: "Ana menü" });
+  await expect(mobileNavigation).toBeVisible();
+  await inviteePage.keyboard.press("Escape");
+  await expect(mobileNavigation).toBeHidden();
+  await expect(mobileMenuTrigger).toBeFocused();
+
+  await inviteePage.setViewportSize({ width: 1280, height: 800 });
+
   const profileMenuTrigger = inviteePage.getByRole("button", {
     name: "Profil menüsünü aç",
   });
