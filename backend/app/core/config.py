@@ -231,17 +231,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_notification_delivery_mode(self) -> "Settings":
-        if (
-            self.environment not in {"local", "test"}
-            and self.notification_email_backend == "fake"
-        ):
+        if self.environment not in {"local", "test"} and self.notification_email_backend == "fake":
             restriction = (
                 "Fake notification email capture is restricted to local and test environments"
             )
             if self.environment == "prod":
                 raise ValueError(
-                    f"Production notification email delivery cannot use fake capture. "
-                    f"{restriction}"
+                    f"Production notification email delivery cannot use fake capture. {restriction}"
                 )
             raise ValueError(restriction)
         if self.notification_email_backend == "smtp":
