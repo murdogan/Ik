@@ -18,6 +18,7 @@ from app.api.dependencies import (
     get_platform_principal,
     get_tenant_principal,
 )
+from app.core.config import Settings
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
@@ -32,13 +33,14 @@ from app.models.organization import LegalEntity
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.authorization import ROLE_PERMISSION_CODES, ROLES_BY_CODE
-from app.platform.identity import PlatformAccessPrincipal
+from app.platform.identity import PlatformAccessPrincipal, hash_activation_token
 from app.platform.principals import PlatformPrincipal
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
 from app.services.platform_auth_session_service import PlatformAuthenticatedUser
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -97,6 +99,7 @@ class TenantApiHarness:
 async def _tenant_api(
     *,
     tenant_status: str = TenantStatus.ACTIVE.value,
+    settings: Settings | None = None,
 ) -> AsyncIterator[TenantApiHarness]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
@@ -204,7 +207,7 @@ async def _tenant_api(
         async with session_factory() as session:
             yield session
 
-    app = create_app()
+    app = create_app(settings=settings)
     app.dependency_overrides[get_session] = override_session
     client = AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
     try:
@@ -928,6 +931,119 @@ async def test_platform_can_safely_reissue_only_the_original_initial_admin_invit
                 sort_keys=True,
             ).lower()
         )
+
+
+async def test_platform_can_generate_a_retry_safe_manual_initial_admin_link() -> None:
+    settings = Settings(
+        environment="test",
+        auth_signing_key=SecretStr("manual-link-test-signing-key-material-0000000000000000"),
+        frontend_base_url="https://tenant.example.test",
+    )
+    async with _tenant_api(settings=settings) as harness:
+        _authorize_platform(harness.app)
+        created = await harness.client.post(
+            "/api/v1/platform/tenants",
+            json={
+                "slug": "manual-link-initial-admin",
+                "name": "Manual Link Initial Admin",
+                "initial_admin": {
+                    "full_name": "Manual Link Admin",
+                    "email": "manual.link.admin@example.test",
+                },
+            },
+        )
+        assert created.status_code == 201
+        tenant_id = UUID(created.json()["data"]["id"])
+
+        first = await harness.client.post(
+            f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/manual-link",
+            headers={
+                "X-Request-Id": "req_initial_admin_manual_link_001",
+                "X-Trace-Id": "20000000000000000000000000000001",
+            },
+        )
+        second = await harness.client.post(
+            f"/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/manual-link",
+            headers={
+                "X-Request-Id": "req_initial_admin_manual_link_002",
+                "X-Trace-Id": "20000000000000000000000000000002",
+            },
+        )
+
+        for response in (first, second):
+            assert response.status_code == 201
+            assert response.headers["cache-control"] == "no-store"
+            assert response.headers["pragma"] == "no-cache"
+            data = _phase1_data(response, {"activation_url", "expires_at", "status"})
+            assert data["status"] == "manual_link_ready"
+            assert data["activation_url"].startswith(
+                "https://tenant.example.test/activate#token="
+            )
+            assert datetime.fromisoformat(data["expires_at"]).tzinfo is not None
+            serialized_response = json.dumps(response.json()).lower()
+            assert "email" not in serialized_response
+            assert "identity" not in serialized_response
+            assert "membership" not in serialized_response
+
+        first_token = first.json()["data"]["activation_url"].split("#token=", 1)[1]
+        second_token = second.json()["data"]["activation_url"].split("#token=", 1)[1]
+        assert first_token != second_token
+
+        async with harness.session_factory() as session:
+            activations = tuple(
+                await session.scalars(
+                    select(UserActivationToken)
+                    .where(UserActivationToken.tenant_id == tenant_id)
+                    .order_by(UserActivationToken.created_at, UserActivationToken.id)
+                )
+            )
+            outbox_events = tuple(
+                await session.scalars(
+                    select(OutboxEvent)
+                    .where(OutboxEvent.tenant_id == tenant_id)
+                    .order_by(OutboxEvent.created_at, OutboxEvent.id)
+                )
+            )
+            audit_events = tuple(
+                await session.scalars(
+                    select(AuditEvent).where(AuditEvent.resource_id == tenant_id)
+                )
+            )
+
+        assert len(activations) == 3
+        active_activations = tuple(
+            activation
+            for activation in activations
+            if activation.consumed_at is None and activation.revoked_at is None
+        )
+        assert len(active_activations) == 1
+        assert active_activations[0].token_hash == hash_activation_token(second_token)
+        assert any(
+            activation.token_hash == hash_activation_token(first_token)
+            and activation.revoked_at is not None
+            for activation in activations
+        )
+        assert len(outbox_events) == 3
+        assert all(
+            set(event.payload) == {"recipient_user_id", "activation_id"}
+            for event in outbox_events
+        )
+        serialized_persistence = json.dumps(
+            {
+                "outbox": [event.payload for event in outbox_events],
+                "audit": [
+                    {
+                        "metadata": event.metadata_,
+                        "before": event.before_data,
+                        "after": event.after_data,
+                    }
+                    for event in audit_events
+                ],
+            },
+            sort_keys=True,
+        )
+        assert first_token not in serialized_persistence
+        assert second_token not in serialized_persistence
 
 
 async def test_initial_admin_reissue_does_not_enumerate_missing_or_activated_state() -> None:
