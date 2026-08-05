@@ -1053,6 +1053,28 @@ async def test_platform_can_generate_a_retry_safe_manual_initial_admin_link() ->
         assert {event.payload["activation_id"] for event in manual_events} == {
             str(activation_id) for activation_id in manual_activation_ids
         }
+        manual_link_audits = tuple(
+            event
+            for event in audit_events
+            if event.event_type == "platform.tenant.initial_admin_manual_link_issued"
+        )
+        assert len(manual_link_audits) == 2
+        assert {event.request_id for event in manual_link_audits} == {
+            "req_initial_admin_manual_link_001",
+            "req_initial_admin_manual_link_002",
+        }
+        assert all(
+            event.action == "issue_initial_admin_manual_link"
+            and event.metadata_ == {}
+            and event.changed_fields == []
+            and event.before_data == {}
+            and event.after_data == {}
+            for event in manual_link_audits
+        )
+        assert not any(
+            event.event_type == "platform.tenant.initial_admin_invitation_reissued"
+            for event in audit_events
+        )
         serialized_persistence = json.dumps(
             {
                 "outbox": [event.payload for event in outbox_events],

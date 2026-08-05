@@ -6,6 +6,7 @@ from app.modules.core.application.events import (
     FeatureFlagChangedEvent,
     InitialTenantAdminInvitationCorrectedEvent,
     InitialTenantAdminInvitationReissuedEvent,
+    InitialTenantAdminManualLinkIssuedEvent,
     TenantCreatedEvent,
     TenantSettingChangedEvent,
     TenantStatusChangedEvent,
@@ -46,6 +47,8 @@ class PlatformEventAuditRecorder:
             }
         elif type(event) is InitialTenantAdminInvitationCorrectedEvent:
             event_type = AuditEventType.PLATFORM_INITIAL_ADMIN_INVITATION_CORRECTED
+        elif type(event) is InitialTenantAdminManualLinkIssuedEvent:
+            event_type = AuditEventType.PLATFORM_INITIAL_ADMIN_MANUAL_LINK_ISSUED
         elif type(event) is InitialTenantAdminInvitationReissuedEvent:
             event_type = AuditEventType.PLATFORM_INITIAL_ADMIN_INVITATION_REISSUED
         elif type(event) is TenantStatusChangedEvent:

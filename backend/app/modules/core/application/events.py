@@ -46,6 +46,7 @@ class PlatformEventType(StrEnum):
     FEATURE_FLAG_CHANGED = "feature_flag.changed"
     INITIAL_ADMIN_INVITATION_CORRECTED = "tenant.initial_admin_invitation_corrected"
     INITIAL_ADMIN_INVITATION_REISSUED = "tenant.initial_admin_invitation_reissued"
+    INITIAL_ADMIN_MANUAL_LINK_ISSUED = "tenant.initial_admin_manual_link_issued"
 
 
 class TenantSettingField(StrEnum):
@@ -220,6 +221,17 @@ class InitialTenantAdminInvitationCorrectedEvent(_PlatformTenantEvent):
 
 
 @register_platform_event_contract
+class InitialTenantAdminManualLinkIssuedEvent(_PlatformTenantEvent):
+    """A credential-free fact that a manual activation link was disclosed."""
+
+    event_type: Literal[PlatformEventType.INITIAL_ADMIN_MANUAL_LINK_ISSUED] = (
+        PlatformEventType.INITIAL_ADMIN_MANUAL_LINK_ISSUED
+    )
+    resource_type: Literal["tenant"] = "tenant"
+    action: Literal["issue_initial_admin_manual_link"] = "issue_initial_admin_manual_link"
+
+
+@register_platform_event_contract
 class InitialTenantAdminInvitationReissuedEvent(_PlatformTenantEvent):
     """A credential-free fact that a fresh initial-admin invitation was prepared."""
 
@@ -236,6 +248,7 @@ type PlatformEvent = (
     | TenantSettingChangedEvent
     | FeatureFlagChangedEvent
     | InitialTenantAdminInvitationCorrectedEvent
+    | InitialTenantAdminManualLinkIssuedEvent
     | InitialTenantAdminInvitationReissuedEvent
 )
 
@@ -247,6 +260,7 @@ PLATFORM_EVENT_TYPES: tuple[type[PlatformEventContract], ...] = (
     TenantSettingChangedEvent,
     FeatureFlagChangedEvent,
     InitialTenantAdminInvitationCorrectedEvent,
+    InitialTenantAdminManualLinkIssuedEvent,
     InitialTenantAdminInvitationReissuedEvent,
 )
 
@@ -254,6 +268,7 @@ PLATFORM_EVENT_TYPES: tuple[type[PlatformEventContract], ...] = (
 __all__ = [
     "FeatureFlagChangedEvent",
     "InitialTenantAdminInvitationCorrectedEvent",
+    "InitialTenantAdminManualLinkIssuedEvent",
     "InitialTenantAdminInvitationReissuedEvent",
     "PlatformEvent",
     "PLATFORM_EVENT_TYPES",

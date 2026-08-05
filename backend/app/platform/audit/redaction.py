@@ -248,6 +248,7 @@ _POLICIES: dict[AuditEventType, AuditMetadataPolicy] = {
     ),
     AuditEventType.PLATFORM_INITIAL_ADMIN_INVITATION_CORRECTED: AuditMetadataPolicy(),
     AuditEventType.PLATFORM_INITIAL_ADMIN_INVITATION_REISSUED: AuditMetadataPolicy(),
+    AuditEventType.PLATFORM_INITIAL_ADMIN_MANUAL_LINK_ISSUED: AuditMetadataPolicy(),
     AuditEventType.PLATFORM_TENANT_STATUS_CHANGED: AuditMetadataPolicy(
         metadata_keys=frozenset({"before_status", "after_status"}),
         changed_fields=frozenset({"status"}),

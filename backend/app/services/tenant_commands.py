@@ -9,6 +9,7 @@ from app.modules.core.application.events import (
     FeatureFlagChangedEvent,
     InitialTenantAdminInvitationCorrectedEvent,
     InitialTenantAdminInvitationReissuedEvent,
+    InitialTenantAdminManualLinkIssuedEvent,
     PlatformEventActorType,
     TenantCreatedEvent,
     TenantSettingChangedEvent,
@@ -129,7 +130,7 @@ class TenantCommandHandler:
                 tenant_id=tenant_id
             )
             await self.event_recorder.record(
-                InitialTenantAdminInvitationReissuedEvent(
+                InitialTenantAdminManualLinkIssuedEvent(
                     **self._event_metadata(
                         tenant_id,
                         request_context,

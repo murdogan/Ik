@@ -11,6 +11,7 @@ from app.modules.core.application.events import (
     FeatureFlagChangedEvent,
     InitialTenantAdminInvitationCorrectedEvent,
     InitialTenantAdminInvitationReissuedEvent,
+    InitialTenantAdminManualLinkIssuedEvent,
     PlatformEventType,
     TenantCreatedEvent,
     TenantSettingChangedEvent,
@@ -106,6 +107,12 @@ def _event_factories() -> tuple[tuple[type[Any], dict[str, Any]], ...]:
                 **_base_fields(),
             },
         ),
+        (
+            InitialTenantAdminManualLinkIssuedEvent,
+            {
+                **_base_fields(),
+            },
+        ),
     )
 
 
@@ -120,6 +127,7 @@ def test_platform_event_contracts_have_fixed_redacted_audit_metadata() -> None:
         PlatformEventType.FEATURE_FLAG_CHANGED,
         PlatformEventType.INITIAL_ADMIN_INVITATION_CORRECTED,
         PlatformEventType.INITIAL_ADMIN_INVITATION_REISSUED,
+        PlatformEventType.INITIAL_ADMIN_MANUAL_LINK_ISSUED,
     }
     for event in events:
         dumped = event.model_dump(mode="json")
@@ -384,6 +392,7 @@ def test_every_tenant_command_requires_an_explicit_safe_request_context() -> Non
         "update_tenant_features",
         "correct_initial_admin_invitation",
         "reissue_initial_admin_invitation",
+        "create_initial_admin_manual_link",
     ):
         parameter = signature(getattr(TenantCommandHandler, method_name)).parameters[
             "request_context"

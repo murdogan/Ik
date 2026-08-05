@@ -83,6 +83,10 @@ _CLOSED_EVENT_IDENTITIES = frozenset(
         ),
         (
             "app.modules.core.application.events",
+            "InitialTenantAdminManualLinkIssuedEvent",
+        ),
+        (
+            "app.modules.core.application.events",
             "InitialTenantAdminInvitationReissuedEvent",
         ),
     }
