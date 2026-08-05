@@ -34,6 +34,7 @@ from app.platform.db.tenant_access import DATABASE_ACCESS_CONTEXT_STATE_KEY
 from app.platform.events import (
     PlatformEventRecorder,
 )
+from app.platform.identity import ActivationDeliveryTokenCodec
 from app.platform.observability.correlation import (
     get_or_create_request_context,
     replace_request_context,
@@ -177,9 +178,21 @@ def get_initial_tenant_admin_provisioner(
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_application_settings)],
 ) -> InitialTenantAdminProvisioner:
+    activation_delivery_tokens: ActivationDeliveryTokenCodec | None = None
+    configured_signing_key = settings.auth_signing_key
+    if configured_signing_key is not None:
+        try:
+            activation_delivery_tokens = ActivationDeliveryTokenCodec(
+                configured_signing_key.get_secret_value().encode("utf-8")
+            )
+        except ValueError:
+            # Resend remains available with its existing random material. Manual-link issuance
+            # checks this optional dependency and fails closed before performing a write.
+            activation_delivery_tokens = None
     return InitialTenantAdminProvisioner(
         session,
         activation_ttl=timedelta(hours=settings.auth_activation_token_ttl_hours),
+        activation_delivery_tokens=activation_delivery_tokens,
     )
 
 

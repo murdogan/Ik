@@ -577,13 +577,14 @@ class NotificationWorker:
                 activation.id,
             )
             if not prepared:
-                activation.token_hash = token.token_hash
+                if activation.token_hash != token.token_hash:
+                    activation.token_hash = token.token_hash
+                    activation.expires_at = datetime.now(UTC) + timedelta(
+                        hours=self.settings.auth_activation_token_ttl_hours
+                    )
             elif activation.token_hash != token.token_hash:
                 return EmailDeliveryError("provider_unavailable")
             if not prepared:
-                activation.expires_at = datetime.now(UTC) + timedelta(
-                    hours=self.settings.auth_activation_token_ttl_hours
-                )
                 delivery.prepared_activation_id = activation.id
                 activation_id = activation.id
             elif activation_id != activation.id:

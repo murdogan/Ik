@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -24,7 +25,7 @@ from app.models.user import User, UserStatus
 from app.platform.authorization import ROLES_BY_CODE
 from app.platform.db import sqlstate_from_error
 from app.platform.errors.application import ApplicationError
-from app.platform.identity import issue_activation_token
+from app.platform.identity import ActivationDeliveryTokenCodec, issue_activation_token
 from app.schemas.tenant import TenantInitialAdminCorrection, TenantInitialAdminProvision
 from app.services.authorization_service import assign_system_role
 from app.services.identity_projection_service import sync_identity_membership_projection
@@ -47,17 +48,27 @@ class InitialTenantAdminUnavailableError(ApplicationError):
     """The requested initial administrator cannot enter the activation flow."""
 
 
+@dataclass(frozen=True, slots=True)
+class InitialTenantAdminManualLinkMaterial:
+    """Ephemeral credential material returned only to the authorized API edge."""
+
+    raw_token: str = field(repr=False)
+    expires_at: datetime
+
+
 class InitialTenantAdminProvisioner:
     def __init__(
         self,
         session: AsyncSession,
         *,
         activation_ttl: timedelta,
+        activation_delivery_tokens: ActivationDeliveryTokenCodec | None = None,
     ) -> None:
         if activation_ttl <= timedelta(0):
             raise ValueError("Activation TTL must be positive")
         self.session = session
         self.activation_ttl = activation_ttl
+        self._activation_delivery_tokens = activation_delivery_tokens
 
     async def provision(
         self,
@@ -116,6 +127,55 @@ class InitialTenantAdminProvisioner:
         activation_id = uuid4()
         outbox_id = uuid4()
 
+        await self._persist_reissue(
+            tenant_id=tenant_id,
+            activation_id=activation_id,
+            token_hash=token.token_hash,
+            expires_at=expires_at,
+            outbox_id=outbox_id,
+            occurred_at=now,
+        )
+
+    async def reissue_manual_link(
+        self,
+        *,
+        tenant_id: UUID,
+    ) -> InitialTenantAdminManualLinkMaterial:
+        token_codec = self._activation_delivery_tokens
+        if token_codec is None:
+            raise RuntimeError("Manual activation-link signing is unavailable")
+        if tenant_id.int == 0:
+            raise InitialTenantAdminUnavailableError()
+
+        activation_id = uuid4()
+        token = token_codec.issue(tenant_id, activation_id)
+        now = datetime.now(UTC)
+        expires_at = now + self.activation_ttl
+        outbox_id = uuid4()
+
+        await self._persist_reissue(
+            tenant_id=tenant_id,
+            activation_id=activation_id,
+            token_hash=token.token_hash,
+            expires_at=expires_at,
+            outbox_id=outbox_id,
+            occurred_at=now,
+        )
+        return InitialTenantAdminManualLinkMaterial(
+            raw_token=token.raw_token,
+            expires_at=expires_at,
+        )
+
+    async def _persist_reissue(
+        self,
+        *,
+        tenant_id: UUID,
+        activation_id: UUID,
+        token_hash: str,
+        expires_at: datetime,
+        outbox_id: UUID,
+        occurred_at: datetime,
+    ) -> None:
         if self.session.get_bind().dialect.name == "postgresql":
             try:
                 await self.session.execute(
@@ -126,7 +186,7 @@ class InitialTenantAdminProvisioner:
                     {
                         "tenant_id": tenant_id,
                         "activation_id": activation_id,
-                        "token_hash": token.token_hash,
+                        "token_hash": token_hash,
                         "expires_at": expires_at,
                         "outbox_id": outbox_id,
                     },
@@ -140,10 +200,10 @@ class InitialTenantAdminProvisioner:
         await self._reissue_compatibility(
             tenant_id=tenant_id,
             activation_id=activation_id,
-            token_hash=token.token_hash,
+            token_hash=token_hash,
             expires_at=expires_at,
             outbox_id=outbox_id,
-            occurred_at=now,
+            occurred_at=occurred_at,
         )
 
     async def correct(
@@ -620,6 +680,7 @@ def _is_original_initial_admin_invitation(event: OutboxEvent) -> bool:
 
 
 __all__ = [
+    "InitialTenantAdminManualLinkMaterial",
     "InitialTenantAdminProvisioner",
     "InitialTenantAdminUnavailableError",
 ]

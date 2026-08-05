@@ -6,6 +6,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -203,6 +204,14 @@ class TenantInitialAdminProvisioningRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["invitation_prepared"] = "invitation_prepared"
+
+
+class TenantInitialAdminManualLinkRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["manual_link_ready"] = "manual_link_ready"
+    activation_url: StrictStr
+    expires_at: AwareDatetime
 
 
 class TenantPlatformCreateRead(TenantPlatformRead):

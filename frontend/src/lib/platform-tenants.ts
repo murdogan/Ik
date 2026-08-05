@@ -138,6 +138,12 @@ export interface PlatformTenantInitialAdminRead {
   status: "invitation_prepared";
 }
 
+export interface PlatformTenantInitialAdminManualLinkRead {
+  status: "manual_link_ready";
+  activation_url: string;
+  expires_at: string;
+}
+
 export interface PlatformTenantInitialAdminCorrectionRequest {
   full_name: string;
   email: string;
@@ -169,6 +175,11 @@ const MAX_CURSOR_LENGTH = 2_048;
 const MAX_TENANT_PAGES = 1_000;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MANUAL_ACTIVATION_TOKEN_PATTERN =
+  /^v1\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.[0-9a-f]{64}$/;
+const RESPONSE_REQUEST_ID_PATTERN =
+  /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/;
+const RESPONSE_TRACE_ID_PATTERN = /^[0-9a-f]{32}$/;
 const TENANT_SLUG_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
 const RFC3339_UTC_PATTERN =
@@ -354,6 +365,10 @@ function isUtcDateTime(value: unknown): value is string {
   );
 }
 
+function isFutureUtcDateTime(value: unknown): value is string {
+  return isUtcDateTime(value) && new Date(value).getTime() > Date.now();
+}
+
 function isStatus(value: unknown): value is PlatformTenantStatus {
   return (
     typeof value === "string" &&
@@ -430,13 +445,116 @@ function isInitialAdminRead(
   );
 }
 
+function isManualActivationUrlForTenant(
+  value: unknown,
+  tenantId: string,
+): value is string {
+  if (
+    !isTrimmedBoundedString(value, { max: 4_096 }) ||
+    !UUID_PATTERN.test(tenantId) ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    return false;
+  }
+
+  let activationUrl: URL;
+  try {
+    activationUrl = new URL(value);
+  } catch {
+    return false;
+  }
+
+  const currentFrontendOrigin =
+    typeof window === "undefined" ? null : window.location.origin;
+
+  if (
+    currentFrontendOrigin === null ||
+    activationUrl.origin !== currentFrontendOrigin ||
+    (activationUrl.protocol !== "https:" &&
+      activationUrl.protocol !== "http:") ||
+    activationUrl.hostname.length === 0 ||
+    activationUrl.username.length > 0 ||
+    activationUrl.password.length > 0 ||
+    !activationUrl.pathname.endsWith("/activate") ||
+    activationUrl.search.length > 0
+  ) {
+    return false;
+  }
+
+  const fragment = activationUrl.hash.slice(1);
+  if (!fragment.startsWith("token=")) {
+    return false;
+  }
+  const token = fragment.slice("token=".length);
+  const tokenMatch = MANUAL_ACTIVATION_TOKEN_PATTERN.exec(token);
+  if (tokenMatch === null || tokenMatch[1] !== tenantId.toLowerCase()) {
+    return false;
+  }
+  const tokenSecret = token.slice(token.lastIndexOf(".") + 1);
+
+  const fragmentIndex = value.indexOf("#");
+  if (fragmentIndex < 0) {
+    return false;
+  }
+  const preFragmentUrl = value.slice(0, fragmentIndex);
+  let decodedPreFragmentUrl: string;
+  try {
+    decodedPreFragmentUrl = decodeURIComponent(preFragmentUrl);
+  } catch {
+    return false;
+  }
+  return (
+    !preFragmentUrl.includes(token) &&
+    !preFragmentUrl.includes(tokenSecret) &&
+    !decodedPreFragmentUrl.includes(token) &&
+    !decodedPreFragmentUrl.includes(tokenSecret)
+  );
+}
+
+function isInitialAdminManualLinkRead(
+  value: unknown,
+  tenantId: string,
+): value is PlatformTenantInitialAdminManualLinkRead {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["status", "activation_url", "expires_at"]) &&
+    value.status === "manual_link_ready" &&
+    isManualActivationUrlForTenant(value.activation_url, tenantId) &&
+    isFutureUtcDateTime(value.expires_at)
+  );
+}
+
+function hasSafeResponseIdentifiers(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & PlatformResponseMeta {
+  return (
+    isBoundedString(value.request_id, { max: 128 }) &&
+    RESPONSE_REQUEST_ID_PATTERN.test(value.request_id) &&
+    value.request_id.split(".").length < 3 &&
+    typeof value.trace_id === "string" &&
+    RESPONSE_TRACE_ID_PATTERN.test(value.trace_id) &&
+    value.trace_id !== "0".repeat(32) &&
+    value.correlation_id === value.request_id
+  );
+}
+
+function responseMetaContainsManualCredential(
+  meta: PlatformResponseMeta,
+  activationUrl: string,
+): boolean {
+  const rawToken = new URL(activationUrl).hash.slice("#token=".length);
+  const tokenSecret = rawToken.slice(rawToken.lastIndexOf(".") + 1);
+  return [meta.request_id, meta.trace_id, meta.correlation_id].some(
+    (identifier) =>
+      identifier.includes(rawToken) || identifier.includes(tokenSecret),
+  );
+}
+
 function isResponseMeta(value: unknown): value is PlatformResponseMeta {
   return (
     isRecord(value) &&
     hasExactKeys(value, ["request_id", "trace_id", "correlation_id"]) &&
-    isBoundedString(value.request_id, { max: 128 }) &&
-    isBoundedString(value.trace_id, { max: 128 }) &&
-    isBoundedString(value.correlation_id, { max: 128 })
+    hasSafeResponseIdentifiers(value)
   );
 }
 
@@ -450,9 +568,7 @@ function isListMeta(value: unknown): value is PlatformTenantListMeta {
       "limit",
       "next_cursor",
     ]) &&
-    isBoundedString(value.request_id, { max: 128 }) &&
-    isBoundedString(value.trace_id, { max: 128 }) &&
-    isBoundedString(value.correlation_id, { max: 128 }) &&
+    hasSafeResponseIdentifiers(value) &&
     typeof value.limit === "number" &&
     Number.isSafeInteger(value.limit) &&
     value.limit >= 1 &&
@@ -484,7 +600,7 @@ function invalidResponse(
   meta?: unknown,
 ): ApiClientError {
   const correlationId =
-    isRecord(meta) && typeof meta.correlation_id === "string"
+    isRecord(meta) && hasSafeResponseIdentifiers(meta)
       ? meta.correlation_id
       : null;
   return new ApiClientError({
@@ -639,6 +755,35 @@ function validateInitialAdminEnvelope(
     !isResponseMeta(envelope.meta)
   ) {
     throw invalidResponse(envelope.meta);
+  }
+  return {
+    data: envelope.data,
+    meta: envelope.meta,
+  };
+}
+
+function validateInitialAdminManualLinkEnvelope(
+  envelope: ApiSuccessEnvelope<unknown, unknown>,
+  tenantId: string,
+): ApiSuccessEnvelope<
+  PlatformTenantInitialAdminManualLinkRead,
+  PlatformResponseMeta
+> {
+  if (
+    !isRecord(envelope) ||
+    !hasExactKeys(envelope, ["data", "meta"]) ||
+    !isInitialAdminManualLinkRead(envelope.data, tenantId) ||
+    !isResponseMeta(envelope.meta)
+  ) {
+    throw invalidResponse(envelope.meta);
+  }
+  if (
+    responseMetaContainsManualCredential(
+      envelope.meta,
+      envelope.data.activation_url,
+    )
+  ) {
+    throw invalidResponse();
   }
   return {
     data: envelope.data,
@@ -822,6 +967,24 @@ export async function resendPlatformTenantInitialAdminInvitation(
     { method: "POST" },
   );
   return validateInitialAdminEnvelope(envelope);
+}
+
+export async function createPlatformTenantInitialAdminManualLink(
+  tenantId: string,
+): Promise<
+  ApiSuccessEnvelope<
+    PlatformTenantInitialAdminManualLinkRead,
+    PlatformResponseMeta
+  >
+> {
+  const envelope = await requestPlatformAuthenticatedApiEnvelope<
+    unknown,
+    unknown
+  >(
+    `/api/v1/platform/tenants/${encodeURIComponent(tenantId)}/initial-admin-invitation/manual-link`,
+    { method: "POST" },
+  );
+  return validateInitialAdminManualLinkEnvelope(envelope, tenantId);
 }
 
 export async function correctPlatformTenantInitialAdminInvitation(

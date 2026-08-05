@@ -1842,12 +1842,16 @@ def organization_pagination_validation_error() -> ApiError:
     )
 
 
-def platform_tenant_pagination_validation_error() -> ApiError:
+def platform_tenant_validation_error() -> ApiError:
     return ApiError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=PLATFORM_TENANT_VALIDATION_ERROR_CODE,
         message=PLATFORM_TENANT_VALIDATION_ERROR_MESSAGE,
     )
+
+
+def platform_tenant_pagination_validation_error() -> ApiError:
+    return platform_tenant_validation_error()
 
 
 def employee_not_found_error() -> ApiError:
@@ -2207,11 +2211,7 @@ def _domain_request_validation_error(
     ):
         return employee_assignment_validation_error()
     if _matches_api_prefix(path, PLATFORM_TENANT_API_PREFIX):
-        return ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            code=PLATFORM_TENANT_VALIDATION_ERROR_CODE,
-            message=PLATFORM_TENANT_VALIDATION_ERROR_MESSAGE,
-        )
+        return platform_tenant_validation_error()
     if _matches_api_prefix(path, TENANT_API_PREFIX):
         return ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

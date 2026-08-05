@@ -1,11 +1,15 @@
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import ValidationError
 
-from app.api.auth_dependencies import require_platform_permission
+from app.api.auth_dependencies import (
+    get_application_settings,
+    require_platform_permission,
+)
 from app.api.dependencies import (
     get_platform_request_context,
     get_platform_tenant_query_service,
@@ -21,12 +25,14 @@ from app.api.errors import (
     TENANT_UPDATE_CONFLICT_RESPONSES,
     UNEXPECTED_ERROR_RESPONSES,
     platform_tenant_pagination_validation_error,
+    platform_tenant_validation_error,
 )
 from app.api.openapi import (
     PLATFORM_PRINCIPAL_OPENAPI,
     PLATFORM_TENANTS_TAG,
     with_correlation_response_headers,
 )
+from app.core.config import Settings
 from app.models.tenant import Tenant
 from app.modules.core.domain.tenant import health_for_status
 from app.platform.pagination import MAX_CURSOR_LENGTH, InvalidCursorError
@@ -44,6 +50,7 @@ from app.schemas.tenant import (
     TenantFeaturesRead,
     TenantFeaturesUpdate,
     TenantInitialAdminCorrection,
+    TenantInitialAdminManualLinkRead,
     TenantInitialAdminProvisioningRead,
     TenantListCursor,
     TenantListPagination,
@@ -287,6 +294,67 @@ async def reissue_platform_initial_admin_invitation(
         request_context=request_context,
     )
     return data_envelope(TenantInitialAdminProvisioningRead(), request_context)
+
+
+async def require_empty_platform_tenant_request_body(request: Request) -> None:
+    """Reject any request-body bytes without buffering a credential-adjacent payload."""
+
+    async for chunk in request.stream():
+        if chunk:
+            raise platform_tenant_validation_error()
+
+
+@router.post(
+    "/{tenant_id}/initial-admin-invitation/manual-link",
+    dependencies=[
+        Depends(require_platform_permission("tenant:update:platform")),
+        Depends(require_empty_platform_tenant_request_body),
+    ],
+    openapi_extra=PLATFORM_PRINCIPAL_OPENAPI,
+    response_model=DataEnvelope[TenantInitialAdminManualLinkRead],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a manual initial tenant administrator activation link",
+    description=(
+        "Atomically revokes prior activation credentials and returns one fresh, expiring, "
+        "one-time activation link only for the tenant's original, still-unactivated initial "
+        "administrator. The credential is returned only in the URL fragment and is never "
+        "persisted in platform audit or outbox metadata."
+    ),
+    response_description="One-time manual activation link with request metadata.",
+    responses=with_correlation_response_headers(
+        {
+            status.HTTP_201_CREATED: {},
+            **TENANT_INITIAL_ADMIN_REISSUE_CONFLICT_RESPONSES,
+        }
+    ),
+)
+async def create_platform_initial_admin_manual_link(
+    tenant_id: UUID,
+    response: Response,
+    request_context: Annotated[RequestContext, Depends(get_platform_request_context)],
+    settings: Annotated[Settings, Depends(get_application_settings)],
+    command_handler: Annotated[
+        TenantCommandHandler,
+        Depends(get_tenant_command_handler),
+    ],
+) -> DataEnvelope[TenantInitialAdminManualLinkRead]:
+    result = await command_handler.create_initial_admin_manual_link(
+        tenant_id,
+        request_context=request_context,
+    )
+    activation_url = (
+        f"{settings.frontend_base_url}/activate#token="
+        f"{quote(result.raw_token, safe='.-_')}"
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return data_envelope(
+        TenantInitialAdminManualLinkRead(
+            activation_url=activation_url,
+            expires_at=result.expires_at,
+        ),
+        request_context,
+    )
 
 
 @router.patch(

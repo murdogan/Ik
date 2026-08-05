@@ -1296,6 +1296,110 @@
   font-weight: 700;
 }
 
+.manualLinkResult {
+  display: grid;
+  width: 100%;
+  gap: 15px;
+  padding: 16px;
+  border: 1px solid #cbd6f3;
+  border-radius: 11px;
+  background: #f7f9ff;
+}
+
+.manualLinkResult:focus {
+  outline: none;
+}
+
+.manualLinkResult:focus-visible {
+  box-shadow: 0 0 0 3px rgba(83, 107, 196, 0.2);
+}
+
+.manualLinkResultHeader {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.manualLinkResultHeader > div {
+  min-width: 0;
+}
+
+.manualLinkResultHeader strong {
+  color: #324a9a;
+  font-size: 14px;
+}
+
+.manualLinkResultHeader p {
+  max-width: 700px;
+}
+
+.manualLinkResultHeader > button {
+  min-height: 40px;
+  flex: 0 0 auto;
+}
+
+.manualLinkField {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.manualLinkField label {
+  color: #3d4b66;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.manualLinkInputRow {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.manualLinkInputRow input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 11px;
+  border: 1px solid #c9d2e3;
+  border-radius: 9px;
+  color: #303c55;
+  background: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.manualLinkInputRow input:focus-visible {
+  border-color: var(--platform-accent);
+  outline: 3px solid rgba(83, 107, 196, 0.17);
+}
+
+.manualLinkField > p {
+  max-width: none;
+  margin: 0;
+  color: #5f6d84;
+  font-size: 11px;
+}
+
+.manualLinkDisposalWarning {
+  padding: 8px 10px;
+  border: 1px solid #ead49b;
+  border-radius: 8px;
+  color: #745511 !important;
+  background: #fff9e8;
+}
+
+.manualLinkCopyStatus {
+  min-height: 17px;
+  color: #324a9a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .operationGrid {
   display: grid;
   min-width: 0;
@@ -1755,6 +1859,27 @@
   .initialAdminLifecycleExplanation {
     max-width: none !important;
     text-align: left;
+  }
+
+  .manualLinkResult {
+    padding: 14px;
+  }
+
+  .manualLinkResultHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .manualLinkResultHeader > button {
+    align-self: flex-start;
+  }
+
+  .manualLinkInputRow {
+    grid-template-columns: 1fr;
+  }
+
+  .manualLinkInputRow button {
+    width: 100%;
   }
 
   .dialogBackdrop,

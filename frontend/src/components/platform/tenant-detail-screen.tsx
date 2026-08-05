@@ -24,6 +24,7 @@ import {
   type PlatformTenantErrorPresentation,
   type PlatformTenantFeature,
   type PlatformTenantInitialAdminCorrectionRequest,
+  type PlatformTenantInitialAdminManualLinkRead,
   type PlatformTenantStatus,
   type PlatformTenantUpdateRequest,
   PLATFORM_TENANT_LOCALES,
@@ -34,6 +35,7 @@ import {
   platformTenantTimezoneOptions,
   platformTenantErrorPresentation,
   correctPlatformTenantInitialAdminInvitation,
+  createPlatformTenantInitialAdminManualLink,
   readPlatformTenant,
   readPlatformTenantFeatures,
   resendPlatformTenantInitialAdminInvitation,
@@ -60,6 +62,7 @@ type PendingConfirmation =
   | { kind: "lifecycle"; target: PlatformTenantStatus }
   | { kind: "feature"; feature: PlatformTenantFeature }
   | { kind: "initial_admin_resend" }
+  | { kind: "initial_admin_manual_link" }
   | { kind: "initial_admin_correction" };
 
 const INITIAL_ADMIN_ELIGIBLE_STATUSES: readonly PlatformTenantStatus[] = [
@@ -147,6 +150,9 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     useState<PlatformTenantErrorPresentation | null>(null);
   const [operationNotice, setOperationNotice] =
     useState<OperationNotice | null>(null);
+  const [manualLinkResult, setManualLinkResult] =
+    useState<PlatformTenantInitialAdminManualLinkRead | null>(null);
+  const [manualLinkCopyStatus, setManualLinkCopyStatus] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [featureReloadKey, setFeatureReloadKey] = useState(0);
   const [isMutating, setIsMutating] = useState(false);
@@ -161,6 +167,9 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     useState<PendingConfirmation | null>(null);
   const mutationLockRef = useRef(false);
   const mutationGenerationRef = useRef(0);
+  const manualLinkStateEpochRef = useRef(0);
+  const manualLinkResultRef = useRef<HTMLDivElement>(null);
+  const manualLinkTriggerRef = useRef<HTMLButtonElement>(null);
   const operationErrorRef = useRef<HTMLDivElement>(null);
   const lifecycleSelectRef = useRef<HTMLSelectElement>(null);
   const initialAdminActionsEligible =
@@ -193,6 +202,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
         }
         if (
           (current?.kind === "initial_admin_resend" ||
+            current?.kind === "initial_admin_manual_link" ||
             current?.kind === "initial_admin_correction") &&
           (!canUpdateTenant || !initialAdminActionsEligible)
         ) {
@@ -200,6 +210,11 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
         }
         return current;
       });
+      if (!canUpdateTenant || !initialAdminActionsEligible) {
+        manualLinkStateEpochRef.current += 1;
+        setManualLinkResult(null);
+        setManualLinkCopyStatus("");
+      }
     });
     return () => {
       isActive = false;
@@ -216,6 +231,9 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
       if (!isActive) return;
       setConfirmation(null);
       setOperationError(null);
+      manualLinkStateEpochRef.current += 1;
+      setManualLinkResult(null);
+      setManualLinkCopyStatus("");
     });
     return () => {
       isActive = false;
@@ -230,6 +248,14 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     return () => window.cancelAnimationFrame(frame);
   }, [confirmation, isMutating, operationError]);
 
+  useEffect(() => {
+    if (!manualLinkResult) return;
+    const frame = window.requestAnimationFrame(() => {
+      manualLinkResultRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [manualLinkResult]);
+
   function acquireMutationLock(): boolean {
     if (mutationLockRef.current) return false;
     mutationLockRef.current = true;
@@ -241,6 +267,20 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
   function releaseMutationLock() {
     mutationLockRef.current = false;
     setIsMutating(false);
+  }
+
+  function clearManualLinkResult({
+    restoreFocus = false,
+  }: { restoreFocus?: boolean } = {}): number {
+    manualLinkStateEpochRef.current += 1;
+    setManualLinkResult(null);
+    setManualLinkCopyStatus("");
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => {
+        manualLinkTriggerRef.current?.focus();
+      });
+    }
+    return manualLinkStateEpochRef.current;
   }
 
   function beginTenantCommitRefresh() {
@@ -263,6 +303,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     if (mutationLockRef.current) return;
     if (
       (next.kind === "initial_admin_resend" ||
+        next.kind === "initial_admin_manual_link" ||
         next.kind === "initial_admin_correction") &&
       hasUnknownInitialAdminOutcome(tenantId)
     ) {
@@ -612,6 +653,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     }
 
     if (!acquireMutationLock()) return;
+    clearManualLinkResult();
     const mutationGeneration = mutationGenerationRef.current;
     setOperationError(null);
     setOperationNotice(null);
@@ -701,6 +743,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     ) {
       return;
     }
+    clearManualLinkResult();
     const mutationGeneration = mutationGenerationRef.current;
     setOperationError(null);
     setOperationNotice(null);
@@ -889,6 +932,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     ) {
       return;
     }
+    clearManualLinkResult();
     setOperationError(null);
     setOperationNotice(null);
     try {
@@ -916,6 +960,64 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     }
   }
 
+  async function confirmInitialAdminManualLink() {
+    if (
+      !tenant ||
+      !canUpdateTenant ||
+      !isInitialAdminActionEligible(tenant.status) ||
+      hasUnknownInitialAdminOutcome(tenantId) ||
+      !acquireMutationLock()
+    ) {
+      return;
+    }
+    const resultEpoch = clearManualLinkResult();
+    setOperationError(null);
+    setOperationNotice(null);
+    try {
+      const response =
+        await createPlatformTenantInitialAdminManualLink(tenantId);
+      if (manualLinkStateEpochRef.current !== resultEpoch) {
+        releaseMutationLock();
+        setConfirmation(null);
+        return;
+      }
+      setManualLinkResult({
+        status: response.data.status,
+        activation_url: response.data.activation_url,
+        expires_at: response.data.expires_at,
+      });
+      setManualLinkCopyStatus("");
+      releaseMutationLock();
+      setConfirmation(null);
+    } catch (cause) {
+      if (isAmbiguousPlatformMutationOutcome(cause)) {
+        showUnknownInitialAdminOutcome(cause);
+      } else {
+        showOperationError(
+          cause,
+          "Yeni davet linki şu anda üretilemedi. Tenant ayrıntısını kontrol edip daha sonra yeniden deneyin.",
+        );
+      }
+      releaseMutationLock();
+    }
+  }
+
+  async function copyManualActivationUrl() {
+    if (!manualLinkResult) return;
+    const copyEpoch = manualLinkStateEpochRef.current;
+    setManualLinkCopyStatus("");
+    try {
+      await navigator.clipboard.writeText(manualLinkResult.activation_url);
+      if (manualLinkStateEpochRef.current !== copyEpoch) return;
+      setManualLinkCopyStatus("Davet linki panoya kopyalandı.");
+    } catch {
+      if (manualLinkStateEpochRef.current !== copyEpoch) return;
+      setManualLinkCopyStatus(
+        "Link kopyalanamadı. Yukarıdaki alandan seçerek elle kopyalayın.",
+      );
+    }
+  }
+
   async function confirmInitialAdminCorrection(
     payload: PlatformTenantInitialAdminCorrectionRequest,
   ) {
@@ -928,6 +1030,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
     ) {
       return;
     }
+    clearManualLinkResult();
     setOperationError(null);
     setOperationNotice(null);
     try {
@@ -1080,6 +1183,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
             type="button"
             disabled={isMutating || pendingTenantCommitRefreshes > 0}
             onClick={() => {
+              clearManualLinkResult();
               setIsLoading(true);
               setDetailError(null);
               setReloadKey((key) => key + 1);
@@ -1185,100 +1289,202 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
           </div>
         </div>
         <div className={styles.invitationBody}>
-          <div>
-            <strong>Yeni bir davet güvenli biçimde hazırlanır</strong>
-            <p>
-              Önceki etkinleştirme bağlantısı geçersiz olur. Alıcı kimliği ve
-              erişim bağlantısı bu platform ekranında gösterilmez.
-            </p>
-          </div>
-          {canUpdateTenant ? (
-            <div className={styles.invitationControls}>
-              {isInitialAdminOutcomeUnknown ? (
-                <div
-                  className={styles.cardNotice}
-                  id="initial-admin-unknown-outcome"
-                  role="alert"
-                >
-                  <strong>Davet işleminin sonucu doğrulanamadı</strong>
+          {manualLinkResult &&
+          canUpdateTenant &&
+          initialAdminActionsEligible ? (
+            <div
+              ref={manualLinkResultRef}
+              className={styles.manualLinkResult}
+              role="region"
+              aria-labelledby="manual-link-result-title"
+              tabIndex={-1}
+            >
+              <div className={styles.manualLinkResultHeader}>
+                <div>
+                  <strong id="manual-link-result-title">
+                    Yeni davet linki hazır
+                  </strong>
                   <p>
-                    Yeniden gönderme ve düzeltme bu tenant için kilitlendi.
-                    Platform denetim kaydını inceleyin veya güvenilir güncel
-                    ayrıntıyı almak için Tenant metadata’sındaki Yenile
-                    düğmesini kullanın.
+                    Link tek kullanımlıdır ve süresi dolduğunda çalışmaz. Yalnız
+                    tenantın ilk yöneticisiyle güvenli bir kanaldan paylaşın.
                   </p>
                 </div>
-              ) : null}
-              <div className={styles.invitationActions}>
                 <button
                   className={styles.secondaryButton}
                   type="button"
-                  disabled={
-                    !initialAdminActionsEligible ||
-                    isInitialAdminOutcomeUnknown ||
-                    isMutating
+                  onClick={() =>
+                    clearManualLinkResult({ restoreFocus: true })
                   }
-                  aria-describedby={
-                    isInitialAdminOutcomeUnknown
-                      ? "initial-admin-unknown-outcome"
-                      : initialAdminActionsEligible
-                        ? undefined
-                        : "initial-admin-lifecycle-explanation"
-                  }
-                  onClick={() => {
-                    if (
-                      !initialAdminActionsEligible ||
-                      hasUnknownInitialAdminOutcome(tenantId)
-                    ) {
-                      return;
-                    }
-                    openConfirmation({ kind: "initial_admin_resend" });
-                  }}
                 >
-                  İlk yönetici davetini yeniden gönder
-                </button>
-                <button
-                  className={styles.secondaryButton}
-                  type="button"
-                  disabled={
-                    !initialAdminActionsEligible ||
-                    isInitialAdminOutcomeUnknown ||
-                    isMutating
-                  }
-                  aria-describedby={
-                    isInitialAdminOutcomeUnknown
-                      ? "initial-admin-unknown-outcome"
-                      : initialAdminActionsEligible
-                        ? undefined
-                        : "initial-admin-lifecycle-explanation"
-                  }
-                  onClick={() => {
-                    if (
-                      !initialAdminActionsEligible ||
-                      hasUnknownInitialAdminOutcome(tenantId)
-                    ) {
-                      return;
-                    }
-                    openConfirmation({ kind: "initial_admin_correction" });
-                  }}
-                >
-                  İlk yönetici bilgilerini düzelt
+                  Paneli kapat
                 </button>
               </div>
-              {!initialAdminActionsEligible ? (
-                <p
-                  className={styles.initialAdminLifecycleExplanation}
-                  id="initial-admin-lifecycle-explanation"
-                >
-                  İlk yönetici işlemleri yalnız Hazırlanıyor, Deneme veya Aktif
-                  yaşam döngüsündeki tenantlarda kullanılabilir.
+              <div className={styles.manualLinkField}>
+                <label htmlFor="manual-initial-admin-activation-url">
+                  Etkinleştirme linki
+                </label>
+                <div className={styles.manualLinkInputRow}>
+                  <input
+                    id="manual-initial-admin-activation-url"
+                    type="text"
+                    value={manualLinkResult.activation_url}
+                    readOnly
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-describedby="manual-link-expiry manual-link-disposal-warning"
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  <button
+                    className={styles.primaryButton}
+                    type="button"
+                    onClick={() => void copyManualActivationUrl()}
+                  >
+                    Linki kopyala
+                  </button>
+                </div>
+                <p id="manual-link-expiry">
+                  Son geçerlilik:{" "}
+                  <time dateTime={manualLinkResult.expires_at}>
+                    {formatPlatformDate(manualLinkResult.expires_at)}
+                  </time>
                 </p>
-              ) : null}
+                <p
+                  className={styles.manualLinkDisposalWarning}
+                  id="manual-link-disposal-warning"
+                >
+                  Bu paneli kapattığınızda veya sayfayı yenilediğinizde link bu
+                  ekranda yeniden gösterilemez.
+                </p>
+                <span
+                  className={styles.manualLinkCopyStatus}
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {manualLinkCopyStatus}
+                </span>
+              </div>
             </div>
           ) : (
-            <p className={styles.invitationPermission}>
-              Bu işlemler tenant güncelleme izni gerektirir.
-            </p>
+            <>
+              <div>
+                <strong>Yeni bir davet güvenli biçimde hazırlanır</strong>
+                <p>
+                  Önceki etkinleştirme bağlantısı geçersiz olur. Yeniden gönderme
+                  ve bilgi düzeltme işlemlerinde alıcı kimliği veya erişim
+                  bağlantısı bu platform ekranında gösterilmez.
+                </p>
+              </div>
+              {canUpdateTenant ? (
+                <div className={styles.invitationControls}>
+                  {isInitialAdminOutcomeUnknown ? (
+                    <div
+                      className={styles.cardNotice}
+                      id="initial-admin-unknown-outcome"
+                      role="alert"
+                    >
+                      <strong>Davet işleminin sonucu doğrulanamadı</strong>
+                      <p>
+                        Yeniden gönderme, düzeltme ve yeni link üretme bu tenant
+                        için kilitlendi. Platform denetim kaydını inceleyin veya
+                        güvenilir güncel ayrıntıyı almak için Tenant
+                        metadata’sındaki Yenile düğmesini kullanın.
+                      </p>
+                    </div>
+                  ) : null}
+                  <div className={styles.invitationActions}>
+                    {initialAdminActionsEligible ? (
+                      <button
+                        ref={manualLinkTriggerRef}
+                        className={styles.primaryButton}
+                        type="button"
+                        disabled={isInitialAdminOutcomeUnknown || isMutating}
+                        aria-describedby={
+                          isInitialAdminOutcomeUnknown
+                            ? "initial-admin-unknown-outcome"
+                            : undefined
+                        }
+                        onClick={() => {
+                          if (hasUnknownInitialAdminOutcome(tenantId)) return;
+                          openConfirmation({
+                            kind: "initial_admin_manual_link",
+                          });
+                        }}
+                      >
+                        Yeni davet linki uret
+                      </button>
+                    ) : null}
+                    <button
+                      className={styles.secondaryButton}
+                      type="button"
+                      disabled={
+                        !initialAdminActionsEligible ||
+                        isInitialAdminOutcomeUnknown ||
+                        isMutating
+                      }
+                      aria-describedby={
+                        isInitialAdminOutcomeUnknown
+                          ? "initial-admin-unknown-outcome"
+                          : initialAdminActionsEligible
+                            ? undefined
+                            : "initial-admin-lifecycle-explanation"
+                      }
+                      onClick={() => {
+                        if (
+                          !initialAdminActionsEligible ||
+                          hasUnknownInitialAdminOutcome(tenantId)
+                        ) {
+                          return;
+                        }
+                        openConfirmation({ kind: "initial_admin_resend" });
+                      }}
+                    >
+                      İlk yönetici davetini yeniden gönder
+                    </button>
+                    <button
+                      className={styles.secondaryButton}
+                      type="button"
+                      disabled={
+                        !initialAdminActionsEligible ||
+                        isInitialAdminOutcomeUnknown ||
+                        isMutating
+                      }
+                      aria-describedby={
+                        isInitialAdminOutcomeUnknown
+                          ? "initial-admin-unknown-outcome"
+                          : initialAdminActionsEligible
+                            ? undefined
+                            : "initial-admin-lifecycle-explanation"
+                      }
+                      onClick={() => {
+                        if (
+                          !initialAdminActionsEligible ||
+                          hasUnknownInitialAdminOutcome(tenantId)
+                        ) {
+                          return;
+                        }
+                        openConfirmation({ kind: "initial_admin_correction" });
+                      }}
+                    >
+                      İlk yönetici bilgilerini düzelt
+                    </button>
+                  </div>
+                  {!initialAdminActionsEligible ? (
+                    <p
+                      className={styles.initialAdminLifecycleExplanation}
+                      id="initial-admin-lifecycle-explanation"
+                    >
+                      İlk yönetici işlemleri yalnız Hazırlanıyor, Deneme veya
+                      Aktif yaşam döngüsündeki tenantlarda kullanılabilir.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className={styles.invitationPermission}>
+                  Bu işlemler tenant güncelleme izni gerektirir.
+                </p>
+              )}
+            </>
           )}
         </div>
       </section>
@@ -1706,7 +1912,9 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
                         ? "devre dışı bırak"
                         : "etkinleştir"
                     }`
-                  : "İlk yönetici davetini yeniden gönder"
+                  : confirmation.kind === "initial_admin_manual_link"
+                    ? "Yeni davet linki uret"
+                    : "İlk yönetici davetini yeniden gönder"
             }
             description={
               confirmation.kind === "lifecycle" ? (
@@ -1723,6 +1931,12 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
                   </strong>{" "}
                   modül erişimini doğrudan etkiler.
                 </p>
+              ) : confirmation.kind === "initial_admin_manual_link" ? (
+                <p>
+                  Yeni link üretildiğinde önceki etkinleştirme linki hemen
+                  geçersiz olur. Yeni link süreli ve tek kullanımlıdır; yalnız
+                  işlem tamamlandıktan sonra bu ekranda bir kez gösterilir.
+                </p>
               ) : (
                 <p>
                   Yeni bir davet hazırlanır ve önceki etkinleştirme bağlantısı
@@ -1734,12 +1948,16 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
             confirmLabel={
               confirmation.kind === "initial_admin_resend"
                 ? "Daveti yeniden gönder"
-                : "Değişikliği uygula"
+                : confirmation.kind === "initial_admin_manual_link"
+                  ? "Yeni linki üret"
+                  : "Değişikliği uygula"
             }
             busyLabel={
               confirmation.kind === "initial_admin_resend"
                 ? "Davet hazırlanıyor…"
-                : "Değişiklik uygulanıyor…"
+                : confirmation.kind === "initial_admin_manual_link"
+                  ? "Link hazırlanıyor…"
+                  : "Değişiklik uygulanıyor…"
             }
             danger={
               confirmation.kind === "lifecycle"
@@ -1750,7 +1968,8 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
             }
             error={operationError}
             errorTitle={
-              confirmation.kind === "initial_admin_resend" &&
+              (confirmation.kind === "initial_admin_resend" ||
+                confirmation.kind === "initial_admin_manual_link") &&
               isInitialAdminOutcomeUnknown
                 ? "Sonuç doğrulanamadı"
                 : undefined
@@ -1758,11 +1977,14 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
             fallbackFocusRef={
               confirmation.kind === "lifecycle"
                 ? lifecycleSelectRef
-                : undefined
+                : confirmation.kind === "initial_admin_manual_link"
+                  ? manualLinkTriggerRef
+                  : undefined
             }
             isBusy={isMutating}
             isConfirmDisabled={
-              confirmation.kind === "initial_admin_resend" &&
+              (confirmation.kind === "initial_admin_resend" ||
+                confirmation.kind === "initial_admin_manual_link") &&
               isInitialAdminOutcomeUnknown
             }
             onCancel={closeConfirmation}
@@ -1771,6 +1993,8 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
                 void confirmLifecycle(confirmation.target);
               } else if (confirmation.kind === "feature") {
                 void confirmFeature(confirmation.feature);
+              } else if (confirmation.kind === "initial_admin_manual_link") {
+                void confirmInitialAdminManualLink();
               } else {
                 void confirmInitialAdminResend();
               }

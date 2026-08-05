@@ -30,6 +30,7 @@ from app.schemas.tenant import (
     TenantSettingsUpdate,
 )
 from app.services.initial_tenant_admin_provisioner import (
+    InitialTenantAdminManualLinkMaterial,
     InitialTenantAdminProvisioner,
 )
 from app.services.tenant_feature_service import (
@@ -116,6 +117,29 @@ class TenantCommandHandler:
             )
 
         await self.unit_of_work.execute(operation)
+
+    async def create_initial_admin_manual_link(
+        self,
+        tenant_id: UUID,
+        *,
+        request_context: RequestContext,
+    ) -> InitialTenantAdminManualLinkMaterial:
+        async def operation() -> InitialTenantAdminManualLinkMaterial:
+            result = await self.initial_admin_provisioner.reissue_manual_link(
+                tenant_id=tenant_id
+            )
+            await self.event_recorder.record(
+                InitialTenantAdminInvitationReissuedEvent(
+                    **self._event_metadata(
+                        tenant_id,
+                        request_context,
+                        actor_type=PlatformEventActorType.PLATFORM_ADMIN,
+                    )
+                )
+            )
+            return result
+
+        return await self.unit_of_work.execute(operation)
 
     async def correct_initial_admin_invitation(
         self,
