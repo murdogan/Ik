@@ -161,6 +161,18 @@ class InitialTenantAdminProvisioner:
             outbox_id=outbox_id,
             occurred_at=now,
         )
+        manual_delivery_event = await self.session.scalar(
+            select(OutboxEvent)
+            .where(
+                OutboxEvent.tenant_id == tenant_id,
+                OutboxEvent.id == outbox_id,
+            )
+            .with_for_update()
+        )
+        if manual_delivery_event is None:
+            raise RuntimeError("Manual activation-link delivery suppression failed")
+        await self.session.delete(manual_delivery_event)
+        await self.session.flush()
         return InitialTenantAdminManualLinkMaterial(
             raw_token=token.raw_token,
             expires_at=expires_at,

@@ -428,6 +428,45 @@ async def test_worker_preserves_manual_link_hash_and_expiry_when_material_is_alr
         await engine.dispose()
 
 
+async def test_worker_does_not_deliver_or_rotate_an_expired_activation() -> None:
+    engine, sessions, settings = await _worker_runtime()
+    signing_key = settings.auth_signing_key
+    assert signing_key is not None
+    expired_token = ActivationDeliveryTokenCodec(
+        signing_key.get_secret_value().encode("utf-8")
+    ).issue(TENANT_ID, ACTIVATION_ID)
+    expired_at = datetime.now(UTC) - timedelta(minutes=1)
+    recorded_messages: list[EmailMessage] = []
+
+    try:
+        async with sessions.begin() as session:
+            activation = await session.get(UserActivationToken, ACTIVATION_ID)
+            assert activation is not None
+            activation.token_hash = expired_token.token_hash
+            original_hash = activation.token_hash
+            activation.expires_at = expired_at
+
+        worker = _SuccessfulNotificationWorker(
+            session_factory=sessions,
+            settings=settings,
+            recorded_messages=recorded_messages,
+        )
+        assert await worker.run_once() == 2
+        assert recorded_messages == []
+
+        async with sessions() as session:
+            activation = await session.get(UserActivationToken, ACTIVATION_ID)
+
+        assert activation is not None
+        persisted_expiry = activation.expires_at
+        if persisted_expiry.tzinfo is None:
+            persisted_expiry = persisted_expiry.replace(tzinfo=UTC)
+        assert activation.token_hash == original_hash
+        assert abs((persisted_expiry - expired_at).total_seconds()) < 0.001
+    finally:
+        await engine.dispose()
+
+
 async def test_expired_claim_recovers_after_process_restart_without_rotating_message() -> None:
     engine, sessions, settings = await _worker_runtime()
     crashed_messages: list[EmailMessage] = []

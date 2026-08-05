@@ -1023,9 +1023,13 @@ async def test_platform_can_generate_a_retry_safe_manual_initial_admin_link() ->
             and activation.revoked_at is not None
             for activation in activations
         )
-        assert len(outbox_events) == 3
+        assert len(outbox_events) == 1
         assert all(
             set(event.payload) == {"recipient_user_id", "activation_id"}
+            for event in outbox_events
+        )
+        assert all(
+            event.payload["activation_id"] != str(active_activations[0].id)
             for event in outbox_events
         )
         serialized_persistence = json.dumps(

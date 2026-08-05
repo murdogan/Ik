@@ -576,6 +576,12 @@ class NotificationWorker:
                 delivery.tenant_id,
                 activation.id,
             )
+            if activation.token_hash == token.token_hash:
+                activation_expires_at = activation.expires_at
+                if activation_expires_at.tzinfo is None:
+                    activation_expires_at = activation_expires_at.replace(tzinfo=UTC)
+                if activation_expires_at <= datetime.now(UTC):
+                    return EmailDeliveryError("recipient_unavailable")
             if not prepared:
                 if activation.token_hash != token.token_hash:
                     activation.token_hash = token.token_hash
