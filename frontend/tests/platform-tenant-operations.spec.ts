@@ -1707,6 +1707,22 @@ test("tenant creation sends the exact initial-admin contract and ignores same-ta
   await expect(
     dialog.getByLabel("İlk yönetici e-posta adresi"),
   ).toHaveAttribute("required", "");
+
+  await dialog.getByLabel("Tenant adı").fill("Güvenli Yeni Tenant");
+  await dialog.getByLabel("Tenant kodu").fill("guvenli-yeni-tenant");
+  await dialog.getByLabel("İlk yönetici tam adı").fill("   ");
+  await dialog
+    .getByLabel("İlk yönetici e-posta adresi")
+    .fill("deniz.yonetici@example.com");
+  await dialog.getByRole("button", { name: "Tenant oluştur" }).click();
+  await expect(
+    dialog.getByRole("alert").filter({
+      hasText: "İlk yönetici tam adını kontrol edin.",
+    }),
+  ).toBeVisible();
+  await expect(dialog.getByLabel("İlk yönetici tam adı")).toBeFocused();
+  expect(createRequests).toBe(0);
+
   await dialog.getByLabel("Tenant adı").fill("Güvenli Yeni Tenant");
   await dialog.getByLabel("Tenant kodu").fill("guvenli-yeni-tenant");
   await dialog

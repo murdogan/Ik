@@ -243,32 +243,80 @@ export function CreateTenantDialog({
     const dataRegion = String(form.get("data_region") ?? "");
     const locale = String(form.get("locale") ?? "");
 
-    if (
-      name.length < 1 ||
-      name.length > 200 ||
-      slug.length < 2 ||
-      !SLUG_PATTERN.test(slug) ||
+    let invalidField: { name: string; message: string } | null = null;
+    if (name.length < 1 || name.length > 200) {
+      invalidField = { name: "name", message: "Tenant adını kontrol edin." };
+    } else if (slug.length < 2 || !SLUG_PATTERN.test(slug)) {
+      invalidField = {
+        name: "slug",
+        message:
+          "Tenant kodu 2-80 karakter olmalı; yalnız küçük harf, rakam ve tire içermelidir.",
+      };
+    } else if (
       initialAdminFullName.length < 1 ||
-      initialAdminFullName.length > 200 ||
+      initialAdminFullName.length > 200
+    ) {
+      invalidField = {
+        name: "initial_admin_full_name",
+        message: "İlk yönetici tam adını kontrol edin.",
+      };
+    } else if (
       initialAdminEmail.length < 3 ||
       initialAdminEmail.length > 320 ||
-      !EMAIL_PATTERN.test(initialAdminEmail) ||
-      !isPlatformTenantTimezone(timezone) ||
+      !EMAIL_PATTERN.test(initialAdminEmail)
+    ) {
+      invalidField = {
+        name: "initial_admin_email",
+        message: "İlk yönetici e-posta adresini kontrol edin.",
+      };
+    } else if (!isPlatformTenantTimezone(timezone)) {
+      invalidField = {
+        name: "timezone",
+        message: "Geçerli bir saat dilimi seçin.",
+      };
+    } else if (
       !PLATFORM_TENANT_PLANS.includes(
         plan as PlatformTenantCreateRequest["plan_code"],
-      ) ||
+      )
+    ) {
+      invalidField = { name: "plan_code", message: "Geçerli bir plan seçin." };
+    } else if (
       !PLATFORM_TENANT_REGIONS.includes(
         dataRegion as PlatformTenantCreateRequest["data_region"],
-      ) ||
+      )
+    ) {
+      invalidField = {
+        name: "data_region",
+        message: "Geçerli bir veri bölgesi seçin.",
+      };
+    } else if (
       !PLATFORM_TENANT_LOCALES.includes(
         locale as PlatformTenantCreateRequest["locale"],
-      ) ||
-      (limit !== null &&
-        (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000_000))
+      )
     ) {
-      setValidationError(
-        "Tenant, ilk yönetici, saat dilimi ve çalışan limiti alanlarını kontrol edin.",
+      invalidField = {
+        name: "locale",
+        message: "Geçerli bir dil ve bölge seçin.",
+      };
+    } else if (
+      limit !== null &&
+      (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000_000)
+    ) {
+      invalidField = {
+        name: "active_employees",
+        message:
+          "Aktif çalışan limiti 1 ile 1.000.000 arasında bir tam sayı olmalıdır.",
+      };
+    }
+
+    if (invalidField) {
+      setValidationError(invalidField.message);
+      const invalidControl = event.currentTarget.elements.namedItem(
+        invalidField.name,
       );
+      if (invalidControl instanceof HTMLElement) {
+        invalidControl.focus();
+      }
       return;
     }
 
