@@ -11,7 +11,9 @@ from app.platform.identity.activation_tokens import (
     ActivationTokenMaterial,
     InvalidActivationTokenFormatError,
     hash_activation_token,
+    is_manual_activation_delivery_event,
     issue_activation_token,
+    manual_activation_delivery_event_id,
     parse_activation_token,
 )
 from app.platform.identity.organization_selection_tokens import (
@@ -78,11 +80,13 @@ __all__ = [
     "PlatformRefreshTokenMaterial",
     "RefreshTokenMaterial",
     "hash_activation_token",
+    "is_manual_activation_delivery_event",
     "hash_refresh_token",
     "hash_organization_selection_token",
     "hash_platform_refresh_token",
     "hash_password_reset_token",
     "issue_activation_token",
+    "manual_activation_delivery_event_id",
     "issue_refresh_token",
     "issue_organization_selection_token",
     "issue_platform_refresh_token",

@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from hashlib import sha256
 from hmac import new as hmac_new
 from secrets import token_urlsafe
-from uuid import UUID
+from uuid import UUID, uuid5
 
 ACTIVATION_TOKEN_VERSION = "v1"
 _DELIVERY_TOKEN_PURPOSE = b"wealthy-falcon:activation-delivery:v1"
+_MANUAL_DELIVERY_EVENT_NAMESPACE = UUID("95b524cb-b0bd-4d54-96b2-f7a15988835e")
 
 
 class InvalidActivationTokenFormatError(ValueError):
@@ -48,6 +49,24 @@ class ActivationDeliveryTokenCodec:
 def issue_activation_token(tenant_id: UUID) -> ActivationTokenMaterial:
     _require_nonzero_uuid(tenant_id, "tenant")
     return _activation_token_material(tenant_id, token_urlsafe(32))
+
+
+def manual_activation_delivery_event_id(activation_id: UUID) -> UUID:
+    """Return the recognizable outbox marker for a copy-only manual credential."""
+
+    _require_nonzero_uuid(activation_id, "activation")
+    return uuid5(_MANUAL_DELIVERY_EVENT_NAMESPACE, str(activation_id))
+
+
+def is_manual_activation_delivery_event(event_id: UUID, activation_id: UUID) -> bool:
+    """Recognize only markers derived from the event's own activation credential."""
+
+    if not isinstance(event_id, UUID) or event_id.int == 0:
+        return False
+    try:
+        return event_id == manual_activation_delivery_event_id(activation_id)
+    except ValueError:
+        return False
 
 
 def _activation_token_material(tenant_id: UUID, secret: str) -> ActivationTokenMaterial:
@@ -96,6 +115,8 @@ __all__ = [
     "ActivationTokenMaterial",
     "InvalidActivationTokenFormatError",
     "hash_activation_token",
+    "is_manual_activation_delivery_event",
     "issue_activation_token",
+    "manual_activation_delivery_event_id",
     "parse_activation_token",
 ]

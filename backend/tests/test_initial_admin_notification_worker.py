@@ -21,6 +21,7 @@ from app.modules.core.domain.feature_flags import FeatureFlagKey
 from app.platform.identity import (
     ActivationDeliveryTokenCodec,
     hash_activation_token,
+    manual_activation_delivery_event_id,
     parse_activation_token,
 )
 from app.services.notification_email_provider import (
@@ -424,6 +425,62 @@ async def test_worker_preserves_manual_link_hash_and_expiry_when_material_is_alr
         assert activation.token_hash == manual_token.token_hash
         assert activation.token_hash == hash_activation_token(delivered_token)
         assert abs((persisted_expiry - manual_expiry).total_seconds()) < 0.001
+    finally:
+        await engine.dispose()
+
+
+async def test_worker_skips_manual_marker_across_signing_key_drift() -> None:
+    engine, sessions, settings = await _worker_runtime()
+    signing_key = settings.auth_signing_key
+    assert signing_key is not None
+    manual_token = ActivationDeliveryTokenCodec(
+        signing_key.get_secret_value().encode("utf-8")
+    ).issue(TENANT_ID, ACTIVATION_ID)
+    manual_event_id = manual_activation_delivery_event_id(ACTIVATION_ID)
+    recorded_messages: list[EmailMessage] = []
+
+    try:
+        async with sessions.begin() as session:
+            activation = await session.get(UserActivationToken, ACTIVATION_ID)
+            event = await session.get(OutboxEvent, OUTBOX_ID)
+            assert activation is not None
+            assert event is not None
+            activation.token_hash = manual_token.token_hash
+            activation.expires_at = datetime.now(UTC) + timedelta(hours=23)
+            event.id = manual_event_id
+
+        drifted_settings = Settings(
+            _env_file=None,
+            environment="test",
+            database_url="sqlite+aiosqlite:///:memory:",
+            frontend_base_url="https://frontend.example.test",
+            auth_signing_key="different-worker-signing-key-material-0000000000000000",
+            notification_email_backend="fake",
+        )
+        worker = _SuccessfulNotificationWorker(
+            session_factory=sessions,
+            settings=drifted_settings,
+            recorded_messages=recorded_messages,
+        )
+        assert await worker.run_once() == 1
+        assert recorded_messages == []
+
+        async with sessions() as session:
+            activation = await session.get(UserActivationToken, ACTIVATION_ID)
+            notification = await session.scalar(
+                select(Notification).where(Notification.source_event_id == manual_event_id)
+            )
+            consumption = await session.scalar(
+                select(OutboxEventConsumption).where(
+                    OutboxEventConsumption.source_event_id == manual_event_id
+                )
+            )
+
+        assert activation is not None
+        assert activation.token_hash == manual_token.token_hash
+        assert notification is None
+        assert consumption is not None
+        assert consumption.outcome == "skipped"
     finally:
         await engine.dispose()
 

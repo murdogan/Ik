@@ -25,7 +25,11 @@ from app.models.user import User, UserStatus
 from app.platform.authorization import ROLES_BY_CODE
 from app.platform.db import sqlstate_from_error
 from app.platform.errors.application import ApplicationError
-from app.platform.identity import ActivationDeliveryTokenCodec, issue_activation_token
+from app.platform.identity import (
+    ActivationDeliveryTokenCodec,
+    issue_activation_token,
+    manual_activation_delivery_event_id,
+)
 from app.schemas.tenant import TenantInitialAdminCorrection, TenantInitialAdminProvision
 from app.services.authorization_service import assign_system_role
 from app.services.identity_projection_service import sync_identity_membership_projection
@@ -151,7 +155,7 @@ class InitialTenantAdminProvisioner:
         token = token_codec.issue(tenant_id, activation_id)
         now = datetime.now(UTC)
         expires_at = now + self.activation_ttl
-        outbox_id = uuid4()
+        outbox_id = manual_activation_delivery_event_id(activation_id)
 
         await self._persist_reissue(
             tenant_id=tenant_id,
@@ -161,18 +165,6 @@ class InitialTenantAdminProvisioner:
             outbox_id=outbox_id,
             occurred_at=now,
         )
-        manual_delivery_event = await self.session.scalar(
-            select(OutboxEvent)
-            .where(
-                OutboxEvent.tenant_id == tenant_id,
-                OutboxEvent.id == outbox_id,
-            )
-            .with_for_update()
-        )
-        if manual_delivery_event is None:
-            raise RuntimeError("Manual activation-link delivery suppression failed")
-        await self.session.delete(manual_delivery_event)
-        await self.session.flush()
         return InitialTenantAdminManualLinkMaterial(
             raw_token=token.raw_token,
             expires_at=expires_at,

@@ -33,7 +33,11 @@ from app.models.organization import LegalEntity
 from app.models.tenant import Tenant, TenantSettings, TenantStatus
 from app.models.user import User, UserStatus
 from app.platform.authorization import ROLE_PERMISSION_CODES, ROLES_BY_CODE
-from app.platform.identity import PlatformAccessPrincipal, hash_activation_token
+from app.platform.identity import (
+    PlatformAccessPrincipal,
+    hash_activation_token,
+    is_manual_activation_delivery_event,
+)
 from app.platform.principals import PlatformPrincipal
 from app.platform.request_context import AuthenticationStrength, RequestContext
 from app.platform.tenancy import TenantContext
@@ -1023,15 +1027,32 @@ async def test_platform_can_generate_a_retry_safe_manual_initial_admin_link() ->
             and activation.revoked_at is not None
             for activation in activations
         )
-        assert len(outbox_events) == 1
+        assert len(outbox_events) == 3
         assert all(
             set(event.payload) == {"recipient_user_id", "activation_id"}
             for event in outbox_events
         )
-        assert all(
-            event.payload["activation_id"] != str(active_activations[0].id)
+        manual_events = tuple(
+            event
             for event in outbox_events
+            if is_manual_activation_delivery_event(
+                event.id,
+                UUID(event.payload["activation_id"]),
+            )
         )
+        assert len(manual_events) == 2
+        manual_activation_ids = {
+            activation.id
+            for activation in activations
+            if activation.token_hash
+            in {
+                hash_activation_token(first_token),
+                hash_activation_token(second_token),
+            }
+        }
+        assert {event.payload["activation_id"] for event in manual_events} == {
+            str(activation_id) for activation_id in manual_activation_ids
+        }
         serialized_persistence = json.dumps(
             {
                 "outbox": [event.payload for event in outbox_events],

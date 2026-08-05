@@ -45,6 +45,7 @@ from app.platform.audit import (
 from app.platform.db import configure_platform_database_access, configure_tenant_database_access
 from app.platform.identity import (
     ActivationDeliveryTokenCodec,
+    is_manual_activation_delivery_event,
 )
 from app.platform.observability.operational import (
     configure_operational_logger,
@@ -235,7 +236,9 @@ class NotificationWorker:
             invitation = _initial_admin_invitation(event)
             if invitation is None:
                 return []
-            recipient_user_id, _activation_id = invitation
+            recipient_user_id, activation_id = invitation
+            if is_manual_activation_delivery_event(event.id, activation_id):
+                return []
             return [
                 _RecipientNotification(
                     user_id=recipient_user_id,
@@ -556,6 +559,8 @@ class NotificationWorker:
                 else None
             )
             if invitation is None or invitation[0] != delivery.recipient_user_id:
+                return EmailDeliveryError("recipient_unavailable")
+            if is_manual_activation_delivery_event(delivery.source_event_id, invitation[1]):
                 return EmailDeliveryError("recipient_unavailable")
             activation = await session.scalar(
                 select(UserActivationToken)
