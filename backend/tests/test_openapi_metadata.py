@@ -632,6 +632,50 @@ def test_platform_initial_admin_reissue_contract_is_credential_safe() -> None:
     assert set(conflict_examples) == {"tenant_initial_admin_unavailable"}
 
 
+def test_platform_manual_initial_admin_link_contract_is_explicit_and_cache_safe() -> None:
+    openapi = create_app().openapi()
+    schemas = openapi["components"]["schemas"]
+    operation = openapi["paths"][
+        "/api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/manual-link"
+    ]["post"]
+
+    assert "requestBody" not in operation
+    success = operation["responses"]["201"]
+    references = _transitive_schema_references(
+        success["content"]["application/json"]["schema"],
+        schemas,
+    )
+    assert "TenantInitialAdminManualLinkRead" in references
+    manual_link = schemas["TenantInitialAdminManualLinkRead"]
+    assert set(manual_link["properties"]) == {
+        "activation_url",
+        "expires_at",
+        "status",
+    }
+    assert set(manual_link["required"]) == {
+        "activation_url",
+        "expires_at",
+        "status",
+    }
+    assert manual_link["properties"]["status"]["const"] == "manual_link_ready"
+    assert manual_link["properties"]["expires_at"]["format"] == "date-time"
+    assert set(success["headers"]) == {"Cache-Control", "Pragma"}
+    serialized_operation = str(operation).lower()
+    assert all(
+        forbidden not in serialized_operation
+        for forbidden in (
+            "email",
+            "identity_id",
+            "membership_id",
+            "password",
+            "raw_token",
+            "user_id",
+        )
+    )
+    conflict_examples = operation["responses"]["409"]["content"]["application/json"]["examples"]
+    assert set(conflict_examples) == {"tenant_initial_admin_unavailable"}
+
+
 def test_platform_initial_admin_correction_contract_is_identity_safe() -> None:
     openapi = create_app().openapi()
     schemas = openapi["components"]["schemas"]

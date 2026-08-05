@@ -372,7 +372,39 @@ test("invite, activate, login, refresh, protected navigation, and logout", async
   expect(restoredStorage).not.toContain("refresh-");
   expect(restoredStorage).not.toContain("token");
 
-  await inviteePage.getByRole("button", { name: "Çıkış yap" }).click();
+  const profileMenuTrigger = inviteePage.getByRole("button", {
+    name: "Profil menüsünü aç",
+  });
+  await expect(profileMenuTrigger).toBeVisible();
+  await expect(inviteePage.getByText(invitedEmployee.email)).toHaveCount(0);
+
+  await profileMenuTrigger.click();
+  const profileMenu = inviteePage.getByRole("menu", { name: "Profil menüsü" });
+  await expect(profileMenu).toBeVisible();
+  await expect(profileMenu).toContainText(invitedEmployee.full_name);
+  await expect(profileMenu).toContainText(invitedEmployee.email);
+  await inviteePage.keyboard.press("Escape");
+  await expect(profileMenu).toBeHidden();
+  await expect(profileMenuTrigger).toBeFocused();
+
+  await profileMenuTrigger.click();
+  await profileMenu.getByRole("menuitem", { name: "Çıkış yap" }).click();
+  const logoutConfirmation = inviteePage.getByRole("dialog", {
+    name: "Oturumu kapat",
+  });
+  await expect(logoutConfirmation).toContainText(
+    "Oturumu kapatmak istediğinize emin misiniz?",
+  );
+  expect(logoutCount).toBe(0);
+
+  await logoutConfirmation.getByRole("button", { name: "Vazgeç" }).click();
+  await expect(logoutConfirmation).toBeHidden();
+  await expect(profileMenuTrigger).toBeFocused();
+  expect(logoutCount).toBe(0);
+
+  await profileMenuTrigger.click();
+  await profileMenu.getByRole("menuitem", { name: "Çıkış yap" }).click();
+  await logoutConfirmation.getByRole("button", { name: "Çıkış yap" }).click();
 
   await expect(inviteePage).toHaveURL(/\/login$/);
   expect(logoutCount).toBe(1);
