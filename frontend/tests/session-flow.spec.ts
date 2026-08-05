@@ -744,7 +744,8 @@ test("tenant shell switches to another authorized organization with a rotated se
   await expect(page.getByRole("heading", { name: "Merhaba, Deniz Çoklu" })).toBeVisible();
   await expect(page.getByText(currentTenant.name).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Kurum değiştir" }).click();
+  await page.getByRole("button", { name: "Profil menüsünü aç" }).click();
+  await page.getByRole("menuitem", { name: "Kurum değiştir" }).click();
   await expect(page).toHaveURL(/\/select-organization$/);
   await expect(
     page.getByRole("heading", { name: "Çalışacağınız kurumu seçin" }),

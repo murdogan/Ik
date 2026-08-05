@@ -77,7 +77,10 @@ export function ProfileMenu() {
     AUTHORIZATION_PERMISSIONS.readOwnEmployee,
   );
   const mutationInProgress = isLoggingOut || isConfirmingLogout;
-  dialogBusy.current = mutationInProgress;
+
+  useEffect(() => {
+    dialogBusy.current = mutationInProgress;
+  }, [mutationInProgress]);
 
   useEffect(() => {
     isMounted.current = true;

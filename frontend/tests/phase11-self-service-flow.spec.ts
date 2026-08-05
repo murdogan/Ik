@@ -350,7 +350,7 @@ test("employee home, requests, critical announcements, and notifications preserv
   await expect(
     page.getByRole("heading", { name: "Bildirimler", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Aç" }).click();
+  await page.getByRole("button", { name: "Aç", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/requests/${REQUEST_ID}$`));
 
   expect(mutationBodies.map((entry) => entry.path)).toEqual([
