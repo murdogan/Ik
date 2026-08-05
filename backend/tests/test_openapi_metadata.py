@@ -659,7 +659,9 @@ def test_platform_manual_initial_admin_link_contract_is_explicit_and_cache_safe(
     }
     assert manual_link["properties"]["status"]["const"] == "manual_link_ready"
     assert manual_link["properties"]["expires_at"]["format"] == "date-time"
-    assert set(success["headers"]) == {"Cache-Control", "Pragma"}
+    assert {"Cache-Control", "Pragma"} <= set(success["headers"])
+    assert success["headers"]["Cache-Control"]["schema"]["const"] == "no-store"
+    assert success["headers"]["Pragma"]["schema"]["const"] == "no-cache"
     serialized_operation = str(operation).lower()
     assert all(
         forbidden not in serialized_operation

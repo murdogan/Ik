@@ -18,7 +18,11 @@ from app.models.notification import (
 from app.models.tenant import Tenant, TenantFeatureFlag, TenantStatus
 from app.models.user import User, UserStatus
 from app.modules.core.domain.feature_flags import FeatureFlagKey
-from app.platform.identity import hash_activation_token, parse_activation_token
+from app.platform.identity import (
+    ActivationDeliveryTokenCodec,
+    hash_activation_token,
+    parse_activation_token,
+)
 from app.services.notification_email_provider import (
     EmailDeliveryError,
     EmailMessage,
@@ -375,6 +379,50 @@ async def test_worker_delivers_initial_admin_when_notifications_are_disabled() -
                 }
             ).lower()
         )
+    finally:
+        await engine.dispose()
+
+
+async def test_worker_preserves_manual_link_hash_and_expiry_when_material_is_already_deterministic() -> None:
+    engine, sessions, settings = await _worker_runtime()
+    signing_key = settings.auth_signing_key
+    assert signing_key is not None
+    codec = ActivationDeliveryTokenCodec(
+        signing_key.get_secret_value().encode("utf-8")
+    )
+    manual_token = codec.issue(TENANT_ID, ACTIVATION_ID)
+    manual_expiry = datetime.now(UTC) + timedelta(hours=23)
+    recorded_messages: list[EmailMessage] = []
+
+    try:
+        async with sessions.begin() as session:
+            activation = await session.get(UserActivationToken, ACTIVATION_ID)
+            assert activation is not None
+            activation.token_hash = manual_token.token_hash
+            activation.expires_at = manual_expiry
+
+        worker = _SuccessfulNotificationWorker(
+            session_factory=sessions,
+            settings=settings,
+            recorded_messages=recorded_messages,
+        )
+        assert await worker.run_once() == 2
+        assert len(recorded_messages) == 1
+        delivered_token = parse_qs(
+            urlsplit(recorded_messages[0].portal_url).fragment
+        )["token"][0]
+        assert delivered_token == manual_token.raw_token
+
+        async with sessions() as session:
+            activation = await session.get(UserActivationToken, ACTIVATION_ID)
+
+        assert activation is not None
+        persisted_expiry = activation.expires_at
+        if persisted_expiry.tzinfo is None:
+            persisted_expiry = persisted_expiry.replace(tzinfo=UTC)
+        assert activation.token_hash == manual_token.token_hash
+        assert activation.token_hash == hash_activation_token(delivered_token)
+        assert abs((persisted_expiry - manual_expiry).total_seconds()) < 0.001
     finally:
         await engine.dispose()
 

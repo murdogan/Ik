@@ -4813,3 +4813,142 @@ test("a principal change remounts protected forms without clearing the session a
     createDialog.getByRole("button", { name: "Tenant oluştur" }),
   ).toBeEnabled();
 });
+
+test("manual initial-admin link is confirmed, copied once, and never persisted in browser storage", async ({
+  context,
+  page,
+}) => {
+  const tenantUpdater = {
+    ...platformAdmin,
+    permissions: ["tenant:read:platform", "tenant:update:platform"],
+    permission_version: 41,
+  };
+  const activationUrl = `http://127.0.0.1:3100/activate#token=v1.${TENANT_ID}.${"a".repeat(64)}`;
+  let manualLinkRequests = 0;
+
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: "http://127.0.0.1:3100",
+  });
+  await context.addCookies([
+    {
+      name: "wf_platform_refresh",
+      value: "platform-manual-link-refresh",
+      url: "http://127.0.0.1:3100",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+
+  await page.route("**/api/v1/**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === "/api/v1/platform/auth/refresh") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({
+          access_token: PLATFORM_ACCESS_TOKEN,
+          token_type: "bearer",
+          expires_in: 900,
+          user: tenantUpdater,
+        }),
+      });
+      return;
+    }
+
+    expectPlatformBearer(request, PLATFORM_ACCESS_TOKEN);
+    if (path === "/api/v1/platform/me") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope({ user: tenantUpdater }),
+      });
+      return;
+    }
+
+    if (
+      path ===
+      `/api/v1/platform/tenants/${TENANT_ID}/initial-admin-invitation/manual-link`
+    ) {
+      expect(request.method()).toBe("POST");
+      expect(request.postData()).toBeNull();
+      expect(request.headers()["content-type"]).toBeUndefined();
+      manualLinkRequests += 1;
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        headers: {
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+        },
+        body: envelope(
+          {
+            status: "manual_link_ready",
+            activation_url: activationUrl,
+            expires_at: "2099-08-05T15:00:00Z",
+          },
+          responseMeta("manual-link-correlation"),
+        ),
+      });
+      return;
+    }
+
+    if (path === `/api/v1/platform/tenants/${TENANT_ID}`) {
+      expect(request.method()).toBe("GET");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: envelope(tenants[0]),
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404 });
+  });
+
+  await page.goto(`/platform/tenants/${TENANT_ID}`);
+  const trigger = page.getByRole("button", { name: "Yeni davet linki üret" });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+
+  const confirmation = page.getByRole("dialog", {
+    name: "Yeni davet linki üret",
+  });
+  await expect(confirmation).toContainText(
+    "önceki etkinleştirme linki hemen geçersiz olur",
+  );
+  await expect(confirmation).toContainText("süreli ve tek kullanımlıdır");
+  await confirmation
+    .getByRole("button", { name: "Yeni linki üret" })
+    .evaluate((button) => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+  const result = page.getByRole("region", { name: "Yeni davet linki hazır" });
+  await expect(result).toBeVisible();
+  await expect(result.getByLabel("Etkinleştirme linki")).toHaveValue(
+    activationUrl,
+  );
+  expect(manualLinkRequests).toBe(1);
+
+  await result.getByRole("button", { name: "Linki kopyala" }).click();
+  await expect(result.getByRole("status")).toHaveText(
+    "Davet linki panoya kopyalandı.",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    activationUrl,
+  );
+  const browserStorage = await page.evaluate(
+    () => `${JSON.stringify(localStorage)}${JSON.stringify(sessionStorage)}`,
+  );
+  expect(browserStorage).not.toContain(activationUrl);
+  expect(browserStorage).not.toContain("a".repeat(64));
+
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Yeni davet linki hazır" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Etkinleştirme linki")).toHaveCount(0);
+});

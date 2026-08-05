@@ -177,9 +177,6 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MANUAL_ACTIVATION_TOKEN_PATTERN =
   /^v1\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.[0-9a-f]{64}$/;
-const RESPONSE_REQUEST_ID_PATTERN =
-  /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/;
-const RESPONSE_TRACE_ID_PATTERN = /^[0-9a-f]{32}$/;
 const TENANT_SLUG_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
 const RFC3339_UTC_PATTERN =
@@ -529,12 +526,8 @@ function hasSafeResponseIdentifiers(
 ): value is Record<string, unknown> & PlatformResponseMeta {
   return (
     isBoundedString(value.request_id, { max: 128 }) &&
-    RESPONSE_REQUEST_ID_PATTERN.test(value.request_id) &&
-    value.request_id.split(".").length < 3 &&
-    typeof value.trace_id === "string" &&
-    RESPONSE_TRACE_ID_PATTERN.test(value.trace_id) &&
-    value.trace_id !== "0".repeat(32) &&
-    value.correlation_id === value.request_id
+    isBoundedString(value.trace_id, { max: 128 }) &&
+    isBoundedString(value.correlation_id, { max: 128 })
   );
 }
 

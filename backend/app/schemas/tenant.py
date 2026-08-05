@@ -209,7 +209,7 @@ class TenantInitialAdminProvisioningRead(BaseModel):
 class TenantInitialAdminManualLinkRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["manual_link_ready"] = "manual_link_ready"
+    status: Literal["manual_link_ready"]
     activation_url: StrictStr
     expires_at: AwareDatetime
 

@@ -323,7 +323,18 @@ async def require_empty_platform_tenant_request_body(request: Request) -> None:
     response_description="One-time manual activation link with request metadata.",
     responses=with_correlation_response_headers(
         {
-            status.HTTP_201_CREATED: {},
+            status.HTTP_201_CREATED: {
+                "headers": {
+                    "Cache-Control": {
+                        "description": "Prevents storage of the credential-bearing response.",
+                        "schema": {"type": "string", "const": "no-store"},
+                    },
+                    "Pragma": {
+                        "description": "Legacy cache prevention for credential-bearing clients.",
+                        "schema": {"type": "string", "const": "no-cache"},
+                    },
+                }
+            },
             **TENANT_INITIAL_ADMIN_REISSUE_CONFLICT_RESPONSES,
         }
     ),
@@ -350,6 +361,7 @@ async def create_platform_initial_admin_manual_link(
     response.headers["Pragma"] = "no-cache"
     return data_envelope(
         TenantInitialAdminManualLinkRead(
+            status="manual_link_ready",
             activation_url=activation_url,
             expires_at=result.expires_at,
         ),

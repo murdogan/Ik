@@ -1411,7 +1411,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
                           });
                         }}
                       >
-                        Yeni davet linki uret
+                        Yeni davet linki üret
                       </button>
                     ) : null}
                     <button
@@ -1913,7 +1913,7 @@ export function TenantDetailScreen({ tenantId }: { tenantId: string }) {
                         : "etkinleştir"
                     }`
                   : confirmation.kind === "initial_admin_manual_link"
-                    ? "Yeni davet linki uret"
+                    ? "Yeni davet linki üret"
                     : "İlk yönetici davetini yeniden gönder"
             }
             description={
