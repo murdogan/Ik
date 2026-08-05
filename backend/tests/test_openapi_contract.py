@@ -261,7 +261,7 @@ def test_current_openapi_surface_matches_phase11_registry_and_security_realms() 
         if line.strip()
     }
 
-    assert len(expected_operations) == 179
+    assert len(expected_operations) == 180
     assert current["operation_count"] == len(expected_operations)
     assert set(current["operations"]) == expected_operations
 

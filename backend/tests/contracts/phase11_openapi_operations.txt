@@ -166,6 +166,7 @@ POST /api/v1/platform/auth/login
 POST /api/v1/platform/auth/logout
 POST /api/v1/platform/auth/refresh
 POST /api/v1/platform/tenants
+POST /api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/manual-link
 POST /api/v1/platform/tenants/{tenant_id}/initial-admin-invitation/resend
 POST /api/v1/positions
 POST /api/v1/privacy/consents/{purpose_id}/grant
