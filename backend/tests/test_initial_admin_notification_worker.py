@@ -383,7 +383,8 @@ async def test_worker_delivers_initial_admin_when_notifications_are_disabled() -
         await engine.dispose()
 
 
-async def test_worker_preserves_manual_link_hash_and_expiry_when_material_is_already_deterministic() -> None:
+async def test_worker_preserves_manual_link_hash_and_expiry_when_material_is_already_deterministic(
+) -> None:
     engine, sessions, settings = await _worker_runtime()
     signing_key = settings.auth_signing_key
     assert signing_key is not None
